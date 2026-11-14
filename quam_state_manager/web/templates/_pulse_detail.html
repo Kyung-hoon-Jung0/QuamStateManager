@@ -272,6 +272,9 @@
 </div>
 <div id="pulse-detail-plot" class="pulse-detail-plot"></div>
 
+{# The status line of the CZ gate this pulse belongs to (gate_status_routes). #}
+{% if gate_line %}{% with line=gate_line %}{% include '_gate_status.html' %}{% endwith %}{% endif %}
+
 {# docs/162: the operating point, where the pulse is. A flux pulse's whole
    meaning is where on the pair's detuning curve it puts the moving qubit, and
    that curve lived only on the Pairs page. Rendered only when the pulse's own

@@ -36,6 +36,7 @@ import numpy as np
 
 from quam_state_manager.core import value_history, cz_flux_math
 from quam_state_manager.core.pulse_catalog import waveform_shape
+from quam_state_manager.core.query import pair_operational_gate
 
 QUAD_LABEL = "quad-term estimate"
 #: validities that put an answer outside where its conversion was measured
@@ -603,7 +604,7 @@ def chip_map(rows, conversions, op_name=None):
                 missing.append(pair)
                 continue
         else:
-            row = next((r for r in ops if r["operation"] == "cz"), ops[0])
+            row = _default_row(ops, getattr(rows, "active", {}).get(pair))
         fq = [ln["point"].get("frequency_hz") for ln in row["lines"]]
         for k, ln in enumerate(row["lines"]):
             p = ln["point"]
@@ -633,8 +634,11 @@ def chip_map(rows, conversions, op_name=None):
     members = getattr(rows, "pair_members", {})
     pairs = {}
     for pair in by_pair:
-        selected = next((r for r in by_pair[pair] if r["operation"] == (op_name or "cz")),
-                        by_pair[pair][0] if by_pair[pair] and not op_name else {})
+        if op_name:
+            selected = next((r for r in by_pair[pair] if r["operation"] == op_name), {})
+        else:
+            selected = (_default_row(by_pair[pair], getattr(rows, "active", {}).get(pair))
+                        if by_pair[pair] else {})
         coupler = selected.get("coupler")
         cp, tp = members.get(pair, ("", ""))
         pairs[pair] = {"control_path": cp or None, "target_path": tp or None,
@@ -686,6 +690,17 @@ def _is_cz(name, macro):
     return "CZ" in cls.split(".")[-1] or name.lower().startswith("cz")
 
 
+def _default_row(ops, active):
+    """The row a pair shows by default: the pair's active gate (the macro its
+    ``cz`` alias names, query.pair_operational_gate), else the alias row, else
+    the first row."""
+    if active:
+        hit = next((r for r in ops if r["operation"] == active), None)
+        if hit is not None:
+            return hit
+    return next((r for r in ops if r["operation"] == "cz"), ops[0])
+
+
 class OperationRows(list):
     """Operation rows plus the resolved pair inventory, including pairs without CZ macros:
     ``pair_names`` in state order and ``pair_members`` ``{pair: (control path, target path)}``
@@ -695,6 +710,8 @@ class OperationRows(list):
         super().__init__()
         self.pair_names = []
         self.pair_members = {}
+        # pair -> the macro its cz alias names (None when it names none)
+        self.active = {}
 
 
 def pulse_lobes(pulse, amplitude):
@@ -1263,6 +1280,10 @@ def operations(doc, conversions=None, unavailable=None):
         if not mapping(pp):
             continue
         rows.pair_names.append(pair_name)
+        _raw_pair = ((doc.get("qubit_pairs") or {}).get(pair_name)
+                     if isinstance(doc, dict) else None)
+        rows.active[pair_name] = pair_operational_gate(
+            pair_name, _raw_pair.get("macros") if isinstance(_raw_pair, dict) else None)
         roles = {}
         for role in ("control", "target"):
             t = read(doc, pp + ".qubit_" + role)

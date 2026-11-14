@@ -13520,7 +13520,7 @@ _TAB_CHIP_DOORS = frozenset({
     "main.api_pulse_rename", "main.pair_gate_inspector_switch", "main.api_pulse_copy",
     "main.api_pulse_gaussian_cz", "main.api_pulse_gaussian_cz_apply_several",
     "main.api_cz_gate_create",
-    "main.api_pulse_delete_together",
+    "main.api_pulse_delete_together", "main.api_cz_gate_make_active",
     "main.type_fix_apply", "main.diagnostics_apply_fix",
     "main.save", "main.undo", "main.redo", "main.discard", "main.discard_all",
     "main.state_sync", "main.state_apply_to_live", "main.state_take_live_restore",
@@ -18009,8 +18009,19 @@ def _render_pair_detail(name: str, *, focus_path: str | None = None):
             entity_note=_entity_note("qubit_pairs." + name),
             gi=gi_ctx,
             cz_plan_op=_pair_cz_plan_ops(store).get(name),
+            gate_lines=_gate_status_lines(store, name),
         ),
     )
+
+
+def _gate_status_lines(store, pair: str) -> list:
+    """The status line of every CZ gate of *pair* (never breaks the page)."""
+    try:
+        from quam_state_manager.web.gate_status_routes import gate_list
+        return gate_list(store, _active_ctx(), pair)
+    except Exception:  # noqa: BLE001
+        logger.warning("gate status lines for %s failed", pair, exc_info=True)
+        return None
 
 
 # The gate types, the env variants and their flux-slot pulse classes live in
@@ -25993,8 +26004,20 @@ def _render_pulse_detail(path: str, *, status_msg: str | None = None,
             gate = gate_inspector.gate_for_pulse(store, path)
         gi_ctx = dict(gi_ctx, read_only=True, gate=gate)
 
+    gate_line = None
+    try:
+        from quam_state_manager.core.gate_parts import gate_of_path
+        from quam_state_manager.web.gate_status_routes import gate_line as _gate_line
+        with store._lock:
+            hit = gate_of_path(store.merged, main["actual_path"]) or (
+                gate_of_path(store.merged, path) if main["actual_path"] != path else None)
+        if hit:
+            gate_line = _gate_line(store, _active_ctx(), *hit)
+    except Exception:  # noqa: BLE001 -- the line never breaks the pulse detail
+        logger.warning("gate status line for %s failed", path, exc_info=True)
     return render_template(
         "_pulse_detail.html",
+        gate_line=gate_line,
         gi=gi_ctx,
         sections=sections,
         view_paths=view_paths,
@@ -30143,6 +30166,11 @@ def api_pulse_delete_together():
     batch -- one Ctrl+Z restores all -- that the same lab check asks again as
     a whole.
 
+    A body with ``gate`` (and ``pair``) deletes that CZ gate with everything
+    it owns (:func:`core.gate_parts.gate_parts`, computed here from the
+    state; the body's paths are ignored), and the pair's ``cz`` name in the
+    same group when the gate is active and ``confirm_active`` is "1".
+
     w9/pulsegate: its own route, so the generic batch door can refuse every
     pulse delete while this one stays possible. The distinction is the ROUTE
     (a server-side ``pulse_door`` argument), never a flag in the body; the
@@ -30155,8 +30183,15 @@ def api_pulse_delete_together():
     if not modifier:
         return jsonify(ok=False, error=_no_chip_msg()), 400
     pj = request.get_json(silent=True)
+    if pj is None and request.form.get("gate"):
+        pj = request.form.to_dict()          # the gate status line's button
     if not isinstance(pj, dict):
         return jsonify(ok=False, error="A JSON body is required"), 400
+    if pj.get("gate") is not None:
+        # a whole CZ gate in one step: the set comes from the state
+        # (core.gate_parts), never from the body
+        from quam_state_manager.web.gate_status_routes import delete_gate_together
+        return delete_gate_together(ctx, modifier, pj)
     main = _normalize_dot_path(str(pj.get("path") or "").strip())
     raw = pj.get("paths")
     paths = (list(dict.fromkeys(
@@ -53212,7 +53247,7 @@ _SCHEDULER_MUTATOR_ENDPOINTS = {
     # Add a qubit / a pair from the chip diagram: creates subtrees through the
     # modifier under one group id (a staging door like /field/edit-batch).
     "main.diagram_add_stage",
-    "main.api_pulse_delete_together",
+    "main.api_pulse_delete_together", "main.api_cz_gate_make_active",
     "main.type_fix_apply", "main.auto_apply_revert",
     "main.state_take_live_restore", "main.chip_profile_set", "main.app_reload",
     # a finished runner item's failed-target values put back (stages + live write)
@@ -55273,3 +55308,5 @@ from quam_state_manager.web import diagram_add_routes  # noqa: E402,F401
 from quam_state_manager.web import diagram_remove_routes  # noqa: E402,F401
 # The CZ gate dialog and its one write door.
 from quam_state_manager.web import cz_gate_routes  # noqa: E402,F401
+# A CZ gate's status line, Make active and the delete offer.
+from quam_state_manager.web import gate_status_routes  # noqa: E402,F401
