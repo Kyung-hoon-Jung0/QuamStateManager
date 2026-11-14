@@ -403,6 +403,197 @@ def set_coupler_delays(folder: Path | str, spec: dict | None = None) -> list[dic
     return items
 
 
+# MW-FEM output latency per band relative to an LF-FEM output, the same table
+# as the build's (generator/run_build.py ``_BAND_TO_DELAY_NS``). Official doc
+# Guides/opx1000_fems.md lines 113-121: "Relative to an LF-FEM analog output
+# port, the additional delay of an MW-FEM analog output port is approximately:
+# `155 ns` for Bands 1 and 3, `175 ns` for Band 2 ... Band 2 is delayed by an
+# additional `20 ns` compared to Bands 1 and 3." The numbers here are the
+# measured ones; both agree on the 20 ns difference.
+_BAND_LATENCY_NS = {1: 141, 2: 161, 3: 141}
+
+
+def _mw_output_items(state: dict):
+    """``(path, port)`` for every MW-FEM output in ``ports.mw_outputs``."""
+    tree = ((state or {}).get("ports") or {}).get("mw_outputs") or {}
+    for con, fems in tree.items():
+        for fem, ports in (fems or {}).items():
+            for pid, port in (ports or {}).items():
+                if isinstance(port, dict):
+                    yield f"ports/mw_outputs/{con}/{fem}/{pid}", port
+
+
+def _num(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _node(doc: dict, path: str):
+    node = doc
+    for part in path.split("/"):
+        if not isinstance(node, dict) or part not in node:
+            return None
+        node = node[part]
+    return node
+
+
+def _moving(pair: dict):
+    return pair.get("qubit_target") if pair.get("moving_qubit") == "target" \
+        else pair.get("qubit_control")
+
+
+def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
+    """The one shift offered to a stored chip whose MW outputs mix band 2
+    with bands 1 / 3 while every MW output delay is 0 (built before the
+    output time base). ``None`` when it does not apply. Never raises.
+
+    The shift keeps every calibrated timing inside a qubit's flux / xy pair:
+    each MW output of an earlier band gets ``s = 20`` ns; a qubit whose xy
+    port shifted gets ``z += s``; a coupler port gets ``+= s`` of its pair's
+    moving qubit (control when unset; a shared port is decided by the first
+    pair in chip order); a resonator gets ``time_of_flight += s`` of its
+    readout output port. Items: ``ports``, ``flux``, ``tof`` and ``spacing``
+    (qubits whose xy and readout shifts differ)."""
+    try:
+        mw = list(_mw_output_items(state))
+        bands = {p.get("band") for _, p in mw}
+        if 2 not in bands or not bands & {1, 3}:
+            return None
+        if any(p.get("delay") not in (0, None) for _, p in mw):
+            return None
+        lat = {b: _BAND_LATENCY_NS[b] for b in bands if b in _BAND_LATENCY_NS}
+        target = max(lat.values())
+        shift = {path: target - lat[p.get("band")] for path, p in mw
+                 if p.get("band") in lat and target - lat[p.get("band")] > 0}
+        doc = {"wiring": (wiring or {}).get("wiring") or {}, **(state or {})}
+        plan = {"ports": [], "flux": [], "tof": [], "spacing": []}
+        for path, p in mw:
+            if path in shift:
+                plan["ports"].append({"port": path, "port_label": _port_label(p, path),
+                                      "band": p.get("band"), "old": p.get("delay") or 0,
+                                      "new": shift[path]})
+        seen: set = set()
+        xy_shift: dict = {}
+        for qid, q in ((state or {}).get("qubits") or {}).items():
+            if not isinstance(q, dict):
+                continue
+            xy_path, _ = _resolve_ref(doc, (q.get("xy") or {}).get("opx_output")) \
+                if isinstance(q.get("xy"), dict) else (None, None)
+            s = shift.get(xy_path, 0)
+            xy_shift[qid] = s
+            z_path, z_port = _resolve_ref(doc, (q.get("z") or {}).get("opx_output")) \
+                if isinstance(q.get("z"), dict) else (None, None)
+            if s and isinstance(z_port, dict) and _num(z_port.get("delay")) and z_path not in seen:
+                seen.add(z_path)
+                plan["flux"].append({"qubit": qid, "port": z_path,
+                                     "port_label": _port_label(z_port, z_path),
+                                     "old": z_port["delay"], "new": z_port["delay"] + s})
+            rr = q.get("resonator") if isinstance(q.get("resonator"), dict) else {}
+            ro_path, _ = _resolve_ref(doc, rr.get("opx_output"))
+            r = shift.get(ro_path, 0)
+            if r and _num(rr.get("time_of_flight")):
+                plan["tof"].append({"qubit": qid, "path": f"qubits/{qid}/resonator/time_of_flight",
+                                    "old": rr["time_of_flight"], "new": rr["time_of_flight"] + r})
+            if rr and s != r:
+                plan["spacing"].append({"qubit": qid, "xy_shift": s, "readout_shift": r})
+        for pid, pair in ((state or {}).get("qubit_pairs") or {}).items():
+            if not isinstance(pair, dict) or not isinstance(pair.get("coupler"), dict):
+                continue
+            c_path, c_port = _resolve_ref(doc, pair["coupler"].get("opx_output"))
+            if not isinstance(c_port, dict) or c_path in seen:
+                continue
+            seen.add(c_path)
+            s = xy_shift.get(_ref_name(_moving(pair)), 0)
+            if s and _num(c_port.get("delay")):
+                plan["flux"].append({"pair": pid, "port": c_path,
+                                     "port_label": _port_label(c_port, c_path),
+                                     "old": c_port["delay"], "new": c_port["delay"] + s})
+        return plan if plan["ports"] else None
+    except (AttributeError, TypeError, ValueError, KeyError):
+        return None
+
+
+def mw_band_shift_offer_text(plan: dict) -> str:
+    """The question for :func:`mw_band_shift_plan`."""
+    text = ("Band 1/3 MW outputs leave 20 ns before band 2 ones. Shift them by 20 ns?")
+    if plan.get("tof"):
+        text += (" Re-check the time of flight of " +
+                 ", ".join(t["qubit"] for t in plan["tof"]) + ".")
+    if plan.get("spacing"):
+        text += (" The xy-readout spacing of " +
+                 ", ".join(s["qubit"] for s in plan["spacing"]) +
+                 " changes by the difference of the two shifts.")
+    return text
+
+
+def apply_mw_band_shift(folder: Path | str) -> dict | None:
+    """Apply an accepted shift to a written chip (judged on that chip);
+    returns the plan it applied, or ``None`` when nothing applied."""
+    folder = Path(folder)
+    state, wiring = safe_io.read_state_wiring(folder)
+    plan = mw_band_shift_plan(state, wiring)
+    if not plan:
+        return None
+    for item in plan["ports"] + plan["flux"]:
+        _node(state, item["port"])["delay"] = item["new"]
+    for item in plan["tof"]:
+        _node(state, item["path"].rsplit("/", 1)[0])["time_of_flight"] = item["new"]
+    safe_io.atomic_write_json(folder / "state.json", state)
+    return plan
+
+
+def follow_source_time_base(merged: dict, old_state: dict, wiring: dict) -> list[str]:
+    """Ports a rebuild ADDED follow the source chip's time base.
+
+    A source chip whose MW outputs all hold delay 0 has no MW shift: a new
+    MW output gets 0 and a new flux port the latency of its own qubit's xy
+    band (a new coupler port: its pair's moving qubit's z delay), so the
+    shift offer covers the whole chip, new ports included. A source chip that
+    already carries the shift keeps the fresh build's values, which are on
+    that base. Stored ports are never touched. Returns the paths it set."""
+    old_paths = {p for p, _ in _mw_output_items(old_state)}
+    old_mw = [p for _, p in _mw_output_items(old_state)]
+    if not old_mw or any(p.get("delay") not in (0, None) for p in old_mw):
+        return []
+    old_lf = (((old_state or {}).get("ports") or {}).get("analog_outputs")) or {}
+
+    def is_new_lf(path):
+        parts = path.split("/")
+        return _node({"ports": {"analog_outputs": old_lf}}, path) is None and \
+            len(parts) == 5 and parts[1] == "analog_outputs"
+
+    done = []
+    for path, p in _mw_output_items(merged):
+        if path not in old_paths and p.get("delay") not in (0, None):
+            p["delay"] = 0
+            done.append(path)
+    doc = {"wiring": (wiring or {}).get("wiring") or {}, **(merged or {})}
+    for qid, q in ((merged or {}).get("qubits") or {}).items():
+        if not isinstance(q, dict) or not isinstance(q.get("z"), dict):
+            continue
+        z_path, z_port = _resolve_ref(doc, q["z"].get("opx_output"))
+        if not isinstance(z_port, dict) or not z_path or not is_new_lf(z_path):
+            continue
+        _, xy_port = _resolve_ref(doc, (q.get("xy") or {}).get("opx_output")) \
+            if isinstance(q.get("xy"), dict) else (None, None)
+        lat = _BAND_LATENCY_NS.get((xy_port or {}).get("band")) if isinstance(xy_port, dict) else None
+        if lat is not None and z_port.get("delay") != lat:
+            z_port["delay"] = lat
+            done.append(z_path)
+    for pid, pair in ((merged or {}).get("qubit_pairs") or {}).items():
+        if not isinstance(pair, dict) or not isinstance(pair.get("coupler"), dict):
+            continue
+        c_path, c_port = _resolve_ref(doc, pair["coupler"].get("opx_output"))
+        if not isinstance(c_port, dict) or not c_path or not is_new_lf(c_path) or c_path in done:
+            continue
+        _, mq = _resolve_ref(doc, _moving(pair))
+        _, z_port = _resolve_ref(doc, ((mq or {}).get("z") or {}).get("opx_output")) \
+            if isinstance(mq, dict) and isinstance(mq.get("z"), dict) else (None, None)
+        if isinstance(z_port, dict) and _num(z_port.get("delay")):
+            c_port["delay"] = z_port["delay"]
+            done.append(c_path)
+    return done
+
+
 def pending_fsp_offers(old_folder: Path | str, spec: dict,
                        populate_baseline: dict | None,
                        populate_touched: list | None,
@@ -728,6 +919,8 @@ def run_regenerate(
             p for p in result.stats.dangling_grafts
             if not (isinstance(regen_merge._path_value(result.merged, p), str)
                     and regen_merge._resolves(doc, regen_merge._path_value(result.merged, p)))]
+    # ports the rebuild added follow the source chip's output time base
+    follow_source_time_base(result.merged, old_state, new_wiring)
     # The rebuild's contract, checked before anything says success: every value the
     # source chip reads must read the same in the rebuilt one, except where the user
     # changed it in the wizard or the report already names the change.

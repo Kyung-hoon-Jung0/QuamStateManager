@@ -48,7 +48,7 @@ async function world() {
   await new Promise(function (r) { win.setTimeout(r, 0); });
   const G = win.QuamGen;
   G.state.spec.instruments.controllers = [{ con: 1, fems: [{ slot: 1, fem: 'mw' }, { slot: 2, fem: 'lf' }] }];
-  return { T: G._test, state: G.state };
+  return { T: G._test, state: G.state, doc: win.document };
 }
 
 function spec(qubits, fluxFem) {
@@ -99,6 +99,22 @@ function spec(qubits, fluxFem) {
   t = txt(spec([['q1', 2, 3]]));
   ok(/Stored port delays and times of flight are kept/.test(t), '[regenerate] stored values kept: ' + t);
 
+  // [regenerate offer] both stored-delay offers are one question step
+  T.showBuildConfirm({
+    error: 'q', confirm_kind: 'coupler_delay',
+    coupler_delay: [{ pair: 'q1-2', pairs: ['q1-2'], port: 'p', port_label: 'con1 / slot 3 / port 9', z_delay: 61 }],
+    mw_shift: { ports: [{ port: 'x', port_label: 'con1 / slot 1 / port 2', band: 1, old: 0, new: 20 }],
+                flux: [{ qubit: 'q2', port: 'z', port_label: 'con1 / slot 3 / port 2', old: 63, new: 83 }],
+                tof: [], spacing: [{ qubit: 'q2', xy_shift: 20, readout_shift: 0 }] } }, '/o');
+  const box = w.doc.getElementById('gen-build-result');
+  ok(box && /delay 0 to 20 ns/.test(box.textContent) && /63 to 83 ns/.test(box.textContent),
+     '[regenerate offer] the shift lists what changes: ' + (box && box.textContent));
+  ok(box.querySelector('.gen-mw-shift-shift') && box.querySelector('.gen-coupler-delay-set'),
+     '[regenerate offer] both questions in one step');
+  box.querySelector('.gen-mw-shift-shift').click();
+  ok(w.state.regenMwShiftAck === 'shift' && box.querySelector('.gen-mw-shift-keep').disabled &&
+     w.state.regenCouplerDelayAck == null && !box.querySelector('.gen-coupler-delay-set').disabled,
+     '[regenerate offer] one answer waits for the other');
   console.log(fails ? fails + ' failure(s)' : 'OK (' + asserts + ' assertions)');
   process.exit(fails ? 1 : 0);
 })();

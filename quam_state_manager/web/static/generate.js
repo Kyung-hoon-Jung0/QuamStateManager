@@ -12271,10 +12271,62 @@
       return;
     }
 
-    if (res.confirm_kind === "coupler_delay") {
-      // An old wizard wrote 0 to coupler flux ports; the merge keeps stored
-      // values, so the server offers the z delay once. The answer rides the
-      // next build request; nothing changes unless the user says set.
+    if (res.confirm_kind === "coupler_delay" || res.confirm_kind === "mw_shift") {
+      // One question step for both stored-delay offers. An old wizard wrote 0
+      // to coupler flux ports, and a chip built before the output time base
+      // holds 0 on every MW output while it mixes band 2 with bands 1 / 3;
+      // the merge keeps stored values, so the server asks once. The answers
+      // ride the next build request; nothing changes unless the user accepts.
+      var asked = { coupler: !!(res.coupler_delay || []).length, shift: !!res.mw_shift };
+      state.regenCouplerDelayAck = asked.coupler ? null : state.regenCouplerDelayAck;
+      state.regenMwShiftAck = asked.shift ? null : state.regenMwShiftAck;
+      var answered = function () {
+        if ((!asked.coupler || state.regenCouplerDelayAck) &&
+            (!asked.shift || state.regenMwShiftAck)) runBuild();
+      };
+      var answerButtons = function (choices, set) {
+        choices.forEach(function (b) {
+          var btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = b[2] + " " + b[3] + " " + b[4];
+          btn.textContent = b[1];
+          btn.addEventListener("click", function () {
+            set(b[0]);
+            el.querySelectorAll("." + b[4]).forEach(function (o) { o.disabled = o !== btn; });
+            answered();
+          });
+          el.appendChild(btn);
+        });
+      };
+      if (asked.shift) {
+        var shiftLines = [];
+        (res.mw_shift.ports || []).forEach(function (d) {
+          shiftLines.push("MW output " + (d.port_label || d.port) + " (band " + d.band +
+            "): delay " + d.old + " to " + d.new + " ns");
+        });
+        (res.mw_shift.flux || []).forEach(function (d) {
+          shiftLines.push((d.qubit ? "Flux port of " + d.qubit : "Coupler port of " + d.pair) +
+            " (" + (d.port_label || d.port) + "): " + d.old + " to " + d.new + " ns");
+        });
+        (res.mw_shift.tof || []).forEach(function (d) {
+          shiftLines.push("Time of flight of " + d.qubit + ": " + d.old + " to " + d.new +
+            " ns; re-check it on the chip");
+        });
+        (res.mw_shift.spacing || []).forEach(function (d) {
+          shiftLines.push("xy-readout spacing of " + d.qubit + " changes by " +
+            Math.abs(d.xy_shift - d.readout_shift) + " ns");
+        });
+        shiftLines.forEach(function (t) {
+          var line = document.createElement("p");
+          line.className = "gen-build-warn-line";
+          line.textContent = "• " + t + ".";
+          el.appendChild(line);
+        });
+        answerButtons([["shift", "Shift them by 20 ns", "btn-sm", "gen-mw-shift-shift", "gen-mw-shift"],
+                       ["keep", "Keep as stored", "btn-sm outline", "gen-mw-shift-keep", "gen-mw-shift"]],
+                      function (v) { state.regenMwShiftAck = v; });
+      }
+      if (!asked.coupler) return;
       (res.coupler_delay || []).forEach(function (d) {
         var line = document.createElement("p");
         line.className = "gen-build-warn-line";
@@ -12284,18 +12336,9 @@
           "qubit's flux port has " + d.z_delay + " ns.";
         el.appendChild(line);
       });
-      [["set", "Set the couplers to the z delay", "btn-sm"],
-       ["keep", "Keep 0", "btn-sm outline"]].forEach(function (b) {
-        var btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = b[2] + " gen-coupler-delay-" + b[0];
-        btn.textContent = b[1];
-        btn.addEventListener("click", function () {
-          state.regenCouplerDelayAck = b[0];
-          runBuild();
-        });
-        el.appendChild(btn);
-      });
+      answerButtons([["set", "Set the couplers to the z delay", "btn-sm", "gen-coupler-delay-set", "gen-coupler-delay"],
+                     ["keep", "Keep 0", "btn-sm outline", "gen-coupler-delay-keep", "gen-coupler-delay"]],
+                    function (v) { state.regenCouplerDelayAck = v; });
       return;
     }
 
@@ -12784,6 +12827,7 @@
         fsp_ack: state.mode === "regenerate" ? (state.regenFspAck || {}) : null,
         // the answer to the coupler-delay offer ("set" / "keep"), if asked
         coupler_delay_ack: state.mode === "regenerate" ? (state.regenCouplerDelayAck || null) : null,
+        mw_shift_ack: state.mode === "regenerate" ? (state.regenMwShiftAck || null) : null,
         // QA regenerate-r2-35: the hydrate-time source stamp + the user's
         // "build anyway" to a changed source.
         source_hash: state.mode === "regenerate" ? (state.regenSourceHash || null) : null,
@@ -14038,6 +14082,7 @@
     state.regenFilled = {};   // fill-empty preset cells (review of r2-03)
     state.regenFspAck = {};   // QA regenerate-r2-06: answers belong to one source chip
     state.regenCouplerDelayAck = null;   // so does the coupler-delay answer
+    state.regenMwShiftAck = null;        // and the MW output shift answer
     repaintFromState();
     // repaintFromState() only syncs the scalar inputs — the Chassis grid, the
     // Qubits pair list, and the chip board render separately. Force them from the
@@ -14095,6 +14140,7 @@
       enterReviewStep: enterReviewStep,
       specWithCoBands: specWithCoBands,   // docs/301 F33
       outputTimingReviewText: outputTimingReviewText,
+      showBuildConfirm: showBuildConfirm,
       coupledBandBlockers: coupledBandBlockers,   // G1
       recomputeLOs: recomputeLOs,
       runBuild: runBuild,               // QA regenerate-r2-06
