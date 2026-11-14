@@ -87,7 +87,8 @@ def _check(folder, merged: dict, pair: str, gate: str) -> dict:
                      f"Checked with the lab's code {when} UTC; the record holds no copy "
                      "of the values it checked.")
     from quam_state_manager.core.gate_parts import HASH_RULE
-    if ent.get("hash") and ent.get("rule") != HASH_RULE:
+    if (ent.get("result") == gate_check_log.CHECKED and ent.get("hash")
+            and ent.get("rule") != HASH_RULE):
         return _item("check", "checked with an older rule: check again", "neutral",
                      f"Checked {when} UTC; SM now compares more of the gate than when "
                      "this was recorded, so it cannot say whether the values changed.")
@@ -140,6 +141,9 @@ def status(store, ctx: dict | None, pair: str, gate: str, *,
     if sp is not None:
         items.append(sp)
     items.append(_check(check_folder, merged, pair, gate))
+    items.append(_item("scope", "what the check covers", "neutral",
+                       "The check covered this gate's pulses. Later changes to a port's "
+                       "offset, range or delay are not tracked here.", pill=False))
     return items
 
 

@@ -232,8 +232,8 @@ def _other_users(merged: dict, mpath: str, mine: set, index, ops) -> list[str]:
       play that operation's channel (the same qubit's macros, a pair's macros
       when the pair holds the qubit, a pair's macros for its coupler), under
       any key except the descriptive ones (:data:`DESCRIPTIVE_KEYS`: a
-      string held directly under ``note``, ``id`` and the like does not
-      count). A dangling name is worse than a refusal naming the field.
+      string anywhere under ``note``, ``id`` and the like, at any depth
+      below the macro's root, does not count). A dangling name is worse than a refusal naming the field.
 
     Each refusal names the holder."""
     out: list[str] = []
@@ -257,7 +257,7 @@ def _other_users(merged: dict, mpath: str, mine: set, index, ops) -> list[str]:
         for segs, v in _strings_at(macro, ()):
             if v not in by_key or v.startswith("#"):
                 continue
-            if not segs or segs[-1] in DESCRIPTIVE_KEYS:
+            if not segs or any(x in DESCRIPTIVE_KEYS for x in segs):
                 continue
             for op in by_key[v]:
                 own = owners.get(op)
@@ -340,7 +340,7 @@ def gate_parts(merged: dict, pair: str, gate: str, *, index=None) -> dict[str, A
 
 #: the version of the content-hash rule; a check record of another version
 #: cannot be compared with the values now
-HASH_RULE = 2
+HASH_RULE = 3
 
 
 def _norm_numbers(v: Any) -> Any:
@@ -374,16 +374,27 @@ def _walk_to(merged: Any, segs: list) -> tuple[bool, Any]:
     return True, node
 
 
-def _resolved(merged: dict, value: Any, holder: tuple, depth: int = 0) -> Any:
-    """*value* with every reference replaced by what it plays: a reference
-    to a plain value hashes as that value (chains followed); a reference to
-    an object or a list hashes as its canonical path only (the object is
-    not walked: the gate's own content is hashed, not the whole qubit); a
-    dangling reference hashes as a marker plus its text."""
+#: how many references deep :func:`_resolved` walks into referenced objects
+RESOLVE_DEPTH = 8
+
+
+def _resolved(merged: dict, value: Any, holder: tuple, depth: int = 0,
+              trail: frozenset = frozenset()) -> Any:
+    """*value* with every reference replaced by what it plays.
+
+    A reference is followed to its target (chains of references followed);
+    a plain value there hashes as that value, an object or a list there is
+    walked and hashed by its own resolved content. A dangling reference
+    hashes as a marker plus its text. A reference back into an object
+    already being walked (a cycle) hashes as ``["cycle", path]``; past
+    :data:`RESOLVE_DEPTH` nested references the target hashes as
+    ``["depth", path]`` (a change that deep is not seen)."""
     if isinstance(value, dict):
-        return {k: _resolved(merged, v, holder + (str(k),), depth) for k, v in value.items()}
+        return {k: _resolved(merged, v, holder + (str(k),), depth, trail)
+                for k, v in value.items()}
     if isinstance(value, list):
-        return [_resolved(merged, v, holder + (str(i),), depth) for i, v in enumerate(value)]
+        return [_resolved(merged, v, holder + (str(i),), depth, trail)
+                for i, v in enumerate(value)]
     if not (isinstance(value, str) and value.startswith("#")):
         return value
     ref, at, seen = value, holder, set()
@@ -401,18 +412,28 @@ def _resolved(merged: dict, value: Any, holder: tuple, depth: int = 0) -> Any:
             ref, at = node, key
             continue
         if isinstance(node, (dict, list)):
-            return ["ref", _land(merged, list(segs))]
+            path = _land(merged, list(segs))
+            if any(key[:len(t)] == t for t in trail):
+                return ["cycle", path]
+            if depth >= RESOLVE_DEPTH:
+                return ["depth", path]
+            return _resolved(merged, node, key, depth + 1, trail | {key})
         return node
 
 
 def content_hash(merged: dict, pair: str, gate: str, *, index=None) -> str | None:
-    """A hash of everything the gate PLAYS, as canonical JSON:
+    """A hash of everything the gate PLAYS, as canonical JSON.
 
-    the macro subtree and every operation the macro owns, names or refers to
-    (owned or kept, a shared ``const`` included), each with every reference
-    inside replaced by the value at its target (:func:`_resolved`); numbers
-    normalised (:func:`_norm_numbers`). Rule version :data:`HASH_RULE`.
-    None when there is no such gate."""
+    Covered: the macro subtree; every operation the macro owns, names or
+    refers to (owned or kept, a shared ``const`` included); and everything
+    their references lead to, walked to the values (:func:`_resolved`).
+    Numbers are normalised (:func:`_norm_numbers`). Rule version
+    :data:`HASH_RULE`.
+
+    NOT covered, on purpose: a port's output range, offset and delay, the
+    channel's offset parameters, and the qubits' other settings (they are
+    retuned often and are not part of the gate). None when there is no such
+    gate."""
     parts = gate_parts(merged, pair, gate, index=index)
     if not parts["macro"]:
         return None

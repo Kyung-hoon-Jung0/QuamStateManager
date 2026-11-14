@@ -277,11 +277,54 @@ def test_a_plain_cz_name_is_the_alias():
     assert gp.active_gate("q1-q2", s["qubit_pairs"]["q1-q2"]["macros"]) == "cz_sq"
 
 
-def test_a_reference_to_an_object_hashes_its_path_not_the_object():
+def test_a_reference_to_an_object_hashes_its_content():
     s, _ = add_gate(chip())
     s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["qubit_ref"] = "#/qubits/q1"
     h = gp.content_hash(s, "q1-q2", "cz_sq")
-    s["qubits"]["q1"]["f_01"] = 5.2e9
-    assert gp.content_hash(s, "q1-q2", "cz_sq") == h
-    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["qubit_ref"] = "#/qubits/q2"
+    s["qubits"]["q1"]["f_01"] = 5.2e9            # the referenced object is walked
     assert gp.content_hash(s, "q1-q2", "cz_sq") != h
+
+
+def test_a_pulse_reached_by_reference_is_walked():
+    s, _ = add_gate(chip())
+    s["qubits"]["q1"]["z"]["extra_pulse"] = {"amplitude": 0.2, "length": 40}
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["flux_pulse_qubit"] = "#/qubits/q1/z/extra_pulse"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q1"]["z"]["extra_pulse"]["amplitude"] = 0.21
+    assert gp.content_hash(s, "q1-q2", "cz_sq") != h
+
+
+def test_a_list_reached_by_reference_is_walked():
+    s, _ = add_gate(chip())
+    s["qubits"]["q3"]["wf"] = [0.1, 0.2]
+    s["qubits"]["q1"]["z"]["operations"]["cz_sq_pulse_q1_q2"]["samples"] = "#/qubits/q3/wf"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q3"]["wf"][0] = 0.15
+    assert gp.content_hash(s, "q1-q2", "cz_sq") != h
+
+
+def test_a_two_step_chain_is_followed_to_its_value():
+    s, _ = add_gate(chip())
+    s["qubits"]["q3"]["a"] = "#/qubits/q3/b"
+    s["qubits"]["q3"]["b"] = 0.4
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["flux_pulse_qubit"]["amplitude"] = "#/qubits/q3/a"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q3"]["b"] = 0.41
+    assert gp.content_hash(s, "q1-q2", "cz_sq") != h
+
+
+def test_a_reference_cycle_through_two_objects_terminates_and_is_stable():
+    s, _ = add_gate(chip())
+    s["qubits"]["q3"]["x"] = {"other": "#/qubits/q3/y", "v": 1}
+    s["qubits"]["q3"]["y"] = {"back": "#/qubits/q3/x", "v": 2}
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["extra"] = "#/qubits/q3/x"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    assert h == gp.content_hash(s, "q1-q2", "cz_sq")
+
+
+def test_a_descriptive_key_anywhere_on_the_path_exempts():
+    s, _ = add_gate(chip())
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_two"] = {"__class__": "lab.G", "note": ["cz_sq_pulse_q1_q2"]}
+    assert gp.gate_parts(s, "q1-q2", "cz_sq")["ok"]
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_two"] = {"__class__": "lab.G", "flux_gate_op": ["cz_sq_pulse_q1_q2"]}
+    assert not gp.gate_parts(s, "q1-q2", "cz_sq")["ok"]

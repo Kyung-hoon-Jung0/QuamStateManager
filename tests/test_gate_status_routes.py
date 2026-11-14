@@ -389,3 +389,15 @@ def test_htmx_lock_refusals_render_a_readable_line(rig, monkeypatch):
     assert r.status_code == 200 and "An agent plan holds this chip." in r.get_data(as_text=True)
     r = rig.post("/api/pulse/delete-together", headers=hx, data={"pair": "q1-q2", "gate": "cz_sq"})
     assert r.status_code == 200 and "An agent plan holds this chip." in r.get_data(as_text=True)
+
+
+def test_htmx_refusal_on_a_row_whose_status_raises_is_not_a_500(rig, monkeypatch):
+    from quam_state_manager.core import gate_status as gs_mod
+    from quam_state_manager.web.gate_status_routes import ARCHIVE_REFUSAL
+    monkeypatch.setattr(gs_mod, "status", lambda *a, **k: (_ for _ in ()).throw(TypeError("x")))
+    _ctx(rig)["origin"] = "archive"
+    r = rig.post("/api/pulse/cz-gate/make-active", headers={"HX-Request": "true"},
+                 data={"pair": "q1-q2", "gate": "cz_sq"})
+    body = r.get_data(as_text=True).replace("&#39;", "'")
+    assert r.status_code == 200
+    assert "status could not be read" in body and ARCHIVE_REFUSAL in body

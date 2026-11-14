@@ -194,9 +194,12 @@ def _refuse(message: str, code: int, *, htmx: bool, pair: str, gate: str, store,
         resp.headers["HX-Reswap"] = "outerHTML"
         return resp
     if htmx and store is not None:
-        resp = make_response(render_template(
-            "_gate_status.html", line=gate_line(store, ctx, pair, gate, note=message,
-                                                note_tone="danger")), 200)
+        try:
+            line = gate_line(store, ctx, pair, gate, note=message, note_tone="danger")
+        except Exception as exc:  # noqa: BLE001 -- the refusal still reaches the user
+            logger.warning("gate status for %s/%s failed", pair, gate, exc_info=True)
+            line = dict(_broken_line(pair, gate, exc), note=message, note_tone="danger")
+        resp = make_response(render_template("_gate_status.html", line=line), 200)
         resp.headers["HX-Reswap"] = "outerHTML"
         return resp
     return jsonify(ok=False, error=message, **extra), code

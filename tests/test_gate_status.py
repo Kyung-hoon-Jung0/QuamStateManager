@@ -176,7 +176,8 @@ def test_which_items_are_pills(monkeypatch, tmp_path):
     assert set(pills) == {"where", "active", "spectators", "check"}
     assert pills["active"] == "active"
     items = gs.status(_store(s), None, "q1-q2", "cz_sq", check_folder=tmp_path)
-    assert {i["key"] for i in items} == {"where", "active", "class", "scaling", "spectators", "check"}
+    assert {i["key"] for i in items} == {"where", "active", "class", "scaling", "spectators",
+                                        "check", "scope"}
     cls = m["__class__"]
     pills = _pills(gs.status(_store(s), None, "q1-q2", "cz_sq", missing_classes=[cls]))
     assert "class" in pills
@@ -208,3 +209,23 @@ def test_a_plain_cz_name_makes_the_gate_active():
     s, _ = add_gate(chip())
     s["qubit_pairs"]["q1-q2"]["macros"]["cz"] = "cz_sq"
     assert _by_key(gs.status(_store(s), None, "q1-q2", "cz_sq"))["active"]["text"] == "active"
+
+
+def test_a_failed_record_without_a_rule_shows_its_own_result(tmp_path):
+    import json
+    s, _ = add_gate(chip())
+    key = json.dumps(["q1-q2", "cz_sq"])
+    (tmp_path / log.FILE_NAME).write_text(json.dumps({"gates": {key: {
+        "result": "not checked", "reason": "the lab check failed", "hash": "abc",
+        "time": "2026-11-14T10:00:00+00:00"}}}), encoding="utf-8")
+    it = _by_key(gs.status(_store(s), None, "q1-q2", "cz_sq", check_folder=tmp_path))["check"]
+    assert it["text"] != "checked with an older rule: check again"
+    assert it["text"] in ("not checked", "values changed since the check")
+
+
+def test_the_details_say_what_the_check_covers():
+    s, _ = add_gate(chip())
+    it = _by_key(gs.status(_store(s), None, "q1-q2", "cz_sq"))["scope"]
+    assert not it["pill"]
+    assert it["why"] == ("The check covered this gate's pulses. Later changes to a port's "
+                         "offset, range or delay are not tracked here.")
