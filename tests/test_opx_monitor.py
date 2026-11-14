@@ -2629,3 +2629,15 @@ def test_names_new_tag_onto_a_tag_removed_in_this_save_saves(names_file):
                                          'new_tag': 'abc', 'new_label': 'Fresh'})
     assert response.status_code == 200, response.get_data(as_text=True)
     assert json.loads(path.read_text()) == {'abc': 'Fresh'}
+
+
+def test_names_a_removal_without_its_row_does_not_free_the_tag(names_file):
+    from quam_state_manager.web.opx_monitor_routes import _key_ref
+    app, path = names_file
+    path.write_text(json.dumps({'abc': 'Orig', 'My PC': 'A'}), encoding='utf-8')
+    before = path.read_bytes()
+    ref = _key_ref('My PC')
+    response = _names_post(app, _names_base(app), **{'remove__abc': '1',
+                                                      'badkey__' + ref: '1', 'rename__' + ref: 'abc'})
+    assert response.status_code == 409
+    assert path.read_bytes() == before
