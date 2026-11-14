@@ -622,6 +622,11 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
                && !/every check passed/.test(alertText()) && !/not checked/i.test(alertText()), 'shared case partly: 5 passed, 1 could not run, with the reason; never every check passed');
             ok(/^5 of 6 passed, 1 could not run$/.test($('#czg-checks-sum').textContent), 'shared case partly: the summary counts 5 of 6, 1 could not run');
             ok(prim().textContent === 'Create gate', 'shared case partly: it may be created');
+            { const cols = $('#czg-dialog .czg-cols'); const was = Object.getOwnPropertyDescriptor(window.HTMLElement.prototype, 'clientWidth');
+              Object.defineProperty(cols, 'clientWidth', { configurable: true, get: () => 900 }); window.dispatchEvent(new window.Event('resize'));
+              const narrow = $('#czg-dialog').hasAttribute('data-czg-stacked');
+              Object.defineProperty(cols, 'clientWidth', { configurable: true, get: () => 1300 }); window.dispatchEvent(new window.Event('resize'));
+              ok(narrow && !$('#czg-dialog').hasAttribute('data-czg-stacked') && was !== null, 'a narrow dialog is marked stacked (banner above the form), a wide one is not'); }
             ok(scrolled.indexOf('czg-alert') >= 0, 'after a check answer the banner is scrolled into view (stacked: it sits above the form)');
         } else {
             ok(/every check passed/.test(alertText()) && /^6 of 6 passed$/.test($('#czg-checks-sum').textContent), 'shared case checked: every check passed, 6 of 6');

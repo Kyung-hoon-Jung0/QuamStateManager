@@ -1627,18 +1627,14 @@ dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)::backdrop { background: va
 .czg-more-row { display: flex; align-items: baseline; gap: var(--ui-gap-2); }
 .czg-chart > .ui-note { padding: var(--ui-gap-3) 0; }
 .czg-stale { opacity: 0.45; }
-/* Stacked (the two columns do not fit side by side: form 360px + evidence
-   640px + the gap): the banner and the pair switch ([data-czg-lead]) move
-   above the form, the rest of the evidence below it; one scroll for all. */
-.czg .czg-body { container: czg-body / inline-size; }
-@container czg-body (max-width: 1015px) {
-    .czg-cols { flex-direction: column; flex-wrap: nowrap; align-items: stretch; }
-    .czg-evidence { display: contents; }
-    .czg-evidence > [data-czg-lead] { order: -1; }
-    .czg-form { flex: 0 0 auto; }
-    .czg-form, .czg-evidence { max-height: none; overflow: visible; }
-    .czg-evidence.czg-stale > :not([data-czg-lead]) { opacity: 0.45; }
-}
+/* Stacked ([data-czg-stacked]: the form and the evidence do not fit side by
+   side): the banner and the pair switch ([data-czg-lead]) move above the
+   form, the rest of the evidence below it; one scroll for all. */
+.czg[data-czg-stacked] .czg-cols { flex-direction: column; flex-wrap: nowrap; align-items: stretch; }
+.czg[data-czg-stacked] .czg-evidence { display: contents; }
+.czg[data-czg-stacked] [data-czg-lead] { order: -1; }
+.czg[data-czg-stacked] .czg-form { flex: 0 0 auto; max-height: none; overflow: visible; }
+.czg[data-czg-stacked] .czg-stale > :not([data-czg-lead]) { opacity: 0.45; }
 .czg-chips { margin-left: auto; }
 .czg-row-acts { display: inline-flex; gap: var(--ui-gap-1); margin-left: var(--ui-gap-2); vertical-align: middle; }
 /* K18 choosing: ARIA states drive the look, so the state a screen reader

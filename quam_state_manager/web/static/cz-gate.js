@@ -1177,6 +1177,18 @@
         top.appendChild(acts);
         try { acts.children[0].focus(); } catch (e) { /* not focusable */ }
     }
+    /* Stacked when the form and the evidence column do not fit side by side
+       (their kit widths plus the gap): the kit then puts the banner above the form. */
+    function layoutStack() {
+        var d = $('czg-dialog'), cols = d && d.querySelector('.czg-cols');
+        if (!cols || !window.getComputedStyle) return;
+        var cs = window.getComputedStyle(cols);
+        var need = (parseFloat(cs.getPropertyValue('--ui-czg-form-w')) || 360)
+            + (parseFloat(cs.getPropertyValue('--ui-czg-evidence-min')) || 640) + (parseFloat(cs.columnGap) || 0);
+        var w = cols.clientWidth;
+        if (w > 0 && w < need) d.setAttribute('data-czg-stacked', ''); else d.removeAttribute('data-czg-stacked');
+    }
+    window.addEventListener('resize', function () { if (S) layoutStack(); });
     function init() {
         var src = $('czg-data');
         S.data = JSON.parse((src && src.textContent) || '{}');
@@ -1188,6 +1200,7 @@
         fillSlots();
         renderWrites();
         refresh();
+        layoutStack();
         return plan();
     }
     function open(opts) {

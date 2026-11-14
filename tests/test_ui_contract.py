@@ -946,7 +946,9 @@ if __name__ == "__main__":
 # into the kit. New selectors require an explicit addition, as in stage 4.
 _STAGE6_SELECTORS = {
     # the CZ gate dialog (cz-gate.js, _cz_gate_dialog.html)
-    '.czg .czg-body', '.czg-alert', '.czg-alert:empty', '.czg-done:empty', '.czg-cols',
+    '.czg .czg-body', '.czg[data-czg-stacked] .czg-cols', '.czg[data-czg-stacked] .czg-evidence',
+    '.czg[data-czg-stacked] [data-czg-lead]', '.czg[data-czg-stacked] .czg-form',
+    '.czg[data-czg-stacked] .czg-stale > :not([data-czg-lead])', '.czg-alert', '.czg-alert:empty', '.czg-done:empty', '.czg-cols',
     '.czg-form', '.czg-evidence', '.czg-slots', '.czg-why-line', '.czg-chips',
     '.czg-more-list', '.czg-more-row', '.czg-chart > .ui-note', '.czg-stale', '.czg-row-acts',
     # a native <dialog> in the kit shell (the two older ones keep their style.css rules)
