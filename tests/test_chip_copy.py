@@ -255,3 +255,19 @@ def test_nan_and_infinity_written_like_the_chip_writer(tmp_path):
     for token in ("NaN", "Infinity", "-Infinity"):
         assert token in mine and token in ref
     assert repr(json.loads(mine)) == repr(json.loads(ref))
+
+
+def test_write_chip_folder_refuses_a_folder_outside_the_temp_dir(tmp_path, monkeypatch):
+    import tempfile as _tempfile
+    from quam_state_manager.core import chip_copy as _cc
+    scratch = tmp_path / "scratch"
+    outside = tmp_path / "live_chip"
+    scratch.mkdir()
+    outside.mkdir()
+    monkeypatch.setattr(_tempfile, "gettempdir", lambda: str(scratch))
+    (scratch / "copy").mkdir()
+    _cc.write_chip_folder(scratch / "copy", {}, {})
+    assert (scratch / "copy" / "state.json").exists()
+    with pytest.raises(ValueError):
+        _cc.write_chip_folder(outside, {"a": 1}, {})
+    assert not (outside / "state.json").exists()
