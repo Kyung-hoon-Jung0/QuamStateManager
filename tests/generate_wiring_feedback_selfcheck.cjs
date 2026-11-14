@@ -1,0 +1,144 @@
+// Behavioral check: step-5 wiring and step-6 pair-table feedback from a
+// from-scratch build of a fixed-frequency + tunable-coupler chip.
+//
+//   W1  a Pin accepts "con1/1/2" and "1/1/2"; "con1/9/1", "1/1", "x/1/2" are
+//       refused, and the hint names both accepted forms
+//   W2  a feedline Out change shows the new port on the card summary and in
+//       the Auto-allocated column at once (never the old allocation's port)
+//   W3  "Checking wiring" never outlives a run that was stranded
+//   W4  a per-pair "CZ shape" select left untouched shows the default shape
+//
+// Run: node tests/generate_wiring_feedback_selfcheck.cjs   (needs jsdom)
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+
+let JSDOM;
+try {
+  ({ JSDOM } = require('jsdom'));
+} catch (e) {
+  console.error('jsdom not installed');
+  process.exit(2);
+}
+
+const ROOT = path.join(__dirname, '..');
+const HTML = fs.readFileSync(
+  path.join(ROOT, 'quam_state_manager', 'web', 'templates', '_generate.html'), 'utf8');
+const GEN_JS = fs.readFileSync(
+  path.join(ROOT, 'quam_state_manager', 'web', 'static', 'generate.js'), 'utf8');
+
+let fails = 0;
+let asserts = 0;
+function ok(c, m) { asserts++; if (!c) { console.error('FAIL: ' + m); fails++; } }
+
+async function world(answer) {
+  const dom = new JSDOM(
+    '<!DOCTYPE html><html><body><div id="table-pane">' + HTML + '</div></body></html>',
+    { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/' });
+  const win = dom.window;
+  win.NumberInput = {
+    fit() {}, attach(el) { try { el.type = 'text'; } catch (e) {} }, format() {},
+    strip(s) { return String(s == null ? '' : s).replace(/,/g, ''); }
+  };
+  win.armPlainResize = function () {};
+  win.renderInstrumentWiring = function () {};
+  win.confirm = function () { return true; };
+  win.showToast = function () {};
+  const calls = [];
+  win.fetch = function (url, opts) {
+    calls.push(url);
+    if (answer && url === '/generate/allocate' && calls.filter(u => u === url).length === 1) {
+      return win.Promise.resolve({ json: function () { return win.Promise.resolve(answer); } });
+    }
+    return new win.Promise(function () {});   // later runs never answer
+  };
+  new win.Function(GEN_JS).call(win);
+  await new Promise(function (r) { win.setTimeout(r, 0); });   // let mount timers settle first
+  const G = win.QuamGen, T = G._test, state = G.state;
+  state.spec.instruments.controllers = [{ con: 1, fems: [{ slot: 1, fem: 'mw' }, { slot: 3, fem: 'lf' }] }];
+  state.spec.network = { host: '1.2.3.4', cluster_name: 'C', port: null };
+  state.spec.qubits = ['q1', 'q2'];
+  win.document.getElementById('gen-mux-size').value = '5';
+  state.env = 'python';
+  T.deriveLines();
+  return { win, T, state, calls, doc: win.document };
+}
+
+function tick(win) { return new Promise(function (r) { win.setTimeout(r, 0); }); }
+
+(async function main() {
+  // W1
+  {
+    const w = await world(null);
+    const T = w.T;
+    const a = T.pinToChannel('con1/1/2', 'drive');
+    ok(a && a.con === 1 && a.slot === 1 && a.out_port === 2, 'W1 "con1/1/2" is a pin: ' + JSON.stringify(a));
+    const b = T.pinToChannel('1/1/2', 'drive');
+    ok(b && b.con === 1 && b.slot === 1 && b.out_port === 2, 'W1 "1/1/2" is a pin');
+    const c = T.pinToChannel('con2/3/8', 'flux');
+    ok(c && c.con === 2 && c.out_slot === 3 && c.out_port === 8, 'W1 "con2/3/8" is a pin');
+    ['con1/9/1', '1/1', 'x/1/2', 'con/1/2', 'con0/1/1', 'cone1/1/1'].forEach(function (p) {
+      ok(T.pinToChannel(p, 'drive') === null, 'W1 "' + p + '" is refused');
+    });
+    ok(/con1\/1\/2/.test(T.PIN_HINT) && /(^|[^n\d])1\/1\/2/.test(T.PIN_HINT.replace('con1/1/2', '')),
+       'W1 the hint names both accepted forms: ' + T.PIN_HINT);
+    const intro = w.doc.querySelector('[data-step="5"] p.muted');
+    ok(intro && intro.textContent.indexOf('con1/1/2') >= 0, 'W1 the step-5 intro shows the accepted form');
+  }
+
+  // W2
+  {
+    const answer = { ok: true, result: { allocation: {
+      q1: { rr: [{ con: 1, slot: 1, port: 8, io_type: 'output', instrument_id: 'mw-fem' },
+                 { con: 1, slot: 1, port: 1, io_type: 'input', instrument_id: 'mw-fem' }] },
+      q2: { rr: [{ con: 1, slot: 1, port: 8, io_type: 'output', instrument_id: 'mw-fem' },
+                 { con: 1, slot: 1, port: 1, io_type: 'input', instrument_id: 'mw-fem' }] } } } };
+    const w = await world(answer);
+    const T = w.T, state = w.state;
+    state.step = 5;
+    T.renderWiringTable();
+    T.runAutoAllocate(true);
+    await tick(w.win); await tick(w.win); await tick(w.win);
+    ok(state.allocation && state.allocation.q1, 'W2 setup: the first allocation was adopted');
+    const card = () => (w.doc.querySelector('.gen-ro-alloc') || {}).textContent || '';
+    ok(card().indexOf('Out 8') >= 0, 'W2 setup: the card says Out 8: ' + card());
+    const name = T.readoutModel().feeds[0].name;
+    const before = (state.spec.lines.find(l => l.element === 'q2' && l.line === 'resonator') || {}).channel;
+    T.setFeedlineOutput(name, { con: 1, slot: 1 }, 1);
+    ok(card().indexOf('Out 8') < 0 && card().indexOf('Out 1') >= 0,
+       'W2 the card summary follows Out 1 at once: ' + card());
+    const cells = Array.from(w.doc.querySelectorAll('#gen-wiring-tbl tr'))
+      .filter(tr => /resonator/.test(tr.textContent))
+      .map(tr => tr.querySelector('.gen-wiring-alloc').textContent);
+    ok(cells.length && cells.every(t => t.indexOf('p8') < 0),
+       'W2 the Auto-allocated column drops the old port: ' + JSON.stringify(cells));
+    ok(before !== undefined, 'W2 setup: q2 has a resonator line');
+  }
+
+  // W3
+  {
+    const w = await world(null);
+    const T = w.T, state = w.state;
+    state.step = 5;
+    T.runAutoAllocate(true);
+    const st = w.doc.getElementById('gen-allocate-status');
+    ok(/Checking wiring/.test(st.textContent), 'W3 setup: a run is in flight');
+    T.resetAllocRuntime();
+    ok(!/Checking wiring/.test(st.textContent), 'W3 a stranded run leaves no "Checking wiring": ' + st.textContent);
+  }
+
+  // W4
+  {
+    const w = await world(null);
+    const T = w.T;
+    const col = T.POP_COUPLER_ONLY_PAIR_COLS.find(c => c.field === 'coupler_pulse_shape');
+    ok(col, 'W4 setup: the CZ shape column exists');
+    const el = T.buildPopCell('pairs', 'q1-q2', col);
+    const sel = el.tagName === 'SELECT' ? el : el.querySelector('select');
+    ok(sel && sel.value === 'flattop', 'W4 an untouched CZ shape shows flattop: ' + (sel && sel.value));
+  }
+
+  console.log(fails ? fails + ' FAILED of ' + asserts : 'all checks passed (' + asserts + ' assertions)');
+  process.exit(fails ? 1 : 0);
+})();

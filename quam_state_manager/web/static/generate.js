@@ -3981,7 +3981,10 @@
     // enough channels". A pin is three whole numbers naming real hardware:
     // con >= 1, slot 1-8 (OPX1000 chassis), port 1-8 (a FEM's 8 analog
     // outputs -- QM docs, opx1000_fems.md). Anything else is not a pin (null).
+    // The controller may be written as its name ("con1/1/2", as the rest of
+    // the UI names it) or as its bare number ("1/1/2").
     var raw = String(str).split("/");
+    if (raw.length === 3) raw[0] = raw[0].replace(/^\s*con(?=\d)/i, "");
     if (raw.length !== 3 || !raw.every(function (s) { return /^\s*\d+\s*$/.test(s); })) return null;
     var parts = raw.map(function (s) { return parseInt(s, 10); });
     var con = parts[0], slot = parts[1], port = parts[2];
@@ -4009,7 +4012,7 @@
   // A typed box that is not a pin, keyed element|line -> the text typed, so a
   // re-render keeps showing (and flagging) what the user typed.
   var _pinBad = {};
-  var PIN_HINT = "con/slot/port — slot 1–8, port 1–8";
+  var PIN_HINT = "con/slot/port, e.g. con1/1/2 or 1/1/2 — slot 1–8, port 1–8";
   function escapeAttr(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
       .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -4216,6 +4219,7 @@
     state.spec.lines.forEach(function (ln) {
       if (ln.line === "resonator" && ln.group && !feedLead[ln.group]) feedLead[ln.group] = ln.element;
     });
+    var allocStale = allocIsStale();
     var staleIdx = {};
     stalePinGroups().forEach(function (g) {
       g.idx.forEach(function (i) { staleIdx[i] = stalePinText(g); });
@@ -4243,7 +4247,7 @@
         "<td>" + ln.element + "</td>" +
         "<td>" + ln.line +
         (ln.group ? ' <span class="muted">· ' + ln.group + "</span>" : "") + "</td>" +
-        '<td class="gen-wiring-alloc">' + allocText(ln.element, ln.line) + "</td>" +
+        '<td class="gen-wiring-alloc">' + (allocStale ? allocPendingText() : allocText(ln.element, ln.line)) + "</td>" +
         '<td><input type="text" id="' + escapeAttr(pinBoxId(ln)) + '" aria-label="' +
         escapeAttr(ln.element + " " + ln.line + " pin") + '" class="gen-wiring-pin' +
         (why ? ' gen-wiring-pin-invalid" aria-invalid="true" title="' +
@@ -5845,7 +5849,25 @@
   }
 
   // "con1 slot2 · Out 8 → In 1" from the allocation, or null.
-  function roAllocText(f) {
+  // The allocation on screen describes an older spec (a feedline or pin was
+  // edited since): its ports must not be shown as the wiring.
+  function allocIsStale() {
+    return !!state.allocation && _allocSpecSig !== null && _allocSpecSig !== topoSig();
+  }
+
+  function allocPendingText() {
+    return state.env ? "re-allocating…" : "changed: press Auto-allocate";
+  }
+
+  function roAllocText(f, stale) {
+    if (stale) {
+      // the card's own ports, until the allocator answers for them
+      var ch = f.channel || {};
+      if (ch.out_port == null) return allocPendingText();
+      return (ch.con != null && ch.slot != null ? "con" + ch.con + " slot " + ch.slot + " · " : "") +
+        "Out " + ch.out_port + (ch.in_port != null ? " → In " + ch.in_port : "") +
+        " (" + allocPendingText() + ")";
+    }
     var rr = (allocEntry(f.members[0]) || {}).rr;
     if (!rr) return null;
     var o = rr.filter(function (x) { return (x.io_type || "output") === "output"; })[0];
@@ -5881,6 +5903,7 @@
     var mode = readoutMode();
     var fems = mwFems();
     var clash = readoutClashes(model.feeds);
+    var stale = allocIsStale();
     var NOTE_23 = "Out 2–7 are coupled to another output, not an input " +
       "(QM: Out1–In1, Out8–In2), so neighbor/crossing does not apply — pick the input.";
 
@@ -5910,7 +5933,7 @@
           var tag = nb == null ? "" : (p === nb ? " · neighbor" : " · crossing");
           return roOpt(String(p), "In " + p + tag, p === inp);
         }).join("") + "</select>";
-      var at = roAllocText(f);
+      var at = roAllocText(f, stale);
       var err = clash[f.name] ||
         (f.members.length > MUX_MAX ? "More than " + MUX_MAX + " qubits on one feedline." : "");
       return '<div class="gen-ro-card' + (err ? " has-err" : "") + '" data-ro-target="' +
@@ -6128,7 +6151,7 @@
     if (!model.feeds.length && !model.pool.length) return null;
     var parts = model.feeds.map(function (f) {
       var ch = f.channel || {};
-      var at = roAllocText(f);
+      var at = roAllocText(f, allocIsStale());
       var where = at || ((ch.con != null ? "con" + ch.con + " slot " + ch.slot : "auto FEM") +
         (ch.out_port != null ? " · Out " + ch.out_port : "") +
         (ch.in_port != null ? " → In " + ch.in_port : ""));
@@ -6236,6 +6259,11 @@
     if (window.GenRules) window.GenRules.resetRuleRuntime();   // C5: strand in-flight rule requests too
     _pinBad = {};   // per-content: a new chip starts with no flagged pin boxes
     _allocRunSeq++;
+    // a stranded run never answers: its "Checking wiring" must not outlive it
+    var st = _allocInFlight && document.getElementById("gen-allocate-status");
+    if (st) st.textContent = "";
+    var abtn = document.getElementById("gen-allocate-btn");
+    if (abtn) abtn.disabled = false;
     _allocInFlight = false;
     _allocAutoBlocked = false;
     _allocFailSig = null;
@@ -6699,7 +6727,9 @@
   // amplitude, and the SNZ shape's own parameters. No moving qubit, no
   // interaction offset: this gate plays on the coupler only (review r2 P2-3/4).
   var POP_COUPLER_ONLY_PAIR_COLS = [
-    { field: "coupler_pulse_shape", label: "CZ shape", kind: "select", options: ["flattop", "snz"] },
+    // shown when untouched: the shape run_build writes for a blank value
+    { field: "coupler_pulse_shape", label: "CZ shape", kind: "select", options: ["flattop", "snz"],
+      shownDefault: "flattop" },
     // the gate's own fields (no preset default fills them): blank = the lab defaults (D-8)
     { field: "coupler_cz_length", label: "CZ length", dim: "time", placeholder: "76 (lab default)" },
     { field: "coupler_amplitude", label: "CZ amp", dim: "volt", placeholder: "0.1 (lab default)" },
@@ -7115,7 +7145,7 @@
         o.textContent = opt === "" ? "—" : opt;
         input.appendChild(o);
       });
-      input.value = current == null ? "" : String(current);
+      input.value = current == null ? (col.shownDefault || "") : String(current);
     } else {
       input = document.createElement("input");
       input.type = col.kind === "text" ? "text" : "number";
@@ -7441,7 +7471,7 @@
       if (input.dataset.dirty === "1") return;   // don't clobber an uncommitted edit
       var rid = input.dataset.rid;
       var v = popBucketRead(group, rid)[col.field];
-      if (v == null) input.value = "";
+      if (v == null) input.value = col.shownDefault || "";
       else if (col.kind === "select") input.value = String(v);
       else if (col.dim === "amp") {
         input.value = ampToDisplay(v, ampMode(),
@@ -13953,6 +13983,12 @@
       inModeOf: inModeOf,
       assignReadout: assignReadout,
       setFeedlineOutput: setFeedlineOutput,
+      PIN_HINT: PIN_HINT,
+      runAutoAllocate: runAutoAllocate,
+      resetAllocRuntime: resetAllocRuntime,
+      POP_COUPLER_ONLY_PAIR_COLS: POP_COUPLER_ONLY_PAIR_COLS,
+      buildPopCell: buildPopCell,
+      renderWiringTable: renderWiringTable,
       setFeedlineInput: setFeedlineInput,
       setAllReadoutInputs: setAllReadoutInputs,
       fillReadoutFromPool: fillReadoutFromPool,
