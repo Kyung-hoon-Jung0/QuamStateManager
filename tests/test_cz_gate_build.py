@@ -1158,6 +1158,73 @@ def test_a_container_that_is_not_a_dict_is_a_refusal(key):
     assert isinstance(_plan(s)["error"], str)
 
 
+def test_a_reference_to_the_model_pair_itself_is_refused_across_pairs():
+    s = _two_pulse_chip()
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]["pair"] = "#/qubit_pairs/q1-q2"
+    res = cgb.plan(s, "q3-q4", gate_name="cz_b", gate_class=LAB_GATE)
+    assert "#/qubit_pairs/q1-q2 " in res["error"]
+    assert "creates" in cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+
+
+def test_refresh_copies_the_rewritten_value_and_keeps_plain_over_relative():
+    s = _two_pulse_chip()
+    m = s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]["flux_pulse_qubit"]
+    m["amplitude"] = "#/qubit_pairs/q1-q2/macros/cz_a/flux_pulse_target/amplitude"
+    m["detuning"] = "#./amplitude"
+    op = s["qubits"]["q1"]["z"]["operations"]["cz_a_flux_pulse_q1_q2"]
+    op["amplitude"] = 0.2
+    op["detuning"] = 0.0
+    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+    op = dict(res["creates"])["qubits.q1.z.operations.cz_b_flux_pulse_q1_q2"]
+    assert op["amplitude"] == "#/qubit_pairs/q1-q2/macros/cz_b/flux_pulse_target/amplitude"
+    assert op["detuning"] == 0.0
+
+
+def test_a_given_explicit_length_is_linked_from_an_inferred_operation():
+    s = _two_pulse_chip()
+    m = s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]["flux_pulse_qubit"]
+    m["length"] = "#./inferred_length"
+    s["qubits"]["q1"]["z"]["operations"]["cz_a_flux_pulse_q1_q2"]["length"] = "#./inferred_length"
+    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE,
+                   pulses={"flux_pulse_qubit": {"fields": {"length": 60}}})
+    by = dict(res["creates"])
+    assert by["qubit_pairs.q1-q2.macros.cz_b"]["flux_pulse_qubit"]["length"] == 60
+    assert by["qubits.q1.z.operations.cz_b_flux_pulse_q1_q2"]["length"] == \
+        "#/qubit_pairs/q1-q2/macros/cz_b/flux_pulse_qubit/length"
+
+
+def test_a_sibling_reference_is_renamed_or_refused():
+    s = _op_owned_lab_chip(lambda k: k)
+    s["qubits"]["q2"]["z"]["operations"]["cz_a_flux_pulse_q2_q1"]["amplitude"] = \
+        "#../cz_a_flux_pulse_q2_q1/length"
+    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+    op = dict(res["creates"])["qubits.q2.z.operations.cz_b_flux_pulse_q2_q1"]
+    assert op["amplitude"] == "#../cz_b_flux_pulse_q2_q1/length"
+    s = _op_owned_lab_chip(lambda k: k)
+    s["qubits"]["q2"]["z"]["operations"]["cz_a_flux_pulse_q2_q1"]["src"] = "#../../../q1/xy"
+    s["qubit_pairs"]["q3-q1"] = _pair("q3", "q1")
+    res = cgb.plan(s, "q3-q1", gate_name="cz_b", gate_class=LAB_GATE)
+    assert "relative reference #../../../q1/xy" in res["error"]
+
+
+def test_a_spectator_operation_name_is_not_kept():
+    s = _two_pulse_chip()
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]["spectator_pulse"] = "cz_a_spec_q3"
+    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+    assert dict(res["creates"])["qubit_pairs.q1-q2.macros.cz_b"]["spectator_pulse"] is None
+
+
+def test_a_coupler_only_copy_without_qubit_ids_needs_no_pair_qubits():
+    c = _chip(4)
+    c["qubit_pairs"]["q1-2"]["coupler"]["operations"]["cz_c_cpl"] = {
+        "id": "cz_c_cpl", "length": 40, "__class__": LAB_PULSE}
+    c["qubit_pairs"]["q1-2"]["macros"]["cz_c"] = {"__class__": LAB_GATE,
+                                                  "coupler_pulse": "cz_c_cpl"}
+    c["qubit_pairs"]["q3-4"]["qubit_control"] = None
+    res = cgb.plan(c, "q3-4", gate_name="cz_d", gate_class=LAB_GATE)
+    assert "qubit_pairs.q3-4.coupler.operations.cz_d_cpl" in dict(res["creates"])
+
+
 def test_a_kept_macro_reference_into_the_model_pair_is_refused_across_pairs():
     s = _two_pulse_chip()
     s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]["mode"] = "#/qubit_pairs/q1-q2/extras/mode"

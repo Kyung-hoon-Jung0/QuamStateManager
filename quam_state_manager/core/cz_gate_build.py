@@ -789,20 +789,25 @@ def copied_name(model_name: str, model_gate: str, model_ids: tuple, gate: str,
 
 
 def _rename_values(value: Any, names: dict[str, str],
-                   plain: dict[str, str] | None = None) -> Any:
+                   plain: dict[str, str] | None = None,
+                   rel: dict[str, str] | None = None) -> Any:
     """Every string EQUAL to a model name, or a reference segment equal to
-    one, becomes the new name; a plain (non-reference) string equal to a key
-    of *plain* becomes its value. Nothing matches inside a longer string."""
+    one, becomes the new name; a segment of a ``#../`` reference equal to a
+    key of *rel* becomes its value; a plain (non-reference) string equal to a
+    key of *plain* becomes its value. Nothing matches inside a longer string."""
     plain = plain or {}
+    rel = rel or names
     if isinstance(value, dict):
-        return {k: _rename_values(v, names, plain) for k, v in value.items()}
+        return {k: _rename_values(v, names, plain, rel) for k, v in value.items()}
     if isinstance(value, list):
-        return [_rename_values(v, names, plain) for v in value]
+        return [_rename_values(v, names, plain, rel) for v in value]
     if isinstance(value, str):
         if value in names:
             return names[value]
         if value.startswith("#/"):
             return "/".join(names.get(seg, seg) for seg in value.split("/"))
+        if value.startswith("#../"):
+            return "/".join(rel.get(seg, seg) for seg in value.split("/"))
         if value in plain:
             return plain[value]
     return value
@@ -831,8 +836,8 @@ def _structure_only(model: dict, pulse_keys: list[str]) -> tuple[dict, dict]:
             macro[k] = {}
         elif k.startswith("phase_shift"):
             macro[k] = 0.0
-        elif k.startswith("spectator_qubits"):
-            macro[k] = [] if isinstance(v, list) else {}
+        elif k.startswith("spectator"):
+            macro[k] = [] if isinstance(v, list) else {} if isinstance(v, dict) else None
         else:
             macro[k] = copy.deepcopy(v)
             if v is not None and not (isinstance(v, str) and v.startswith("#")):
@@ -882,8 +887,10 @@ def _walk_strings(value: Any, where: str):
 def _leftover_refs(merged, creates, mpair, mname, mids, pair_id, ids) -> list[str]:
     """Strings in the creates that still point at the model.
 
-    Only absolute references are scanned: relative ones (``#./``, ``#../``)
-    keep their meaning because the copy keeps the object's shape."""
+    Absolute references and parent-relative ones (``#../``, ``#../../``)
+    are scanned; a parent-relative reference can name a sibling such as the
+    model's operation. Same-object references (``#./``) keep their meaning
+    because the copy keeps the object's shape."""
     created = {path for path, _ in creates}
     model_ref = _ref("qubit_pairs", mpair, "macros", mname)
     cross = mpair != pair_id
@@ -895,7 +902,8 @@ def _leftover_refs(merged, creates, mpair, mname, mids, pair_id, ids) -> list[st
             refs = _ABS_REF.findall(s)
             for r in refs:
                 bad = r == model_ref or r.startswith(model_ref + "/")
-                if cross and r.startswith(_ref("qubit_pairs", mpair) + "/"):
+                pair_ref = _ref("qubit_pairs", mpair)
+                if cross and (r == pair_ref or r.startswith(pair_ref + "/")):
                     bad = True
                 if cross and any(r == _ref("qubits", q) or r.startswith(_ref("qubits", q) + "/")
                                  for q in moved):
@@ -909,7 +917,23 @@ def _leftover_refs(merged, creates, mpair, mname, mids, pair_id, ids) -> list[st
                                f"(in {where}), which still points at the model or "
                                "at nothing. Pick a model gate on this pair, or one "
                                "without that reference.")
+            for r in _REL_REF.findall(s):
+                segs = r.split("/")
+                if mname in segs or (cross and any(q in segs for q in moved)):
+                    out.append(f"The copy of {mname} would keep the relative "
+                               f"reference {r} (in {where}), which still names the "
+                               "model. Pick a model gate on this pair, or one "
+                               "without that reference.")
     return out
+
+
+_REL_REF = re.compile(r"#(?:\.\./)+[^\s\"'#]*")
+
+
+def _has_run(name: str, qubit_id: str) -> bool:
+    """Does *name* hold *qubit_id* as a whole ``_``-delimited run?"""
+    toks, want = name.split("_"), qubit_id.split("_")
+    return any(toks[i:i + len(want)] == want for i in range(len(toks) - len(want) + 1))
 
 
 def _op_pointing_at(lines: dict, prefix: str) -> str | None:
@@ -997,17 +1021,21 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
                     f"({src.get('qubit_' + role)!r}) does not point at a qubit, so "
                     f"SM cannot rename its pulses for pair {pair_id}. Fix that "
                     "reference, or pick a model gate on this pair."])
-        for role, nq in (("control", control), ("target", target)):
-            if not nq:
-                return _refuse(reasons + [
-                    f"The {role} of pair {pair_id} does not point at a qubit, so SM "
-                    "cannot name the copied pulses. Set the pair's qubit_control "
-                    "and qubit_target first."])
     fields = pulse_fields(model, _op_keys(mlines))
     if not fields:
         return _refuse(reasons + [
             f"The model gate {mname} has no pulse SM can copy. Pick another "
             "model gate."])
+    if mpair != pair_id:
+        # The new pair's ids are needed only when a model name carries an id.
+        mkeys = [_resolve_slot_pulse(model, f, mlines)[2] or "" for f in fields]
+        needs = any(_has_run(k, q) for k in mkeys for q in mids if q)
+        for role, nq in (("control", control), ("target", target)):
+            if needs and not nq:
+                return _refuse(reasons + [
+                    f"The {role} of pair {pair_id} does not point at a qubit, so SM "
+                    "cannot name the copied pulses. Set the pair's qubit_control "
+                    "and qubit_target first."])
     old_ref = _ref("qubit_pairs", mpair, "macros", mname)
     macro_segs = ("qubit_pairs", pair_id, "macros", gate_name)
     new_ref = _ref(*macro_segs)
@@ -1093,10 +1121,20 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
                 # Where the operation holds a plain copy, it holds what the
                 # macro pulse holds, whatever the value's source.
                 for k in op:
-                    if k in ("id", "__class__") or k not in pulse:
+                    if k in ("id", "__class__") or k not in owned:
                         continue
-                    if not (isinstance(op[k], str) and op[k].startswith("#")):
-                        op[k] = copy.deepcopy(pulse[k])
+                    if isinstance(op[k], str) and op[k].startswith("#"):
+                        continue
+                    v = owned[k]
+                    if isinstance(v, str) and v.startswith("#.") :
+                        continue  # a relative value would resolve on the operation
+                    op[k] = copy.deepcopy(v)
+                # An explicit macro length is referenced by the operation.
+                ml = owned.get("length")
+                if (isinstance(ml, (int, float)) and not isinstance(ml, bool)
+                        and isinstance(op.get("length"), str)
+                        and op["length"].startswith("#./")):
+                    op["length"] = _ref(*macro_segs, f) + "/length"
             else:
                 op = linked_operation(owned, _ref(*macro_segs, f))
         else:
@@ -1125,8 +1163,9 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
         for old, new in zip(mids, (control, target)):
             if old and new and old != new:
                 plain[old] = new
-    macro = _rename_values(macro, names, plain)
-    op_creates = [(path, _rename_values(v, names, plain)) for path, v in op_creates]
+    rel = {**names, mname: gate_name}
+    macro = _rename_values(macro, names, plain, rel)
+    op_creates = [(path, _rename_values(v, names, plain, rel)) for path, v in op_creates]
     creates = [(_dot(macro_segs), macro)] + op_creates
     leftovers = _leftover_refs(merged, creates, mpair, mname, mids, pair_id,
                                (control, target))
