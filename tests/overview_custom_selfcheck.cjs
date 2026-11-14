@@ -363,11 +363,11 @@ function stored(win) { return win.localStorage.getItem('quam_overview_tiles_v1')
     ok(!/153|470|1\.53|4\.7/.test(txt),
       'C9: no unphysical number reaches the tile (got "' + txt.slice(0, 90) + '")');
     // N counts pairs that still have a usable value; the tail counts the
-    // dropped ROWS, which is the truer number when a pair survives on
-    // another macro (2 rows here, only 1 pair lost)
+    // pairs left with NO usable value (D-NF4): q2-q3 survives on another
+    // macro, so only q3-q4 is excluded although two rows were dropped
     ok(/\(2\)/.test(txt), 'C9: N is the pairs with a usable value (got "' + txt + '")');
-    ok(/2 excluded/.test(txt),
-      'C9: the tile SAYS how many rows it set aside (got "' + txt + '")');
+    ok(/1 excluded/.test(txt) && !/2 excluded/.test(txt),
+      'C9: the tile counts the pairs with no usable value (got "' + txt + '")');
 
     // the hover list still names the fully-excluded pair, uncoloured and last
     t.dispatchEvent(new win.MouseEvent('mouseenter', { bubbles: true }));

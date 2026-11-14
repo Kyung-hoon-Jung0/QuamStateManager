@@ -21086,6 +21086,13 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str],
                 if _parts[1] in entities:
                     by_e[dp] = _parts[1] + " · " + ".".join(
                         _parts[i] for i in _wild)
+        # D-NF5: a series built from ONE raw per-gate key (InterleavedRB, a
+        # lab alias IRB) names that key in its legend, so two raw families
+        # that share a title can never be read as the same number.
+        from quam_state_manager.core.query import rb_level as _rb_level_of
+        _raw_key = label.rsplit(".", 1)[-1]
+        if scope == "qubit_pairs" and _rb_level_of(_raw_key) == "gate":
+            by_e = {dp: f"{name} · {_raw_key}" for dp, name in by_e.items()}
         # hold_to_newest: a value set once and never changed still has a
         # duration — it is carried to the newest snapshot as a HELD point the
         # chart draws hollow ("unchanged since …"), never as a new measurement.
@@ -25044,6 +25051,7 @@ def _cz_plan_table(rows) -> list[dict]:
             # which key that per-gate value came from + a disagreement, if any
             "irb_key": (r["fidelity"].get("InterleavedRB") or {}).get("key"),
             "irb_conflict": gate_conflict_text((r["fidelity"].get("InterleavedRB") or {}).get("conflict") or []),
+            "irb_basis": (r["fidelity"].get("InterleavedRB") or {}).get("basis_text") or "",
         })
     return out
 

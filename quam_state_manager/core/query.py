@@ -1728,7 +1728,8 @@ def pair_gate_fidelity(fid: Any) -> dict | None:
     3. else the fixed key order :data:`_GATE_KEY_ORDER`: ``InterleavedRB``
        before ``IRB``, then any other per-gate spelling by name.
 
-    Ties in 1 and 2 fall back to the key order.
+    A tie in 1 (or no time on some key) falls to 2, a tie in 2 to 3
+    (D-NF3); ``basis`` names the step that decided.
 
     Returns ``{"value", "key", "basis", "physical", "keys", "conflict"}`` or
     None when the block holds no numeric per-gate key. ``conflict`` is
@@ -1758,14 +1759,25 @@ def pair_gate_fidelity(fid: Any) -> dict | None:
     cands.sort(key=lambda kv: _order(kv[0]))
     basis = "key order"
     if len(cands) > 1:
+        # D-NF3: newest recorded time, then newest run id, then key order.
+        # A level is used only when every candidate records it; run ids are
+        # compared whenever the times are equal or not all recorded. The
+        # basis names the level that actually separated the winner.
         times = {k: _gate_key_time(fid, k) for k, _ in cands}
         runs = {k: _gate_key_run(fid, k) for k, _ in cands}
-        if all(t is not None for t in times.values()):
+        use_t = all(t is not None for t in times.values())
+        use_r = all(r is not None for r in runs.values())
+
+        def _rank(kv):
+            k = kv[0]
+            return ((-times[k] if use_t else 0), (-runs[k] if use_r else 0), _order(k))
+
+        cands.sort(key=_rank)
+        top, second = cands[0][0], cands[1][0]
+        if use_t and times[top] != times[second]:
             basis = "newest time"
-            cands.sort(key=lambda kv: (-times[kv[0]], _order(kv[0])))
-        elif all(r is not None for r in runs.values()):
+        elif use_r and runs[top] != runs[second]:
             basis = "newest run"
-            cands.sort(key=lambda kv: (-runs[kv[0]], _order(kv[0])))
     key, value = cands[0]
     vals = [v for _, v in cands]
     conflict = (list(cands) if len(cands) > 1
@@ -1773,6 +1785,19 @@ def pair_gate_fidelity(fid: Any) -> dict | None:
     return {"value": value, "key": key, "basis": basis,
             "physical": chip_health.physical_fidelity(value),
             "keys": [k for k, _ in cands], "conflict": conflict}
+
+
+_BASIS_TEXT = {"newest time": "picked: newest recorded time",
+               "newest run": "picked: newest run id",
+               "key order": "picked: key order (InterleavedRB before IRB)"}
+
+
+def gate_pick_basis_text(res: dict | None) -> str:
+    """Why :func:`pair_gate_fidelity` picked its key, for a reader who sees
+    the key; "" when the block held one per-gate key (nothing was picked)."""
+    if not res or len(res.get("keys") or ()) < 2:
+        return ""
+    return _BASIS_TEXT.get(res.get("basis"), "")
 
 
 def gate_conflict_text(conflict: list) -> str:
@@ -1878,6 +1903,10 @@ def _gate_fidelity_row(entry: dict) -> dict:
     if not bad:
         return entry
     entry["physical"] = False
+    # D-NF1: a NaN / infinite number reaches JSON as null; name the raw text
+    nonfinite = [entry[k] for k in bad if not math.isfinite(entry[k])]
+    if nonfinite:
+        entry["raw_text"] = str(nonfinite[0])
     if "value" in entry:
         entry["raw_value"] = entry.pop("value")
     for k in bad:
@@ -2037,15 +2066,22 @@ def _mark_gate_pick(rows: list[dict], fid: dict) -> None:
     values disagree every per-gate row carries ``gate_conflict``.
     """
     res = pair_gate_fidelity(fid)
-    if res is None or len(res["keys"]) < 2:
+    if res is None:
+        return
+    # D-NF4: every per-gate key of the block, including one whose value is
+    # no measurement (NaN, infinite, text), is a sibling of the pick.
+    gate_keys = {k for k in fid if isinstance(k, str) and rb_level(k) == "gate"
+                 and fidelity_field_kind(k) != "load_id"}
+    if len(gate_keys) < 2:
         return
     for r in rows:
-        if r.get("level") != "gate" or r.get("metric") not in res["keys"]:
+        if r.get("level") != "gate" or r.get("metric") not in gate_keys:
             continue
         r["gate_pick"] = r["metric"] == res["key"]
         if not r["gate_pick"]:
             r["superseded_by"] = res["key"]
         r["gate_pick_basis"] = res["basis"]
+        r["gate_pick_basis_text"] = _BASIS_TEXT.get(res["basis"], "")
         if res["conflict"]:
             r["gate_conflict"] = [[k, v] for k, v in res["conflict"]]
 
