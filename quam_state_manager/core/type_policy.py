@@ -428,12 +428,13 @@ _PLAIN_GROUPED_NUMBER = re.compile(r"^[+-]?\d[\d,]*(\.\d+)?$")
 
 def nonfinite_where(value, where: str = "") -> str | None:
     """Where inside *value* a non-finite number (NaN, +Infinity, -Infinity)
-    sits, or None when there is none. Python floats and numpy scalars, at the
-    top level or nested in lists / tuples / dict values, are all checked.
-    ``where`` is the prefix of the answer: "" for the value itself, else
-    ".key" / ".0" steps. Such a number is not JSON, so state.json must never
-    hold it; every door that stages a proposed value asks this one function."""
-    if isinstance(value, bool) or value is None or isinstance(value, str):
+    sits, or None when there is none. Python floats, Decimals, complex
+    numbers and numpy scalars or arrays, at the top level or nested in lists /
+    tuples / sets / dict values, are all checked. ``where`` is the prefix of
+    the answer: "" for the value itself, else ".key" / ".0" steps. Such a
+    number is not JSON, so state.json must never hold it; every door that
+    stages a proposed value, and every modifier write, asks this one function."""
+    if isinstance(value, bool) or value is None or isinstance(value, (str, bytes)):
         return None
     if isinstance(value, dict):
         for k, v in value.items():
@@ -447,14 +448,55 @@ def nonfinite_where(value, where: str = "") -> str | None:
             if hit is not None:
                 return hit
         return None
+    if isinstance(value, (set, frozenset)):
+        for v in value:
+            hit = nonfinite_where(v, where)
+            if hit is not None:
+                return hit
+        return None
     import numbers
-    if isinstance(value, numbers.Real) and not isinstance(value, numbers.Integral):
+    if isinstance(value, numbers.Integral):
+        return None
+    tolist = getattr(value, "tolist", None)
+    if callable(tolist) and not isinstance(value, numbers.Number):
+        # A numpy array (any shape, also 0-d): judge its plain Python items.
+        try:
+            items = tolist()
+        except Exception:  # noqa: BLE001 - an unreadable array is not a number we can vouch for
+            return where
+        return nonfinite_where(items, where)
+    if isinstance(value, complex) or (isinstance(value, numbers.Complex)
+                                      and not isinstance(value, numbers.Real)):
+        import cmath
+        try:
+            return None if cmath.isfinite(complex(value)) else where
+        except (TypeError, ValueError, OverflowError):
+            return where
+    is_finite = getattr(value, "is_finite", None)
+    if callable(is_finite) and not isinstance(value, float):
+        # decimal.Decimal: NaN, sNaN and Infinity answer False.
+        try:
+            return None if is_finite() else where
+        except Exception:  # noqa: BLE001
+            return where
+    if isinstance(value, numbers.Real):
         try:
             if not math.isfinite(float(value)):
                 return where
         except (TypeError, ValueError, OverflowError):
             return where
     return None
+
+
+def _refuse_nonfinite_json(loaded, raw: str):
+    """Python's json module reads NaN, Infinity and 1e999 inside a list or
+    object; none of them is JSON, so a typed literal holding one is refused."""
+    hit = nonfinite_where(loaded)
+    if hit is not None:
+        at = f" at {hit.lstrip('.')}" if hit else ""
+        raise ValueError(f"{raw!r} holds a non-finite number{at}; "
+                         f"state.json cannot store NaN or Infinity")
+    return loaded
 
 
 def parse_value(raw: str):
@@ -486,9 +528,11 @@ def parse_value(raw: str):
     # (``[1,2``) falls through to the bare-string path.
     if s[:1] in ('"', '[', '{'):
         try:
-            return json.loads(s)
+            loaded = json.loads(s)
         except (ValueError, TypeError):
             pass
+        else:
+            return _refuse_nonfinite_json(loaded, raw)
     candidate = (s.replace(",", "")
                  if ("," in s and _PLAIN_GROUPED_NUMBER.match(s)) else s)
     try:
@@ -558,12 +602,13 @@ def parse_with_expected(raw: str, expected: Expected | None) -> Any:
         return f
     if base in ("list", "dict", "component", "union"):
         try:
-            return json.loads(s)
+            loaded = json.loads(s)
         except ValueError as exc:
             shape = "[1, 2, 3]" if base == "list" else "{\"key\": value}"
             raise ValueError(
                 f"expected JSON for a {format_type(expected.spec)} — e.g. {shape}; "
                 f"could not parse {raw!r}") from exc
+        return _refuse_nonfinite_json(loaded, raw)
     return parse_value(raw)
 
 

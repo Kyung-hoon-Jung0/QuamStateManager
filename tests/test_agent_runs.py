@@ -1494,6 +1494,36 @@ def test_non_finite_approval_stays_pending(c, inst, synth_folder):
 
 
 @pytest.mark.parametrize("synth_folder", ["null_leaf"], indirect=True)
+@pytest.mark.parametrize("new", [float("nan"), [1.0, float("inf")]])
+def test_card_press_never_writes_the_null_a_nonfinite_proposal_shows(c, inst, synth_folder, new):
+    """The card shows a NaN proposal as null and sends that null back: the press
+    is refused, the card says why, and a typed value still writes."""
+    path = "qubits.qA1.rb_details.epc_stderr"
+    original = (synth_folder / "state.json").read_bytes()
+    ap = _null_leaf_approval(c, inst, [{"path": path, "old": 0.004, "new": new}])
+    rows = c.get("/api/agent/chat/cards?after=0").get_json()["live"]["approvals"][0]["writes"]
+    assert rows[0].get("nonfinite") is True, rows[0]
+    sent = {"writes": [{"path": w["path"], "new": w["new"]} for w in rows]}   # what approve() posts
+    res = c.post(f"/api/agent/approvals/{ap['id']}/approve", json=sent, headers=HUMAN)
+    assert res.status_code == 409 and "not a finite number" in res.get_json()["error"], res.get_json()
+    assert path in res.get_json()["error"]
+    assert approvals.get(str(inst), _chip(c), ap["id"])["status"] == "pending"
+    assert (synth_folder / "state.json").read_bytes() == original
+    typed = 0.006          # the leaf holds a float: a typed float writes, whatever the node proposed
+    ok = c.post(f"/api/agent/approvals/{ap['id']}/approve",
+                json={"writes": [{"path": path, "new": typed}]}, headers=HUMAN).get_json()
+    assert ok["stage"]["applied"], ok
+    assert _live_rb(synth_folder)["rb_details"]["epc_stderr"] == typed
+
+
+@pytest.mark.parametrize("synth_folder", ["null_leaf"], indirect=True)
+def test_card_flags_only_nonfinite_rows(c, inst, synth_folder):
+    _null_leaf_approval(c, inst, [{"path": "qubits.qA1.rb_details.epc_stderr", "old": 0.004, "new": 0.005}])
+    rows = c.get("/api/agent/chat/cards?after=0").get_json()["live"]["approvals"][0]["writes"]
+    assert not rows[0].get("nonfinite"), rows[0]
+
+
+@pytest.mark.parametrize("synth_folder", ["null_leaf"], indirect=True)
 def test_large_finite_number_still_stages(c, inst, synth_folder):
     ap = _null_leaf_approval(c, inst, [{"path": "qubits.qA1.rb_details.alpha_stderr", "old": None, "new": 1e308}])
     res = c.post(f"/api/agent/approvals/{ap['id']}/approve", json={}, headers=HUMAN).get_json()

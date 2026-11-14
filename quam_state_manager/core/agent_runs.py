@@ -1041,7 +1041,7 @@ class Registry:
         elif resized:
             # review R1-M6: a list that changed SHAPE cannot be staged leaf by leaf -- the overlapping cells
             # would land as a matrix that never existed
-            why = f"list resized at {', '.join(sorted(resized)[:3])} -- SM stages leaves, not a new shape; " \
+            why = f"list resized at {', '.join(sorted(resized)[:3])}; SM stages leaves, not a new shape, so " \
                   "apply the run's state from Datasets → Apply to chip"
         elif mode != "auto":
             why = f"mode {mode}"

@@ -854,6 +854,7 @@ window.AgentPanel = (function () {
       if (w.becomes_ref) writeNote += ' <span class="muted">this field becomes a reference to ' + esc(w.becomes_ref) +
         (w.ref_resolves ? '' : ', which SM cannot find in the chip') + '</span>';
       else if (w.text_into_null) writeNote += ' <span class="muted">writes text, not a number, into a field that holds null</span>';
+      if (w.nonfinite) writeNote += ' <span class="muted">the node gave no finite number here (NaN or Infinity, shown as null); type a value or untick it</span>';
       if (cannotStage) writeNote += ' <span class="muted">cannot be staged: ' + esc(cannotStage) + '</span>';
       // a value from a target the node itself marked failed: shown apart, not written unless ticked
       var failed = !!w.failed_target;

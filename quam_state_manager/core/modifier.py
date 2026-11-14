@@ -21,8 +21,32 @@ from typing import Any
 
 from quam_state_manager.core.loader import ChangeEntry, QuamStore
 from quam_state_manager.core.store_revs import note as _revs_note
+from quam_state_manager.core.type_policy import nonfinite_where as _nonfinite_where
 
 logger = logging.getLogger(__name__)
+
+
+_NO_OLD = object()
+
+
+def _refuse_new_nonfinite(dot_path: str, value: Any, old_value: Any = _NO_OLD) -> None:
+    """A user-facing write (``enforce=True``) never puts a NaN or Infinity
+    into state.json. Re-writing a value that already held the same
+    non-finite content (``repr`` equal) is not new and passes, so a field a
+    node once wrote as NaN can still be saved back unchanged. Replays of the
+    live file (``enforce=False``) are not judged here: SM never refuses what
+    the chip already holds."""
+    hit = _nonfinite_where(value)
+    if hit is None:
+        return
+    if old_value is not _NO_OLD:
+        try:
+            if repr(old_value) == repr(value):
+                return
+        except Exception:  # noqa: BLE001 - an unprintable old value is not proof of sameness
+            pass
+    raise TypeError(f"Non-finite value at {dot_path}{hit} (NaN or Infinity) "
+                    f"cannot be stored in state.json")
 
 
 class Modifier:
@@ -77,6 +101,8 @@ class Modifier:
 
             coerced = self._checked_value(dot_path, old_value, new_value,
                                           coerce=coerce, enforce=enforce)
+            if enforce:
+                _refuse_new_nonfinite(dot_path, coerced, old_value)
 
             source_file = self.store.source_file_for(dot_path)
             source_dict = self.store.wiring if source_file == "wiring" else self.store.state
@@ -165,6 +191,8 @@ class Modifier:
             policy = getattr(self.store, "type_policy", None)
             if policy is not None and enforce:
                 policy.check_subtree(self.store.merged, dot_path, value)
+            if enforce:
+                _refuse_new_nonfinite(dot_path, value)
 
             leaf_key = keys[-1]
             parent_keys = keys[:-1]

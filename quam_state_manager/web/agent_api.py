@@ -2184,10 +2184,10 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
             # press leaves SM exactly where it found it.
             why = _take_back_saved(r, ctx, staged, before)
             if why is None:
-                out["error"] += " -- nothing was written; the approval's values were taken back out of SM"
+                out["error"] += "; nothing was written, and the approval's values were taken back out of SM"
             else:
                 out["saved_in_working_copy"] = True
-                out["error"] += (" -- the values are saved in SM's working copy (unapplied) and could not be "
+                out["error"] += ("; the values are saved in SM's working copy (unapplied) and could not be "
                                  f"taken back ({why}); a human decides in the window")
         return out
     if r._change_count() == 0 and not ctx.get("live_diverged"):
@@ -2812,6 +2812,30 @@ def approvals_list():
     return jsonify(ok=True, pending=pend, recent=recent, waiting=len(pend))
 
 
+def _finite_or_none(v):
+    """The value as a JSON response shows it: every non-finite number is null."""
+    import math
+    if isinstance(v, dict):
+        return {k: _finite_or_none(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_finite_or_none(x) for x in v]
+    if isinstance(v, float) and not math.isfinite(v):
+        return None
+    return v
+
+
+def _nonfinite_masked(proposed_new, sent_new) -> bool:
+    """True when a proposal holds a non-finite number and the value sent back is
+    just its null-masked display (what the card shows and sends untouched)."""
+    from quam_state_manager.core.type_policy import nonfinite_where
+    if nonfinite_where(proposed_new) is None:
+        return False
+    try:
+        return _finite_or_none(proposed_new) == _finite_or_none(sent_new)
+    except Exception:  # noqa: BLE001 -- an odd value is judged by the stage door
+        return False
+
+
 @agent_bp.route("/approvals/<aid>/<verb>", methods=["POST"])
 def approvals_decide(aid: str, verb: str):
     """approve / reject, by a person. Approving ``writes`` stages them as the
@@ -2853,6 +2877,18 @@ def approvals_decide(aid: str, verb: str):
                     + " was not among them", 400)
             # keep each proposal's own `old`: the value is the person's to
             # change, the anchor it is compared against is not
+            # a node that proposed NaN or Infinity is shown null (JSON has no
+            # such number), so the card sends that null back unchanged. That
+            # null is the display, never a value the person chose: writing it
+            # would erase a calibrated value with nothing.
+            masked = [str(w.get("path")) for w in writes
+                      if _nonfinite_masked(proposed[str(w.get("path"))].get("new"), w.get("new"))]
+            if masked:
+                return _err(
+                    "the node proposed a value that is not a finite number (NaN or Infinity) for "
+                    + ", ".join(masked[:6])
+                    + (" and %d more" % (len(masked) - 6) if len(masked) > 6 else "")
+                    + "; type a value for it, or untick it", 409)
             writes = [dict(proposed[str(w.get("path"))], new=w.get("new"))
                       for w in writes]
         if verb == "approve" and cur.get("kind") == "writes" and writes is None:
@@ -3349,6 +3385,9 @@ def _approval_view(ap: dict, store) -> dict:
         elif w.get("created") and not w.get("deleted") and _new_key_root(
                 store, str(w.get("path")), w.get("new"), _resized) is not None:
             w2["new_key"] = True          # staged as a key creation; the card says "new key"
+        from quam_state_manager.core.type_policy import nonfinite_where
+        if nonfinite_where(w.get("new")) is not None:
+            w2["nonfinite"] = True        # the card says the node gave no finite number
         if not (w2.get("created") or w2.get("deleted")):
             try:
                 target = r._resolve_edit_path(store, str(w.get("path"))) or str(w.get("path"))

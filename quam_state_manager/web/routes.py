@@ -12111,8 +12111,8 @@ def _agent_apply_hold(ctx: dict):
     except Exception:  # noqa: BLE001
         logger.debug("approval wake failed", exc_info=True)
     return jsonify(ok=False, held=True, applied=False, approval=approvals.summary(ap),
-                   message=f"held for approval: card {ap['id']} ({len(writes)} value(s)); "
-                           "nothing was written to the chip"), 202
+                   message=f"held for approval ({len(writes)} value(s)); nothing reaches the chip "
+                           "until a person approves the card"), 202
 
 def _agent_held_paths(changes) -> list:
     """D-45: the pending rows an agent staged (actor ``by_<agent>``)."""
