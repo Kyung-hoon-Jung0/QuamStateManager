@@ -534,8 +534,43 @@ def _port_cfg(cfg: dict, port):
     return outs.get(port[1], outs.get(str(port[1]))), "opx"
 
 
+def plain(v):
+    """*v* with numpy scalars (and containers of them) turned into Python
+    numbers, so ``json.dumps`` never fails on a value from the lab's config.
+    A numpy floating value stays a float (an integral one is NOT made an
+    int: the length rule judges the value as the config holds it)."""
+    if isinstance(v, dict):
+        return {k: plain(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [plain(x) for x in v]
+    if type(v).__module__ == "numpy" and hasattr(v, "item"):
+        try:
+            return v.item()
+        except Exception:  # noqa: BLE001
+            return repr(v)
+    return v
+
+
+def _nonfinite(values) -> int:
+    n = 0
+    for v in values:
+        try:
+            if not math.isfinite(float(v)):
+                n += 1
+        except (TypeError, ValueError):
+            n += 1
+    return n
+
+
 def op_data(cfg: dict, element: str, operation: str, max_samples: int = _MAX_SAMPLES) -> dict:
-    """What the generated config holds for one played operation."""
+    """What the generated config holds for one played operation. The
+    waveform carries ``nonfinite`` (how many samples are inf / NaN / not a
+    number; they appear as None in ``samples``) and ``error`` when it cannot
+    be read at all."""
+    return plain(_op_data(cfg, element, operation, max_samples))
+
+
+def _op_data(cfg, element, operation, max_samples):
     rec = {"element": element, "operation": operation, "found": False,
            "error": None, "length": None, "waveform": None, "port": None,
            "port_kind": None, "delay": None, "sampling_rate": None,
@@ -554,15 +589,31 @@ def op_data(cfg: dict, element: str, operation: str, max_samples: int = _MAX_SAM
     wfs = pulse.get("waveforms") or {}
     wname = wfs.get("single", wfs.get("I"))
     rec["iq"] = "Q" in wfs or any(k in el_cfg for k in ("mixInputs", "MWInput", "RF_inputs"))
-    wf = (cfg.get("waveforms") or {}).get(wname) or {}
-    if wf.get("type") == "constant":
-        rec["waveform"] = {"type": "constant", "sample": wf.get("sample")}
+    wf = (cfg.get("waveforms") or {}).get(wname)
+    if not isinstance(wf, dict):
+        rec["waveform"] = {"type": None, "error": f"waveform {wname!r} is not in the config",
+                           "nonfinite": 0}
+    elif wf.get("type") == "constant":
+        if "sample" not in wf or wf.get("sample") is None:
+            rec["waveform"] = {"type": "constant", "error": "the constant waveform has no sample",
+                               "nonfinite": 0}
+        else:
+            s = plain(wf.get("sample"))
+            bad = _nonfinite([s])
+            rec["waveform"] = {"type": "constant", "sample": None if bad else float(s),
+                               "nonfinite": bad}
     else:
         samples = list(wf.get("samples") or [])
+        bad = _nonfinite(samples)
+        try:
+            head = _floats(samples[:max_samples])
+        except (TypeError, ValueError):
+            head = [None] * min(len(samples), max_samples)
         rec["waveform"] = {"type": wf.get("type") or "arbitrary",
-                           "samples": _floats(samples[:max_samples]),
-                           "total": len(samples),
-                           "truncated": len(samples) > max_samples}
+                           "samples": head, "total": len(samples),
+                           "truncated": len(samples) > max_samples, "nonfinite": bad}
+        if not samples:
+            rec["waveform"]["error"] = "the waveform has no samples"
     port = _element_port(el_cfg)
     rec["port"] = port
     pc, kind = _port_cfg(cfg, port)
@@ -608,6 +659,20 @@ def _quam_config_origin(lab_dir) -> dict:
     return out
 
 
+def _err_text(exc, folders) -> str:
+    """``Type: message`` with the temporary chip folders replaced by
+    ``<chip>`` (both separators) BEFORE the text is cut, so the same error on
+    "before" and "after" reads the same."""
+    msg = f"{type(exc).__name__}: {exc}"
+    for f in folders:
+        if not f:
+            continue
+        for form in {f, f.replace("\\", "/"), f.replace("/", "\\"),
+                     f.replace("\\", "\\\\")}:
+            msg = msg.replace(form, "<chip>")
+    return msg[:600]
+
+
 def _check_gates(params: dict) -> dict:
     """Load the "before" and "after" chip folders and build both configs;
     on "after", run each named macro's ``apply()`` inside ``program()`` and
@@ -618,6 +683,8 @@ def _check_gates(params: dict) -> dict:
 
     The config is built ONCE per folder; each gate gets its own
     ``program()``, so the order of the gates does not change any answer.
+    Known limit: all gates of one run share ONE loaded machine, so a lab
+    ``apply()`` that mutates the machine could make the order matter.
 
     Never saves a machine and never writes into the folders. The only guard
     added for the lab's code is ``QUAM_STATE_PATH`` pointing at "after"; a
@@ -633,6 +700,7 @@ def _check_gates(params: dict) -> dict:
         os.environ["QUAM_STATE_PATH"] = after_folder
     try:
         root_class = params.get("root_class")
+        folders = [params.get("before"), after_folder]
         bmachine, res["before"], _c = _chip_side(params.get("before"), root_class)
         del _c
         machine, res["after"], cfg = _chip_side(after_folder, root_class)
@@ -647,7 +715,7 @@ def _check_gates(params: dict) -> dict:
                     _apply_in_program(bmachine, path)
                     res["before_gates"][path] = {"error": None}
                 except BaseException as exc:  # noqa: BLE001
-                    res["before_gates"][path] = {"error": f"{type(exc).__name__}: {exc}"[:600]}
+                    res["before_gates"][path] = {"error": _err_text(exc, folders)}
         if machine is not None:
             try:
                 from qm import generate_qua_script
@@ -663,7 +731,7 @@ def _check_gates(params: dict) -> dict:
                         raise RuntimeError(qm_error)
                     g["script"] = generate_qua_script(prog)
                 except BaseException as exc:  # noqa: BLE001 -- the lab's own check
-                    g["error"] = f"{type(exc).__name__}: {exc}"[:600]
+                    g["error"] = _err_text(exc, folders)
                 if g["script"] and cfg:
                     g["ops"] = [op_data(cfg, el, op, max_samples)
                                 for el, op in played_ops(g["script"])]

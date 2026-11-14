@@ -365,11 +365,135 @@ def test_run_cold_sets_the_typed_timeout_flag(monkeypatch, tmp_path):
     assert out["timed_out"] is True
 
 
+@pytest.mark.parametrize("bad", [float("inf"), float("nan"), -float("inf")])
+def test_non_finite_sample_fails_range_and_preview(bad):
+    samples = _wave(0.2)
+    samples[3] = bad
+    cfg = _cfg(samples=samples)
+    ops = _ops(cfg)
+    assert ops[0]["waveform"]["nonfinite"] == 1
+    json.dumps(ops, allow_nan=False)
+    res = gate_check.evaluate([GATE], _ran(cfg=cfg, ops=ops), PREVIEW)
+    c = _checks(res)
+    assert c["range"] == "fail" and "cz_pulse contains values that are not numbers" in _msg(res, "range")
+    assert c["preview"] == "fail" and not res["ok"]
+
+
+def test_non_finite_constant_fails_range():
+    cfg = _cfg()
+    cfg["waveforms"]["cz.wf"] = {"type": "constant", "sample": float("nan")}
+    res = gate_check.evaluate([GATE], _ran(cfg=cfg))
+    assert _checks(res)["range"] == "fail"
+
+
+def test_unreadable_waveform_is_never_counted_as_checked():
+    cfg = _cfg()
+    cfg["pulses"]["cz_pulse.pulse"]["waveforms"]["single"] = "missing.wf"
+    res = gate_check.evaluate([GATE], _ran(cfg=cfg), PREVIEW)
+    c = _checks(res)
+    assert c["range"] == "skipped" and "missing.wf" in _msg(res, "range")
+    assert c["preview"] == "skipped" and "missing.wf" in _msg(res, "preview")
+    cfg["waveforms"]["missing.wf"] = {"type": "constant"}
+    res = gate_check.evaluate([GATE], _ran(cfg=cfg))
+    assert _checks(res)["range"] == "skipped" and "no sample" in _msg(res, "range")
+
+
+def test_numpy_numbers_from_the_config_are_plain():
+    np = pytest.importorskip("numpy")
+    cfg = _cfg(length=np.int64(N), samples=list(np.array(_wave(0.2))))
+    ops = _ops(cfg)
+    json.dumps(ops)
+    assert type(ops[0]["length"]) is int
+    assert _checks(gate_check.evaluate([GATE], _ran(cfg=cfg, ops=ops)))["length"] == "pass"
+    ops = _ops(_cfg(length=np.float64(16.0)))
+    assert type(ops[0]["length"]) is float
+    assert _checks(gate_check.evaluate([GATE], _ran(ops=ops)))["length"] == "fail"
+
+
+@pytest.mark.parametrize("stmt,status", [
+    ('play("cz_pulse", "q1.z", duration=2)', "fail"),
+    ('play("cz_pulse", "q1.z", duration=0)', "fail"),
+    ('wait(3, "q1.z")', "fail"),
+    ('play("cz_pulse", "q1.z", duration=4)', "pass"),
+    ('wait(4, "q1.z")', "pass"),
+])
+def test_play_time_duration_minimum(stmt, status):
+    script = SCRIPT.replace('play("cz_pulse", "q1.z")', stmt + '\n    play("cz_pulse", "q1.z")')
+    res = gate_check.evaluate([GATE], _ran(script=script))
+    assert _checks(res)["length"] == status
+    if status == "fail":
+        assert stmt in _msg(res, "length")
+
+
+def test_runner_error_text_drops_the_temp_folders():
+    b, a = r"C:\tmp\sm_chipcopy_x\before", r"C:\tmp\sm_chipcopy_x\after"
+    e1 = runner_mod._err_text(RuntimeError(f"no file {b}\\q1"), [b, a])
+    e2 = runner_mod._err_text(RuntimeError(f"no file {a.replace(chr(92), '/')}/q1"), [b, a])
+    assert "sm_chipcopy_x" not in e1 + e2 and e1.replace("\\", "/") == e2.replace("\\", "/")
+
+
+def test_a_create_under_the_gate_never_downgrades_to_note():
+    err = "AssertionError: lines differ"
+    ran = _ran(error=err, before_gates={PATH: {"error": err}})
+    assert _checks(gate_check.evaluate([GATE], ran))["ops"] == "note"
+    res = gate_check.evaluate([GATE], ran, created_paths=[PATH + ".extra_field"])
+    assert _checks(res)["ops"] == "fail"
+    res = gate_check.evaluate([GATE], ran, created_paths=["qubits.q1.z.operations.other"])
+    assert _checks(res)["ops"] == "note"
+
+
+def test_preview_coverage_is_stated():
+    pv = {GATE: {("q1.z", "cz_pulse"): _wave(0.2), ("q9.z", "ghost"): [0.1]}}
+    res = gate_check.evaluate([GATE], _ran(), pv)
+    assert _checks(res)["preview"] == "note"
+    assert "1 of 1 played" in _msg(res, "preview") and "q9.z ghost" in _msg(res, "preview")
+    script = SCRIPT.replace('play("cz_pulse", "q1.z")',
+                            'play("cz_pulse", "q1.z")\n    play("other", "q2.z")')
+    cfg = _cfg()
+    cfg["elements"]["q2.z"] = {"singleInput": {"port": ["con1", 1, 1]},
+                               "operations": {"other": "cz_pulse.pulse"}}
+    res = gate_check.evaluate([GATE], _ran(script=script, cfg=cfg), PREVIEW)
+    assert "1 of 2 played" in _msg(res, "preview") and "No preview for: q2.z other" in \
+        _msg(res, "preview")
+
+
+@pytest.mark.parametrize("bad", [None, [float("nan")] * N, ["x"] * N, {"a": 1}])
+def test_bad_preview_entry_only_skips_the_preview(bad):
+    res = gate_check.evaluate([GATE], _ran(), {GATE: {("q1.z", "cz_pulse"): bad}})
+    c = _checks(res)
+    assert c["preview"] == "skipped"
+    assert all(c[k] == "pass" for k in gate_check.CHECKS if k != "preview")
+
+
+def test_leftover_folder_reported(tmp_path, monkeypatch):
+    from quam_state_manager.core import chip_copy
+    monkeypatch.setattr(chip_copy, "REMOVE_PAUSE_S", 0)
+    calls = []
+
+    def stuck(path, *a, **k):
+        calls.append(path)
+        raise PermissionError("in use")
+    monkeypatch.setattr(chip_copy.shutil, "rmtree", stuck)
+    res = gate_check.check_gates(_store(tmp_path), "python.exe", [GATE],
+                                 runner=lambda *a, **k: {"status": "timeout", "error": "t",
+                                                         "data": None})
+    assert res["leftover"] and len(calls) == chip_copy.REMOVE_TRIES
+    json.dumps(res)
+
+
 # --------------------------------------------------------------- real env
 
 def _find_env_python():
+    """The env the other real-env tests use, else the first QM-capable env
+    the generator's own discovery finds (``test_config_generator``'s rule)."""
     python = Path(r"C:\ProgramData\miniconda3\envs\qsm_official_ext\python.exe")
-    return str(python) if python.is_file() else None
+    if python.is_file():
+        return str(python)
+    from quam_state_manager.core.config_generator import discover_envs, probe_env
+    for env in discover_envs():
+        if probe_env(env["python"])["usable"]:
+            return env["python"]
+    return None
 
 
 def test_real_env_copy_gate_and_broken_gate(tmp_path, monkeypatch):
@@ -412,7 +536,12 @@ def test_real_env_copy_gate_and_broken_gate(tmp_path, monkeypatch):
     assert res["checked"], res
     ok = {k: v["status"] for k, v in gate_check.gate_result(res, pair, "cz_copy")["checks"].items()}
     assert ok["load_config"] == "pass" and ok["ops"] == "pass", gate_check.gate_result(res, pair, "cz_copy")
-    assert ok["timeline"] in ("pass", "note")
+    assert ok["timeline"] == "pass" and ok["length"] == "pass", gate_check.gate_result(res, pair, "cz_copy")
+    copy_entry = gate_check.gate_result(res, pair, "cz_copy")
+    assert copy_entry["timeline"]["rows"], copy_entry
+    assert "all 0 played" not in copy_entry["checks"]["ops"]["message"]
+    rng = copy_entry["checks"]["range"]
+    assert rng["status"] == "pass" or (rng["status"] == "skipped" and rng["message"]), rng
     broken = gate_check.gate_result(res, pair, "cz_broken")["checks"]["ops"]
     assert broken["status"] == "fail" and "no_such_op" in broken["message"], broken
     assert res["quam_config"] is not None

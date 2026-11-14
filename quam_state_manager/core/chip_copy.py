@@ -16,6 +16,9 @@ copy or live file is touched. :func:`store_at_seq` answers, under the lock,
 whether the store is still at the sequence value the copies were read at.
 :func:`write_chip_folder` is the one folder writer (the add / remove env check
 uses it too).
+
+Known limit: creates carry no key position, so the key ORDER in "after" may
+differ from a later write that inserts at an index; the content is equal.
 """
 
 from __future__ import annotations
@@ -25,7 +28,8 @@ import json
 import marshal
 import shutil
 import tempfile
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -37,6 +41,8 @@ class ChipCopies:
     seq: int
     root: Path
     root_class: str | None = None
+    #: the store the copies were read from (identity, never compared by value)
+    store: Any = field(default=None, compare=False, repr=False)
 
 
 class CreateError(ValueError):
@@ -111,17 +117,44 @@ def make_chip_copies(store, creates: Iterable[tuple[str, Any]] = (), *,
         shutil.rmtree(str(root.resolve()), ignore_errors=True)
         raise
     return ChipCopies(before=before, after=after, seq=seq, root=root,
-                      root_class=root_class if isinstance(root_class, str) else None)
+                      root_class=root_class if isinstance(root_class, str) else None,
+                      store=store)
 
 
-def remove_chip_copies(copies: ChipCopies | None) -> None:
-    """Remove both folders (and their common parent)."""
+REMOVE_TRIES = 5
+REMOVE_PAUSE_S = 0.2
+
+
+def remove_chip_copies(copies: ChipCopies | None) -> str | None:
+    """Remove both folders (and their common parent). On Windows a handle
+    of a stopped child may still be open for a moment, so the removal is
+    retried; returns the path left behind when it never succeeds (else
+    None), so the caller can show it and retry."""
     if copies is None:
-        return
-    shutil.rmtree(str(Path(copies.root).resolve()), ignore_errors=True)
+        return None
+    target = Path(copies.root).resolve()
+    for n in range(REMOVE_TRIES):
+        try:
+            shutil.rmtree(str(target))
+            return None
+        except FileNotFoundError:
+            return None
+        except OSError:
+            if n + 1 < REMOVE_TRIES:
+                time.sleep(REMOVE_PAUSE_S)
+    return str(target) if target.exists() else None
 
 
-def store_at_seq(store, seq: int) -> bool:
-    """True when the store is still at *seq* (read under the store lock)."""
+def store_at_seq(store, copies) -> bool:
+    """True when *store* is the store the copies were read from and is
+    still at their sequence value (read under the store lock). *copies* is
+    a :class:`ChipCopies` (or a bare sequence value, which checks the
+    counter only)."""
+    if isinstance(copies, ChipCopies):
+        if copies.store is not None and copies.store is not store:
+            return False
+        seq = copies.seq
+    else:
+        seq = copies
     with store._lock:
         return store.mutation_seq == seq

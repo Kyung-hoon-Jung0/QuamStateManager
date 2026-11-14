@@ -102,6 +102,51 @@ def test_store_at_seq_false_after_change(tmp_path):
         chip_copy.remove_chip_copies(copies)
 
 
+def test_store_at_seq_false_for_another_store_at_the_same_counter(tmp_path):
+    a = QuamStore(_chip(tmp_path))
+    (tmp_path / "b").mkdir()
+    b = QuamStore(_chip(tmp_path / "b"))
+    assert a.mutation_seq == b.mutation_seq
+    copies = chip_copy.make_chip_copies(a, [])
+    try:
+        assert chip_copy.store_at_seq(a, copies)
+        assert not chip_copy.store_at_seq(b, copies)
+    finally:
+        chip_copy.remove_chip_copies(copies)
+
+
+def test_removal_retries_then_succeeds(tmp_path, monkeypatch):
+    store = QuamStore(_chip(tmp_path))
+    copies = chip_copy.make_chip_copies(store, [])
+    monkeypatch.setattr(chip_copy, "REMOVE_PAUSE_S", 0)
+    real = chip_copy.shutil.rmtree
+    calls = []
+
+    def flaky(path, *a, **k):
+        calls.append(path)
+        if len(calls) <= 2:
+            raise PermissionError("in use")
+        real(path, *a, **k)
+    monkeypatch.setattr(chip_copy.shutil, "rmtree", flaky)
+    assert chip_copy.remove_chip_copies(copies) is None
+    assert len(calls) == 3 and not copies.root.exists()
+
+
+def test_removal_that_never_succeeds_names_the_leftover(tmp_path, monkeypatch):
+    store = QuamStore(_chip(tmp_path))
+    copies = chip_copy.make_chip_copies(store, [])
+    monkeypatch.setattr(chip_copy, "REMOVE_PAUSE_S", 0)
+    real = chip_copy.shutil.rmtree
+    monkeypatch.setattr(chip_copy.shutil, "rmtree",
+                        lambda *a, **k: (_ for _ in ()).throw(PermissionError("in use")))
+    try:
+        left = chip_copy.remove_chip_copies(copies)
+        assert left and Path(left) == copies.root.resolve()
+    finally:
+        monkeypatch.setattr(chip_copy.shutil, "rmtree", real)
+        chip_copy.remove_chip_copies(copies)
+
+
 def test_lock_not_held_while_the_lab_check_runs(tmp_path):
     """While the runner works another thread takes the store lock at once,
     and the runner sees temp folders, never the chip folder."""

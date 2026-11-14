@@ -97,7 +97,7 @@ def _signed_peak(info: dict) -> float:
     wf = info.get("waveform") or {}
     if wf.get("type") == "constant":
         return float(wf.get("sample") or 0.0)
-    samples = [float(s) for s in (wf.get("samples") or [])]
+    samples = [float(s) for s in (wf.get("samples") or []) if s is not None]
     if not samples:
         return 0.0
     return max(samples, key=abs)
@@ -226,3 +226,37 @@ def _play(call, kw, stmt, table, clocks) -> TimelineRow:
     return TimelineRow(element=el, port=info.get("port"), operation=op,
                        start_ns=t0 + delay, end_ns=t0 + length + delay,
                        level=_signed_peak(info) * scale, scale=scale)
+
+
+#: QUA's shortest ``duration=`` / ``wait`` (clock cycles of 4 ns, so 16 ns)
+MIN_CYCLES = 4
+
+
+def short_timing(script) -> list[str]:
+    """The ``play(..., duration=n)`` and ``wait(n, ...)`` statements whose
+    literal *n* is not a positive integer of at least :data:`MIN_CYCLES`
+    clock cycles. A real-time (non-literal) *n* is not judged here. Never
+    raises: an unreadable script gives an empty list."""
+    try:
+        src = _body(script if isinstance(script, str) else "")
+        tree = ast.parse(src)
+        out = []
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+                continue
+            arg = None
+            if node.func.id == "play":
+                arg = next((k.value for k in node.keywords if k.arg == "duration"), None)
+            elif node.func.id == "wait" and node.args:
+                arg = node.args[0]
+            if arg is None:
+                continue
+            try:
+                n = ast.literal_eval(arg)
+            except Exception:  # noqa: BLE001 -- a real-time value
+                continue
+            if isinstance(n, bool) or not isinstance(n, int) or n < MIN_CYCLES:
+                out.append((ast.get_source_segment(src, node) or "").strip())
+        return out
+    except Exception:  # noqa: BLE001
+        return []
