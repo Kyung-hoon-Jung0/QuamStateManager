@@ -1,0 +1,41 @@
+{# The one status line of a CZ gate (web/gate_status_routes.py, core/gate_status.py).
+   `line`: {pair, gate, items, pills, active, present, edit_paths, note, note_tone}.
+   One row: the gate's name, the pills that say something, the actions, and a
+   "details" disclosure listing every item with its explanation. Which items
+   are pills is decided by core/gate_status (item.pill), not here. #}
+{% import "_ui.html" as ui %}
+<div class="gate-status" data-gate-pair="{{ line.pair }}" data-gate="{{ line.gate }}">
+    <div class="gate-status-row">
+        <code class="ui-chip">{{ line.gate }}</code>
+        <span class="gate-status-items">{% for it in line.pills %}<span class="ui-pill ui-pill--{{ it.tone }}" data-status-key="{{ it.key }}"{% if it.why %} title="{{ it.why }}"{% endif %}>{{ it.text }}</span>{% endfor %}</span>
+        <details class="ui-disclosure gate-status-details">
+            <summary class="ui-disclosure-summary">details</summary>
+            <dl class="ui-text-quiet gate-status-details-list">
+                {% for it in line.details or line['items'] %}<dt data-status-key="{{ it.key }}">{{ it.text }}</dt><dd>{{ it.why }}</dd>{% endfor %}
+            </dl>
+        </details>
+        {% if line.present %}
+        <span class="gate-status-actions">
+            {% if line.edit_paths %}
+            <button type="button" class="btn-sm outline secondary gate-status-edit"
+                    hx-get="/pulse/detail?{% for p in line.edit_paths %}paths={{ p | urlencode }}{% if not loop.last %}&amp;{% endif %}{% endfor %}"
+                    hx-target="#inspector-pane" hx-swap="innerHTML"
+                    title="Open this gate's pulses to edit their values">Edit values</button>
+            {% endif %}
+            {% if not line.active %}
+            <button type="button" class="btn-sm outline secondary gate-status-activate"
+                    hx-post="/api/pulse/cz-gate/make-active"
+                    hx-vals='{{ ({"pair": line.pair, "gate": line.gate, "scope": "list"} if in_list else {"pair": line.pair, "gate": line.gate}) | tojson }}'
+                    hx-target="{{ 'closest .gate-status-list' if in_list else 'closest .gate-status' }}" hx-swap="outerHTML"
+                    title="Check the gate with the lab's code, then point the pair's cz at it (one Ctrl+Z)">Make active</button>
+            {% endif %}
+            <button type="button" class="btn-sm outline secondary gate-status-delete"
+                    hx-get="/pulse/cz-gate/delete-offer?pair={{ line.pair | urlencode }}&amp;gate={{ line.gate | urlencode }}"
+                    hx-target="next .gate-status-slot" hx-swap="innerHTML"
+                    title="Show what goes with this gate before deleting">Delete</button>
+        </span>
+        {% endif %}
+    </div>
+    {% if line.note %}{% if line.note_tone == 'danger' %}{% with message=line.note %}{% include '_gate_fail.html' %}{% endwith %}{% else %}{{ ui.ui_callout(line.note_tone, 'Note', line.note) }}{% endif %}{% endif %}
+    <div class="gate-status-slot" role="status" aria-live="polite"></div>
+</div>
