@@ -634,6 +634,13 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
     ok(last().layout.shapes.some((x2) => x2.meta && x2.meta.lit), 'hovering the third row lights its bracket');
     hv.setLineHidden('q2.z', true);
     ok(!last().layout.shapes.some((x2) => x2.meta && x2.meta.lit), 'after a line is hidden no bracket stays lit');
+    // a pair that survives the rebuild is not left lit either (the pointer is no longer on a row)
+    hv.setLineHidden('q2.z', false);
+    const rowQ1C = [...lastRoot().querySelectorAll('[data-pair-key]')].find((r) => r.getAttribute('data-pair-key') === 'q1.zc');
+    rowQ1C.dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true }));
+    hv.setLineHidden('q2.z', true);
+    ok(last().layout.shapes.some((x2) => x2.name === 'bracket') && !last().layout.shapes.some((x2) => x2.meta && x2.meta.lit),
+       'a rebuilt list clears the highlight even when the lit pair stays listed');
     // listeners do not pile up when the list is rebuilt
     const live0 = window.__live;
     for (let k = 0; k < 10; k++) { hv.setLineHidden('q2.z', k % 2 === 0); }

@@ -1241,10 +1241,11 @@
             // each view shows only its own vertical-scale control
             [scaleLab, seg].forEach(function (n) { n.hidden = ov; });
             [heightSeg.label, heightSeg.group].forEach(function (n) { n.hidden = !ov; });
-            lastFigure = ov ? overlayFigure() : figure();
+            // the list first: a rebuild clears the highlight before the picture is made
             var pairsNow = timing();
             var listKey = JSON.stringify(pairsNow);
             if (listKey !== pairList.__key) { pairList.__key = listKey; buildPairList(pairsNow); }
+            lastFigure = ov ? overlayFigure() : figure();
             legend.hidden = !ov;
             legendBtns.forEach(function (lb) {
                 lb.btn.setAttribute("aria-pressed", state.hidden[lb.key] ? "false" : "true");
