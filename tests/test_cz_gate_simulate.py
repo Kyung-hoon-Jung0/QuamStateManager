@@ -123,9 +123,33 @@ def test_sim_length_without_a_timeline_is_the_sum_of_plays():
     assert rgs.sim_length_ns([], ops, 200) == (380, "sum")
 
 
+def _rows(*ends):
+    return [type("R", (), {"end_ns": e})() for e in ends]
+
+
+def test_sim_length_adds_start_latency_and_largest_delay():
+    # undelayed lines: end + start + pad
+    assert rgs.sim_length_ns(_rows(300), [{"delay": 0}], 200, 300) == (800, "timeline")
+    # the largest delay among the lines is added once
+    ops = [{"delay": 0}, {"delay": 160}, {"delay": 40}]
+    assert rgs.sim_length_ns(_rows(300), ops, 200, 300) == (960, "timeline")
+    assert rgs.sim_length_ns([], [{"length": 100, "delay": 160}], 200, 300) == (760, "sum")
+
+
+@pytest.mark.parametrize("bad", [None, "x", float("nan"), [], True])
+def test_sim_length_bad_delay_counts_zero(bad):
+    assert rgs.sim_length_ns(_rows(300), [{"delay": bad}], 200, 300) == (800, "timeline")
+
+
+def test_sim_length_near_the_limit_goes_over_it_not_shortened():
+    # 19500 + 300 + 200 = 20000 is allowed; one more 4 ns step is over
+    assert rgs.sim_length_ns(_rows(19_500), [], 200, 300)[0] == sim.MAX_SIM_NS
+    assert rgs.sim_length_ns(_rows(19_500), [{"delay": 8}], 200, 300)[0] > sim.MAX_SIM_NS
+
+
 def _main(monkeypatch, tmp_path, built, target=None, limit_s=60):
     job = {"folder": str(tmp_path / "chip"), "macro": "qubit_pairs.p.macros.cz",
-           "max_ns": sim.MAX_SIM_NS, "pad_ns": sim.PAD_NS, "limit_s": limit_s}
+           "max_ns": sim.MAX_SIM_NS, "pad_ns": sim.PAD_NS, "start_ns": sim.START_LATENCY_NS, "limit_s": limit_s}
     (tmp_path / "job.json").write_text(json.dumps(job), encoding="utf-8")
     work = tmp_path / "work"
     work.mkdir()
@@ -372,7 +396,7 @@ def test_start_runs_on_a_copy_and_writes_nothing(app):
     assert r.status_code == 200 and j["state"] == "starting", j
     job = json.loads(Path(app.procs[0].argv[2]).read_text(encoding="utf-8"))
     assert job["macro"] == "qubit_pairs.q1-2.macros.cz_sq"
-    assert job["pad_ns"] == 200 and job["max_ns"] == 20_000
+    assert job["pad_ns"] == 200 and job["start_ns"] == 300 and job["max_ns"] == 20_000
     assert job["folder"] == app.env["QUAM_STATE_PATH"]
     assert Path(job["folder"]).resolve() != live.resolve()
     # the password rides stdin only, never the job file

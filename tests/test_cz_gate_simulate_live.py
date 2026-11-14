@@ -26,7 +26,7 @@ def test_live_gate_simulation_returns_port_traces(tmp_path):
     work = tmp_path / "work"
     work.mkdir()
     job = {"folder": str(chip), "root_class": None, "macro": os.environ["SM_GATE_SIM_MACRO"],
-           "max_ns": 20000, "pad_ns": 600, "limit_s": 240}
+           "max_ns": 20000, "pad_ns": 200, "start_ns": 300, "limit_s": 240}
     (work / "job.json").write_text(json.dumps(job), encoding="utf-8")
     req = {"target": {"local": {}, "saas": {"email": os.environ["SAAS_EMAIL"],
                                             "host": os.environ["SAAS_HOST"],
@@ -47,4 +47,5 @@ def test_live_gate_simulation_returns_port_traces(tmp_path):
     res = json.loads(text)
     assert res["ok"], res.get("error")
     assert res["ports"] and all(pt["volts"] for pt in res["ports"])
+    assert not any(pt["cut_at_end"] for pt in res["ports"]), res.get("cut_note")
     assert max(abs(v) for pt in res["ports"] for v in pt["volts"]) > 0

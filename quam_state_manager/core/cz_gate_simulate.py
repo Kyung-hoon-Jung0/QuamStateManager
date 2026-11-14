@@ -10,7 +10,8 @@ and its credentials ladder; no setting of its own. A local QOP host is tried
 first when one is saved, then the QM-SaaS cloud simulator when its account is
 complete. Only ``simulate`` runs; nothing is played on an instrument.
 
-Limits: the simulated duration is the timeline's program time plus
+Limits: the simulated duration is the timeline's program time plus the
+largest output delay of the played lines, :data:`START_LATENCY_NS` and
 :data:`PAD_NS`, rounded up to 4 ns, and at most :data:`MAX_SIM_NS`. A run
 ends after :data:`LIMIT_LOCAL_S` on a local QOP, :data:`LIMIT_CLOUD_S` when
 the cloud simulator may be used; that is reported as ``timeout``.
@@ -34,6 +35,11 @@ from quam_state_manager.core import port_test_runs as ptr
 RUNNER = Path(__file__).resolve().parent.parent / "generator" / "run_gate_sim.py"
 
 PAD_NS = 200
+#: The simulator starts its output after the program start: about 250 ns on the
+#: cloud simulator version tested (a measured property, not a documented one),
+#: plus the port delay of a delayed line. The window must cover it, or a
+#: delayed line is cut before its end.
+START_LATENCY_NS = 300
 MAX_SIM_NS = 20_000
 LIMIT_LOCAL_S = 60.0
 LIMIT_CLOUD_S = 240.0
@@ -224,7 +230,7 @@ class Manager:
             return answer("busy"), 409
         copy = make_copy()
         job = {"folder": str(copy.after), "root_class": copy.root_class, "macro": macro,
-               "max_ns": MAX_SIM_NS, "pad_ns": PAD_NS, "limit_s": limit_s}
+               "max_ns": MAX_SIM_NS, "pad_ns": PAD_NS, "start_ns": START_LATENCY_NS, "limit_s": limit_s}
         meta = {"target": "saas" if target.get("saas") else "sim", "where": label,
                 "limit_s": limit_s}
         try:

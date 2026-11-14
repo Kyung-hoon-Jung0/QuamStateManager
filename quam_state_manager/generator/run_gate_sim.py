@@ -3,7 +3,7 @@
     python run_gate_sim.py JOB_JSON WORK_DIR        (connection on stdin)
 
 ``JOB_JSON`` holds no secret: ``{"folder", "root_class", "macro", "max_ns",
-"pad_ns", "limit_s"}`` (``folder`` is a temporary chip copy SM made). The
+"pad_ns", "start_ns", "limit_s"}`` (``folder`` is a temporary chip copy SM made). The
 connection is the first stdin line, ``{"target": {"local": {...}, "saas":
 {...}}}``; it carries the password, so it is read once and never written or
 printed. Stdin then stays open; end-of-file or a ``stop`` line (or a file
@@ -50,19 +50,29 @@ def _static_timeline():
     return mod
 
 
-def sim_length_ns(rows, ops, pad_ns: int) -> tuple[int, str]:
-    """``(ns, how)``: the timeline's end plus *pad_ns*, rounded up to 4 ns.
-    Without rows (the timeline cannot place the program) the sum of every
-    played length plus the largest port delay is used, an upper bound for a
-    program without loops."""
+def _delay_ns(op) -> int:
+    """The op's port delay in ns; a missing or non-numeric entry counts as 0."""
+    try:
+        d = op.get("delay") if isinstance(op, dict) else None
+        return max(int(d), 0) if d is not None and not isinstance(d, bool) else 0
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def sim_length_ns(rows, ops, pad_ns: int, start_ns: int = 0) -> tuple[int, str]:
+    """``(ns, how)``: the program end plus the largest output delay among the
+    played lines, plus *start_ns* (the simulator's start latency) and
+    *pad_ns*, rounded up to 4 ns. Without rows (the timeline cannot place the
+    program) the sum of every played length plus the largest port delay is the
+    program end, an upper bound for a program without loops."""
     ends = [int(r.end_ns) for r in rows or []]
+    max_delay = max([_delay_ns(o) for o in ops or []] or [0])
     if ends:
-        total, how = max(ends), "timeline"
+        total, how = max(ends) + max_delay, "timeline"
     else:
         lengths = [int(o.get("length") or 0) for o in ops or [] if isinstance(o, dict)]
-        delays = [int(o.get("delay") or 0) for o in ops or [] if isinstance(o, dict)]
-        total, how = sum(lengths) + (max(delays) if delays else 0), "sum"
-    ns = total + int(pad_ns)
+        total, how = sum(lengths) + max_delay, "sum"
+    ns = total + int(start_ns) + int(pad_ns)
     return -(-ns // 4) * 4, how
 
 
@@ -171,7 +181,8 @@ def build(job: dict) -> dict:
     plays, _unres, _readable = rpw._plays(script)
     ops = [rpw.op_data(cfg, el, op) for el, op in plays]
     tl = _static_timeline().static_timeline(script, ops)
-    ns, how = sim_length_ns(tl.get("rows"), ops, int(job.get("pad_ns") or 0))
+    ns, how = sim_length_ns(tl.get("rows"), ops, int(job.get("pad_ns") or 0),
+                          int(job.get("start_ns") or 0))
     return {"ok": True, "config": cfg, "program": prog, "plays": plays, "sim_ns": ns,
             "length_from": how, "cannot_draw": tl.get("cannot_draw")}
 
