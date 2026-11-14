@@ -365,6 +365,20 @@ def _previews(plan: dict) -> tuple[dict, list[str]]:
     return out, skipped
 
 
+def sync_now() -> dict:
+    """What the top bar's one sync control knows right now (the same
+    ``_sync_view`` it renders from, no second source): ``{"auto_push": bool,
+    "state": str | None, "unapplied": int}``. ``auto_push``: an Auto-Sync
+    session that pushes is armed, so a create also reaches the chip's files."""
+    try:
+        ctx = R._active_ctx()
+        sv = R._sync_view(ctx) or {}
+        return {"auto_push": bool(R._auto_apply_state(ctx)), "state": sv.get("state"),
+                "unapplied": int(sv.get("unapplied") or 0)}
+    except Exception:  # noqa: BLE001 -- unknown is said as unknown, never a guess
+        return {"auto_push": False, "state": None, "unapplied": 0}
+
+
 def headline(entry: dict | None, tl: dict | None, reason: str) -> str:
     """One short sentence for the verdict banner. A failed range check says
     which line would play what against which limit, from the drawn lanes;
@@ -433,7 +447,7 @@ def cz_gate_dialog():
     selected = want if any(p["id"] == want for p in pairs) else ""
     from quam_state_manager.web import diagram_remove_routes as DR
     data = {"pairs": pairs, "selected": selected, "classes": classes,
-            "env": DR.env_name(_env_python())}
+            "env": DR.env_name(_env_python()), "sync": sync_now()}
     return render_template("_cz_gate_dialog.html", data=data, selected=selected,
                            unknown_pair=want if want and not selected else "")
 
@@ -516,7 +530,7 @@ def api_cz_gate_check():
     tok = _remember({"store_id": chip_copy.store_id(store),
                      "seq": seq if seq is not None else pre_seq,
                      "plan_sig": sig, "body": body, "verdicts": verdicts, "sigs": sigs})
-    return jsonify(ok=True, status=(res or {}).get("status") or "not-run",
+    return jsonify(ok=True, status=(res or {}).get("status") or "not-run", sync=sync_now(),
                    why_not_checked=(res or {}).get("why_not_checked"),
                    leftover=(res or {}).get("leftover"),
                    plan_sig=sig, check_token=tok, pairs=out_pairs)
@@ -605,6 +619,7 @@ def api_cz_gate_create():
                             "paths": [c[0] for c in plans[pid]["creates"]]})
     R._reprobe_if_new_classes(store)
     resp = jsonify(ok=True, created=created, skipped=skipped, count=len(created), group=gid,
+                   sync=sync_now(),
                    tray_html=R._tray_html())
     resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
     return resp

@@ -100,6 +100,9 @@ function checkOk(body, opts) {
 }
 function respond(status, j) { return Promise.resolve({ ok: status < 400, status, json: () => Promise.resolve(j), text: () => Promise.resolve('') }); }
 window.fetch = (url, opt) => {
+    if (String(url).indexOf('/state/drift') === 0) {
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: true, sync: { state: driftState } }) });
+    }
     if (!opt || !opt.method) {
         return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(dialogHtml()) });
     }
@@ -111,8 +114,10 @@ window.fetch = (url, opt) => {
     if (q) { const r = q(body); return Array.isArray(r) ? respond(r[0], r[1]) : respond(200, r); }
     if (kind === 'plan') return respond(200, planOk(body));
     if (kind === 'check') return respond(200, checkOk(body));
-    return respond(200, { ok: true, created: [{ pair: 'q1-2', gate: body.gate_name || 'cz_new', state: 'verified', paths: ['a'] }], skipped: [], count: 1, tray_html: '' });
+    return respond(200, { ok: true, created: [{ pair: 'q1-2', gate: body.gate_name || 'cz_new', state: 'verified', paths: ['a'] }], skipped: [], count: 1, tray_html: '', sync: createSync });
 };
+let driftState = 'mine';
+let createSync = { auto_push: false, state: 'mine', unapplied: 1 };
 const charts = [];
 window.GateTimeline = { render: (host, data) => { charts.push(data); return { destroy() {} }; } };
 const ajax = [];
@@ -253,7 +258,9 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     // create
     prim().click();
     await settle();
-    ok(/Not on the chip yet: press Apply to write it/.test(alertText()) && $('#czg-status-slot'), 'success says Apply is still needed; the status slot is there');
+    ok(/In the working copy only: press Apply to write it to the chip\./.test(alertText()) && !/Not on the chip yet/.test(alertText())
+       && /In the working copy only/.test($('#czg-status').textContent) && $('#czg-status-slot'),
+       'Auto-Sync off: banner and foot say working copy only; the status slot is there');
     ok(!$('#czg-open-pair').hidden && prim().textContent === 'Close' && !$('#czg-form').contains(doc.activeElement), 'after create: Open the pair and Close; the focus is not left in the hidden form');
     prim().click();
     await settle();
@@ -340,6 +347,31 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
        'a lab refusal: one red row, then one quiet line for the four checks not run');
     ok(/\u201d Change the inputs and check again\./.test(alertText()), 'the lab\'s sentence is quoted, then SM\'s sentence');
     window.CzGate.close();
+
+    // Auto-Sync armed: the banner follows the app's sync state, never "not on the chip"
+    for (const [armedState, want] of [['synced', /Written to the chip by Auto-Sync\./], ['mine', /Auto-Sync is on: the top bar shows when it reaches the chip\./]]) {
+        createSync = { auto_push: true, state: armedState, unapplied: armedState === 'synced' ? 0 : 1 };
+        driftState = 'mine';
+        await window.CzGate.open({ pair: 'q1-2' });
+        await settle();
+        type($('#czg-name'), 'cz_auto_' + armedState);
+        await settle();
+        queue.check.push((b) => { const j = checkOk(b); j.sync = { auto_push: true, state: 'synced', unapplied: 0 }; return j; });
+        prim().click();
+        await settle();
+        if (armedState === 'synced') ok(/Auto-Sync is on: Create also writes the chip\./.test($('#czg-status').textContent), 'before Create with Auto-Sync on, the foot says Create also writes the chip');
+        prim().click();
+        await settle();
+        ok(want.test(alertText()) && !/In the working copy only/.test(alertText()), 'Auto-Sync on, sync state ' + armedState + ': the banner says ' + want);
+        if (armedState === 'mine') {
+            driftState = 'synced';
+            await tick(2300); await settle();
+            ok(/Written to the chip by Auto-Sync\./.test(alertText()) && /Written to the chip/.test($('#czg-status').textContent),
+               'when the top bar\'s state reaches synced, the banner says written by Auto-Sync');
+        }
+        window.CzGate.close();
+    }
+    createSync = { auto_push: false, state: 'mine', unapplied: 1 };
 
     // the chart component missing
     delete window.GateTimeline;

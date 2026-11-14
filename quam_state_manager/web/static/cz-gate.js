@@ -634,7 +634,13 @@
         var np = list.filter(function (c) { return c.state === 'pass'; }).length;
         var ns = list.length - nf - np;
         if (sum) sum.textContent = nf ? nf + ' failed, ' + np + ' passed' : np + ' of ' + list.length + ' passed' + (ns ? ', ' + ns + ' not checked' : '');
-        (p.previews_skipped || []).forEach(function (x) { host.appendChild(el('p', 'ui-text-quiet', 'No preview compared for ' + x)); });
+        var ranNot = cs.some(function (c) { return c.name === 'ops' && c.status === 'fail'; });
+        var pv = p.previews_skipped || [];
+        if (pv.length && !ranNot) {
+            var q = el('p', 'ui-text-quiet', 'No preview compared for ' + pv.length + (pv.length === 1 ? ' pulse' : ' pulses') + ': SM cannot draw its class itself.');
+            q.title = pv.join('\n');
+            host.appendChild(q);
+        }
     }
     function renderTiles(p) {
         var host = clear($('czg-tiles'));
@@ -745,7 +751,8 @@
         var verified = ok.length && ok.every(function (x) { return x.verdict.state === 'verified'; });
         setBusy(false, !ok.length ? 'Checked: nothing can be created. Change the inputs.'
             : (verified ? 'Checked with the lab code. ' : 'Not checked with the lab code. ')
-            + 'Press Create to add ' + (ok.length === 1 ? 'it' : 'the ' + ok.length + ' gates') + ' to the working copy.');
+            + 'Press Create to add ' + (ok.length === 1 ? 'it' : 'the ' + ok.length + ' gates') + ' to the working copy.'
+            + (ok.length && (c.sync || {}).auto_push ? ' ' + AUTO_NOTE : ''));
     }
     function check() {
         if (!S || S.busy) return Promise.resolve();
@@ -808,15 +815,47 @@
                 alertBox(callout('danger', 'Not created', 'The app did not answer (' + e + '). Nothing is known to be written; look at the pending changes, then try again.'));
             });
     }
+    /* After a create the dialog says what the app's own sync state says (the
+       server's sync_now, the same source as the top bar's control). */
+    var AUTO_NOTE = 'Auto-Sync is on: Create also writes the chip.';
+    var SYNC_WORDS = {
+        working: 'In the working copy only: press Apply to write it to the chip.',
+        written: 'Written to the chip by Auto-Sync.',
+        pending: 'Auto-Sync is on: the top bar shows when it reaches the chip.'
+    };
+    function syncWord(sync) {
+        if (!sync || !sync.auto_push) return 'working';
+        return sync.state === 'synced' ? 'written' : 'pending';
+    }
+    function createdWhy(word, skip) {
+        return SYNC_WORDS[word] + ' The gate is not active; the pair\'s cz stays as it was.'
+            + (skip.length ? ' Left out: ' + skip.join(' ') : '');
+    }
+    function watchSync(g, skip, tries) {
+        if (S !== g || tries <= 0) return;
+        setTimeout(function () {
+            if (S !== g) return;
+            fetch('/state/drift').then(function (r) { return r.json(); }).then(function (d) {
+                if (S !== g) return;
+                var sync = { auto_push: true, state: (d.sync || {}).state };
+                if (syncWord(sync) === 'written') {
+                    var w = $('czg-alert') && $('czg-alert').querySelector('.ui-verdict-why');
+                    if (w) w.textContent = createdWhy('written', skip);
+                    say(SYNC_WORDS.written);
+                    S.syncWord = 'written';
+                } else watchSync(g, skip, tries - 1);
+            }).catch(function () { watchSync(g, skip, tries - 1); });
+        }, 2000);
+    }
     function done(j) {
         S.phase = 'done';
         S.created = j;
         S.busy = false;
         var made = (j.created || []).map(function (c) { return c.gate + ' on ' + c.pair + (c.state !== 'verified' ? ' (not checked)' : ''); });
         var skip = (j.skipped || []).map(function (s) { return s.pair + ': ' + s.reason; });
-        alertBox(banner('ok', 'Created ' + made.join(', '),
-            'Not on the chip yet: press Apply to write it. The gate is not active; the pair\'s cz stays as it was.'
-            + (skip.length ? ' Left out: ' + skip.join(' ') : '')));
+        var word = syncWord(j.sync);
+        S.syncWord = word;
+        alertBox(banner('ok', 'Created ' + made.join(', '), createdWhy(word, skip)));
         // move the focus off the form before hiding it: a focused element that
         // disappears leaves the dialog without focus (Chrome then paints a stray mark)
         var pb = $('czg-primary');
@@ -831,8 +870,9 @@
         if (open) open.hidden = false;
         var cancel = $('czg-cancel');
         if (cancel) cancel.hidden = true;
-        say('');
+        say(SYNC_WORDS[word]);
         refresh();
+        if (word === 'pending') watchSync(S, skip, 15);
         if (window.htmx && document.body) {
             window.htmx.trigger(document.body, 'pulses-changed');
             window.htmx.trigger(document.body, 'diagnostics-changed');
