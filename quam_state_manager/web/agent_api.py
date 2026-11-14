@@ -1888,6 +1888,20 @@ def _take_back_saved(r, ctx, staged: list, before: dict) -> str | None:
     return None
 
 
+def _existing_leaf(store, path: str) -> bool:
+    """True when ``path`` is a key present in the chip right now and holds a
+    scalar (JSON null included). A row a capture flagged ``created`` because
+    its old value was null is then an ordinary edit; a key that is truly
+    absent, or a container, stays a structural change."""
+    from quam_state_manager.core.modifier import _navigate_to_parent
+    try:
+        parent, leaf = _navigate_to_parent(store.merged, path)
+        value = parent[int(leaf)] if isinstance(parent, list) else parent[leaf]
+    except (KeyError, IndexError, ValueError, TypeError):
+        return False
+    return not isinstance(value, (dict, list))
+
+
 def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan_id: str | None,
                   apply: bool, *, presser: str | None = None) -> dict:
     """Stage ``writes`` onto the chip's working copy as ONE group with the
@@ -1936,7 +1950,7 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
                 "error": "node writes could not be captured; nothing was written"}
     with store._lock:
         for w in writes:
-            if w.get("created") or w.get("deleted"):
+            if w.get("deleted") or (w.get("created") and not _existing_leaf(store, w["path"])):
                 unstaged.append({"path": w["path"], "why": "new/removed key -- SM stages existing leaves only; "
                                                             "apply the run's state from Datasets → Apply to chip"})
                 continue
@@ -3172,7 +3186,9 @@ def _approval_view(ap: dict, store) -> dict:
     rows = []
     for w in ap.get("writes") or []:
         w2 = dict(w)
-        if not (w.get("created") or w.get("deleted")):
+        if w.get("created") and not w.get("deleted") and _existing_leaf(store, str(w.get("path"))):
+            w2.pop("created", None)       # the same rule the approve door stages by
+        if not (w2.get("created") or w2.get("deleted")):
             try:
                 target = r._resolve_edit_path(store, str(w.get("path"))) or str(w.get("path"))
                 w2["now"] = _jsonable(store.get_value(target))
