@@ -1,36 +1,40 @@
 {#- Owner cell of one open QM, read from the owner marker in its config.
     Labels (PC names) are applied here, at render time only. Every text read from the
-    server or the names file goes through the owner_shown filter (escaped, capped). -#}
+    server or the names file goes through the owner_shown filter (escaped, capped).
+    Three text levels: the PC name or tag strong, the node normal, session and state quiet;
+    an unknown owner is quiet text; pills only for what needs attention. -#}
 {%- set same_tag_hint = "The marker carries the tag stored on this PC. A client that sets its own tag is not recognised, and a tag can be copied by another client." -%}
+{%- set owner_hint = "Owner is read from a marker element the client put in the QM's configuration." -%}
 {%- macro owner_tag(tag, pc_names, this_tag) -%}
-<span class="ui-opxmon-owner-tag">{% if pc_names.get(tag) %}{{ pc_names[tag]|owner_shown }} ({{ tag|owner_shown }}){% else %}{{ tag|owner_shown }}{% endif %}</span>{% if this_tag and tag == this_tag %} <span class="ui-badge ui-badge--accent ui-opxmon-this-pc" title="{{ same_tag_hint }}">same tag as this PC</span>{% endif %}
+<span class="ui-text-strong ui-opxmon-owner-tag">{% if pc_names.get(tag) %}{{ pc_names[tag]|owner_shown }} ({{ tag|owner_shown }}){% else %}{{ tag|owner_shown }}{% endif %}</span>{% if this_tag and tag == this_tag %} <span class="ui-pill ui-pill--accent ui-opxmon-this-pc" title="{{ same_tag_hint }}">same tag as this PC</span>{% endif %}
 {%- endmacro -%}
 {%- macro owner_cell(info, pc_names, this_tag) -%}
 <div class="ui-opxmon-owner" data-owner-kind="{{ info.kind }}">
 {%- if info.kind == 'unreported' -%}
-<span class="ui-note">Owner not reported: the monitor worker is from an older version; reopen the monitor.</span>
+<span class="ui-text-quiet">Owner not reported: the monitor worker is from an older version; reopen the monitor.</span>
 {%- elif info.kind == 'failed' -%}
-<span class="ui-note">Owner could not be worked out.</span>
+<span class="ui-text-quiet">Owner could not be worked out.</span>
 {%- elif info.kind == 'unread' -%}
-<span class="ui-note">Owner unknown: this QM's configuration could not be read.</span>
+<span class="ui-text-quiet">Owner unknown: this QM's configuration could not be read.</span>
 {%- elif info.kind == 'none' -%}
-<span class="ui-note">Not reported by the server (no owner marker).</span>
+<span class="ui-text-quiet">Not reported by the server (no owner marker).</span>
 {%- else -%}
-{%- if info.kind == 'several' %}<span class="ui-badge ui-badge--warn ui-opxmon-several">several markers ({{ info.markers|length }})</span>{% endif -%}
+{%- if info.kind == 'several' %}<span class="ui-pill ui-pill--warn ui-opxmon-several">several markers ({{ info.markers|length }})</span>{% endif -%}
 {%- for m in info.markers %}
 <div class="ui-opxmon-owner-marker" title="marker element {{ m.name|owner_shown(300) }}">
 {%- if m.parsed -%}
-<span class="ui-note">marker</span> {{ owner_tag(m.parsed.tag, pc_names, this_tag) }} <span class="ui-note">&middot; node {{ (m.parsed.node or 'none')|owner_shown }} &middot; session {{ m.parsed.session|owner_shown }} &middot; state {{ m.parsed.state|owner_shown }}</span>
+{{ owner_tag(m.parsed.tag, pc_names, this_tag) }} <span>node {{ (m.parsed.node or 'none')|owner_shown }}</span> <span class="ui-text-quiet">session {{ m.parsed.session|owner_shown }} &middot; state {{ m.parsed.state|owner_shown }}</span>
 {%- else -%}
-<span>marker present, not readable</span> <span class="ui-note">({{ m.version_text }}) <code>{{ m.name|owner_shown }}</code></span>
+<span class="ui-text-quiet">marker present, not readable ({{ m.version_text }})</span> <code class="ui-chip">{{ m.name|owner_shown }}</code>
 {%- endif -%}
 </div>
 {%- endfor %}
 {%- endif -%}
 </div>
 {%- endmacro -%}
-{%- macro owner_note() -%}
-<p class="ui-note ui-opxmon-owner-note">Owner is read from a marker element the client put in the QM's configuration; the server does not check it.</p>
+{#- The Owner column head: the claim sentence once per table, as a hint on the head. -#}
+{%- macro owner_head(any_marker) -%}
+<th class="ui-table-head" scope="col"{% if any_marker %} title="{{ owner_hint }}"{% endif %}>Owner{% if any_marker %} <span class="ui-text-quiet ui-opxmon-owner-note">set by the client; the server does not check it</span>{% endif %}</th>
 {%- endmacro -%}
 {%- macro owner_text(info, pc_names, this_tag) -%}
 {%- if info.kind == 'unreported' %}owner not reported (older monitor worker){% elif info.kind == 'failed' %}owner could not be worked out{% elif info.kind == 'unread' %}owner unknown (configuration not read){% elif info.kind == 'none' %}no owner marker{% else %}{% if info.kind == 'several' %}several markers: {% endif %}{% for m in info.markers %}{% if m.parsed %}marker {{ ((pc_names[m.parsed.tag] ~ ' (' ~ m.parsed.tag ~ ')') if pc_names.get(m.parsed.tag) else m.parsed.tag)|owner_shown }}{% if this_tag and m.parsed.tag == this_tag %} [same tag as this PC]{% endif %}, node {{ (m.parsed.node or 'none')|owner_shown }}{% else %}marker present, not readable ({{ m.version_text }}){% endif %}{% if not loop.last %}; {% endif %}{% endfor %}{% endif -%}

@@ -1093,6 +1093,96 @@ def _occupancy_verdict(answer, health_state, idle_states):
     return {'label': 'OPEN ' + str(len(qms)), 'reason': reason}
 
 
+def band_view(verdict_value, state, health, problem_details=None):
+    """Display values of the page's verdict band, from the verdict already computed.
+
+    Returns ``{'tone', 'next'}``: the tone is a state colour only when the state is known
+    (stale, starting and unconfigured are neutral); ``next`` is one next step or None."""
+    label = str(verdict_value.get('label') or '')
+    health = health or {}
+    if state == 'stale':
+        return {'tone': 'neutral', 'next': 'Values are from the last good read; waiting for a fresh answer.'}
+    if label.startswith('PROBLEM') or health.get('color') == 'red' or health.get('problem'):
+        return {'tone': 'danger', 'next': problem_details or None}
+    if state in ('unconfigured', 'starting'):
+        return {'tone': 'neutral', 'next': None}
+    if state != 'ok':
+        return {'tone': 'neutral', 'next': 'Values are from the last good read; waiting for a fresh answer.'}
+    if label == 'FREE':
+        return {'tone': 'ok', 'next': 'No action needed.'}
+    if label.startswith('BUSY'):
+        return {'tone': 'note', 'next': 'A job is running: ask its owner before closing anything (see Open QMs).'}
+    if 'idle' in label.lower():
+        return {'tone': 'warn', 'next': None}
+    return {'tone': 'note', 'next': 'No action needed; a QM can be closed under Clean up once it is idle.'}
+
+
+def qm_state(q, idle_value):
+    """The State cell of one open QM: a short fact, what it is measured from, its job statuses."""
+    jobs = q.get('jobs')
+    basis = (idle_value or {}).get('basis') or ''
+    if jobs is None:
+        fact = 'jobs unknown'
+    elif any(job_activity(j.get('status')) == 'active' for j in jobs):
+        fact = ', '.join(sorted({str(j.get('status') or 'active').lower() for j in jobs
+                                 if job_activity(j.get('status')) == 'active'}))
+    elif (idle_value or {}).get('idle'):
+        fact = 'idle'
+    elif not jobs:
+        fact = 'open, no job seen'
+    else:
+        fact = 'open, jobs finished'
+    statuses = 'unknown' if jobs is None else (', '.join(str(j.get('status')) for j in jobs) or 'none')
+    return {'fact': fact, 'basis': basis, 'jobs': statuses}
+
+
+def live_tiles(answer, idle_states, hottest, limit, state, failures):
+    """The four Live tiles. A tile carries a state tone only from a known abnormal value;
+    an unknown value is quiet (grey). ``failures`` = number of calls refused or unanswered."""
+    ans = answer or {}
+    fresh = state == 'ok'
+    qms = ans.get('open_qms')
+    tiles = []
+    if qms is None:
+        tiles.append({'label': 'Open QMs', 'value': 'unknown', 'note': 'QM list not read', 'tone': 'quiet'})
+    else:
+        idle = sum(bool((idle_states.get(q['id']) or {}).get('idle')) for q in qms)
+        tiles.append({'label': 'Open QMs', 'value': str(len(qms)),
+                      'note': (f'{idle} idle' if idle else ('none idle' if qms else 'no QM open')),
+                      'tone': 'warn' if idle and fresh else None})
+    if qms is None or any(q.get('jobs') is None for q in qms):
+        tiles.append({'label': 'Jobs running', 'value': 'unknown', 'note': 'job list not read', 'tone': 'quiet'})
+    else:
+        active = [q for q in qms if any(job_activity(j.get('status')) == 'active' for j in q.get('jobs') or [])]
+        n = sum(job_activity(j.get('status')) == 'active' for q in qms for j in q.get('jobs') or [])
+        tiles.append({'label': 'Jobs running', 'value': str(n),
+                      'note': (f'in {len(active)} QM' + ('s' if len(active) != 1 else '')) if n else 'running, queued or processing'})
+    if hottest is None:
+        tiles.append({'label': 'Hottest sensor', 'value': 'unknown', 'note': 'no temperature reading', 'tone': 'quiet'})
+    else:
+        over = limit is not None and hottest['value'] > limit
+        tiles.append({'label': 'Hottest sensor', 'value': '%.1f' % hottest['value'], 'unit': '°C',
+                      'note': str(hottest.get('label') or hottest.get('key')) + (' · limit %g °C' % limit if limit is not None else ' · no limit set'),
+                      'tone': 'danger' if over else None,
+                      'title': str(hottest.get('controller') or '') + ' / raw sensor ' + str(hottest.get('key'))})
+    qop = (ans.get('version') or {}).get('QOP')
+    if state == 'error':
+        note, tone = 'not answering', 'danger'
+    elif failures:
+        note, tone = f'{failures} call' + ('s' if failures != 1 else '') + ' refused or unanswered', 'warn'
+    elif not fresh:
+        note, tone = 'no fresh answer', 'quiet'
+    else:
+        note, tone = 'all calls answered', None
+    tiles.append({'label': 'Server', 'value': ('QOP ' + str(qop)) if qop else 'QOP not reported', 'note': note,
+                  'tone': tone if (qop or tone in ('danger', 'warn')) else 'quiet'})
+    if not fresh:
+        for t in tiles:
+            if t.get('tone') != 'danger':
+                t['tone'] = 'quiet'
+    return tiles
+
+
 class Monitor:
     """One poller per SM process. ``worker_factory(python, target)`` is
     injectable so tests drive it with fake answers."""

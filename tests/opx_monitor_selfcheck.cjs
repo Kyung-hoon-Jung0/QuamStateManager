@@ -38,7 +38,7 @@ const tick = () => new Promise(r => setTimeout(r, 20));
   ok(w.document.querySelector('.ui-opxmon-confirm') && w.__asked.length === 0, 'D-25 inline confirmation replaces native confirm');
   ok(/QM-x/.test(w.document.querySelector('.ui-opxmon-confirm').textContent) && /con1\/2, con1\/3/.test(w.document.querySelector('.ui-opxmon-confirm').textContent) && /Running/.test(w.document.querySelector('.ui-opxmon-confirm').textContent),
      'the question names the QM, its FEMs and its jobs');
-  ok(w.document.querySelectorAll('.ui-opxmon-confirm p').length === 2 && (w.document.querySelector('.ui-opxmon-confirm').textContent.match(/con1\/2/g) || []).length === 1, 'round 4 confirmation has one resource summary');
+  ok(w.document.querySelectorAll('.ui-opxmon-confirm .ui-facts').length === 1 && w.document.querySelectorAll('.ui-opxmon-confirm .ui-facts-row').length === 3 && (w.document.querySelector('.ui-opxmon-confirm').textContent.match(/con1\/2/g) || []).length === 1, 'round 4 confirmation has one resource summary');
   ok(w.__posts.length === 0, 'declining sends nothing');
 
   w.document.querySelector('.ui-opxmon-confirm-cancel').click();

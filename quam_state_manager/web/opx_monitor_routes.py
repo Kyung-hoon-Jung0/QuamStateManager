@@ -167,7 +167,18 @@ def _view(tab: str) -> dict:
                  'pc_names': pc_names, 'pc_names_problem': pc_names_problem,
                  'this_tag': om.own_pc_tag(), 'seen_tags': seen_tags,
                  'pc_name_rows': sorted(set(pc_names) | set(seen_tags))}
-    return {**owner_ctx, 'temperature_failed': 'controllers' in st['section_errors'] or any(k.endswith('.temperatures') for k in (st.get('answer') or {}).get('refused', {})), 'unreadable_temps': om.unreadable_temperatures(st.get('answer')), 'last_job': last_job, 'hottest': hottest, 'local_time': om.local_time, 'plain_error': plain_error, 'raw_error': raw_error(st), 'stale_time': stale_time, 'opx_time': om.opx_time, 'pc_zone': om.zone_text(), 'words': om.words, 'job_activity': om.job_activity, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': om.verdict(st.get('answer'), st['health'], idle_states, st['state'], st['age_s']), 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason, skew=skew) if not run_reason else {}, 'clock_skew': skew, 'skew_text': om.skew_text(skew, m.clock()), 'metric_known': om.metric_known, 'job_list_cap': om.JOB_LIST_CAP, 'value_vs_limit': om.value_vs_limit,
+    temperature_failed = 'controllers' in st['section_errors'] or any(k.endswith('.temperatures') for k in (st.get('answer') or {}).get('refused', {}))
+    verdict = om.verdict(st.get('answer'), st['health'], idle_states, st['state'], st['age_s'])
+    hottest_limit = om.temperature_limit(hottest['key'], s['thresholds']) if hottest else None
+    failures = len(set((st.get('answer') or {}).get('refused') or {}) | set(st['section_errors']))
+    details = st['health'].get('details')
+    owner_ctx.update({
+        'band': om.band_view(verdict, st['state'], st['health'], plain_error(details) if details else None),
+        'tiles': om.live_tiles(st.get('answer'), idle_states, None if temperature_failed else hottest, hottest_limit, st['state'], failures) if tab == 'live' else [],
+        'qm_states': {q['id']: om.qm_state(q, idle_states.get(q['id'])) for q in open_qms},
+        'hottest_limit': hottest_limit,
+    })
+    return {**owner_ctx, 'temperature_failed': 'controllers' in st['section_errors'] or any(k.endswith('.temperatures') for k in (st.get('answer') or {}).get('refused', {})), 'unreadable_temps': om.unreadable_temperatures(st.get('answer')), 'last_job': last_job, 'hottest': hottest, 'local_time': om.local_time, 'plain_error': plain_error, 'raw_error': raw_error(st), 'stale_time': stale_time, 'opx_time': om.opx_time, 'pc_zone': om.zone_text(), 'words': om.words, 'job_activity': om.job_activity, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': verdict, 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason, skew=skew) if not run_reason else {}, 'clock_skew': skew, 'skew_text': om.skew_text(skew, m.clock()), 'metric_known': om.metric_known, 'job_list_cap': om.JOB_LIST_CAP, 'value_vs_limit': om.value_vs_limit,
             "trends": m.trends().series(m.clock()) if m.trends() and tab == "live" else {}, "idle_states": idle_states, "idle_ids": [k for k, v in idle_states.items() if v['idle'] and st['state'] == 'ok'], "tab": tab, "tabs": TABS, "tab_labels": TAB_LABELS, "st": st, "settings": s,
             "target": t, "has_headers": has_headers,
             "history_rows": h.table() if h and tab == "history" else [],

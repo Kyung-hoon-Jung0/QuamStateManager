@@ -591,10 +591,9 @@
 
 /* OPX monitor (core/opx_monitor.py) -- ui-kit tokens only, so light and dark follow ---- */
 .ui-opxmon-page { padding: var(--ui-gap-2) var(--ui-opxmon-space-lg) var(--ui-opxmon-page-bottom); max-width: var(--ui-opxmon-page-width); }
-.ui-opxmon-status { margin: var(--ui-opxmon-space-md) 0; padding: var(--ui-opxmon-space-sm) var(--ui-opxmon-space-md); border-radius: var(--ui-r-md); border: var(--ui-bw) solid var(--ui-border); }
-.ui-opxmon-status--ok { border-color: var(--ui-ok-border); color: var(--ui-ok-text); }
-.ui-opxmon-status--stale, .ui-opxmon-status--starting { border-color: var(--ui-warn-border); color: var(--ui-warn-text); background: var(--ui-warn-bg); }
-.ui-opxmon-status--error { border-color: var(--ui-danger-border); color: var(--ui-danger-text); background: var(--ui-danger-bg); }
+.ui-opxmon-status { margin: 0; }
+.ui-opxmon-status--stale, .ui-opxmon-status--starting { color: var(--ui-warn-text); }
+.ui-opxmon-status--error { color: var(--ui-danger-text); }
 .ui-opxmon-status--unconfigured { color: var(--ui-opxmon-muted); }
 .ui-opxmon-target { font-weight: var(--ui-fw); }
 .ui-opxmon-h { font-size: var(--ui-opxmon-heading-font); margin: var(--ui-opxmon-heading-space) 0 var(--ui-opxmon-tile-padding); }
@@ -626,10 +625,9 @@
 .ui-opxmon-health { font-size: var(--ui-opxmon-health-font); }
 
 /* D-23: the verdict carries health; freshness is secondary. */
-.ui-opxmon-verdict {font-size:var(--ui-opxmon-verdict-font); margin:var(--ui-opxmon-space-md) 0; display:flex; gap:var(--ui-opxmon-space-md); align-items:baseline; flex-wrap:wrap}
-.ui-opxmon-verdict strong {font-size:var(--ui-opxmon-verdict-label-font)}
+.ui-opxmon-verdict {margin:0 0 var(--ui-gap-3)}
 .ui-opxmon-verdict--red {color:var(--ui-danger-text)}
-.ui-opxmon-status--ok {border:0; color:var(--ui-opxmon-muted); padding:0; font-size:var(--ui-opxmon-compact-font)}
+.ui-opxmon-status--ok {color:var(--ui-text-2)}
 .ui-opxmon-details {margin:var(--ui-gap-2) 0}
 
 .ui-opxmon-tiles {display:flex; flex-wrap:wrap; gap:var(--ui-opxmon-space-xs); padding:var(--ui-opxmon-tile-padding) 0; align-items:flex-start; min-width:0}
@@ -644,7 +642,7 @@
 .ui-opxmon-table--stale {opacity:0.6}
 .ui-opxmon-hot {color:var(--ui-danger-text)}
 .ui-opxmon-hottest {font-size:var(--ui-opxmon-input-font); color:var(--ui-opxmon-muted)}
-.ui-opxmon-confirm {white-space:pre-line; padding:var(--ui-opxmon-confirm-padding); margin:var(--ui-gap-2) 0}
+.ui-opxmon-confirm {margin:var(--ui-gap-2) 0}
 
 .ui-opxmon-alarm-slot {display:flex; align-items:center; gap:var(--ui-gap-2); min-width:0; max-width:var(--ui-opxmon-alarm-max-width)}
 .ui-opxmon-alarm-slot .ui-opxmon-health {overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; max-width:var(--ui-opxmon-health-max-width)}
@@ -664,7 +662,7 @@
 
 .ui-opxmon-tile svg {display:block; width:var(--ui-opxmon-full-width); height:var(--ui-icon-btn); color:var(--ui-accent)}
 .ui-opxmon-tile summary > span {overflow-wrap:anywhere}
-.ui-opxmon-health-note {font-size:var(--ui-opxmon-compact-font); margin:var(--ui-opxmon-space-xxs) 0}
+.ui-opxmon-health-note {margin:0}
 .ui-opxmon-settings .ui-opxmon-input-number {width:var(--ui-opxmon-number-width); display:inline-block; padding:var(--ui-opxmon-space-xs) var(--ui-gap-2); height:auto}
 
 .ui-opxmon-other-temperatures {margin:var(--ui-opxmon-space-sm) 0; font-size:var(--ui-opxmon-input-font)}
@@ -683,8 +681,8 @@
 .ui-opxmon-owners { margin: 0 0 var(--ui-opxmon-space-md); padding: 0; list-style: none; }
 .ui-opxmon-owners > li { display: grid; grid-template-columns: auto 1fr; align-items: baseline; gap: var(--ui-gap-2); margin: 0; }
 .ui-opxmon-owner { min-width: 0; max-width: 100%; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--ui-gap-2); }
-.ui-opxmon-owner-marker { flex: 0 1 auto; max-width: 100%; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.ui-opxmon-owner-marker code { display: inline; }
+.ui-opxmon-owner-marker { flex: 0 1 auto; max-width: 100%; min-width: 0; overflow-wrap: anywhere; }
+.ui-opxmon-owner-marker code { display: inline; white-space: normal; overflow-wrap: anywhere; }
 .ui-opxmon-owner-tag { font-weight: var(--ui-fw); }
 .ui-opxmon-pcnames { margin-top: var(--ui-opxmon-space-lg); }
 .ui-opxmon-pcname-row code, .ui-opxmon-pcname-new input { overflow-wrap: anywhere; }

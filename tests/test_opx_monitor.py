@@ -772,7 +772,7 @@ def test_d23_verdict_first(env):
     m.poll_once()
     html = page(app, 'live')
     assert html.index('ui-opxmon-verdict') < html.index('ui-opxmon-status')
-    assert '<summary>Details</summary>' in html
+    assert '<h3 class="ui-panel-title">Details</h3>' in html
     assert om.verdict({'open_qms': []}, {'color': 'green'}, {})['label'] == 'FREE'
     assert om.verdict(answer(), {'color': 'amber'}, {})['label'] == 'BUSY'
 
@@ -912,10 +912,10 @@ def test_round4_unconfigured_health_preserves_occupancy(env, mode, label):
         _slow(m)
         _watch(m, clock, 7300)
     html = page(app, 'live')
-    assert '<strong>' + label + '</strong>' in html
+    assert '<strong class="ui-verdict-key">' + label + '</strong>' in html
     assert 'health not assessed: no admin URL / no limits set' in html
     assert 'ui-opxmon-health-note' in html
-    assert '<strong>PROBLEM</strong>' not in html
+    assert '<strong class="ui-verdict-key">PROBLEM</strong>' not in html
 
 
 def test_round4_recent_open_is_normal(env):
@@ -924,8 +924,8 @@ def test_round4_recent_open_is_normal(env):
     w.script[:] = [answer(qms=(("QM-placeholder", [], []),), temps={'Chassis': 40})]
     m.poll_once()
     html = page(app, 'live')
-    assert '<strong>OPEN 1</strong> open, no job seen yet; not idle yet' in html
-    assert '<strong>PROBLEM</strong>' not in html
+    assert '<strong class="ui-verdict-key">OPEN 1</strong>' in html and 'ui-verdict-why">open, no job seen yet; not idle yet' in html
+    assert '<strong class="ui-verdict-key">PROBLEM</strong>' not in html
 
 
 def test_round4_alarm_and_failed_calls(env):
@@ -934,14 +934,14 @@ def test_round4_alarm_and_failed_calls(env):
     w.script[:] = [answer(qms=(), temps={'FEM 0': 60, 'Chassis': 70})]
     m.poll_once()
     html = page(app, 'live')
-    assert '<strong>PROBLEM</strong>' in html
+    assert '<strong class="ui-verdict-key">PROBLEM</strong>' in html
     assert 'Above limit: FEM 0 60.0 °C' in html
     assert 'limit 50 °C' in html
     assert 'Hottest: Chassis' not in html
     w.script[:] = [om.WorkerError('read failed')]
     m.poll_once()
     html = page(app, 'live')
-    assert '<strong>PROBLEM</strong>' in html
+    assert '<strong class="ui-verdict-key">PROBLEM</strong>' in html
     assert 'Temperatures unavailable (last good read at' in html
     assert 'No temperature readings.' not in html
     assert 'SSH tunnel' not in html
@@ -961,7 +961,7 @@ def test_round4_partial_failure_and_admin_failure(env, monkeypatch):
     w.script[:] = [answer(qms=(), refused={'con1.temperatures': 'read failed'})]
     m.poll_once()
     html = page(app, 'live')
-    assert '<strong>PROBLEM</strong>' in html
+    assert '<strong class="ui-verdict-key">PROBLEM</strong>' in html
     assert 'Temperatures unavailable (last good read at' in html
     assert 'No temperature readings.' not in html
     def unavailable(*args):
@@ -975,7 +975,7 @@ def test_round4_partial_failure_and_admin_failure(env, monkeypatch):
     m.poll_once()
     m.admin = admin
     html = page(app, 'live')
-    assert '<strong>PROBLEM</strong>' in html
+    assert '<strong class="ui-verdict-key">PROBLEM</strong>' in html
     assert 'The SDK itself answers.' in html
 
 
@@ -984,8 +984,8 @@ def test_round5_starting_before_first_poll(env):
     html = page(app, 'live')
     assert m.status()['state'] == 'starting'
     assert not w.calls and m.last_answer is None
-    assert '<strong>Checking...</strong>' in html
-    assert '<strong>PROBLEM</strong>' not in html
+    assert '<strong class="ui-verdict-key">Checking...</strong>' in html
+    assert '<strong class="ui-verdict-key">PROBLEM</strong>' not in html
     assert 'data-health="grey"' in html
 
 
@@ -998,7 +998,7 @@ def test_round5_mixed_idle_headline(env):
     w.script[:] = [answer(qms=old + (('QM-new', [], []),))]
     m.poll_once()
     html = page(app, 'live')
-    assert '<strong>OPEN 3 · 2 idle</strong> Close idle QMs under Clean up' in html
+    assert '<strong class="ui-verdict-key">OPEN 3 · 2 idle</strong>' in html and 'ui-verdict-why">Close idle QMs under Clean up' in html
     assert 'in use / recent activity' not in html
     assert 'Close idle QMs (2)' in page(app, 'cleanup')
 
@@ -1008,7 +1008,7 @@ def test_round5_no_job_seen_headline(env):
     w.script[:] = [answer(qms=(('QM-new', [], []),))]
     m.poll_once()
     html = page(app, 'live')
-    assert '<strong>OPEN 1</strong> open, no job seen yet; not idle yet' in html
+    assert '<strong class="ui-verdict-key">OPEN 1</strong>' in html and 'ui-verdict-why">open, no job seen yet; not idle yet' in html
     assert 'in use' not in html
 
 
@@ -1017,7 +1017,7 @@ def test_round5_stale_headline(env):
     m.poll_once()
     clock.t += 60
     m.wanted_until = clock.t + 15
-    assert '<strong>BUSY — as of 60 s ago</strong>' in page(app, 'live')
+    assert '<strong class="ui-verdict-key">BUSY — as of 60 s ago</strong>' in page(app, 'live')
 
 
 def test_round5_frozen_cue_only_after_fifteen_minutes(env):
@@ -1061,7 +1061,7 @@ def test_stress_d1_unconfigured(env):
     om.save_settings(m.instance, {})
     assert m.status()['health']['reason'] == 'health not assessed'
     html = page(app, 'live')
-    assert 'Health not assessed' in html and '<strong>PROBLEM' not in html
+    assert 'Health not assessed' in html and '<strong class="ui-verdict-key">PROBLEM' not in html
 
 
 def test_stress_d2_cleanup_poll_and_close(env):
@@ -1132,7 +1132,7 @@ def test_stress_d6_full_job_ids(env):
     w.script[:] = [answer(qms=(('QM-many', [(j, 'Running') for j in ids], []),))]
     m.poll_once()
     html = page(app, 'jobs')
-    assert all('<code>' + j + '</code>' in html.split('Server jobs')[0] for j in ids)
+    assert all('<code class="ui-chip">' + j + '</code>' in html.split('Server jobs')[0] for j in ids)
 
 
 def test_stress_d7_unverified_type():
@@ -1174,7 +1174,7 @@ def test_stress_r4_outage_red(env):
     app, m, w, *_ = env
     w.script[:] = [om.WorkerError('Server unreachable')]; m.poll_once()
     html = page(app,'live')
-    assert 'ui-opxmon-verdict--red' in html and '<strong>PROBLEM</strong>' in html
+    assert 'ui-verdict--danger ui-opxmon-verdict' in html and '<strong class="ui-verdict-key">PROBLEM</strong>' in html
 
 
 def test_stress_r5_settings(env):
@@ -1190,7 +1190,7 @@ def test_stress_r6_returning_viewer_checks(env):
     html = page(app,'live')
     # earlier answers exist: their age is shown, never "Waiting for the first server answer"
     assert 'Waiting for the first server answer' not in html
-    assert '<strong>BUSY — as of 25 s ago</strong>' in html and 'last good read was 25 s ago' in html
+    assert '<strong class="ui-verdict-key">BUSY — as of 25 s ago</strong>' in html and 'last good read was 25 s ago' in html
 
 
 def test_stress_r7_gap_markers(env):
@@ -1249,7 +1249,7 @@ def test_stress_r1_responsive(env):
     css = (Path(__file__).resolve().parents[1]/'quam_state_manager/web/static/ui-kit.css').read_text(encoding='utf-8')
     assert '.ui-opxmon-tiles {display:flex; flex-wrap:wrap;' in css
     assert '.ui-opxmon-table--stacked tr, .ui-opxmon-table--stacked td { display:block;' in css
-    assert 'data-label="FEMs claimed"' in html
+    assert 'data-label="FEMs"' in html
 
 
 
@@ -1841,7 +1841,7 @@ def test_history_status_is_labelled_last_seen(env):
     w.script[:] = [answer(qms=())]
     m.poll_once()
     html = page(app, 'history')
-    assert 'Status (last seen)' in html and 'Running (when last seen)' in html
+    assert 'Status (last seen)' in html and 'Running</span> <span class="ui-text-quiet">(when last seen)</span>' in html
 
 
 def test_unreachable_server_is_not_called_unavailable_for_this_target(env):

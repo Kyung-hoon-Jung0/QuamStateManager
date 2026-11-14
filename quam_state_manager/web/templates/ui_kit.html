@@ -51,7 +51,7 @@
 </section>
 <section class="ui-kit-section"><h2 class="ui-kit-section-title">OPX monitor</h2>
 <div class="ui-opxmon-page"><div class="ui-opxmon-body">
-<div class="ui-opxmon-verdict ui-opxmon-health"><strong>FREE</strong> No open machines <small class="ui-opxmon-hottest">Hottest: Slot 1 42 °C</small></div>
+<div class="ui-verdict ui-verdict--strong ui-verdict--ok ui-opxmon-verdict" role="status"><span class="ui-dot" aria-hidden="true"></span><strong class="ui-verdict-key">FREE</strong><span class="ui-verdict-why">No open QM. No action needed.</span><span class="ui-verdict-meta ui-opxmon-status ui-opxmon-status--ok"><span class="ui-opxmon-target">Bench A</span> · <span class="ui-opxmon-sentence">Updated 2 s ago</span> · <span class="ui-opxmon-hottest">Hottest: Slot 1 42 °C</span></span></div>
 <div class="ui-opxmon-verdict ui-opxmon-verdict--red"><strong>ALARM</strong> Temperature above limit</div>
 {% for state, sentence in [('ok', 'Updated just now'), ('starting', 'Waiting for the first answer'), ('stale', 'No fresh answer'), ('error', 'Data unavailable'), ('unconfigured', 'Choose a connection')] %}
 <p class="ui-opxmon-status {{ 'ui-opxmon-status--' ~ state }}"><span class="ui-opxmon-target">Sample target</span> · <span class="ui-opxmon-sentence">{{ sentence }}</span></p>
@@ -59,7 +59,7 @@
 <p class="ui-note ui-opxmon-health-note">Health is unknown until readings arrive.</p>
 <p class="ui-note ui-opxmon-section-age">Controller readings unavailable.</p>
 <p class="ui-opxmon-version">SDK / server version</p>
-<ul class="ui-opxmon-owners"><li><code>qm-1</code> <div class="ui-opxmon-owner" data-owner-kind="several"><span class="ui-badge ui-badge--warn ui-opxmon-several">several markers (2)</span><div class="ui-opxmon-owner-marker"><span class="ui-note">marker</span> <span class="ui-opxmon-owner-tag">Bench (ab12cd34)</span> <span class="ui-badge ui-badge--accent ui-opxmon-this-pc">this PC</span></div></div></li></ul>
+<ul class="ui-opxmon-owners"><li><code>qm-1</code> <div class="ui-opxmon-owner" data-owner-kind="several"><span class="ui-pill ui-pill--warn ui-opxmon-several">several markers (2)</span><div class="ui-opxmon-owner-marker"><span class="ui-text-strong ui-opxmon-owner-tag">Bench A (ab12cd34)</span> <span class="ui-pill ui-pill--accent ui-opxmon-this-pc">same tag as this PC</span> <span>node qubit_spec</span> <span class="ui-text-quiet">session 1a2b · state running</span></div></div></li></ul>
 <p class="ui-note ui-opxmon-owner-note">Owner marker note</p>
 <form class="ui-opxmon-pcnames"><p class="ui-note ui-opxmon-pcnames-problem">PC names problem</p><table class="ui-table"><tbody><tr class="ui-opxmon-pcname-row"><td><code>ab12cd34</code></td></tr><tr class="ui-opxmon-pcname-new"><td><input class="ui-input" aria-label="New tag"></td></tr></tbody></table></form>
 <h3 class="ui-opxmon-h">Temperatures</h3>

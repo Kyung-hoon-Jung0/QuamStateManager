@@ -83,7 +83,7 @@ def test_jobs_tab_owner_cell_for_each_case(env, marker_home):
     assert "Not reported by the server (no owner marker)" in _row(html, "QM-none")
     one = _row(html, "QM-one")
     assert "ab12cd34" in one and "qubit_spec" in one and "sess1" in one and "0123abcd" in one
-    assert "ui-opxmon-this-pc" in one and ">marker<" in one
+    assert "ui-opxmon-this-pc" in one and ">marker<" not in one  # the word is on the column head, not per row
     v2 = _row(html, "QM-v2")
     assert "marker present, not readable" in v2 and "version 2" in v2 and V2 in v2
     two = _row(html, "QM-two")
@@ -356,7 +356,7 @@ def test_live_owner_list_marks_a_stale_poll(env, marker_home):
     clock.t += 99
     m.poll_once()
     html = page(app, "live")
-    start = html.index('class="ui-opxmon-owners')
+    start = html.index('aria-label="Who holds each open QM')
     assert "Owners below are from the last good read, 99 s ago" in html[:start]
     assert 'data-stale="1"' in html[start:start + 300] and "last good read, 99 s ago" in html[start:start + 300]
 

@@ -1,0 +1,18 @@
+{#- The one open-QM table of Live and Clean up: QM | State | Owner | FEMs (| close action).
+    State: the fact strong, what it is measured from quiet under it. -#}
+{%- from "_opx_owner.html" import owner_cell, owner_head, owner_text -%}
+{%- macro qm_table(qms, label, stale=False, age=None, actions=False) -%}
+<table class="ui-table ui-opxmon-table{% if stale %} ui-opxmon-table--stale{% endif %}" aria-label="{{ label }}{% if stale %} (last good read, {{ age }}){% endif %}"{% if stale %} data-stale="1"{% endif %}>
+  <thead><tr><th class="ui-table-head" scope="col">QM</th><th class="ui-table-head" scope="col">State</th>{{ owner_head(any_marker) }}<th class="ui-table-head" scope="col">FEMs</th>{% if actions %}<th class="ui-table-head" scope="col"><span class="ui-sr">Close</span></th>{% endif %}</tr></thead>
+  <tbody>{% for q in qms %}{% set qs = qm_states[q.id] %}
+    <tr class="ui-opxmon-qm-row" data-qm-id="{{ q.id }}">
+      <td data-label="QM" class="ui-table-cell"><code class="ui-chip">{{ q.id }}</code></td>
+      <td data-label="State" class="ui-table-cell"><span class="ui-text-strong">{{ qs.fact }}</span><div class="ui-text-quiet">{{ qs.basis }}{% if idle_states[q.id].idle %} &middot; idle{% endif %}</div>{% if actions %}<div class="ui-text-quiet">jobs: {{ qs.jobs }}</div>{% endif %}</td>
+      <td data-label="Owner" class="ui-table-cell">{{ owner_cell(owners[q.id], pc_names, this_tag) }}</td>
+      <td data-label="FEMs" class="ui-table-cell">{{ (q.ports or []) | join(', ') or 'unknown' }}</td>
+      {%- if actions %}
+      <td data-label="" class="ui-table-cell"><button type="button" class="btn-sm outline ui-opxmon-close" data-last-job="{{ last_job(q) }}" data-basis="{{ idle_states[q.id].basis }}" data-qm-id="{{ q.id }}" data-owner="{{ owner_text(owners[q.id], pc_names, this_tag) }}" {% if st.state != 'ok' %}disabled{% endif %} data-ports="{{ (q.ports or []) | join(', ') }}" data-jobs="{{ 'unknown' if q.jobs is none else ((q.jobs or []) | map(attribute='status') | join(', ')) }}">Close&hellip;</button></td>
+      {%- endif %}
+    </tr>{% endfor %}</tbody>
+</table>
+{%- endmacro -%}
