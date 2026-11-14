@@ -27,7 +27,14 @@ const DATA = {
               { 'class': 'L.TwoFlux', label: 'TwoFlux (copies a gate)', layout: 'copied', available: true, why: '', slots: [], models: [['q1-2', 'cz_m']] }],
 };
 
+let dataOverride = null;             // a test's own dialog data (which classes can run where)
 function dialogHtml() {
+    const h = dialogHtmlBase();
+    if (!dataOverride) return h;
+    return h.replace(/(<script type="application\/json" id="czg-data">)[\s\S]*?(<\/script>)/,
+        (m, a, b) => a + JSON.stringify(dataOverride) + b);
+}
+function dialogHtmlBase() {
     if (process.env.CZG_DIALOG) return fs.readFileSync(process.env.CZG_DIALOG, 'utf8');
     let t = fs.readFileSync(path.join(ROOT, 'templates', '_cz_gate_dialog.html'), 'utf8');
     t = t.replace(/\{#[\s\S]*?#\}/g, '');
@@ -77,7 +84,12 @@ function planCopied(body) {
                    { key: 'note', value: null, kind: 'any', source: LONG, reference: false, optional: true }],
         model_gate: ['q1-2', 'cz_m'], reset: ['fidelity', 'extras'] })) };
 }
+const NO_CLASS = 'The gate class must be given by its class name. Pick a gate class from the list.';
+let planExtra = null;               // a test's own refusals: [reason, aboutClass]
 function planOk(body) {
+    if (!body.gate_class) return { ok: true, plan_sig: 'none', pairs: body.pairs.map((p) => ({ pair: p, ok: false, refusals: [NO_CLASS], class_refusals: [NO_CLASS] })) };
+    if (planExtra) return { ok: true, plan_sig: 'x', pairs: body.pairs.map((p) => ({ pair: p, ok: false,
+        refusals: planExtra.map((r) => r[0]), class_refusals: planExtra.filter((r) => r[1]).map((r) => r[0]) })) };
     if (body.gate_class === 'L.TwoFlux') return planCopied(body);
     return { ok: true, plan_sig: 'sig-' + JSON.stringify(body.pulses) + body.gate_name + body.pairs.join(','),
              pairs: body.pairs.map((p) => p === 'q9-9' ? { pair: p, ok: false, refusals: ['No such pair.'] } : {
@@ -702,6 +714,75 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     await settle();
     ok(/Created/.test(alertText()) && !$('#czg-dialog[aria-busy="true"], #czg-dialog [aria-busy="true"]'), 'created: nothing left marked busy (Pico draws a spinner for it)');
     window.CzGate.close();
+
+
+    // ---- which class opens: the first one that can run on the pair (server's data.fit)
+    {
+        const SQ = DATA.classes[0].slots[0].pulse_classes;
+        const CZ = { 'class': 'G.CZGate', label: 'CZ gate', layout: 'known', available: true, why: '', models: [],
+                     slots: [{ field: 'flux_pulse_qubit', line: 'moving', line_words: 'x', required: true, pulse_classes: SQ }] };
+        const CO = { 'class': 'G.CouplerCZ', label: 'Coupler-only CZ gate', layout: 'known', available: true, why: '', models: [],
+                     slots: [{ field: 'coupler_flux_pulse', line: 'coupler', line_words: 'x', required: true, pulse_classes: SQ }] };
+        const NOZ = 'The qubits of pair q1-2 have no flux line, so a gate that plays on a qubit flux line cannot run here. Pick the coupler-only gate class.';
+        const NOC = 'Pair q1-2 has no coupler that can hold operations.';
+        const base = { pairs: DATA.pairs, selected: 'q1-2', env: 'lab', classes: [CZ, CO, DATA.classes[1]] };
+        const optOf = (v) => [...doc.querySelectorAll('#czg-class-list .ui-option')].filter((o) => o.getAttribute('data-value') === v || (o.textContent || '').indexOf(v) >= 0)[0];
+        const st = () => window.CzGate.state();
+        const classWhy = () => $('#czg-class-why');
+        const nameWhy = () => $('#czg-name-why');
+
+        // 1. no flux line, coupler class offered: the coupler class opens, the name stays clean
+        dataOverride = Object.assign({}, base, { fit: { 'q1-2': { 'G.CZGate': NOZ, 'G.CouplerCZ': '', X: '' }, 'q2-3': { 'G.CZGate': '', 'G.CouplerCZ': '', X: '' } } });
+        await window.CzGate.open({ pair: 'q1-2' });
+        await settle();
+        ok(st().klass === 'G.CouplerCZ', 'no flux line: the coupler-only class is selected on open');
+        ok(sent[sent.length - 1].body.gate_class === 'G.CouplerCZ', 'no flux line: the plan is asked for the coupler-only class');
+        ok(nameWhy().hidden && !$('#czg-name').hasAttribute('aria-invalid'), 'no flux line: nothing under Name');
+        ok(classWhy().hidden && !$('#czg-class').hasAttribute('aria-invalid'), 'no flux line: nothing under Class once a class can run');
+        ok(!prim().disabled, 'no flux line: Check is enabled with a valid name');
+        { const o = [...doc.querySelectorAll('#czg-class-list .ui-option[aria-disabled="true"]')].filter((x) => /CZ gate/.test(x.textContent) && !/Coupler/.test(x.textContent))[0];
+          ok(o && /no flux line/.test(o.querySelector('.ui-option-desc').textContent), 'the class that cannot run is listed, disabled, with its reason'); }
+        // 4. hand-picked class survives a pair where it runs; moves with a note where it does not
+        window.CzGate.close();
+        dataOverride = Object.assign({}, base, { fit: { 'q1-2': { 'G.CZGate': '', 'G.CouplerCZ': '', X: '' }, 'q2-3': { 'G.CZGate': '', 'G.CouplerCZ': 'Pair q2-3 has no coupler that can hold operations.', X: '' } } });
+        await window.CzGate.open({ pair: 'q1-2' });
+        await settle();
+        ok(st().klass === 'G.CZGate', 'every class runs: the first class opens, as before');
+        $('#czg-class-host .ui-menu').dispatchEvent(new window.CustomEvent('ui-menu-pick', { bubbles: true, detail: { value: 'G.CouplerCZ', kind: 'pick' } }));
+        await settle();
+        ok(st().klass === 'G.CouplerCZ', 'a class picked by hand is taken');
+        change($('#czg-pair'), 'q2-3');
+        await settle();
+        ok(st().klass === 'G.CZGate' && sent[sent.length - 1].body.gate_class === 'G.CZGate', 'pair change: the hand-picked class that cannot run there moves to the first runnable class');
+        ok(!classWhy().hidden && /class changed/.test(classWhy().textContent) && /no coupler/.test(classWhy().textContent) && nameWhy().hidden, 'pair change: a note under Class says the class changed and why');
+        $('#czg-class-host .ui-menu').dispatchEvent(new window.CustomEvent('ui-menu-pick', { bubbles: true, detail: { value: 'G.CZGate', kind: 'pick' } }));
+        change($('#czg-pair'), 'q1-2');
+        await settle();
+        $('#czg-class-host .ui-menu').dispatchEvent(new window.CustomEvent('ui-menu-pick', { bubbles: true, detail: { value: 'G.CouplerCZ', kind: 'pick' } }));
+        await settle();
+        change($('#czg-pair'), 'q1-2');
+        await settle();
+        ok(st().klass === 'G.CouplerCZ' && classWhy().hidden, 'pair change: a hand-picked class that runs on the new pair is kept');
+        // 5. a name error and a class error at once: each under its own field
+        planExtra = [['The gate name must start with cz_.', false], [NOZ, true]];
+        type($('#czg-name'), 'cz_both');
+        await settle();
+        ok(/must start with cz_/.test(nameWhy().textContent) && !/no flux line/.test(nameWhy().textContent), 'name error stays under Name');
+        ok(/no flux line/.test(classWhy().textContent) && !/must start/.test(classWhy().textContent) && $('#czg-class').getAttribute('aria-invalid') === 'true', 'class error goes under Class, the class control marked');
+        ok($('#czg-name').getAttribute('aria-invalid') === 'true', 'name control marked for the name error');
+        planExtra = null;
+        window.CzGate.close();
+        // 2./4. no class can run (no coupler either): said once under Class, Check disabled
+        dataOverride = Object.assign({}, base, { fit: { 'q1-2': { 'G.CZGate': NOZ, 'G.CouplerCZ': NOC, X: '' }, 'q2-3': {} } });
+        await window.CzGate.open({ pair: 'q1-2' });
+        await settle();
+        ok(st().klass === '', 'no class can run: none is selected');
+        ok(classWhy().querySelectorAll('.czg-why-line').length === 1 && /No gate class can run on q1-2/.test(classWhy().textContent) && /no flux line/.test(classWhy().textContent), 'no class can run: said once under Class with the first class\'s reason');
+        ok(nameWhy().hidden && !$('#czg-name').hasAttribute('aria-invalid'), 'no class can run: Name stays clean');
+        ok(prim().disabled, 'no class can run: Check stays disabled');
+        window.CzGate.close();
+        dataOverride = null;
+    }
 
     // the chart component missing
     delete window.GateTimeline;
