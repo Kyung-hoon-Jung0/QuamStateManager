@@ -725,7 +725,9 @@ def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
     if copy_from is not None:
         copy_macro, why = _gate_or_alias(macros, copy_from, merged, pair_id)
         if why:
-            reasons.append(why)
+            # Without the source gate, no slot can be judged: refuse on the
+            # cause alone so no advice about slots is given that does not fit.
+            return _refuse(reasons + [why])
         else:
             copy_path = _gate_path(macros, copy_from, merged, pair_id)
 

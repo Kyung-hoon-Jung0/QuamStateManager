@@ -1732,6 +1732,41 @@ def test_a_dangling_plain_name_does_not_count_as_name_form():
     assert macro["coupler_flux_pulse"].startswith("#/qubit_pairs/q1-2/coupler/operations/")
 
 
+def _copy_fail_chip(path):
+    s = _chip()
+    _op_owned_ref(s, "q1-2", "cz_src")
+    macros = s["qubit_pairs"]["q1-2"]["macros"]
+    if path == "alias":
+        macros["cz"] = "#./cz_gone"
+        return s, "cz"
+    if path == "not_a_gate":
+        macros["cz_num"] = 5
+        return s, "cz_num"
+    if path == "other_class":
+        m = cgb._coupler_cz_skeleton()
+        m["coupler_flux_pulse"] = macros["cz_src"]["coupler_flux_pulse"]
+        macros["cz_cpl"] = m
+        return s, "cz_cpl"
+    return s, "cz_missing"
+
+
+@pytest.mark.parametrize("path,expected", [
+    ("missing", ["Pair q1-2 has no gate cz_missing to copy values from. "
+                 "Pick a gate of this pair, or leave copying off."]),
+    ("not_a_gate", ["Pair q1-2 has no gate cz_num to copy values from. "
+                    "Pick a gate of this pair, or leave copying off."]),
+    ("alias", ["cz on pair q1-2 is an alias (#./cz_gone) that SM could not follow. "
+               "Name the gate itself to copy values from."]),
+    ("other_class", ["The gate cz_cpl holds no pulse in flux_pulse_qubit to copy. "
+                     "Pick a pulse class for flux_pulse_qubit, or start from another gate."]),
+])
+def test_copy_from_failures_carry_only_refusals_that_fit(path, expected):
+    s, src = _copy_fail_chip(path)
+    res = _plan(s, copy_from=src, pulses=None)
+    assert res["refusals"] == expected
+    assert "coupler-only" not in json.dumps(res)
+
+
 def test_qubits_without_flux_lines_point_at_the_coupler_only_class():
     s = _chip()
     for q in s["qubits"].values():
