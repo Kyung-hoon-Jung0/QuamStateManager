@@ -701,7 +701,7 @@ _STAGE6_SELECTORS = {
     '.gate-status-row', '.gate-status-items', '.gate-status-details',
     '.gate-status-details-list', '.gate-status-details-list dd', '.gate-status-actions',
     '.gate-status-edit', '.gate-status-activate', '.gate-status-delete',
-    '.gate-status-delete:hover', '.gate-delete-confirm', '.gate-status-slot:empty',
+    '.gate-status-delete:hover', '.gate-delete-confirm', '.gate-delete-cancel', '.gate-status-slot:empty',
     '.gate-delete-offer', '.gate-delete-list', '.gate-delete-actions',
     '.gen-rule-allcant',
     '.gen-rule-dim',

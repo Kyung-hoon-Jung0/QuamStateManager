@@ -64,6 +64,9 @@ def gate_line(store, ctx, pair: str, gate: str, *, env=None, folder=None,
     items = gate_status.status(store, ctx, pair, gate, check_folder=folder,
                                missing_classes=missing, env_name=env_name)
     pills = [i for i in items if i.get("pill")]
+    # the details list the check first: its reason and time are not in the pill
+    details = ([i for i in items if i["key"] == "check"]
+               + [i for i in items if i["key"] != "check"])
     active = any(i["key"] == "active" and i["text"] == "active" for i in items)
     present = not any(i["key"] == "gone" for i in items)
     edit = []
@@ -73,7 +76,8 @@ def gate_line(store, ctx, pair: str, gate: str, *, env=None, folder=None,
             edit = (parts["pulses"] or parts["operations"])[:4]
         except Exception:  # noqa: BLE001 -- the line stays without the link
             edit = []
-    return {"pair": pair, "gate": gate, "items": items, "pills": pills, "active": active,
+    return {"pair": pair, "gate": gate, "items": items, "pills": pills,
+            "details": details, "active": active,
             "present": present, "edit_paths": edit, "note": note,
             "note_tone": note_tone}
 
@@ -153,6 +157,14 @@ def cz_gate_delete_offer():
 
 def _refuse(message: str, code: int, *, htmx: bool, pair: str, gate: str, store, ctx,
             **extra):
+    if htmx and store is not None and str(_body_scope()) == "list":
+        gl = gate_list(store, ctx, pair)
+        for ln in gl["lines"]:
+            if ln["gate"] == gate:
+                ln["note"], ln["note_tone"] = message, "danger"
+        resp = make_response(render_template("_gate_status_list.html", gate_lines=gl), 200)
+        resp.headers["HX-Reswap"] = "outerHTML"
+        return resp
     if htmx and store is not None:
         resp = make_response(render_template(
             "_gate_status.html", line=gate_line(store, ctx, pair, gate, note=message,
@@ -160,6 +172,13 @@ def _refuse(message: str, code: int, *, htmx: bool, pair: str, gate: str, store,
         resp.headers["HX-Reswap"] = "outerHTML"
         return resp
     return jsonify(ok=False, error=message, **extra), code
+
+
+def _body_scope() -> str:
+    try:
+        return str(json_object(request.form.to_dict).get("scope") or "")
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def _cannot_run(entry: dict | None) -> str | None:
@@ -251,6 +270,16 @@ def api_cz_gate_make_active():
     if not rec.get("ok"):
         note = (f"{gate} is now active, but the check record could not be saved: "
                 f"{rec.get('error')}.")
+    if htmx and str(body.get("scope") or "") == "list":
+        # the whole list: its head and the row that was active before change too
+        gl = gate_list(store, ctx, pair)
+        for ln in gl["lines"]:
+            if ln["gate"] == gate and note:
+                ln["note"], ln["note_tone"] = note, "warn"
+        resp = make_response(render_template("_gate_status_list.html", gate_lines=gl)
+                             + R._tray_oob())
+        resp.headers["HX-Trigger"] = "pulses-changed"
+        return R._lab_toast(resp)
     if htmx:
         resp = make_response(render_template(
             "_gate_status.html", line=gate_line(store, ctx, pair, gate, note=note,

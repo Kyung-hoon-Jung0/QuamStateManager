@@ -81,19 +81,20 @@ def _check(folder, merged: dict, pair: str, gate: str) -> dict:
     if not ent:
         return _item("check", "no check record", "neutral",
                      "This gate was not made or made active in SM.", pill=False)
+    when = _when(ent.get("time"))
     if ent.get("result") == gate_check_log.CHECKED and not ent.get("hash"):
-        return _item("check", f"checked {_when(ent.get('time'))}, cannot tell whether the "
-                     "values changed since", "warn",
-                     "The record holds no copy of the values it checked.")
+        return _item("check", "checked, cannot tell whether values changed", "warn",
+                     f"Checked with the lab's code {when} UTC; the record holds no copy "
+                     "of the values it checked.")
     now = content_hash(merged, pair, gate)
     if ent.get("hash") and now != ent.get("hash"):
         return _item("check", "values changed since the check", "warn",
-                     f"Checked {_when(ent.get('time'))} UTC; the gate changed after.")
+                     f"Checked with the lab's code {when} UTC; the gate changed after.")
     if ent.get("result") == gate_check_log.CHECKED:
-        return _item("check", f"checked with the lab's code {_when(ent.get('time'))}",
-                     "ok", "UTC time of the last check.")
-    return _item("check", f"not checked: {ent.get('reason') or 'no reason given'}",
-                 "warn", f"Recorded {_when(ent.get('time'))} UTC.")
+        return _item("check", "checked", "ok", f"Checked with the lab's code {when} UTC.")
+    return _item("check", "not checked", "warn",
+                 f"Not checked with the lab's code: {ent.get('reason') or 'no reason given'} "
+                 f"({when} UTC).")
 
 
 def status(store, ctx: dict | None, pair: str, gate: str, *,

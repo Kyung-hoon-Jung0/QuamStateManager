@@ -90,9 +90,9 @@ def test_check_item_in_each_state(tmp_path):
     assert check()["text"] == "no check record"
     h = log.content_hash(s, "q1-q2", "cz_sq")
     log.record(tmp_path, "q1-q2", "cz_sq", result=log.CHECKED, reason=None, content=h)
-    assert check()["text"].startswith("checked with the lab's code ")
+    assert check()["text"] == "checked"
     log.record(tmp_path, "q1-q2", "cz_sq", result=log.NOT_CHECKED, reason="no env", content=h)
-    assert check()["text"] == "not checked: no env"
+    assert check()["text"] == "not checked" and "no env" in check()["why"]
     log.record(tmp_path, "q1-q2", "cz_sq", result=log.CHECKED, reason=None, content=h)
     s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["flux_pulse_qubit"]["amplitude"] = 0.25
     assert check()["text"] == "values changed since the check"
@@ -136,7 +136,7 @@ def test_checked_without_a_hash_is_not_plain_checked(tmp_path):
         '{"gates": {"[\\"q1-q2\\", \\"cz_sq\\"]": {"result": "checked", "time": "2026-11-14T10:00:00+00:00"}}}',
         encoding="utf-8")
     it = _by_key(gs.status(_store(s), None, "q1-q2", "cz_sq", check_folder=tmp_path))["check"]
-    assert "cannot tell whether the values changed since" in it["text"]
+    assert it["text"] == "checked, cannot tell whether values changed"
     assert it["tone"] == "warn" and it["pill"]
 
 

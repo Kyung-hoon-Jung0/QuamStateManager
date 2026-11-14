@@ -225,3 +225,60 @@ def test_pair_detail_head_says_no_active_gate(rig):
     assert "No active CZ gate (the pair's cz alias is not set)" in body
     assert body.count('data-status-key="active"') == 2   # details only, no pill
     assert "ui-pill--accent" not in body.split("gate-status-list")[1].split("</section>")[0]
+
+
+def test_list_scope_make_active_updates_the_head_and_the_old_active_row(rig):
+    _ctx(rig)["modifier"].delete_subtree(ALIAS)
+    hx = {"HX-Request": "true"}
+    r = rig.post("/api/pulse/cz-gate/make-active", headers=hx,
+                 data={"pair": "q1-q2", "gate": "cz_sq", "scope": "list"})
+    body = r.get_data(as_text=True).split("pending-tray")[0]
+    assert 'class="gate-status-list"' in body and "No active CZ gate" not in body
+    r = rig.post("/api/pulse/cz-gate/make-active", headers=hx,
+                 data={"pair": "q1-q2", "gate": "cz_two", "scope": "list"})
+    body = r.get_data(as_text=True).split("pending-tray")[0]
+    rows = {seg.split('"')[0]: seg for seg in body.split('data-gate="')[1:]}
+    assert "ui-pill--accent" in rows["cz_two"] and "ui-pill--accent" not in rows["cz_sq"]
+    assert "gate-status-activate" in rows["cz_sq"] and "gate-status-activate" not in rows["cz_two"]
+    assert body.count("ui-pill--accent") == 1
+    assert rig.post("/undo").status_code == 200
+    assert _merged(rig)["qubit_pairs"]["q1-q2"]["macros"]["cz"] == "#./cz_sq"
+
+
+def test_the_list_buttons_ask_for_the_list(rig):
+    body = rig.get("/pair/q1-q2", headers={"HX-Request": "true"}).get_data(as_text=True)
+    assert '&#34;scope&#34;: &#34;list&#34;' in body or '"scope": "list"' in body
+    assert 'hx-target="closest .gate-status-list"' in body
+
+
+def test_check_pill_is_short_and_the_reason_is_its_title(rig):
+    hm = rig._app.config["history_manager"]
+    folder = log.chip_dir(hm, _ctx(rig)["path"])
+    log.record(folder, "q1-q2", "cz_sq", result=log.NOT_CHECKED,
+               reason="no Python environment is selected",
+               content=log.content_hash(_merged(rig), "q1-q2", "cz_sq"))
+    body = rig.get("/pulse/cz-gate/status?pair=q1-q2&gate=cz_sq").get_data(as_text=True)
+    pills = body.split('class="gate-status-items"')[1].split("</span></span>")[0]
+    assert '>not checked' in pills and 'not checked:' not in pills
+    assert "Not checked with the lab&#39;s code: no Python environment is selected" in pills
+    details = body.split("gate-status-details-list")[1]
+    assert details.index('data-status-key="check"') < details.index('data-status-key="where"')
+
+
+def test_delete_offer_has_cancel(rig):
+    body = rig.get("/pulse/cz-gate/delete-offer?pair=q1-q2&gate=cz_sq").get_data(as_text=True)
+    assert "gate-delete-cancel" in body and ">Cancel<" in body
+
+
+def test_gate_status_selfcheck():
+    import os
+    import shutil
+    import subprocess
+    from pathlib import Path
+    node = shutil.which("node")
+    if not node or not os.environ.get("NODE_PATH"):
+        pytest.skip("node + jsdom (NODE_PATH) needed")
+    p = subprocess.run([node, str(Path(__file__).parent / "gate_status_selfcheck.cjs")],
+                       capture_output=True, text=True, timeout=120)
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "ALL OK" in p.stdout

@@ -5,6 +5,10 @@
 <div class="gate-delete-offer">
 {% if not parts.ok %}
     {{ ui.ui_callout('danger', 'Cannot delete ' ~ gate, parts.refusals | join(' ')) }}
+    <div class="ui-actions gate-delete-actions">
+        <button type="button" class="btn-sm outline secondary gate-delete-cancel"
+                title="Close this message (Esc)">Close</button>
+    </div>
 {% else %}
     <p class="ui-note">Deleting {{ gate }} removes, in one step (one Ctrl+Z brings all back):</p>
     <ul class="gate-delete-list">
@@ -22,6 +26,8 @@
                 hx-post="/api/pulse/delete-together"
                 hx-vals='{{ {"pair": pair, "gate": gate, "confirm_active": ("1" if parts.active else "")} | tojson }}'
                 hx-target="closest .gate-status-slot" hx-swap="innerHTML">{{ 'Delete the active gate' if parts.active else 'Delete gate' }}</button>
+        <button type="button" class="btn-sm outline secondary gate-delete-cancel"
+                title="Close this offer; nothing is deleted (Esc)">Cancel</button>
     </div>
 {% endif %}
 </div>

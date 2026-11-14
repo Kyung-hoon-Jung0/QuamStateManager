@@ -7,11 +7,11 @@
 <div class="gate-status" data-gate-pair="{{ line.pair }}" data-gate="{{ line.gate }}">
     <div class="gate-status-row">
         <code class="ui-chip">{{ line.gate }}</code>
-        <span class="gate-status-items">{% for it in line.pills %}<span class="ui-pill ui-pill--{{ it.tone }}" data-status-key="{{ it.key }}">{{ it.text }}</span>{% endfor %}</span>
+        <span class="gate-status-items">{% for it in line.pills %}<span class="ui-pill ui-pill--{{ it.tone }}" data-status-key="{{ it.key }}"{% if it.why %} title="{{ it.why }}"{% endif %}>{{ it.text }}</span>{% endfor %}</span>
         <details class="ui-disclosure gate-status-details">
             <summary class="ui-disclosure-summary">details</summary>
             <dl class="gate-status-details-list">
-                {% for it in line['items'] %}<dt data-status-key="{{ it.key }}">{{ it.text }}</dt><dd>{{ it.why }}</dd>{% endfor %}
+                {% for it in line.details or line['items'] %}<dt data-status-key="{{ it.key }}">{{ it.text }}</dt><dd>{{ it.why }}</dd>{% endfor %}
             </dl>
         </details>
         {% if line.present %}
@@ -25,8 +25,8 @@
             {% if not line.active %}
             <button type="button" class="btn-sm outline secondary gate-status-activate"
                     hx-post="/api/pulse/cz-gate/make-active"
-                    hx-vals='{{ {"pair": line.pair, "gate": line.gate} | tojson }}'
-                    hx-target="closest .gate-status" hx-swap="outerHTML"
+                    hx-vals='{{ ({"pair": line.pair, "gate": line.gate, "scope": "list"} if in_list else {"pair": line.pair, "gate": line.gate}) | tojson }}'
+                    hx-target="{{ 'closest .gate-status-list' if in_list else 'closest .gate-status' }}" hx-swap="outerHTML"
                     title="Check the gate with the lab's code, then point the pair's cz at it (one Ctrl+Z)">Make active</button>
             {% endif %}
             <button type="button" class="btn-sm outline secondary gate-status-delete"
