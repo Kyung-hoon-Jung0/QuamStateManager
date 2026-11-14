@@ -33,9 +33,8 @@
     var TEXT_PX = 11;
     var TICK_ROOM = 52;        // room for the y tick labels ("-0.05 V") between gutter and plot
     var FILL_OPACITY = 0.18;
-    var SPECT_KEY = "spectators";  // the legend key of the spectator group
+    var SPECT_KEY = "\u0001spectators";  // the legend key of the spectator group (a lane key equal to it is refused)
     var GUIDE_ROWS_PX = 32;    // two rows of edge-time labels above the overlay plot
-    var LEGEND_ROW_PX = 24;
     var BAR_PX = 3;            // the lane colour bar at the gutter's left edge
     var CHIP_ALPHA = 0.16;     // tint behind the lane name chip
 
@@ -57,6 +56,8 @@
        - A segment with fewer than two samples is drawn as a marker.
        - Times closer than TIME_EPS ns are the same time. */
     var TIME_EPS = 1e-6;
+    var MAX_BRACKETS = 12;     // brackets drawn in the overlay; the list holds every pair
+    var MAX_SPOKEN = 6;        // lines and pairs named in the plot's text alternative
     var TRUNCATED_TEXT = "only part of this waveform was received";
 
     function severity(s) {
@@ -68,16 +69,20 @@
 
     /* A kit colour token resolved by the browser (tokens may be var() or
        color-mix() expressions Plotly cannot parse); "" when not defined. */
+    var RGB = /^rgba?\(/;
     function kitColor(name) {
-        if (!cssVar(name)) return "";
+        var own = cssVar(name);
+        if (!own) return "";                       // not defined: the caller falls back
         try {
             var probe = document.createElement("span");
+            probe.hidden = true;
             probe.style.setProperty("color", "var(" + name + ")");
             (document.body || document.documentElement).appendChild(probe);
             var col = getComputedStyle(probe).color;
             probe.remove();
-            return (col && col.indexOf("var(") < 0) ? col : cssVar(name);
-        } catch (e) { return cssVar(name); }
+            if (col && RGB.test(col)) return col;
+        } catch (e) { /* no DOM */ }
+        return RGB.test(own) ? own : "";           // never a var() or color-mix() string
     }
     /* The state tones: danger (refuses) and warn (informs), line and fill. */
     function stateTones() {
@@ -145,15 +150,15 @@
        status-like hues last). Index modulo the list length. */
     var PALETTE_ORDER = [0, 3, 5, 2, 4, 1];
     function identityColors() {
-        var out = [];
-        for (var n = 1; n <= 6; n++) {
-            var c = kitColor("--ui-line-" + n);
-            if (c) out.push(c);
-        }
-        if (out.length) return out;
+        // slot by slot: the kit colour when defined and resolvable, else the
+        // palette colour that slot stands for (the kit uses the same order)
         var pt = window.PlotTheme || {};
         var pal = (pt.palette && pt.palette()) || [];
-        PALETTE_ORDER.forEach(function (k) { if (pal[k]) out.push(pal[k]); });
+        var out = [];
+        for (var n = 1; n <= 6; n++) {
+            var c = kitColor("--ui-line-" + n) || pal[PALETTE_ORDER[n - 1]];
+            if (c) out.push(c);
+        }
         return out;
     }
     function laneColor(index) {
@@ -175,8 +180,40 @@
         return n;
     }
     function num(x) { return typeof x === "number" && isFinite(x); }
-    function fmt(v) { return String(+v.toPrecision(3)); }
-    function fmtV(v) { return num(v) ? fmt(v) + " V" : "?"; }
+    /* TIME (ns): exact to 0.001 ns, integers whole, trailing zeros trimmed, never
+       scientific notation. */
+    function fmt(t) {
+        if (!num(t)) return "?";
+        var r = Math.round(t * 1000) / 1000;
+        var out = r.toFixed(3).replace(/\.?0+$/, "");
+        return out === "-0" ? "0" : out;
+    }
+    /* VOLT: 4 significant digits, trailing zeros trimmed; within one picture two
+       values more than VOLT_EPS apart never print the same (voltDigits grows). */
+    var VOLT_EPS = 1e-6;
+    var voltDigits = 4;
+    function voltNum(v, digits) {
+        if (!num(v)) return "?";
+        var d = digits || voltDigits;
+        if (Math.abs(v) < 1e-12) return "0";
+        var mag = Math.floor(Math.log(Math.abs(v)) / Math.LN10);
+        var dec = Math.max(0, Math.min(15, d - 1 - mag));
+        var out = (Math.round(v * Math.pow(10, dec)) / Math.pow(10, dec)).toFixed(dec);
+        if (out.indexOf(".") >= 0) out = out.replace(/\.?0+$/, "");
+        return out === "-0" ? "0" : out;
+    }
+    function pickVoltDigits(values) {
+        var vs = values.filter(num).sort(function (a, b) { return a - b; });
+        for (var d = 4; d < 12; d++) {
+            var clash = false;
+            for (var i = 1; i < vs.length && !clash; i++) {
+                if (vs[i] - vs[i - 1] > VOLT_EPS && voltNum(vs[i], d) === voltNum(vs[i - 1], d)) clash = true;
+            }
+            if (!clash) return d;
+        }
+        return 12;
+    }
+    function fmtV(v) { return num(v) ? voltNum(v) + " V" : "?"; }
 
     /* The value a lane plays at time t, from its samples only.
        Inside a segment (start <= t < end, or t == end of the last one that ends
@@ -218,7 +255,7 @@
         if (lane.port) lines.push(lane.port);
         var off = num(lane.offset_v) && lane.offset_v !== 0;
         if (lane.limit_v) {
-            lines.push("limit " + fmt(lane.limit_v[0]) + " to " + fmt(lane.limit_v[1]) + " V");
+            lines.push("limit " + voltNum(lane.limit_v[0]) + " to " + voltNum(lane.limit_v[1]) + " V");
             // limit_v already has the offset taken off: say so beside it
             if (off) lines.push("(port range less the " + fmtV(lane.offset_v) + " offset)");
         } else {
@@ -245,6 +282,8 @@
             var lastIdx = Math.max(0, (s.v || []).length - 1);
             tail += ", samples end at " + fmt(ts[lastIdx]) + " ns";
         }
+        var vv = s.v || [];
+        if (vv.some(function (x, k) { return k < ts.length && !num(x); })) tail += ", no value in part";
         if (!vs.length) return "no samples" + tail;
         var mx = Math.max.apply(null, vs), mn = Math.min.apply(null, vs);
         if (mx === mn) return "level " + fmtV(mx) + tail;
@@ -305,12 +344,23 @@
     }
 
     function render(host, data, opts) {
+        // one picture per host: a second render replaces the first
+        if (host && host.__gateTimeline) { try { host.__gateTimeline.destroy(); } catch (e) { /* gone */ } }
+        var h = renderOnce(host, data, opts);
+        if (host) host.__gateTimeline = h;
+        return h;
+    }
+
+    function renderOnce(host, data, opts) {
         data = data || {};
         var src = data.lanes || [];
         var counts = { gate: src.filter(function (l) { return l && l.group !== "spectator"; }).length,
                        spectator: src.filter(function (l) { return l && l.group === "spectator"; }).length };
         var seen = {}, dup = null;
         src.forEach(function (l) { if (l && seen[l.key] && dup === null) dup = l.key; if (l) seen[l.key] = true; });
+        if (seen[SPECT_KEY] && !data.cannot_draw) {
+            return cannotDraw(host, "cannot draw: a line key is reserved", data.notes, counts);
+        }
         if (dup !== null && !data.cannot_draw) {
             return cannotDraw(host, "cannot draw: two lines share the key " + dup, data.notes, counts);
         }
@@ -447,22 +497,30 @@
             else root.appendChild(bar);
         }
 
-        /* Overlay legend: one kit button per gate line (and one for the spectator
-           group); pressed = shown. The identity colour is the matching chip drawn
-           in the chart; nothing interactive lives inside the chart. */
+        /* Overlay legend: ONE row of kit buttons, one per gate line (and one for the
+           spectator group): the line's colour dot, its label and its summary;
+           pressed = shown. Nothing interactive lives inside the chart. */
+        function lineClass(l) { return "ui-line-" + ((colorIndex[l.key] || 0) % 6 + 1); }
         var legend = el("div", "ui-actions ui-actions--start");
         legend.setAttribute("data-gate-timeline-legend", "");
         var legendBtns = [];
-        gate.concat(spect.length ? [{ key: SPECT_KEY, label: spect.length + " spectators", spectGroup: true }] : [])
+        gate.concat(spect.length ? [{ key: SPECT_KEY, label: spect.length + (spect.length === 1 ? " spectator" : " spectators"), spectGroup: true }] : [])
             .forEach(function (l) {
-                var b = el("button", "btn-sm secondary", l.label || l.key);
+                var b = el("button", "btn-sm secondary");
                 b.type = "button";
                 b.setAttribute("data-legend", l.key);
+                var dot = null;
+                if (!l.spectGroup) {
+                    dot = el("span", "ui-line-dot " + lineClass(l));
+                    dot.setAttribute("aria-hidden", "true");
+                    b.appendChild(dot);
+                }
+                b.appendChild(document.createTextNode(l.label || l.key));
+                var note = el("span", "ui-note", l.spectGroup ? "" : lineSummary(l));
+                b.appendChild(note);
                 on(b, "click", function () { handle.setLineHidden(l.key, !state.hidden[l.key]); });
                 legend.appendChild(b);
-                var note = l.spectGroup ? null : el("span", "ui-note", lineSummary(l));
-                if (note) legend.appendChild(note);
-                legendBtns.push({ key: l.key, btn: b, note: note, spectGroup: !!l.spectGroup });
+                legendBtns.push({ key: l.key, btn: b, note: note, dot: dot, spectGroup: !!l.spectGroup });
             });
         root.appendChild(legend);
 
@@ -478,6 +536,25 @@
         var pairList = el("div");
         pairList.setAttribute("data-gate-timeline-pairs", "");
         root.appendChild(pairList);
+        function pairKey(p) { return p.a + "\u0001" + p.b; }
+        // one delegated set of listeners for every row the list ever holds
+        function rowOf(e) {
+            var n = e.target;
+            while (n && n !== pairList && !(n.getAttribute && n.getAttribute("data-pair-key"))) n = n.parentNode;
+            return n && n !== pairList ? n : null;
+        }
+        function lightRow(e) {
+            var row = rowOf(e);
+            if (!row) return;
+            var key = row.getAttribute("data-pair-key");
+            if (state.highlight !== key) { state.highlight = key; draw(); }
+        }
+        function unlightRow(e) {
+            var row = rowOf(e);
+            if (row && state.highlight === row.getAttribute("data-pair-key")) { state.highlight = null; draw(); }
+        }
+        on(pairList, "mouseover", lightRow); on(pairList, "focusin", lightRow);
+        on(pairList, "mouseout", unlightRow); on(pairList, "focusout", unlightRow);
         function buildPairList(pairs) {
             pairList.textContent = "";
             if (!pairs || !pairs.length) return;
@@ -486,21 +563,24 @@
                 more = el("details", "ui-disclosure");
                 more.appendChild(el("summary", "ui-disclosure-summary", "all " + pairs.length + " pairs"));
             }
+            state.highlight = null;   // a rebuilt list starts with nothing highlighted
             pairs.forEach(function (p, k) {
                 var row = el("div", "ui-actions ui-actions--start");
                 row.setAttribute("data-pair", String(k));
+                row.setAttribute("data-pair-key", pairKey(p));
                 row.setAttribute("tabindex", "0");
-                row.appendChild(el("code", "ui-chip", nameOf(p.a)));
-                row.appendChild(el("span", "ui-note", "to"));
-                row.appendChild(el("code", "ui-chip", nameOf(p.b)));
+                [p.a, p.b].forEach(function (key, n) {
+                    var l = lanes.filter(function (x) { return x.key === key; })[0];
+                    var dot = el("span", "ui-line-dot " + lineClass(l || { key: key }));
+                    dot.setAttribute("aria-hidden", "true");
+                    row.appendChild(dot);
+                    row.appendChild(el("code", "ui-chip", nameOf(key)));
+                    if (n === 0) row.appendChild(el("span", "ui-note", "to"));
+                });
                 var what = p.kind === "gap" ? "gap " + fmt(p.ns) + " ns" : p.kind === "overlap" ? "overlap " + fmt(p.ns) + " ns" : "meet";
                 if (p.kind === "overlap" && p.intervals.length > 1) what += " in " + p.intervals.length + " parts";
                 row.appendChild(el("span", "ui-badge ui-badge--" + (p.kind === "gap" ? "warn" : "neutral"), what));
                 row.appendChild(el("span", "ui-note", fmt(p.from_ns) + " to " + fmt(p.to_ns) + " ns"));
-                function lit() { if (state.highlight !== k) { state.highlight = k; draw(); } }
-                function unlit() { if (state.highlight === k) { state.highlight = null; draw(); } }
-                on(row, "mouseenter", lit); on(row, "focus", lit);
-                on(row, "mouseleave", unlit); on(row, "blur", unlit);
                 (more && k >= 6 ? more : pairList).appendChild(row);
             });
             if (more) pairList.appendChild(more);
@@ -509,6 +589,13 @@
         var notesBox = el("div");
         notesInto(notesBox);
         root.appendChild(notesBox);
+
+        var pictureDigits = pickVoltDigits(lanes.reduce(function (acc, l) {
+            (l.segments || []).forEach(function (sg) { acc = acc.concat(sg.v || []); });
+            if (l.limit_v) acc = acc.concat(l.limit_v);
+            if (num(l.offset_v)) acc.push(l.offset_v);
+            return acc;
+        }, []));
 
         function drawnLanes() { return state.fold ? gate.slice() : gate.concat(spect); }
 
@@ -676,10 +763,16 @@
                 var first = plan[i].segs[0];
                 // (only when the idle stretch is wide enough to hold the words)
                 var startText = first ? "starts at " + fmt(first.start_ns) + " ns" : "";
-                if (first && num(first.start_ns) && first.start_ns > 0 &&
+                // a place clear of the 0 V line and the shown limit lines, or none at all
+                var lineYs = [0].concat((lane.limit_v || []).filter(function (v) { return num(v) && v >= range[0] && v <= range[1]; }));
+                var spot = [0.5, 0.35, 0.62].filter(function (fy) {
+                    var vAt = range[0] + fy * (range[1] - range[0]);
+                    return lineYs.every(function (ly) { return Math.abs(ly - vAt) * lanePx / (range[1] - range[0]) > 10; });
+                })[0];
+                if (spot !== undefined && first && num(first.start_ns) && first.start_ns > 0 &&
                     (first.start_ns - span[0]) * widthPx / (span[1] - span[0]) > startText.length * CHAR_PX + 12) {
                     fixed.push({
-                        xref: "paper", yref: ax + " domain", x: 0, y: 0.5, xanchor: "left", yanchor: "middle",
+                        xref: "paper", yref: ax + " domain", x: 0, y: spot, xanchor: "left", yanchor: "middle",
                         xshift: 4, showarrow: false, text: "starts at " + fmt(first.start_ns) + " ns",
                         font: { size: TEXT_PX, color: c.muted },
                         meta: { role: "starts-at", lane: lane.key }
@@ -772,10 +865,19 @@
                         var extra = (s.flags || []).map(function (f) { return FLAG_TEXT[f] || f; });
                         if (s.truncated) extra.push(TRUNCATED_TEXT);
                         var line2 = levelText(s) + (extra.length ? ", " + extra.join(", ") : "");
+                        var anchorRight = line2.length > room;
+                        var xa = x0;
+                        if (anchorRight) {
+                            // right-aligned at the segment's end, as far left as the row allows
+                            xa = Math.min(s.end_ns, xr[1]);
+                            var prev = segs[k - (plan[i].bottom ? 2 : 1)];
+                            var left = prev ? Math.max(prev.end_ns, xr[0]) : xr[0];
+                            room = Math.max(room, Math.floor((xa - left) * pxPerNs / CHAR_PX) - 1);
+                        }
                         var name = shorten(s.operation || "", room);
-                        var l2 = line2.length > room ? line2.slice(0, Math.max(3, room - 1)) + "\u2026" : line2;
+                        var l2 = line2;   // numbers are never cut
                         out.push({
-                            xref: "x", yref: ax + " domain", x: x0, xanchor: "left", align: "left",
+                            xref: "x", yref: ax + " domain", x: xa, xanchor: anchorRight ? "right" : "left", align: anchorRight ? "right" : "left",
                             y: row === "top" ? 1 : 0, yanchor: row === "top" ? "top" : "bottom",
                             showarrow: false, text: esc(name) + "<br>" + esc(l2),
                             font: { size: TEXT_PX, color: sev ? c.tones[sev].line : c.text },
@@ -800,7 +902,7 @@
         }
         function limitLabel(l, lim, ax, c) {
             return { xref: "paper", yref: ax, x: 1, y: lim, xanchor: "right", yanchor: "bottom", showarrow: false,
-                     text: esc(l.label || l.key) + " limit " + fmt(lim) + " V", font: { size: TEXT_PX, color: c.tones.danger.line },
+                     text: esc(l.label || l.key) + " limit " + voltNum(lim) + " V", font: { size: TEXT_PX, color: c.tones.danger.line },
                      meta: { role: "limit-label", lane: l.key } };
         }
 
@@ -815,7 +917,10 @@
             var l = lanes.filter(function (x) { return x.key === key; })[0];
             return l ? (l.label || l.key) : key;
         }
-        function visibleGate() { return gate.filter(function (l) { return !state.hidden[l.key] && lineSpan(l); }); }
+        /* "hidden" belongs to the Overlay view: in Lanes every gate line counts. */
+        function visibleGate() {
+            return gate.filter(function (l) { return (state.view !== "overlay" || !state.hidden[l.key]) && lineSpan(l); });
+        }
         function overlayLines() {
             var out = visibleGate();
             if (!state.fold && !state.hidden[SPECT_KEY]) out = out.concat(spect);
@@ -858,7 +963,8 @@
             ia.forEach(function (x) {
                 ib.forEach(function (y) {
                     var from, to;
-                    if (x[1] <= y[0] + TIME_EPS) { from = x[1]; to = y[0]; }
+                    if (Math.max(x[0], y[0]) <= Math.min(x[1], y[1]) + TIME_EPS) { from = to = Math.max(x[0], y[0]); }
+                    else if (x[1] < y[0]) { from = x[1]; to = y[0]; }
                     else { from = y[1]; to = x[0]; }
                     var d = Math.max(0, to - from);
                     if (!best || d < best.d - TIME_EPS || (Math.abs(d - best.d) <= TIME_EPS && from < best.from)) best = { d: d, from: from, to: Math.max(from, to) };
@@ -929,8 +1035,7 @@
             var span = spanOf(gate.concat(state.fold ? [] : spect));
             var margin = { l: 64, r: 12, t: 0, b: 38 };
             var widthPx = Math.max(200, ((host.clientWidth || 900) - margin.l - margin.r));
-            var leg = legendAnnotations(widthPx, c);
-            margin.t = GUIDE_ROWS_PX + LEGEND_ROW_PX * leg.rows + 6;
+            margin.t = GUIDE_ROWS_PX + 6;
             var same = state.height === "same";
             var family = uiFont();
             var traces = [], shapes = [], fixed = [];
@@ -947,9 +1052,9 @@
                 lo = Math.min(lo, e[0] * factor[l.key]); hi = Math.max(hi, e[1] * factor[l.key]);
             });
             var pairs = timing();
-            var bracketRows = pairs.reduce(function (n, p) {
+            var bracketRows = Math.min(MAX_BRACKETS, pairs.reduce(function (n, p) {
                 return n + (p.kind === "overlap" ? p.intervals.length : (p.kind === "gap" && silentGap(p) ? 1 : 0));
-            }, 0);
+            }, 0));
             var plotPx = 240 + 18 * bracketRows;
             var range = bandedRange([lo, hi], plotPx, 20 + 22 * bracketRows, 0);
             var layout = {
@@ -1025,7 +1130,7 @@
                 });
             });
             edges.sort(function (a, b) { return a - b; });
-            var hiPair = state.highlight !== null ? pairs[state.highlight] : null;
+            var hiPair = state.highlight === null ? null : pairs.filter(function (q) { return pairKey(q) === state.highlight; })[0] || null;
             var hiEdges = !hiPair ? [] : (hiPair.intervals.length ? hiPair.intervals : [[hiPair.from_ns, hiPair.to_ns]])
                 .reduce(function (a, x) { return a.concat(x); }, []);
             edges.forEach(function (t) {
@@ -1042,11 +1147,18 @@
                 if (p.kind === "overlap") p.intervals.forEach(function (x) { brackets.push({ p: p, k: k, from: x[0], to: x[1] }); });
                 else if (p.kind === "gap" && silentGap(p)) brackets.push({ p: p, k: k, from: p.from_ns, to: p.to_ns });
             });
+            var more = Math.max(0, brackets.length - MAX_BRACKETS);
+            brackets = brackets.slice(0, MAX_BRACKETS);   // overlaps come first
+            if (more) {
+                fixed.push({ xref: "paper", yref: "paper", x: 1, y: 1, xanchor: "right", yanchor: "bottom", yshift: GUIDE_ROWS_PX - 14,
+                             showarrow: false, text: more + " more in the list", font: { size: TEXT_PX, color: c.muted },
+                             meta: { role: "brackets-more", count: more } });
+            }
             var labelled = brackets.length <= 2;
             brackets.forEach(function (bk, n) {
                 var p = bk.p;
-                var col = p.kind === "gap" ? warn : c.muted;
-                var lit = state.highlight === bk.k;
+                var col = c.muted;
+                var lit = state.highlight !== null && pairKey(p) === state.highlight;
                 var y = 1 - (14 + 22 * n) / plotPx;
                 shapes.push({ type: "path", name: "bracket", xref: "x", yref: "paper",
                               path: "M " + bk.from + " " + (y - 0.02) + " L " + bk.from + " " + y + " L " + bk.to + " " + y +
@@ -1062,7 +1174,6 @@
             });
             if (window.PlotTheme && window.PlotTheme.houseLayout) layout = window.PlotTheme.houseLayout(layout);
             function labels(xr, w) { return guideLabels(edges, xr, w, c); }
-            fixed = fixed.concat(leg.annotations);
             layout.annotations = fixed.concat(labels(span, widthPx));
             return { data: traces, layout: layout, drawn: lines, fixedAnnotations: fixed, labels: labels,
                      span: span, widthPx: widthPx, view: "overlay", timing: pairs };
@@ -1082,47 +1193,26 @@
             if (sp) parts.push("starts " + fmt(sp[0]) + " ns");
             return parts.join(", ");
         }
-        function legendAnnotations(widthPx, c) {
-            var items = gate.map(function (l) { return { key: l.key, name: l.label || l.key, text: lineSummary(l), col: laneCol(l) }; });
-            if (spect.length && !state.fold) items.push({ key: SPECT_KEY, name: spect.length + " spectators", text: "", col: quietColor() });
-            var out = [], x = 0, row = 0;
-            items.forEach(function (it) {
-                var hidden = !!state.hidden[it.key];
-                var wName = it.name.length * CHAR_PX * LABEL_PX / TEXT_PX + 10;
-                var wText = 0;
-                if (x > 0 && x + wName + wText > widthPx) { x = 0; row += 1; }
-                var y = row;   // row index; turned into a pixel lift below, first row on top
-                out.push({ xref: "paper", yref: "paper", x: 0, y: 1, xanchor: "left", yanchor: "bottom",
-                           xshift: x, yshift: y, showarrow: false,
-                           text: "<b>" + esc(it.name) + "</b>", font: { size: LABEL_PX, color: it.col },
-                           bgcolor: faint(it.col, CHIP_ALPHA), borderpad: 3, borderwidth: 0, opacity: hidden ? 0.45 : 1,
-                           meta: { role: "legend-chip", key: it.key, hidden: hidden } });
-                x += wName + wText + 14;
-            });
-            var rows = row + 1;
-            out.forEach(function (a) {
-                var r = a.yshift;
-                a.meta.row = r;
-                a.yshift = GUIDE_ROWS_PX + LEGEND_ROW_PX * (rows - 1 - r) + (a.meta.role === "legend-text" ? 3 : 0);
-            });
-            return { annotations: out, rows: rows };
-        }
 
         /* The plot's text alternative: what each visible line plays and the timing,
            from the same data as the list. */
         function describe() {
             var lines = (state.view === "overlay" ? overlayLines() : drawnLanes()).filter(function (l) { return l.group !== "spectator"; });
+            var extraLines = Math.max(0, lines.length - MAX_SPOKEN);
+            lines = lines.slice(0, MAX_SPOKEN);
             var parts = lines.map(function (l) {
                 var iv = lineIntervals(l).map(function (x) { return fmt(x[0]) + " to " + fmt(x[1]) + " ns"; }).join(" and ");
                 var segs = l.segments || [];
                 var lvl = segs.length === 1 ? levelText(segs[0]).split(",")[0] : segs.length + " pulses";
                 return (l.label || l.key) + " plays " + (iv || "nothing") + (segs.length ? " at " + lvl.replace(/^level /, "") : "");
             });
-            timing().forEach(function (p) {
+            var ps = timing();
+            ps.slice(0, MAX_SPOKEN).forEach(function (p) {
                 parts.push(p.kind === "meet" ? nameOf(p.a) + " and " + nameOf(p.b) + " meet at " + fmt(p.from_ns) + " ns"
                     : p.kind + " " + fmt(p.ns) + " ns between " + nameOf(p.a) + " and " + nameOf(p.b));
             });
-            return parts.join("; ");
+            var rest = extraLines + Math.max(0, ps.length - MAX_SPOKEN);
+            return parts.join("; ") + (rest ? "; and " + rest + " more, see the list" : "");
         }
 
         var lastFigure = null;
@@ -1135,6 +1225,7 @@
             });
             if (simBox) simBox.checked = state.showSim;
             if (foldBox) foldBox.checked = !state.fold;
+            voltDigits = pictureDigits;
             var ov = state.view === "overlay";
             viewSeg.buttons.forEach(function (b) {
                 var onNow = b.getAttribute("data-view") === state.view;
@@ -1157,7 +1248,8 @@
             legendBtns.forEach(function (lb) {
                 lb.btn.setAttribute("aria-pressed", state.hidden[lb.key] ? "false" : "true");
                 lb.btn.hidden = lb.spectGroup && state.fold;
-                if (lb.note) lb.note.textContent = state.hidden[lb.key] ? "hidden" : lineSummaryByKey(lb.key);
+                // a line switched off reads "hidden" even while the button has focus
+                lb.note.textContent = state.hidden[lb.key] ? "hidden" : (lb.spectGroup ? "" : lineSummaryByKey(lb.key));
             });
             plot.setAttribute("aria-label", describe());
             if (window._plotlyRender) {

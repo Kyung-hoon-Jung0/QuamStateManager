@@ -70,7 +70,8 @@ function seg(op, t, v, extra) {
 }
 
 const title = (fig, key) => fig.layout.annotations.find((a) => a.meta && a.meta.role === 'lane-title' && a.meta.lane === key);
-const lastRoot = () => [...host.querySelectorAll('[data-gate-timeline]')].pop();
+const host2 = doc.createElement("div"); doc.body.appendChild(host2);
+const lastRoot = () => [...doc.querySelectorAll("[data-gate-timeline]")].pop();
 const facts = (fig, key) => fig.layout.annotations.find((a) => a.meta && a.meta.role === 'lane-facts' && a.meta.lane === key);
 const segText = (fig, key) => fig.layout.annotations.filter((a) => a.meta && a.meta.role === 'segment-text' && a.meta.lane === key);
 
@@ -146,13 +147,13 @@ ok([...Array(116).keys()].every((t) => hov.x.includes(t)), 'hover grid has every
 {
     const xr = fig.layout.xaxis.range;
     ok(xr[0] === 0 && xr[1] > 1000 && xr[1] <= 1000 * 1.04 + 2 && fig.layout.xaxis.autorange === false, 'time axis 0 to the last end plus a pad, no autorange');
-    const one = GT.render(host, { lanes: [lane('q9.z', 'gate', [seg('late', [161, 261], [0.1, 0.1])])], notes: [] });
+    const one = GT.render(host2, { lanes: [lane('q9.z', 'gate', [seg('late', [161, 261], [0.1, 0.1])])], notes: [] });
     const f1 = last();
     ok(f1.layout.xaxis.range[0] === 0 && f1.layout.xaxis.range[1] > 261 && f1.layout.xaxis.range[1] < 280, 'a single late pulse: axis still starts at 0');
     const sa = f1.layout.annotations.filter((a) => a.meta && a.meta.role === 'starts-at');
     ok(sa.length === 1 && sa[0].text === 'starts at 161 ns' && sa[0].x === 0 && sa[0].xanchor === 'left' && sa[0].font.size === 11, 'late start: "starts at 161 ns" at the lane left');
     one.destroy();
-    const neg = GT.render(host, { lanes: [lane('q9.z', 'gate', [seg('early', [-20, 30], [0.1, 0.1])])], notes: [] });
+    const neg = GT.render(host2, { lanes: [lane('q9.z', 'gate', [seg('early', [-20, 30], [0.1, 0.1])])], notes: [] });
     const f2 = last();
     ok(f2.layout.xaxis.range[0] === -20, 'a negative start extends the axis to it');
     ok(!f2.layout.annotations.some((a) => a.meta && a.meta.role === 'starts-at'), 'no "starts at" text when a lane starts at or before 0');
@@ -241,9 +242,10 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
     ok(upd && q2.length === 2 && q2[0].meta.operation === 'flux_b' && q2[0].x === 50, 'after a zoom only the visible segments are labelled');
     const qc = st.find((a) => a.meta.lane === 'coupler_q1_q2');
     ok(qc === undefined || qc.x >= 49, 'a segment started before the range is labelled at the left edge');
-    ok(st.every((a) => { const [n1, n2] = a.text.split('<br>'); return true; }) &&
-       st.filter((a) => a.meta.lane === 'q1.z').every((a) => a.meta.name.length < 'cz_x_pulse_q1_q2'.length && a.x === 63),
-       'names re-fitted to the zoomed width');
+    const q1t = st.filter((a) => a.meta.lane === 'q1.z');
+    ok(q1t.length === 1 && q1t[0].xanchor === 'right' && q1t[0].x === 75 && q1t[0].text.split('<br>')[1] === 'max 0.1 V, 52 ns',
+       'zoomed: a label whose numbers do not fit to the right is placed left of the visible end, numbers whole');
+    ok(st.every((a) => a.meta.shown2 === a.meta.line2), 'a number is never cut');
     hs[0]({ 'yaxis.range[0]': 0 });
     ok(window.__relayouts.length === before + 1, 'a y-only change does not re-fit');
     hs[0]({ width: 300 });
@@ -275,7 +277,7 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
     const hostTb = doc.createElement('div'); doc.body.appendChild(hostTb);
     const many = { lanes: [lane('a.z', 'gate', [seg('p', [0, 10], [0.1, 0.1])], { color: 0 }), lane('b.z', 'gate', [seg('p', [0, 10], [0.1, 0.1])], { color: 3 })]
         .concat([1, 2, 3].map((i) => lane('s' + i + '.z', 'spectator', [seg('p', [0, 10], [0.01, 0.01])]))), notes: [] };
-    const hc = GT.render(host, many, { foldSpectators: false, toolbarHost: hostTb });
+    const hc = GT.render(host2, many, { foldSpectators: false, toolbarHost: hostTb });
     const fc = last();
     const col = (key) => role(fc, 'segment').find((t) => t.meta.lane === key).line.color;
     ok(col('a.z') === GT.laneColor(0) && col('b.z') === GT.laneColor(3) && col('a.z') !== col('b.z'), 'lane.color picks the palette index');
@@ -288,7 +290,7 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
     ok(JSON.stringify(last().layout.yaxis.tickvals) !== JSON.stringify(fc.layout.yaxis.tickvals) || last().layout.yaxis.tickvals.length === 2, 'controls in the toolbar host work');
     hc.destroy();
     ok(hostTb.childNodes.length === 0, 'destroy removes the controls from the toolbar host');
-    const hn = GT.render(host, many, { toolbar: false });
+    const hn = GT.render(host2, many, { toolbar: false });
     ok(!lastRoot().querySelector('[data-gate-timeline-bar]') && lastRoot().querySelector('[data-gate-timeline-plot]'), 'toolbar false: no controls');
     hn.setFold(false);
     ok(hn.laneCount().drawn === 5, 'toolbar false: the setters still work');
@@ -303,7 +305,7 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
     const OV = { lanes: [L('coupler_q1_q2', [sq('cp', 0, 100, 0.1)], { color: 3 }), L('q1.z', [sq('fx', 161, 261, 0.01)], { color: 0 }),
                          lane('s1.z', 'spectator', [sq('sp', 161, 201, -0.02)]), lane('s2.z', 'spectator', [sq('sp', 161, 205, 0.03)])],
                  notes: ['n'] };
-    const ho = GT.render(host, OV, { view: 'overlay' });
+    const ho = GT.render(host2, OV, { view: 'overlay' });
     let f = last();
     const r = lastRoot();
     ok(xAxes(f.layout).length === 1 && yAxes(f.layout).length === 1 && f.data.every((t) => t.xaxis === 'x' && t.yaxis === 'y'), 'overlay: one time axis and one V axis');
@@ -322,13 +324,13 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
     ok(['0', '100', '161', '261'].every((t) => gtxt.includes(t)), 'guide times written at the top');
     ok(ho.laneCount().drawn === 2 && role(f, 'segment').length === 2, 'spectators folded: not drawn');
     // legend: the colour key in the chart (not interactive), the controls in the DOM
-    const chips = f.layout.annotations.filter((a) => a.meta && a.meta.role === 'legend-chip');
-    ok(chips.length === 2 && chips[0].font.color === GT.laneColor(3) && chips[0].bgcolor === window.PlotTheme.withAlpha(GT.laneColor(3), 0.16) &&
-       chips.every((c) => !c.captureevents), 'legend: one chip per gate line in its colour; nothing interactive in the chart');
+    ok(!f.layout.annotations.some((a) => a.meta && a.meta.role === 'legend-chip'), 'one legend only: no chip row inside the chart');
     const leg = r.querySelector('[data-gate-timeline-legend]');
     const btns = [...leg.querySelectorAll('button[data-legend]')];
-    ok(btns.length === 3 && btns.every((b) => b.type === 'button' && b.getAttribute('aria-pressed') === 'true') && btns[0].textContent === 'coupler_q1_q2' &&
+    ok(btns.length === 3 && btns.every((b) => b.type === 'button' && b.getAttribute('aria-pressed') === 'true') && btns[0].childNodes[1].textContent === 'coupler_q1_q2' &&
        btns[2].hidden, 'legend: a kit button per line labelled with the lane label, pressed = shown (Space and Enter are native)');
+    ok(btns[0].querySelector('.ui-line-dot.ui-line-4') && btns[1].querySelector('.ui-line-dot.ui-line-1') && !btns[2].querySelector('.ui-line-dot'),
+       'each line button carries its colour dot (ui-line-N of its colour index)');
     const ltext = [...leg.querySelectorAll('.ui-note')].map((n) => n.textContent);
     ok(ltext.includes('level 0.01 V, 100 ns, starts 161 ns') && ltext.includes('level 0.1 V, 100 ns, starts 0 ns'), 'legend text: level, length, start');
     btns[1].focus();
@@ -338,7 +340,7 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
     ok(ho.timing().length === 0 && f.layout.shapes.filter((s) => s.name === 'guide').map((s) => s.x0).join() === '0,100' &&
        f.layout.annotations.filter((a) => a.meta && a.meta.role === 'bracket-label').length === 0 && role(f, 'segment').every((t) => t.meta.lane !== 'q1.z'),
        'a hidden line leaves the plot, its guides and its bracket');
-    ok(f.layout.annotations.find((a) => a.meta && a.meta.role === 'legend-chip' && a.meta.key === 'q1.z').opacity < 1, 'hidden chip shown faded');
+    ok(btns[1].querySelector('.ui-note').textContent === 'hidden', 'the button of a hidden line says "hidden"');
     ok(!ho.valuesAt(200).some((v) => v.key === 'q1.z') && ho.valuesAt(200, { all: true }).some((v) => v.key === 'q1.z'), 'valuesAt leaves out a hidden line');
     ho.setLineHidden('q1.z', false);
     // Same height: each line scaled to its own largest value; no volt numbers
@@ -364,8 +366,8 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
     const sp = role(f, 'segment').filter((t) => t.meta.lane.startsWith('s'));
     ok(sp.length === 2 && sp.every((t) => t.line.width === 1 && t.line.color === sp[0].line.color) && !role(f, 'fill').some((t) => t.meta.lane.startsWith('s')),
        'spectators: thin quiet lines without fill');
-    ok(f.layout.annotations.filter((a) => a.meta && a.meta.role === 'legend-chip').map((a) => a.text).join() === '<b>coupler_q1_q2</b>,<b>q1.z</b>,<b>2 spectators</b>',
-       'one legend chip for the spectator group');
+    ok([...r.querySelectorAll('[data-gate-timeline-legend] button[data-legend]')].filter((b) => !b.hidden).map((b) => b.childNodes[b.childNodes.length - 2].textContent).join() === 'coupler_q1_q2,q1.z,2 spectators',
+       'one legend button for the spectator group');
     ok(f.layout.shapes.filter((s) => s.name === 'guide').length === 4, 'spectator edges get no guides');
     // back to lanes, unchanged
     bar.querySelector('[data-view="lanes"]').click();
@@ -374,7 +376,7 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
     ho.destroy();
 
     // overlap, meet, three lines and more than three
-    const tm = (lanes) => { const h2 = GT.render(host, { lanes, notes: [] }, { view: 'overlay' }); const t = h2.timing(); const fig2 = last(); const note = !!lastRoot().querySelector('[data-overlay-note]'); h2.destroy(); return { t, fig2, note }; };
+    const tm = (lanes) => { const h2 = GT.render(host2, { lanes, notes: [] }, { view: 'overlay' }); const t = h2.timing(); const fig2 = last(); const note = !!lastRoot().querySelector('[data-overlay-note]'); h2.destroy(); return { t, fig2, note }; };
     let x = tm([L('a', [sq('p', 0, 100, 0.1)]), L('b', [sq('p', 40, 140, 0.1)])]);
     ok(JSON.stringify(x.t) === JSON.stringify([{ a: 'a', b: 'b', kind: 'overlap', ns: 60, from_ns: 40, to_ns: 100, intervals: [[40, 100]] }]), 'timing: overlap 60 ns');
     ok(x.fig2.layout.annotations.some((a) => a.meta && a.meta.role === 'bracket-label' && /overlap 60 ns/.test(a.text)), 'overlap bracket labelled');
@@ -414,14 +416,14 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
         '--ui-danger-text: rgb(200,0,0); --ui-danger-bg: rgb(250,220,220); --ui-warn-text: rgb(150,100,0); --ui-warn-bg: rgb(250,240,200); }';
     doc.head.appendChild(st);
     const nameOf = (D, key) => (D.lanes.find((l) => l.key === key) || {}).label || key;
-    ok(GT.laneColor(0) === 'rgb(1,1,1)' && GT.laneColor(2) === 'rgb(3,3,3)' && GT.laneColor(3) === 'rgb(1,1,1)', 'identity colours come from the kit line colours when defined');
+    ok(GT.laneColor(0) === 'rgb(1,1,1)' && GT.laneColor(2) === 'rgb(3,3,3)' && GT.laneColor(3) === window.PlotTheme.palette()[2] && GT.laneColor(6) === 'rgb(1,1,1)', 'identity colours come from the kit line colours, slot by slot, six slots');
     const sq = (op, s, e, v, extra) => seg(op, [s, e], [v, v], extra);
     const D = { lanes: [
         lane('coupler_q1_q2', 'gate', [sq('big', 0, 50, 0.62, { flags: ['over_range'] })], { color: 0 }),
         lane('q1.z', 'gate', [sq('odd', 60, 90, 0.1, { flags: ['something_new'] })], { color: 1 }),
         lane('q2.z', 'gate', [Object.assign(sq('long', 100, 300, 0.1), { t_ns: [100, 150], v: [0.1, 0.1], truncated: true })], { color: 2 })],
         notes: [] };
-    const hs = GT.render(host, D, {});
+    const hs = GT.render(host2, D, {});
     let f = last();
     const segOf = (fig, key) => role(fig, 'segment').find((t) => t.meta.lane === key);
     const fillOf = (fig, key) => role(fig, 'fill').find((t) => t.meta.lane === key);
@@ -452,14 +454,14 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
         nameOf(D, p.a) + 'to' + nameOf(D, p.b) + (p.kind === 'gap' ? 'gap ' + p.ns + ' ns' : p.kind === 'overlap' ? 'overlap ' + p.ns + ' ns' : 'meet') + p.from_ns + ' to ' + p.to_ns + ' ns').join('|'),
        'the pair list is timing(), one row per pair');
     ok(rows[0].querySelector('.ui-badge--warn') && rows.every((r) => r.getAttribute('tabindex') === '0'), 'gap rows in the warn tone; rows focusable');
-    rows[0].dispatchEvent(new window.Event('mouseenter'));
+    rows[0].dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true }));
     f = last();
     const br = f.layout.shapes.filter((x2) => x2.name === 'bracket');
     const p0 = hs.timing()[0];
     ok(br.filter((x2) => x2.meta.lit).length === 1 && br.find((x2) => x2.meta.lit).meta.index === 0 &&
        f.layout.shapes.filter((x2) => x2.name === 'guide' && x2.meta.lit).map((x2) => x2.x0).sort((a, b) => a - b).join() === [p0.from_ns, p0.to_ns].join(),
        'hovering a row highlights exactly its bracket and its two guides');
-    rows[0].dispatchEvent(new window.Event('mouseleave'));
+    rows[0].dispatchEvent(new window.MouseEvent('mouseout', { bubbles: true }));
     ok(!last().layout.shapes.some((x2) => x2.meta && x2.meta.lit), 'leaving the row clears the highlight');
     hs.setView('lanes');
     ok(lastRoot().querySelectorAll('[data-gate-timeline-pairs] [data-pair]').length === 3, 'the Lanes view shows the same list');
@@ -473,24 +475,24 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
 // robustness: empty handles, limits, duplicate keys, lengths, one sample, missing values, names
 {
     const sq = (op, s, e, v, extra) => seg(op, [s, e], [v, v], extra);
-    const he = GT.render(host, { lanes: [], notes: [], cannot_draw: 'cannot draw: x' });
+    const he = GT.render(host2, { lanes: [], notes: [], cannot_draw: 'cannot draw: x' });
     let threw = false;
     try { he.setView('overlay'); he.setHeight('same'); he.setLineHidden('a', true); he.relayout({}); he.readout(1); he.figure(); } catch (e) { threw = true; }
     ok(!threw && JSON.stringify(he.timing()) === '[]' && he.valuesAt(1).length === 0, 'an empty picture has every handle method; timing() is []');
     he.destroy();
-    const h1 = GT.render(host, { lanes: [lane('q1.z', 'gate', [sq('p', 0, 10, 0.1)], { limit_v: 0.5 }), lane('q2.z', 'gate', [sq('p', 0, 10, 0.1)], { limit_v: [0.4, -0.3] }),
+    const h1 = GT.render(host2, { lanes: [lane('q1.z', 'gate', [sq('p', 0, 10, 0.1)], { limit_v: 0.5 }), lane('q2.z', 'gate', [sq('p', 0, 10, 0.1)], { limit_v: [0.4, -0.3] }),
                                           lane('c.z', 'gate', [sq('p', 0, 10, 0.1)], { limit_v: 'wide' })], notes: [] });
     let f = last();
     ok(/limit -0\.5 to 0\.5 V/.test(facts(f, 'q1.z').text) && /limit -0\.3 to 0\.4 V/.test(facts(f, 'q2.z').text) && /range not known/.test(facts(f, 'c.z').text),
        'limit_v: one number r is [-r, r]; a reversed pair is ordered; anything else is unknown');
     h1.destroy();
-    const before = host.childNodes.length;
-    const hb = GT.render(host, { lanes: [{ key: 'bad', group: 'gate', segments: [{ operation: 'p', start_ns: 0, end_ns: 10, t_ns: 5, v: 'x' }] }], notes: ['n'] });
-    ok(host.querySelectorAll('[data-gate-timeline]').length === host.childNodes.length && host.childNodes.length === before + 1 &&
+    const before = host2.childNodes.length;
+    const hb = GT.render(host2, { lanes: [{ key: 'bad', group: 'gate', segments: [{ operation: 'p', start_ns: 0, end_ns: 10, t_ns: 5, v: 'x' }] }], notes: ['n'] });
+    ok(host2.querySelectorAll('[data-gate-timeline]').length === host2.childNodes.length && host2.childNodes.length === before + 1 &&
        /^cannot draw: /.test(lastRoot().querySelector('.ui-state--empty').textContent) && typeof hb.setView === 'function',
        'an exception while drawing leaves no half-built root, only the cannot-draw line with the reason');
     hb.destroy();
-    const hd = GT.render(host, { lanes: [lane('q1.z', 'gate', [sq('p', 0, 10, 0.1)]), lane('q1.z', 'gate', [sq('p', 20, 30, 0.1)])], notes: [] });
+    const hd = GT.render(host2, { lanes: [lane('q1.z', 'gate', [sq('p', 0, 10, 0.1)]), lane('q1.z', 'gate', [sq('p', 20, 30, 0.1)])], notes: [] });
     ok(lastRoot().querySelector('.ui-state--empty').textContent === 'cannot draw: two lines share the key q1.z' && hd.laneCount().drawn === 0, 'duplicate keys are refused with the reason');
     hd.destroy();
     // lengths, one sample, short v, null inside, back-to-back edge, escaping
@@ -498,7 +500,7 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
     const L2 = { lanes: [
         lane('a', 'gate', [sq('p', 0, 100, 0.1, { length_ns: 96 }), sq('q', 100, 140, 0.2)], { label: odd }),
         lane('b', 'gate', [seg('one', [50], [0.1]), seg('short', [60, 61, 62, 70], [0.1, 0.2]), seg('hole', [80, 81, 90], [0.1, null, 0.1])])], notes: [] };
-    const h2 = GT.render(host, L2, {});
+    const h2 = GT.render(host2, L2, {});
     f = last();
     const ta = segText(f, 'a');
     ok(ta[0].meta.line2 === 'level 0.1 V, config length 96 ns, drawn 100 ns' && ta[1].meta.line2 === 'level 0.2 V, 40 ns',
@@ -517,12 +519,159 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
     h2.destroy();
     // more than six pairs: six rows and a disclosure with the rest
     const many = { lanes: [0, 1, 2, 3, 4].map((i) => lane('l' + i, 'gate', [sq('p', i * 20, i * 20 + 10, 0.1)])), notes: [] };
-    const h3 = GT.render(host, many, {});
+    const h3 = GT.render(host2, many, {});
     const pl = lastRoot().querySelector('[data-gate-timeline-pairs]');
     ok(h3.timing().length === 10 && pl.querySelectorAll(':scope > [data-pair]').length === 6 &&
        pl.querySelector('details.ui-disclosure > summary.ui-disclosure-summary').textContent === 'all 10 pairs' &&
        pl.querySelectorAll('details [data-pair]').length === 4, 'more than six pairs: six rows and "all N pairs"');
     h3.destroy();
+}
+
+// numbers, the reference comparison, view-scoped hiding, bounds, colours
+{
+    const sq = (op, s, e, v, extra) => seg(op, [s, e], [v, v], extra);
+    const L = (key, segs, extra) => lane(key, 'gate', segs, extra);
+    // times above 1000 and 10000 ns print exactly
+    let hx = GT.render(host2, { lanes: [L('A', [sq('p', 1024, 1030, 0.1)]), L('B', [sq('q', 1026, 1040, 0.1)]),
+                                          L('C', [sq('r', 10000, 11234.5, 0.1, { length_ns: 2048 })])], notes: [] }, { view: 'overlay' });
+    const rowsX = [...lastRoot().querySelectorAll('[data-pair]')].map((r) => r.textContent);
+    ok(rowsX.some((t) => /overlap 4 ns1026 to 1030 ns$/.test(t)), 'times above 1000 ns print exactly (overlap 4 ns, 1026 to 1030 ns)');
+    ok(/A plays 1024 to 1030 ns/.test(lastRoot().querySelector('[data-gate-timeline-plot]').getAttribute('aria-label')), 'the text alternative prints exact times');
+    hx.setView('lanes');
+    ok(segText(last(), 'C')[0].meta.line2 === 'level 0.1 V, config length 2048 ns, drawn 1234.5 ns', 'lengths above 1000 ns print exactly');
+    const gl = last().layout.annotations.filter((a) => a.meta && a.meta.role === 'segment-text').map((a) => a.text).join();
+    ok(!/e\+|e-/.test(gl), 'never scientific notation');
+    hx.destroy();
+    // volts: 4 significant digits; two values that differ never print the same
+    hx = GT.render(host2, { lanes: [L('A', [sq('p', 0, 10, 0.1)]), L('B', [sq('q', 0, 10, 0.1001)]), L('C', [sq('r', 0, 10, 0.30000000000000004)])], notes: [] });
+    ok(segText(last(), 'A')[0].meta.line2.startsWith('level 0.1 V') && segText(last(), 'B')[0].meta.line2.startsWith('level 0.1001 V') &&
+       segText(last(), 'C')[0].meta.line2.startsWith('level 0.3 V'), 'volts: 0.1 and 0.1001 differ, 0.30000000000000004 reads 0.3');
+    hx.destroy();
+    hx = GT.render(host2, { lanes: [L('A', [sq('p', 0, 10, 0.12345)]), L('B', [sq('q', 0, 10, 0.12346)])], notes: [] });
+    ok(segText(last(), 'A')[0].meta.line2 !== segText(last(), 'B')[0].meta.line2, 'volts: digits grow until different values print differently');
+    hx.destroy();
+
+    // timing() against an independent reference: quarter-ns cells and points
+    let seed = 12345;
+    const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+    function reference(A, B) {
+        const cells = (segs) => { const c = new Set(); segs.forEach(([s, e]) => { for (let k = s; k < e; k++) c.add(k); }); return c; };
+        const points = (segs) => { const p = new Set(); segs.forEach(([s, e]) => { for (let k = s; k <= e; k++) p.add(k); }); return p; };
+        const ca = cells(A), cb = cells(B);
+        const both = [...ca].filter((k) => cb.has(k)).sort((x, y) => x - y);
+        if (both.length) {
+            const runs = [];
+            both.forEach((k) => { const r = runs[runs.length - 1]; if (r && r[1] === k) r[1] = k + 1; else runs.push([k, k + 1]); });
+            return { kind: 'overlap', ns: both.length / 4, from_ns: runs[0][0] / 4, to_ns: runs[runs.length - 1][1] / 4, intervals: runs.map((r) => [r[0] / 4, r[1] / 4]) };
+        }
+        const pa = [...points(A)], pb = [...points(B)];
+        let best = null;
+        pa.forEach((a) => pb.forEach((b) => {
+            const d = Math.abs(a - b), from = Math.min(a, b);
+            if (!best || d < best.d || (d === best.d && from < best.from)) best = { d, from, to: Math.max(a, b) };
+        }));
+        if (best.d === 0) return { kind: 'meet', ns: 0, from_ns: best.from / 4, to_ns: best.from / 4, intervals: [] };
+        return { kind: 'gap', ns: best.d / 4, from_ns: best.from / 4, to_ns: best.to / 4, intervals: [[best.from / 4, best.to / 4]] };
+    }
+    const randSegs = () => {
+        const out = [];
+        const n = 1 + rnd(3);
+        for (let i = 0; i < n; i++) {
+            const s = rnd(120), len = rnd(5) === 0 ? 0 : rnd(40);
+            out.push([s, s + len]);
+        }
+        if (rnd(6) === 0) out.push(out[0].slice());                     // identical
+        if (rnd(6) === 0) out.push([out[0][0] + 1, out[0][0] + 1]);     // nested point
+        return out.reverse();                                           // unsorted
+    };
+    let mismatches = 0, cases = 0, firstBad = '';
+    for (let c = 0; c < 300; c++) {
+        const A = randSegs(), B = randSegs();
+        const toLane = (key, ss) => L(key, ss.map(([s, e], k) => seg('s' + k, s === e ? [s / 4] : [s / 4, e / 4], s === e ? [0.1] : [0.1, 0.1],
+                                                                    { start_ns: s / 4, end_ns: e / 4 })));
+        const hr = GT.render(host2, { lanes: [toLane('a', A), toLane('b', B)], notes: [] });
+        const got = hr.timing()[0];
+        hr.destroy();
+        const want = reference(A, B);
+        cases++;
+        const same = got && got.kind === want.kind && got.ns === want.ns && got.from_ns === want.from_ns && got.to_ns === want.to_ns &&
+            JSON.stringify(got.intervals) === JSON.stringify(want.intervals);
+        if (!same) { mismatches++; if (!firstBad) firstBad = JSON.stringify({ A, B, got, want }); }
+    }
+    ok(cases === 300 && mismatches === 0, 'timing() equals an independent quarter-ns reference on 300 seeded cases' + (firstBad ? ' ' + firstBad : ''));
+    // order independence for a point inside the other line
+    const pA = L('a', [sq('p', 34.5, 53.5, 0.1)]), pB = L('b', [seg('pt', [44.75], [0.1], { start_ns: 44.75, end_ns: 44.75 })]);
+    const t1 = GT.render(host2, { lanes: [pA, pB], notes: [] }).timing()[0];
+    const t2 = GT.render(host2, { lanes: [pB, pA], notes: [] }).timing()[0];
+    ok(t1.kind === 'meet' && t1.from_ns === 44.75 && t2.from_ns === 44.75, 'a point inside the other line meets at the point, whatever the pair order');
+    // nested segments of one line form one union
+    const hn = GT.render(host2, { lanes: [L('a', [sq('p', 0, 100, 0.1), sq('q', 10, 20, 0.1)]), L('b', [sq('r', 50, 150, 0.1)])], notes: [] });
+    ok(hn.timing()[0].kind === 'overlap' && hn.timing()[0].ns === 50, 'a nested segment does not shorten the union');
+    hn.destroy();
+
+    // hidden is Overlay-only; picture, list, timing() and text alternative agree
+    const three = { lanes: [L('q1.z', [sq('p', 0, 10, 0.1)]), L('q2.z', [sq('p', 20, 30, 0.1)]), L('c', [sq('p', 40, 50, 0.1)])], notes: [] };
+    const hv = GT.render(host2, three, { view: 'overlay' });
+    const nRows = () => lastRoot().querySelectorAll('[data-pair]').length;
+    ok(nRows() === 3, 'overlay: three pairs listed');
+    hv.setLineHidden('q1.z', true);
+    ok(nRows() === 1 && hv.timing().length === 1, 'the list refreshes after setLineHidden');
+    ok(!/q1\.z/.test(lastRoot().querySelector('[data-gate-timeline-plot]').getAttribute('aria-label')), 'the text alternative follows hidden lines');
+    hv.setView('lanes');
+    ok(yAxes(last().layout).length === 3 && nRows() === 3 && hv.timing().length === 3 &&
+       /q1\.z plays/.test(lastRoot().querySelector('[data-gate-timeline-plot]').getAttribute('aria-label')), 'Lanes: every lane drawn and counted');
+    hv.setView('overlay');
+    ok(nRows() === 1, 'back in Overlay the line is still hidden');
+    hv.setLineHidden('q1.z', false);
+    // the row highlight is keyed by the pair and cleared on a rebuild
+    const rows3 = [...lastRoot().querySelectorAll('[data-pair]')];
+    rows3[2].dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true }));
+    ok(last().layout.shapes.some((x2) => x2.meta && x2.meta.lit), 'hovering the third row lights its bracket');
+    hv.setLineHidden('q2.z', true);
+    ok(!last().layout.shapes.some((x2) => x2.meta && x2.meta.lit), 'after a line is hidden no bracket stays lit');
+    // listeners do not pile up when the list is rebuilt
+    const live0 = window.__live;
+    for (let k = 0; k < 10; k++) { hv.setLineHidden('q2.z', k % 2 === 0); }
+    ok(window.__live === live0, 'rebuilding the list adds no listeners');
+    hv.destroy();
+
+    // bounds: 40 overlapping gate lines
+    const forty = { lanes: Array.from({ length: 40 }, (_, i) => L('l' + i, [sq('p', i, 200 + i, 0.1)])), notes: [] };
+    const hf = GT.render(host2, forty, { view: 'overlay' });
+    const ff = last();
+    const brs = ff.layout.shapes.filter((x2) => x2.name === 'bracket');
+    const ys = brs.map((b) => +b.path.split(' ')[2]);
+    ok(brs.length === 12 && ys.every((y) => y > 0 && y <= 1), 'at most 12 brackets, all inside the plot');
+    ok(ff.layout.annotations.some((a) => a.meta && a.meta.role === 'brackets-more' && a.text === (hf.timing().length - 12) + ' more in the list'), 'the rest are said to be in the list');
+    const al = lastRoot().querySelector('[data-gate-timeline-plot]').getAttribute('aria-label');
+    ok(al.length < 1500 && /and \d+ more, see the list$/.test(al), 'the text alternative is bounded');
+    hf.destroy();
+
+    // kit colours: an undefined --ui-line-1 falls back to the palette, never to black
+    const st2 = doc.createElement('style');
+    st2.textContent = ':root { --ui-line-2: rgb(2,2,2); --ui-line-3: color-mix(in srgb, red 50%, blue); }';
+    doc.head.appendChild(st2);
+    ok(GT.laneColor(0) === window.PlotTheme.palette()[0], 'an undefined kit line colour falls back to the palette');
+    st2.remove();
+
+    // "no value in part", one spectator, the reserved key, one picture per host
+    const hn2 = GT.render(host2, { lanes: [L('a', [seg('h', [0, 5, 10], [0.1, null, 0.1])])], notes: [] });
+    ok(/no value in part/.test(segText(last(), 'a')[0].meta.line2), 'a null inside a received segment is said in the label');
+    hn2.destroy();
+    const h1s = GT.render(host2, { lanes: [L('a', [sq('p', 0, 10, 0.1)]), lane('s', 'spectator', [sq('p', 0, 10, 0.01)])], notes: [] }, { view: 'overlay', foldSpectators: false });
+    ok([...lastRoot().querySelectorAll('button[data-legend]')].some((b) => /^1 spectator$/.test(b.childNodes[0].textContent)), '"1 spectator", not "1 spectators"');
+    h1s.destroy();
+    GT.render(host2, { lanes: [L('spectators', [sq('p', 0, 10, 0.1)])], notes: [] });
+    ok(lastRoot().querySelector('[data-gate-timeline-plot]'), 'a lane keyed "spectators" is an ordinary lane');
+    const h4 = GT.render(host2, { lanes: [L('x', [sq('p', 0, 10, 0.1)])], notes: [] });
+    ok(host2.querySelectorAll('[data-gate-timeline]').length === 1, 'a second render on the same host replaces the first');
+    h4.destroy();
+    // "starts at" never sits on a line
+    const hs2 = GT.render(host2, { lanes: [L('a', [sq('p', 600, 700, 0.62)], { limit_v: [-0.5, 0.5] })], notes: [] });
+    const sa = last().layout.annotations.find((a) => a.meta && a.meta.role === 'starts-at');
+    const yr = last().layout.yaxis.range;
+    ok(!sa || [0, 0.5].every((ly) => Math.abs(yr[0] + sa.y * (yr[1] - yr[0]) - ly) * 110 / (yr[1] - yr[0]) > 10), '"starts at" clear of the 0 V and limit lines');
+    hs2.destroy();
 }
 
 // sim
