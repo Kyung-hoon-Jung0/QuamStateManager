@@ -296,9 +296,10 @@ def _shapes_of(ds: dict | None) -> dict:
             if isinstance(meta, dict) and "shape" in meta}
 
 
-def _bundle_of(run):
-    """``(recipe, bundle)`` for a run, from the cached inputs."""
-    inputs = _bundle_inputs(run)
+def _bundle_of(run, inputs=None):
+    """``(recipe, bundle)`` for a run, from the cached inputs (read once when not given)."""
+    if inputs is None:
+        inputs = _bundle_inputs(run)
     recipe = _resolve(inputs["name"])
     raw, fit, iqb = inputs["raw"], inputs["fit"], inputs["iqb"]
     bundle = Bundle(
@@ -329,7 +330,7 @@ def build_interactive_figure(run, key: str) -> dict | None:
     """Full Plotly JSON for one figure key: ``{data, layout, kind, title, clickable}``."""
     inputs = _bundle_inputs(run)
     name = inputs["name"]
-    recipe, bundle = _bundle_of(run)
+    recipe, bundle = _bundle_of(run, inputs)
     try:
         spec = recipe.build(bundle, key)
     except Exception:  # noqa: BLE001 — one bad figure must not 500 the tab

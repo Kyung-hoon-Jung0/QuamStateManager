@@ -567,6 +567,16 @@ def replot_outcome(result: dict) -> dict:
                       if fatal is not None else None)}
 
 
+def replot_unavailable_reason(result: dict, key: str) -> str:
+    """Why a reproduced figure is absent: the last line of its own plot error ("" when none)."""
+    for e in result.get("errors") or []:
+        if isinstance(e, dict) and e.get("stage") == f"plot:{key}":
+            lines = [ln.strip() for ln in str(e.get("trace") or "").strip().splitlines() if ln.strip()]
+            if lines:
+                return lines[-1]
+    return ""
+
+
 def replot_figure(result: dict, key: str) -> dict | None:
     """Convert one cached figure to Plotly ``{data, layout, title}``; ``None`` if absent."""
     for f in result.get("figures", []):

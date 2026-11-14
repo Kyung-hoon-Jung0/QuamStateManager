@@ -405,3 +405,51 @@ def test_mapped_run_has_no_unmapped_line(tmp_path):
     from quam_state_manager.core.interactive_plots.registry import unmapped_variables_line
     run, *_ = _chevron_run(tmp_path)
     assert unmapped_variables_line(run, list_interactive_figures(run)) == ""
+
+
+# ----- the 404 text of the two plot routes ----------------------------------
+
+def _client(tmp_path, monkeypatch, run):
+    from types import SimpleNamespace
+    from quam_state_manager.web import routes
+    from quam_state_manager.web.app import create_app
+    store = SimpleNamespace(runs={1: run})
+    monkeypatch.setattr(routes, "_resolve_run", lambda uid: (store, 1, ""))
+    app = create_app(testing=True, instance_path=str(tmp_path / "instance"))
+    return app.test_client()
+
+
+def test_interactive_route_404_names_why_the_figure_is_not_drawn(tmp_path, monkeypatch):
+    run, *_ = _chevron_run(tmp_path, nan=True)
+    resp = _client(tmp_path, monkeypatch, run).get(
+        f"/dataset/x/interactive/plot?fig=moving_qubit::{PAIR}")
+    assert resp.status_code == 404
+    assert resp.get_json()["error"].startswith("Not drawn: ")
+    assert "no finite values" in resp.get_json()["error"]
+
+
+def test_replot_route_404_reason_comes_from_the_replot_result(tmp_path, monkeypatch):
+    from quam_state_manager.core.interactive_plots import replot
+    run, *_ = _chevron_run(tmp_path)
+    monkeypatch.setattr(replot, "replot_capability", lambda r, ip: {"available": True})
+    result = {"figures": [], "errors": [
+        {"stage": "plot:amp_map", "trace": "Traceback\n  ...\nValueError: replot-only failure"}]}
+    monkeypatch.setattr(replot, "replot_run", lambda r, ip: result)
+    client = _client(tmp_path, monkeypatch, run)
+    # a key the interactive recipe knows too: the reason must still be the replot one
+    for key, expect in (("amp_map", "Not drawn: ValueError: replot-only failure"),
+                        (f"moving_qubit::{PAIR}", "no figure named")):
+        resp = client.get(f"/dataset/x/replot/plot?fig={key}")
+        assert resp.status_code == 404
+        assert expect in resp.get_json()["error"]
+    assert "Not drawn" not in resp.get_json()["error"]
+
+
+def test_build_interactive_figure_reads_the_bundle_inputs_once(tmp_path, monkeypatch):
+    from quam_state_manager.core.interactive_plots import registry
+    run, *_ = _chevron_run(tmp_path)
+    calls = []
+    real = registry._bundle_inputs
+    monkeypatch.setattr(registry, "_bundle_inputs", lambda r: calls.append(1) or real(r))
+    registry.build_interactive_figure(run, f"moving_qubit::{PAIR}")
+    assert len(calls) == 1
