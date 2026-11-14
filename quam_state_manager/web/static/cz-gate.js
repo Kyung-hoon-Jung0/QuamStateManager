@@ -481,14 +481,16 @@
             dot.setAttribute('aria-hidden', 'true');
             tds[0].insertBefore(dot, tds[0].firstChild);
             if (tones.length) { [1, 2].forEach(function (c) { tds[c].classList.add(CELL_TONE[tones.length]); }); flagged++; }
-            if (tones.amplitude === 'danger') {
-                [4, 5].forEach(function (c) { tds[c].classList.add(CELL_TONE.danger); });
-                if ((r.actual || {}).limit_v) tds[4].appendChild(el('span', 'ui-text-quiet', ' limit ' + num(r.actual.limit_v, 'V')));
-                flagged++;
-            } else if (tones.amplitude) { [3, 4, 5].forEach(function (c) { tds[c].classList.add(CELL_TONE[tones.amplitude]); }); flagged++; }
+            if (tones.amplitude) { tds[3].classList.add(CELL_TONE[tones.amplitude]); flagged++; }
+            // only the cell that breaks the port's limit is red, with the limit beside it
+            [['max', 4, 1], ['min', 5, -1]].forEach(function (x) {
+                if (tones[x[0]] !== 'danger') return;
+                tds[x[1]].classList.add(CELL_TONE.danger);
+                if ((r.actual || {}).limit_v) tds[x[1]].appendChild(el('span', 'ui-text-quiet', ' limit ' + num(x[2] * r.actual.limit_v, 'V')));
+            });
         });
         host.appendChild(t);
-        var over = rows.filter(function (r) { return (r.tones || {}).amplitude === 'danger'; }).length;
+        var over = rows.filter(function (r) { var t = r.tones || {}; return t.max === 'danger' || t.min === 'danger'; }).length;
         if (sum) sum.textContent = over ? over + ' over the limit' : flagged ? flagged + ' differ' : 'all as entered';
         rows.forEach(function (r) { (r.why || []).forEach(function (w) { host.appendChild(el('p', 'ui-text-quiet', r.operation + ': ' + w)); }); });
     }

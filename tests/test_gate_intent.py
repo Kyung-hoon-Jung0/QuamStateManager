@@ -91,9 +91,15 @@ def test_port_delay_start_and_cell_tones():
     e["timeline"]["rows"][0].update(start_ns=161, delay_ns=161, range_v=0.5, offset_v=0.0)
     (r,) = gi.intent_rows(_plan({"length": 52, "amplitude": 0.2}), e)
     assert r["actual"]["start_ns"] == 161 and any("port delay of 161 ns" in w for w in r["why"])
-    assert r["tones"] == {"length": None, "amplitude": None}
+    assert r["tones"] == {"length": None, "amplitude": None, "max": None, "min": None}
     e["timeline"]["rows"][0].update(constant=3.0)
     (r,) = gi.intent_rows(_plan({"length": 52, "amplitude": 3.0}), e)
-    assert r["tones"]["amplitude"] == "danger"
+    assert r["tones"]["max"] == "danger" and r["tones"]["min"] is None and r["tones"]["amplitude"] is None
+    e["timeline"]["rows"][0].update(constant=-3.0)
+    (r,) = gi.intent_rows(_plan({"length": 52, "amplitude": -3.0}), e)
+    assert r["tones"]["min"] == "danger" and r["tones"]["max"] is None
+    e["timeline"]["rows"][0].update(constant=-0.3)
+    (r,) = gi.intent_rows(_plan({"length": 52, "amplitude": -0.3}), e)
+    assert not any(r["tones"].values())
     (r,) = gi.intent_rows(_plan({"length": 52, "amplitude": 0.2}), _entry(samples=[0, 0.18, 0]))
     assert r["tones"]["amplitude"] == "warn"

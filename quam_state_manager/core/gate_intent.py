@@ -102,14 +102,15 @@ def _actual(rows: list, key: str) -> dict | None:
     return None
 
 
-def _over(have: dict) -> bool:
-    """The played level (scale applied) plus the offset outside the port's limit."""
+def _over_side(have: dict) -> tuple[bool, bool]:
+    """(maximum above the upper limit, minimum below the lower limit), with
+    the play scale and the channel offset applied."""
     lim, k = _num(have.get("limit_v")), have.get("scale") or 1.0
     off = _num(have.get("offset_v")) or 0.0
     if lim is None or have.get("max_v") is None:
-        return False
+        return False, False
     vals = [have["max_v"] * k + off, have["min_v"] * k + off]
-    return max(vals) > lim + 1e-9 or min(vals) < -lim - 1e-9
+    return max(vals) > lim + 1e-9, min(vals) < -lim - 1e-9
 
 
 def _close(a: float, b: float) -> bool:
@@ -159,9 +160,12 @@ def intent_rows(plan: dict, entry: dict | None) -> list[dict]:
             have = {k2: v for k2, v in have.items() if k2 != "received"}
         want.pop("_inferred", None)
         tones = {"length": "warn" if differs["length"] else None,
-                 "amplitude": "warn" if differs["amplitude"] else None}
-        if have is not None and _over(have):
-            tones["amplitude"] = "danger"
+                 "amplitude": "warn" if differs["amplitude"] else None,
+                 "max": None, "min": None}
+        if have is not None:
+            hi, lo = _over_side(have)
+            tones["max"] = "danger" if hi else None      # only the cell that breaks the limit
+            tones["min"] = "danger" if lo else None
         out.append({"field": field, "operation": op.get("key"), "channel": op.get("channel"),
                     "intended": want, "actual": have, "differs": differs, "tones": tones,
                     "why": why})
