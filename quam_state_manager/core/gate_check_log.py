@@ -37,7 +37,12 @@ _LOCK = threading.Lock()
 
 
 def _key(pair: str, gate: str) -> str:
-    return f"{pair}/{gate}"
+    """The entry key: a JSON list, so no pair and gate can collide."""
+    return json.dumps([str(pair), str(gate)])
+
+
+class RecordError(OSError):
+    """The check record could not be written; the caller says so."""
 
 
 def chip_dir(history_manager, chip_path) -> Path:
@@ -50,8 +55,10 @@ def _file(folder) -> Path:
 
 
 def read(folder) -> dict[str, dict]:
-    """``{"<pair>/<gate>": entry}``; ``{}`` when the file is missing or
-    cannot be read."""
+    """``{key: entry}`` (key: :func:`_key`); ``{}`` when the file is missing
+    or cannot be read."""
+    if folder is None:
+        return {}
     try:
         data = json.loads(_file(folder).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -61,8 +68,13 @@ def read(folder) -> dict[str, dict]:
 
 
 def entry(folder, pair: str, gate: str) -> dict | None:
-    """The last record of one gate, or None."""
-    return read(folder).get(_key(pair, gate))
+    """The last record of one gate, or None. A file written with the older
+    ``"<pair>/<gate>"`` keys still reads, when that key is not ambiguous."""
+    gates = read(folder)
+    hit = gates.get(_key(pair, gate))
+    if hit is None and "/" not in str(pair) and "/" not in str(gate):
+        hit = gates.get(f"{pair}/{gate}")
+    return hit
 
 
 def content_hash(merged: dict, pair: str, gate: str) -> str | None:
@@ -73,14 +85,27 @@ def content_hash(merged: dict, pair: str, gate: str) -> str | None:
 
 def record(folder, pair: str, gate: str, *, result: str, reason: str | None,
            content: str | None, when: datetime | None = None) -> dict:
-    """Write the last check of one gate (atomic). Returns the entry."""
+    """Write the last check of one gate (atomic). Returns the entry.
+
+    "checked" needs the content hash (a record without one cannot be matched
+    to the values later): ValueError. A folder that cannot be written raises
+    :class:`RecordError`."""
     if result not in (CHECKED, NOT_CHECKED):
         raise ValueError(f"result must be {CHECKED!r} or {NOT_CHECKED!r}")
+    if result == CHECKED and not content:
+        raise ValueError("a checked result needs the gate's content hash")
     when = when or datetime.now(timezone.utc)
     ent = {"result": result, "reason": reason,
            "time": when.astimezone(timezone.utc).isoformat(timespec="seconds"),
            "hash": content}
     folder = Path(folder)
+    try:
+        return _write(folder, pair, gate, ent)
+    except OSError as exc:
+        raise RecordError(f"the check record could not be saved ({type(exc).__name__})") from exc
+
+
+def _write(folder: Path, pair: str, gate: str, ent: dict) -> dict:
     with _LOCK:
         gates = read(folder)
         gates[_key(pair, gate)] = ent
@@ -113,7 +138,16 @@ def result_of(check: dict | None) -> tuple[str, str | None]:
 def record_check(history_manager, chip_path, merged: dict, pair: str, gate: str,
                  check: dict | None) -> dict:
     """The one call a door makes after it wrote a gate (or made it active):
-    records *check* against the gate's content as it is now."""
-    result, reason = result_of(check)
-    return record(chip_dir(history_manager, chip_path), pair, gate, result=result,
-                  reason=reason, content=content_hash(merged, pair, gate))
+    records *check* against the gate's content as it is now. Never raises:
+    ``{"ok": True, "entry": ...}`` or ``{"ok": False, "error": text}`` for the
+    door to show ("the gate was written, the check record was not saved")."""
+    try:
+        result, reason = result_of(check)
+        content = content_hash(merged, pair, gate)
+        if result == CHECKED and not content:
+            result, reason = NOT_CHECKED, "the gate's content could not be read"
+        ent = record(chip_dir(history_manager, chip_path), pair, gate, result=result,
+                     reason=reason, content=content)
+        return {"ok": True, "entry": ent}
+    except Exception as exc:  # noqa: BLE001 -- a typed failure, never a raise
+        return {"ok": False, "error": str(exc) or type(exc).__name__}

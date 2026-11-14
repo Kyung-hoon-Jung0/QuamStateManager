@@ -27,9 +27,10 @@ def test_record_then_read_one_entry_per_gate(tmp_path):
                content="h2")
     log.record(tmp_path, "q2-q3", "cz_a", result=log.CHECKED, reason=None, content="h3")
     got = log.read(tmp_path)
-    assert set(got) == {"q1-q2/cz_a", "q2-q3/cz_a"}
-    assert got["q1-q2/cz_a"]["result"] == log.NOT_CHECKED
-    assert got["q1-q2/cz_a"]["reason"] == "no env" and got["q1-q2/cz_a"]["hash"] == "h2"
+    assert len(got) == 2
+    e = log.entry(tmp_path, "q1-q2", "cz_a")
+    assert e["result"] == log.NOT_CHECKED
+    assert e["reason"] == "no env" and e["hash"] == "h2"
     assert not list(tmp_path.glob(".gate_checks.*.tmp"))
 
 
@@ -50,7 +51,44 @@ def test_record_check_uses_the_history_chip_folder(tmp_path):
         def resolve_chip_dir(self, path):
             return tmp_path / "hist" / Path(path).name, "k", "path", None
     s, _ = add_gate(chip())
-    ent = log.record_check(HM(), tmp_path / "chipA", s, "q1-q2", "cz_sq", {"all_checked": True})
+    rec = log.record_check(HM(), tmp_path / "chipA", s, "q1-q2", "cz_sq", {"all_checked": True})
+    assert rec["ok"]
+    ent = rec["entry"]
     assert ent["result"] == log.CHECKED
     assert ent["hash"] == log.content_hash(s, "q1-q2", "cz_sq")
     assert log.entry(tmp_path / "hist" / "chipA", "q1-q2", "cz_sq") == ent
+
+
+def test_pair_and_gate_cannot_collide(tmp_path):
+    log.record(tmp_path, "a/b", "c", result=log.NOT_CHECKED, reason="one", content="h")
+    log.record(tmp_path, "a", "b/c", result=log.NOT_CHECKED, reason="two", content="h")
+    assert log.entry(tmp_path, "a/b", "c")["reason"] == "one"
+    assert log.entry(tmp_path, "a", "b/c")["reason"] == "two"
+
+
+def test_an_old_file_still_reads(tmp_path):
+    (tmp_path / log.FILE_NAME).write_text(
+        '{"gates": {"q1-q2/cz_a": {"result": "checked", "hash": "h"}}}', encoding="utf-8")
+    assert log.entry(tmp_path, "q1-q2", "cz_a")["hash"] == "h"
+
+
+def test_checked_needs_the_hash(tmp_path):
+    with pytest.raises(ValueError):
+        log.record(tmp_path, "p", "g", result=log.CHECKED, reason=None, content=None)
+
+
+def test_read_none_and_unwritable_places(tmp_path):
+    assert log.read(None) == {} and log.entry(None, "p", "g") is None
+    a_file = tmp_path / "f"
+    a_file.write_text("x", encoding="utf-8")
+    with pytest.raises(log.RecordError):
+        log.record(a_file, "p", "g", result=log.NOT_CHECKED, reason="r", content="h")
+    (tmp_path / "d" / log.FILE_NAME).mkdir(parents=True)
+    with pytest.raises(log.RecordError):
+        log.record(tmp_path / "d", "p", "g", result=log.NOT_CHECKED, reason="r", content="h")
+
+    class HM:
+        def resolve_chip_dir(self, path):
+            return a_file, "k", "path", None
+    rec = log.record_check(HM(), tmp_path, {}, "p", "g", None)
+    assert rec["ok"] is False and rec["error"]

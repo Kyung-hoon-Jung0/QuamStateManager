@@ -128,3 +128,55 @@ def test_plan_rows_record_the_active_gate():
     rows, _ = cz_gate_plan.operations(copy.deepcopy(s))
     assert rows.active["q1-q2"] == "cz_two"
     assert rows.active["q2-q3"] is None
+
+
+def test_checked_without_a_hash_is_not_plain_checked(tmp_path):
+    s, _ = add_gate(chip())
+    (tmp_path / log.FILE_NAME).write_text(
+        '{"gates": {"[\\"q1-q2\\", \\"cz_sq\\"]": {"result": "checked", "time": "2026-11-14T10:00:00+00:00"}}}',
+        encoding="utf-8")
+    it = _by_key(gs.status(_store(s), None, "q1-q2", "cz_sq", check_folder=tmp_path))["check"]
+    assert "cannot tell whether the values changed since" in it["text"]
+    assert it["tone"] == "warn" and it["pill"]
+
+
+def test_a_bool_is_not_a_phase_shift():
+    s, _ = add_gate(chip())
+    m = s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]
+    m["spectator_qubits"] = {"q3": "#/qubits/q3"}
+    m["spectator_qubits_phase_shift"] = {"q3": False}
+    assert "spectators" not in _by_key(gs.status(_store(s), None, "q1-q2", "cz_sq"))
+
+
+def test_non_dict_shapes_never_raise():
+    for bad in ("x", [1], 3):
+        assert gs.status(_store({"qubit_pairs": bad}), None, "p", "g")[0]["key"] == "gone"
+        assert gs.cz_gates({"qubit_pairs": bad}, "p") == []
+    assert gs.status(_store("x"), None, "p", "g")[0]["key"] == "gone"
+
+
+def _pills(items):
+    return {i["key"]: i["text"] for i in items if i["pill"]}
+
+
+def test_which_items_are_pills(monkeypatch, tmp_path):
+    s, _ = add_gate(chip())
+    # a fresh gate on the chip, not active, no record: only where
+    pills = _pills(gs.status(_store(s), _ctx(monkeypatch, s), "q1-q2", "cz_sq",
+                             check_folder=tmp_path))
+    assert pills == {"where": "on the chip"}
+    # active, checked, spectators uncalibrated
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz"] = "#./cz_sq"
+    m = s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]
+    m["spectator_qubits"] = {"q3": "#/qubits/q3"}
+    log.record(tmp_path, "q1-q2", "cz_sq", result=log.CHECKED, reason=None,
+               content=log.content_hash(s, "q1-q2", "cz_sq"))
+    pills = _pills(gs.status(_store(s), _ctx(monkeypatch, s), "q1-q2", "cz_sq",
+                             check_folder=tmp_path))
+    assert set(pills) == {"where", "active", "spectators", "check"}
+    assert pills["active"] == "active"
+    items = gs.status(_store(s), None, "q1-q2", "cz_sq", check_folder=tmp_path)
+    assert {i["key"] for i in items} == {"where", "active", "class", "scaling", "spectators", "check"}
+    cls = m["__class__"]
+    pills = _pills(gs.status(_store(s), None, "q1-q2", "cz_sq", missing_classes=[cls]))
+    assert "class" in pills

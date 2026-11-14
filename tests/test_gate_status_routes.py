@@ -152,8 +152,12 @@ def test_status_partial(rig):
     assert r.status_code == 200
     for text in ("on the chip", "not active", "not a class SM made",
                  "amplitude scaling: not known", "no check record"):
-        assert text in body, text
-    assert "Make active" in body and "Delete gate" in body and "Edit values" in body
+        assert text in body, text            # every item is in the details
+    pills = body.split('class="gate-status-items"')[1].split("</span></span>")[0]
+    assert "on the chip" in pills and "not active" not in pills
+    assert "not a class SM made" not in pills and "no check record" not in pills
+    assert "Make active" in body and ">Delete<" in body and "Edit values" in body
+    assert 'role="group"' not in body
     assert "paths=qubit_pairs.q1-q2.macros.cz_sq.flux_pulse_qubit" in body
     r = rig.get("/pulse/cz-gate/status?pair=q1-q2&gate=cz_two")
     assert "Make active" not in r.get_data(as_text=True)
@@ -184,3 +188,40 @@ def test_delete_offer_lists_the_set(rig):
     body = rig.get("/pulse/cz-gate/delete-offer?pair=q1-q2&gate=cz_two").get_data(as_text=True)
     assert "qubits.q1.z.operations.cz_two_pulse_q1_q2" in body
     assert "has no active CZ gate" in body and "Delete the active gate" in body
+
+
+def test_make_active_on_the_active_gate_is_refused_before_anything(rig):
+    st = _ctx(rig)["store"]
+    seq, n = st.mutation_seq, len(st.change_log)
+    r = _ma(rig, gate="cz_two")
+    assert r.status_code == 409
+    assert r.get_json()["error"] == "cz_two is already the active CZ gate of q1-q2."
+    assert rig._calls == [] and st.mutation_seq == seq and len(st.change_log) == n
+
+
+@pytest.mark.parametrize("q", ["pair=nope&gate=cz_sq", "pair=q1-q2&gate=nope",
+                               "pair=q1-q2&gate=cz", "pair=q1-q2", "gate=cz_sq", "",
+                               "pair=q1-q2&gate=swap"])
+def test_status_and_offer_refuse_a_gate_that_is_not_there(rig, q):
+    _ctx(rig)["modifier"].create_subtree("qubit_pairs.q1-q2.macros.swap", {"__class__": "lab.Swap"})
+    for url in ("/pulse/cz-gate/status?", "/pulse/cz-gate/delete-offer?"):
+        r = rig.get(url + q)
+        assert 400 <= r.status_code < 500, (url, q)
+        body = r.get_data(as_text=True)
+        assert "Make active" not in body and "Delete" not in body and "hx-post" not in body
+
+
+def test_a_record_that_cannot_be_saved_is_said(rig, monkeypatch):
+    monkeypatch.setattr(log, "chip_dir", lambda hm, path: (_ for _ in ()).throw(OSError("no")))
+    r = _ma(rig)
+    assert r.status_code == 200
+    assert r.get_json()["record_error"]
+    assert _merged(rig)["qubit_pairs"]["q1-q2"]["macros"]["cz"] == "#./cz_sq"
+
+
+def test_pair_detail_head_says_no_active_gate(rig):
+    _ctx(rig)["modifier"].delete_subtree(ALIAS)
+    body = rig.get("/pair/q1-q2", headers={"HX-Request": "true"}).get_data(as_text=True)
+    assert "No active CZ gate (the pair's cz alias is not set)" in body
+    assert body.count('data-status-key="active"') == 2   # details only, no pill
+    assert "ui-pill--accent" not in body.split("gate-status-list")[1].split("</section>")[0]

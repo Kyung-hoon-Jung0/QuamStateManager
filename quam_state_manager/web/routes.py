@@ -18014,11 +18014,11 @@ def _render_pair_detail(name: str, *, focus_path: str | None = None):
 def _gate_status_lines(store, pair: str) -> list:
     """The status line of every CZ gate of *pair* (never breaks the page)."""
     try:
-        from quam_state_manager.web.gate_status_routes import gate_lines
-        return gate_lines(store, _active_ctx(), pair)
+        from quam_state_manager.web.gate_status_routes import gate_list
+        return gate_list(store, _active_ctx(), pair)
     except Exception:  # noqa: BLE001
         logger.warning("gate status lines for %s failed", pair, exc_info=True)
-        return []
+        return None
 
 
 # The gate types, the env variants and their flux-slot pulse classes live in

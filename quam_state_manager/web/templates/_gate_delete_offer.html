@@ -17,7 +17,7 @@
     {% if parts.active %}
     {{ ui.ui_callout('warn', gate ~ ' is the active CZ gate', 'After this, pair ' ~ pair ~ ' has no active CZ gate.') }}
     {% endif %}
-    <div class="ui-actions" role="group" aria-label="Delete gate">
+    <div class="ui-actions gate-delete-actions">
         <button type="button" class="btn-sm danger gate-delete-confirm"
                 hx-post="/api/pulse/delete-together"
                 hx-vals='{{ {"pair": pair, "gate": gate, "confirm_active": ("1" if parts.active else "")} | tojson }}'

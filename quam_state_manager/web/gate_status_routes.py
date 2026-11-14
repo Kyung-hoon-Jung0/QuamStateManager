@@ -63,6 +63,7 @@ def gate_line(store, ctx, pair: str, gate: str, *, env=None, folder=None,
     folder = folder if folder is not None else _check_folder(ctx or {})
     items = gate_status.status(store, ctx, pair, gate, check_folder=folder,
                                missing_classes=missing, env_name=env_name)
+    pills = [i for i in items if i.get("pill")]
     active = any(i["key"] == "active" and i["text"] == "active" for i in items)
     present = not any(i["key"] == "gone" for i in items)
     edit = []
@@ -72,9 +73,16 @@ def gate_line(store, ctx, pair: str, gate: str, *, env=None, folder=None,
             edit = (parts["pulses"] or parts["operations"])[:4]
         except Exception:  # noqa: BLE001 -- the line stays without the link
             edit = []
-    return {"pair": pair, "gate": gate, "items": items, "active": active,
+    return {"pair": pair, "gate": gate, "items": items, "pills": pills, "active": active,
             "present": present, "edit_paths": edit, "note": note,
             "note_tone": note_tone}
+
+
+def gate_list(store, ctx, pair: str) -> dict:
+    """The pair detail's gate list: its lines and the one head note."""
+    lines = gate_lines(store, ctx, pair)
+    return {"lines": lines, "count": len(lines),
+            "no_active": bool(lines) and not any(ln["active"] for ln in lines)}
 
 
 def gate_lines(store, ctx, pair: str) -> list[dict]:
@@ -96,15 +104,33 @@ def _args():
     return (request.args.get("pair") or "").strip(), (request.args.get("gate") or "").strip()
 
 
+def _gate_problem(store, pair: str, gate: str) -> str | None:
+    """Why (pair, gate) is not a CZ gate of this chip, or None."""
+    if not pair or not gate:
+        return "Name a pair and a gate."
+    if gate == "cz":
+        return "cz is the pair's name for its active gate, not a gate."
+    with store._lock:
+        pairs = store.merged.get("qubit_pairs")
+        pobj = pairs.get(pair) if isinstance(pairs, dict) else None
+        macros = pobj.get("macros") if isinstance(pobj, dict) else None
+        macro = macros.get(gate) if isinstance(macros, dict) else None
+        if not isinstance(pobj, dict):
+            return f"This chip has no pair {pair}."
+        if not isinstance(macro, dict) or not cgb.is_cz_macro(gate, macro):
+            return f"Pair {pair} has no CZ gate named {gate}."
+    return None
+
+
 @bp.route("/pulse/cz-gate/status")
 def cz_gate_status():
     store = R._store()
     if not store:
         return render_template("_status.html", message="No state loaded", level="warning")
     pair, gate = _args()
-    if not pair or not gate:
-        return render_template("_status.html", message="pair and gate are required",
-                               level="error"), 400
+    bad = _gate_problem(store, pair, gate)
+    if bad:
+        return render_template("_status.html", message=bad, level="error"), 404
     return render_template("_gate_status.html",
                            line=gate_line(store, R._active_ctx(), pair, gate))
 
@@ -117,6 +143,9 @@ def cz_gate_delete_offer():
     if not store:
         return render_template("_status.html", message="No state loaded", level="warning")
     pair, gate = _args()
+    bad = _gate_problem(store, pair, gate)
+    if bad:
+        return render_template("_status.html", message=bad, level="error"), 404
     with store._lock:
         parts = gate_parts.gate_parts(store.merged, pair, gate)
     return render_template("_gate_delete_offer.html", pair=pair, gate=gate, parts=parts)
@@ -161,13 +190,15 @@ def api_cz_gate_make_active():
     body = json_object(request.form.to_dict)
     pair, gate = json_text(body, "pair"), json_text(body, "gate")
     kw = dict(htmx=htmx, pair=pair, gate=gate, store=store, ctx=ctx)
+    bad = _gate_problem(store, pair, gate)
+    if bad:
+        return _refuse(bad, 400, **kw)
+    from quam_state_manager.core.query import pair_operational_gate
     with store._lock:
-        macros = (((store.merged.get("qubit_pairs") or {}).get(pair) or {}).get("macros")
-                  if isinstance((store.merged.get("qubit_pairs") or {}).get(pair), dict)
-                  else None)
-        macro = macros.get(gate) if isinstance(macros, dict) else None
-        if not isinstance(macro, dict) or not cgb.is_cz_macro(gate, macro) or gate == "cz":
-            return _refuse(f"Pair {pair} has no CZ gate named {gate}.", 400, **kw)
+        macros = store.merged["qubit_pairs"][pair]["macros"]
+        macro = macros[gate]
+        if pair_operational_gate(pair, macros) == gate:
+            return _refuse(f"{gate} is already the active CZ gate of {pair}.", 409, **kw)
         alias = macros.get("cz")
         cls = str(macro.get("__class__") or "")
         seq0 = store.mutation_seq
@@ -212,16 +243,23 @@ def api_cz_gate_make_active():
     finally:
         release()
     try:
-        gate_check_log.record_check(R._history(), ctx["path"], store.merged, pair, gate, check)
-    except Exception:  # noqa: BLE001 -- the record is a note, never a reason to fail
-        logger.warning("gate check record failed", exc_info=True)
+        rec = gate_check_log.record_check(R._history(), ctx["path"], store.merged,
+                                          pair, gate, check)
+    except Exception as exc:  # noqa: BLE001 -- the record never fails the write
+        rec = {"ok": False, "error": str(exc)}
+    note = None
+    if not rec.get("ok"):
+        note = (f"{gate} is now active, but the check record could not be saved: "
+                f"{rec.get('error')}.")
     if htmx:
         resp = make_response(render_template(
-            "_gate_status.html", line=gate_line(store, ctx, pair, gate)) + R._tray_oob())
+            "_gate_status.html", line=gate_line(store, ctx, pair, gate, note=note,
+                                                note_tone="warn")) + R._tray_oob())
         resp.headers["HX-Trigger"] = "pulses-changed"
         return R._lab_toast(resp)
     return jsonify(ok=True, active=gate, path=path, tray_html=R._tray_html(),
-                   checked=bool(check.get("all_checked")))
+                   checked=bool(check.get("all_checked")), record_error=None if not note
+                   else rec.get("error"))
 
 
 def delete_gate_together(ctx, modifier, body: dict):

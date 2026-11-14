@@ -1282,12 +1282,21 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 /* The qubits page draws large stones: its map scales to the pane width. */
 .cm-svg.cm-hl-qubits { max-width: var(--ui-opxmon-full-width); height: auto; }
 
-/* CZ gate status line (_gate_status.html) and its delete offer (_gate_delete_offer.html) */
-.gate-status-list { display: flex; flex-direction: column; gap: var(--ui-gap-2); margin: var(--ui-gap-2) 0; }
-.gate-status { display: flex; flex-direction: column; gap: var(--ui-gap-1); padding: var(--ui-gap-2) 0; border-bottom: var(--ui-bw) solid var(--ui-border); }
-.gate-status-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-gap-2); }
-.gate-status-items { display: flex; flex-wrap: wrap; gap: var(--ui-gap-1); }
+/* CZ gate status line (_gate_status.html) and its delete offer (_gate_delete_offer.html):
+   one row per gate, a hairline between rows */
+.gate-status-list { display: flex; flex-direction: column; margin: var(--ui-gap-2) 0; }
+.gate-status-list-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--ui-gap-2); margin: 0 0 var(--ui-gap-1); font-size: var(--ui-fs-sm); font-weight: var(--ui-fw); color: var(--ui-text-2); }
+.gate-status-list-note { font-weight: var(--ui-fw-normal); }
+.gate-status { display: flex; flex-direction: column; border-top: var(--ui-bw) solid var(--ui-border); }
+.gate-status-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-gap-1) var(--ui-gap-2); min-height: var(--ui-icon-btn); }
+.gate-status-items { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-gap-1); }
+.gate-status-details { margin: 0; }
+.gate-status-details-list { margin: var(--ui-gap-1) 0; font-size: var(--ui-fs-xs); color: var(--ui-text-2); }
+.gate-status-details-list dd { margin: 0 0 var(--ui-gap-1) var(--ui-gap-3); }
+.gate-status-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-gap-1); margin-left: auto; }
 .gate-status-edit, .gate-status-activate, .gate-status-delete, .gate-delete-confirm { width: auto; margin: 0; }
+.gate-status-delete:hover { color: var(--ui-danger-text); border-color: var(--ui-danger-border); }
 .gate-status-slot:empty { display: none; }
-.gate-delete-offer { display: flex; flex-direction: column; gap: var(--ui-gap-1); }
+.gate-delete-offer { display: flex; flex-direction: column; gap: var(--ui-gap-1); padding-bottom: var(--ui-gap-1); }
 .gate-delete-list { margin: 0; padding-left: var(--ui-gap-4); font-size: var(--ui-fs-sm); }
+.gate-delete-actions { justify-content: flex-start; margin-left: 0; }

@@ -14,7 +14,10 @@ order:
 6. ``check``: "checked with the lab's code <when>" / "not checked: <reason>"
    / "values changed since the check" / "no check record".
 
-Tones: ``ok``, ``neutral``, ``warn`` (only what needs action). Nothing here
+Tones: ``ok``, ``accent``, ``neutral``, ``warn`` (only what needs action).
+Each item carries ``pill``: True for an item that says something about this
+gate (shown as a pill), False for a default every gate shares (shown only in
+the line's details). Nothing here
 raises on chip shape; SM never imports the QM stack.
 """
 from __future__ import annotations
@@ -26,8 +29,11 @@ from quam_state_manager.core.gate_parts import content_hash
 from quam_state_manager.core.query import pair_operational_gate
 
 
-def _item(key: str, text: str, tone: str = "neutral", why: str = "") -> dict:
-    return {"key": key, "text": text, "tone": tone, "why": why}
+def _item(key: str, text: str, tone: str = "neutral", why: str = "", *,
+          pill: bool = True) -> dict:
+    """One item; ``pill`` says whether the line shows it as a pill (an item
+    that says something) or only in the line's details."""
+    return {"key": key, "text": text, "tone": tone, "why": why, "pill": pill}
 
 
 def _at(doc: Any, dot: str) -> tuple[bool, Any]:
@@ -59,7 +65,8 @@ def _spectators(macro: dict) -> dict | None:
         return None
     phases = macro.get("spectator_qubits_phase_shift")
     values = list(phases.values()) if isinstance(phases, dict) else []
-    if all(isinstance(v, (int, float)) and v == 0 for v in values):
+    if all(isinstance(v, (int, float)) and not isinstance(v, bool) and v == 0
+           for v in values):
         return _item("spectators", "spectator phases not calibrated", "warn",
                      "Every spectator phase shift is 0.")
     return None
@@ -73,7 +80,11 @@ def _check(folder, merged: dict, pair: str, gate: str) -> dict:
     ent = gate_check_log.entry(folder, pair, gate) if folder is not None else None
     if not ent:
         return _item("check", "no check record", "neutral",
-                     "This gate was not made or made active in SM.")
+                     "This gate was not made or made active in SM.", pill=False)
+    if ent.get("result") == gate_check_log.CHECKED and not ent.get("hash"):
+        return _item("check", f"checked {_when(ent.get('time'))}, cannot tell whether the "
+                     "values changed since", "warn",
+                     "The record holds no copy of the values it checked.")
     now = content_hash(merged, pair, gate)
     if ent.get("hash") and now != ent.get("hash"):
         return _item("check", "values changed since the check", "warn",
@@ -94,8 +105,10 @@ def status(store, ctx: dict | None, pair: str, gate: str, *,
     (:func:`gate_check_log.chip_dir`); None reads as "no check record".
     *missing_classes*: the selected env's classes it cannot import (the env
     manifest), with *env_name* for the text."""
-    merged = getattr(store, "merged", None) or {}
-    pobj = (merged.get("qubit_pairs") or {}).get(pair) if isinstance(merged, dict) else None
+    merged = getattr(store, "merged", None)
+    merged = merged if isinstance(merged, dict) else {}
+    pairs = merged.get("qubit_pairs")
+    pobj = pairs.get(pair) if isinstance(pairs, dict) else None
     macros = pobj.get("macros") if isinstance(pobj, dict) else None
     macro = macros.get(gate) if isinstance(macros, dict) else None
     if not isinstance(macro, dict):
@@ -104,18 +117,19 @@ def status(store, ctx: dict | None, pair: str, gate: str, *,
     mpath = f"qubit_pairs.{pair}.macros.{gate}"
     items = [_where(ctx, mpath)]
     if pair_operational_gate(pair, macros) == gate:
-        items.append(_item("active", "active", "ok", "The pair's cz alias names this gate."))
+        items.append(_item("active", "active", "accent", "The pair's cz alias names this gate."))
     else:
         items.append(_item("active", "not active", "neutral",
-                           "The pair's cz alias names another gate or none."))
+                           "The pair's cz alias names another gate or none.", pill=False))
     cls = str(macro.get("__class__") or "")
     if cls and missing_classes and cls in set(missing_classes):
         items.append(_item("class", f"class {cls.rsplit('.', 1)[-1]} not importable in "
                            f"{env_name or 'the selected env'}", "warn", cls))
     else:
-        items.append(_item("class", "not a class SM made", "neutral", cls))
+        items.append(_item("class", "not a class SM made", "neutral", cls, pill=False))
     items.append(_item("scaling", "amplitude scaling: not known", "neutral",
-                       "SM does not yet test whether the waveform scales with amplitude."))
+                       "SM does not yet test whether the waveform scales with amplitude.",
+                       pill=False))
     sp = _spectators(macro)
     if sp is not None:
         items.append(sp)
@@ -126,7 +140,8 @@ def status(store, ctx: dict | None, pair: str, gate: str, *,
 def cz_gates(merged: dict, pair: str) -> list[str]:
     """The pair's CZ gates (macro dicts, the alias excluded), in state order."""
     from quam_state_manager.core.cz_gate_build import is_cz_macro
-    pobj = (merged.get("qubit_pairs") or {}).get(pair) if isinstance(merged, dict) else None
+    pairs = merged.get("qubit_pairs") if isinstance(merged, dict) else None
+    pobj = pairs.get(pair) if isinstance(pairs, dict) else None
     macros = pobj.get("macros") if isinstance(pobj, dict) else None
     if not isinstance(macros, dict):
         return []

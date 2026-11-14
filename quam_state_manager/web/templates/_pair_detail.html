@@ -98,10 +98,11 @@
     </details>
     {% endfor %}
 
-    {% if gate_lines %}
-    <div class="gate-status-list" aria-label="CZ gates">
-        {% for line in gate_lines %}{% include '_gate_status.html' %}{% endfor %}
-    </div>
+    {% if gate_lines and gate_lines.count %}
+    <section class="gate-status-list" aria-label="CZ gates">
+        <p class="gate-status-list-head"><span>CZ gates</span> <span class="ui-count">{{ gate_lines.count }}</span>{% if gate_lines.no_active %} <span class="ui-note gate-status-list-note">No active CZ gate (the pair's cz alias is not set)</span>{% endif %}</p>
+        {% for line in gate_lines.lines %}{% include '_gate_status.html' %}{% endfor %}
+    </section>
     {% endif %}
     {% include '_pair_add_gate_area.html' %}
 

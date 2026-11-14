@@ -64,7 +64,7 @@ def test_shared_operation_is_refused_naming_the_other_gate():
     s["qubit_pairs"]["q1-q2"]["macros"]["cz_other"] = other
     parts = gp.gate_parts(s, "q1-q2", "cz_sq")
     assert not parts["ok"]
-    assert any("also used by the gate cz_other of pair q1-q2" in r
+    assert any("also used by qubit_pairs.q1-q2.macros.cz_other.flux_pulse_qubit" in r
                for r in parts["refusals"]), parts["refusals"]
 
 
@@ -120,3 +120,47 @@ def test_rename_keeps_pulse_id_equal_to_the_key_and_every_reference_resolves():
                 break
             assert isinstance(node, dict) and seg in node, (holder, ref)
             node = node[seg]
+
+
+def test_any_other_macro_naming_the_operation_is_a_refusal():
+    s, _ = add_gate(chip())
+    s["qubit_pairs"]["q1-q2"]["macros"]["swap"] = {"__class__": "lab.Swap",
+                                                    "flux_pulse": "cz_sq_pulse_q1_q2"}
+    s["qubits"]["q3"]["macros"] = {"park": {"pulse_ref": "#/qubits/q1/z/operations/cz_sq_pulse_q1_q2"}}
+    parts = gp.gate_parts(s, "q1-q2", "cz_sq")
+    assert not parts["ok"]
+    text = " ".join(parts["refusals"])
+    assert "qubit_pairs.q1-q2.macros.swap.flux_pulse" in text
+    assert "qubits.q3.macros.park.pulse_ref" in text
+
+
+def test_a_plain_name_on_two_lines_of_an_unknown_class_is_refused():
+    s = chip()
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_lab"] = {"__class__": "lab.CZX", "flux_pulse": "shared_op"}
+    for q in ("q1", "q2"):
+        s["qubits"][q]["z"]["operations"]["shared_op"] = {"amplitude": 0.1}
+    parts = gp.gate_parts(s, "q1-q2", "cz_lab")
+    assert not parts["ok"]
+    assert any("qubits.q1.z.operations.shared_op and qubits.q2.z.operations.shared_op" in r
+               for r in parts["refusals"])
+
+
+def test_the_qubit_slot_plays_on_the_moving_line_only():
+    s = chip()
+    s["qubit_pairs"]["q1-q2"]["moving_qubit"] = "target"
+    from quam_state_manager.core import cz_gate_build as cgb2
+    m = cgb2._cz_skeleton()
+    m["flux_pulse_qubit"] = "cz_y_op"
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_y"] = m
+    for q in ("q1", "q2"):
+        s["qubits"][q]["z"]["operations"]["cz_y_op"] = {"amplitude": 0.1}
+    parts = gp.gate_parts(s, "q1-q2", "cz_y")
+    assert parts["operations"] == ["qubits.q2.z.operations.cz_y_op"]
+
+
+def test_non_dict_shapes_never_raise():
+    for bad in ("x", [1], 3, None):
+        parts = gp.gate_parts({"qubit_pairs": bad}, "q1-q2", "cz_sq")
+        assert not parts["ok"]
+        assert gp.gate_of_path({"qubit_pairs": bad}, "qubit_pairs.q1-q2.macros.cz_sq") is None
+    assert not gp.gate_parts("x", "p", "g")["ok"]

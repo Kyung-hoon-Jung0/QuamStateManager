@@ -91,26 +91,49 @@ def _owner_op(path: str, ops: dict) -> str | None:
     return None
 
 
-def _pair_line_ops(merged: dict, pair: str) -> dict[str, str]:
-    """``{operation key: operation dot path}`` on the pair's control, target
-    and coupler lines."""
+def _d(x) -> dict:
+    return x if isinstance(x, dict) else {}
+
+
+def _line_paths(merged: dict, pair: str) -> dict[str, tuple]:
+    """Each line of the pair that can hold operations -> (segments, ops)."""
     try:
         lines = cgb._lines(merged, pair)
     except Exception:  # noqa: BLE001 -- a pair SM cannot read has no lines
         return {}
-    out: dict[str, str] = {}
-    for name in ("control", "target", "coupler"):
-        ln = lines.get(name)
-        if isinstance(ln, tuple):
-            for key in ln[1]:
-                out.setdefault(str(key), ".".join(ln[0] + (str(key),)))
-    return out
+    return {k: v for k, v in lines.items() if k != "_ids" and isinstance(v, tuple)}
 
 
-def _uses(merged: dict, pair: str, gate: str, index, ops) -> tuple[set, set]:
-    """``(refers_in, named)``: the operations that refer into the macro, and
-    the operations the macro names (a reference or a pulse field holding an
-    operation key of one of the pair's lines)."""
+def _slot_op(merged: dict, pair: str, macro: dict, field: str, key: str
+             ) -> tuple[str | None, str | None]:
+    """``(operation path, refusal)`` for a plain operation name in a macro
+    field, resolved on the line that slot plays on: the slot's line for a
+    class SM knows, else the one line of the pair that holds the key. More
+    than one candidate is a refusal naming them."""
+    lines = _line_paths(merged, pair)
+    cls = str(macro.get("__class__") or "")
+    desc = cgb.GATE_CLASSES.get(cls)
+    if desc is not None:
+        slot = next((sl for sl in desc["slots"] if sl.field == field), None)
+        if slot is not None:
+            ln = lines.get(slot.line)
+            if ln is not None and key in ln[1]:
+                return ".".join(ln[0] + (key,)), None
+            return None, None
+    cands = sorted({".".join(ln[0] + (key,)) for name, ln in lines.items()
+                    if name in ("control", "target", "coupler") and key in ln[1]})
+    if len(cands) > 1:
+        return None, (f"The gate field {field} names {key}, which "
+                      f"{' and '.join(cands)} both hold; SM cannot tell which one "
+                      "it plays. Nothing was deleted.")
+    return (cands[0] if cands else None), None
+
+
+def _uses(merged: dict, pair: str, gate: str, index, ops) -> tuple[set, set, list]:
+    """``(refers_in, named, refusals)``: the operations that refer into the
+    macro, the operations the macro names (a reference, or a pulse field
+    holding a plain operation key, resolved on its line), and why a plain
+    name could not be resolved."""
     mpath = cgb._dot(("qubit_pairs", pair, "macros", gate))
     refers_in: set[str] = set()
     named: set[str] = set()
@@ -124,17 +147,59 @@ def _uses(merged: dict, pair: str, gate: str, index, ops) -> tuple[set, set]:
             if op:
                 named.add(op)
     macro = merged["qubit_pairs"][pair]["macros"][gate]
-    line_ops = _pair_line_ops(merged, pair)
+    refusals = []
     for k, v in macro.items():
-        if isinstance(v, str) and not v.startswith("#") and "pulse" in k and v in line_ops:
-            named.add(line_ops[v])
-    return refers_in, named
+        if isinstance(v, str) and v and not v.startswith("#") and "pulse" in k:
+            op, why = _slot_op(merged, pair, macro, k, v)
+            if op:
+                named.add(op)
+            if why:
+                refusals.append(why)
+    return refers_in, named, refusals
 
 
-def _used_ops(merged: dict, pair: str, gate: str, index, ops) -> set[str]:
-    """Every operation a macro uses, by reference or by name (both ways)."""
-    a, b = _uses(merged, pair, gate, index, ops)
-    return a | b
+def _all_macros(merged: dict):
+    """(dot path, macro dict) of every macro of any class, anywhere."""
+    stack: list[tuple[Any, tuple]] = [(merged, ())]
+    while stack:
+        node, segs = stack.pop()
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k == "macros" and isinstance(v, dict):
+                    for name, m in v.items():
+                        if isinstance(m, dict):
+                            yield ".".join(segs + ("macros", str(name))), m
+                stack.append((v, segs + (str(k),)))
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                stack.append((v, segs + (str(i),)))
+
+
+def _other_users(merged: dict, mpath: str, mine: set, index, ops) -> list[str]:
+    """Refusals for every operation of *mine* another macro (any class, on
+    any pair or qubit) refers to, is referred from, or names by plain key in
+    a pulse-like field. Each names the holder."""
+    out: list[str] = []
+    keys = {ops[p]: p for p in mine}
+    for path, macro in _all_macros(merged):
+        if path == mpath:
+            continue
+        hits: set[tuple[str, str]] = set()
+        for holder, land in index:
+            if _under(holder, path):
+                op = _owner_op(land, ops)
+                if op in mine:
+                    hits.add((op, holder))
+            elif _under(land, path):
+                op = _owner_op(holder, ops)
+                if op in mine:
+                    hits.add((op, holder))
+        for k, v in macro.items():
+            if isinstance(v, str) and "pulse" in k and v in keys:
+                hits.add((keys[v], f"{path}.{k}"))
+        for op, holder in sorted(hits):
+            out.append(f"The operation {op} is also used by {holder}. Nothing was deleted.")
+    return out
 
 
 def _names(merged: dict, pair: str, gate: str) -> set[str]:
@@ -146,7 +211,7 @@ def _names(merged: dict, pair: str, gate: str) -> set[str]:
 
 
 def _cz_gates(merged: dict):
-    for p, pobj in (merged.get("qubit_pairs") or {}).items():
+    for p, pobj in _d(_d(merged).get("qubit_pairs")).items():
         macros = pobj.get("macros") if isinstance(pobj, dict) else None
         if isinstance(macros, dict):
             for g, m in macros.items():
@@ -160,24 +225,26 @@ def gate_parts(merged: dict, pair: str, gate: str, *, index=None) -> dict[str, A
     Returns ``{"ok", "refusals": [str], "macro": dot path, "pulses": [macro
     pulse field paths], "operations": [operation dot paths], "active": bool,
     "alias": dot path of the cz alias when active else None, "paths": [macro,
-    *operations], "kept": [operations the macro names that stay]}``. ``ok`` is False with plain refusals when the gate is not
-    a CZ gate of the pair, when an operation is also another gate's, or when a
-    value outside the set refers into it. *index* is :func:`ref_index` of the
-    same *merged* (a caller holding one passes it)."""
+    *operations], "kept": [operations the macro names that stay]}``. ``ok``
+    is False with plain refusals when the gate is not a CZ gate of the pair,
+    when an operation is also used by any other macro, when a plain
+    operation name cannot be placed on one line, or when a value outside the
+    set refers into it. *index* is :func:`ref_index` of the same *merged*."""
     out: dict[str, Any] = {"ok": False, "refusals": [], "macro": None, "pulses": [],
                            "operations": [], "kept": [], "active": False, "alias": None,
                            "paths": []}
-    pobj = (merged.get("qubit_pairs") or {}).get(pair) if isinstance(merged, dict) else None
+    pobj = _d(_d(merged).get("qubit_pairs")).get(pair)
     macros = pobj.get("macros") if isinstance(pobj, dict) else None
     macro = macros.get(gate) if isinstance(macros, dict) else None
-    if not isinstance(macro, dict) or not cgb.is_cz_macro(gate, macro):
+    if not isinstance(macro, dict) or not cgb.is_cz_macro(str(gate), macro):
         out["refusals"].append(f"Pair {pair} has no CZ gate named {gate}.")
         return out
     mpath = cgb._dot(("qubit_pairs", pair, "macros", gate))
     out["macro"] = mpath
     index = ref_index(merged) if index is None else index
     ops = _operations(merged)
-    refers_in, named = _uses(merged, pair, gate, index, ops)
+    refers_in, named, unresolved = _uses(merged, pair, gate, index, ops)
+    out["refusals"].extend(unresolved)
     names = _names(merged, pair, gate)
     # an operation the macro only names goes with it when it carries the
     # gate's name; a general operation (a shared const, an x180) stays
@@ -186,15 +253,7 @@ def gate_parts(merged: dict, pair: str, gate: str, *, index=None) -> dict[str, A
     out["kept"] = sorted(named - mine)
     out["pulses"] = [f"{mpath}.{f}" for f in cgb.pulse_fields(macro)
                      if isinstance(macro.get(f), dict)]
-    # an operation another gate also uses stays, and the delete is refused
-    for p2, g2 in _cz_gates(merged):
-        if (p2, g2) == (pair, gate):
-            continue
-        shared = sorted(mine & _used_ops(merged, p2, g2, index, ops))
-        for op in shared:
-            out["refusals"].append(
-                f"The operation {op} is also used by the gate {g2} of pair {p2}. "
-                "Nothing was deleted.")
+    out["refusals"].extend(_other_users(merged, mpath, mine, index, ops))
     out["operations"] = sorted(mine)
     out["active"] = pair_operational_gate(pair, macros) == gate
     alias = cgb._dot(("qubit_pairs", pair, "macros", "cz"))
@@ -229,11 +288,11 @@ def content_hash(merged: dict, pair: str, gate: str, *, index=None) -> str | Non
 def gate_of_path(merged: dict, path: str) -> tuple[str, str] | None:
     """``(pair, gate)`` of the one CZ gate whose macro or operations hold
     *path*; None when no gate or more than one does."""
-    if not isinstance(path, str) or not path:
+    if not isinstance(path, str) or not path or not isinstance(merged, dict):
         return None
     segs = path.split(".")
     if len(segs) >= 4 and segs[0] == "qubit_pairs" and segs[2] == "macros":
-        pobj = (merged.get("qubit_pairs") or {}).get(segs[1])
+        pobj = _d(_d(merged).get("qubit_pairs")).get(segs[1])
         m = (pobj.get("macros") or {}).get(segs[3]) if isinstance(pobj, dict) else None
         return (segs[1], segs[3]) if cgb.is_cz_macro(segs[3], m) else None
     if ".operations." not in path:
