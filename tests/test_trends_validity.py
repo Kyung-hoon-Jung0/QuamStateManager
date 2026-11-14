@@ -31,6 +31,22 @@ class TestPhysicalRule:
         assert routes._trend_value_physical("macros.cz.phase_shift_control", "pair", 3.2)
         assert routes._trend_value_physical("f_01", "qubit", -1.0)
 
+    def test_the_edges(self):
+        # exactly 100 % is a valid fidelity, exactly 0 s is not a valid T2
+        assert routes._trend_value_physical("gate_fidelity_avg", "qubit", 1.0)
+        assert not routes._trend_value_physical("gate_fidelity_avg", "qubit", 1.0 + 1e-5)
+        assert routes._trend_value_physical("macros.*.fidelity.InterleavedRB", "pair", 1.0)
+        assert not routes._trend_value_physical("T2echo", "qubit", 0.0)
+        assert not routes._trend_value_physical("T2echo", "qubit", float("nan"))
+
+    def test_trends_and_overview_agree_value_by_value(self):
+        from quam_state_manager.core import chip_health
+        keys = sorted(set(chip_health._FIDELITY_KEYS) | set(chip_health._POSITIVE_KEYS))
+        vals = [-1.0, 0.0, 1e-9, 0.5, 1.0, 1.0000001, 2.33, float("inf")]
+        for k in keys:
+            for v in vals:
+                assert routes._trend_value_physical(k, "qubit", v) == chip_health.physicality(k, v), (k, v)
+
     def test_an_excluded_point_leaves_a_gap_and_is_listed(self):
         ser = {"points": [("a", 0.95), ("b", 2.1), ("c", 0.96), ("d", 0.96)],
                "held": {"d": "c"}}
