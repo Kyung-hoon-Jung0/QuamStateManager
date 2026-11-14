@@ -1,5 +1,5 @@
 """Drives tests/generate_output_timing_selfcheck.cjs under node + jsdom: the
-Review row "Output timing" for one-class, mixed-band and non-LF specs.
+Review row "Output timing" (the rule) and the build result timing table.
 Skips without node + jsdom.
 """
 

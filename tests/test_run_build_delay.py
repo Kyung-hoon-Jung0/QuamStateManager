@@ -280,10 +280,10 @@ class TestAlignCouplerDelays:
     def test_build_aligns_after_the_band_fixup(self):
         src = _RUN_BUILD.read_text(encoding="utf-8")
         fix = src.index("        _fix_coupled_bands(machine, spec, warnings)\n")
-        call = src.index("        warnings.extend(_align_output_timing(machine))\n")
+        call = src.index("        warnings.extend(_align_output_timing(machine, spec))\n")
         assert call > fix
         # the build has one timing call; the coupler rule is only its fallback
-        assert src.count("_align_output_timing(machine))") == 1
+        assert src.count("_align_output_timing(machine, spec))") == 1
         assert "warnings.extend(_align_coupler_delays(" not in src
         assert "return _align_coupler_delays(machine)" in src
 
@@ -371,3 +371,32 @@ class TestAlignOutputTiming:
         self.mod._align_output_timing(m)
         assert m.qubit_pairs["q1-q2"].coupler.opx_output.delay == 61
         assert m.qubits["q2"].z.opx_output.delay == 0
+
+
+class TestAlignOutputTimingEdges:
+    def setup_method(self):
+        self.mod = _load_helpers()
+
+    def test_a_double_call_is_the_same_chip(self):
+        m = _chip([2, 2], ro_band=3)
+        self.mod._align_output_timing(m)
+        self.mod._align_output_timing(m)
+        assert m.ports.mw_outputs["con1"][1][8].delay == 20
+        assert [q.resonator.time_of_flight for q in m.qubits.values()] == [52, 52]
+
+    def test_a_typed_time_of_flight_stays_and_is_named(self):
+        m = _chip([2, 2], ro_band=3, tof=300)
+        spec = {"populate": {"resonator": {"q1": {"time_of_flight": 300}}}}
+        warns = self.mod._align_output_timing(m, spec)
+        assert m.qubits["q1"].resonator.time_of_flight == 300
+        assert m.qubits["q2"].resonator.time_of_flight == 320      # the default moves
+        assert warns == ["q1: time of flight left as typed (300 ns); its readout output is "
+                         "delayed by 20 ns: measure time of flight again."]
+
+    def test_a_dedicated_cr_port_is_shifted(self):
+        m = _chip([2, 2], ro_band=2)
+        cr = MWFEMAnalogOutputPort(band=1, delay=0)
+        m.ports.mw_outputs["con1"][1][5] = cr
+        self.mod._align_output_timing(m)
+        assert cr.delay == 20
+        assert _arrivals(self.mod, m) == ({161}, {161})

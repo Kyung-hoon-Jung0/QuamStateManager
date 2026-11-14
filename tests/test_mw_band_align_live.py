@@ -138,3 +138,81 @@ def test_one_latency_class_is_byte_identical_to_the_base_build(tmp_path, name):
     _build(python, spec, out)
     for fn in ("state.json", "wiring.json"):
         assert (out / fn).read_bytes() == (base_out / fn).read_bytes(), f"{fn} differs"
+
+
+# --- the build result lists what the build wrote (core/output_timing) ------
+
+def _shared_feedline_2_and_3():
+    """Two resonators typed band 2 and band 3 on one feedline port, xy band 1:
+    the port takes one band, so the result shows no per-line shift."""
+    s = _pair(1, 1, 2)
+    s["populate"]["resonator"]["q2"]["band"] = 3
+    return s
+
+
+def _dedicated_cr():
+    """xy band 2 and a dedicated cross-resonance MW port (band 1)."""
+    s = _pair(2, 2, 2)
+    s["pair_gate"] = "cr"
+    s["lines"] = [ln for ln in s["lines"] if ln["line"] != "coupler"] + [
+        {"element": "q1-q2", "line": "cross_resonance",
+         "channel": {"kind": "mw_fem", "out_port": 5}}]
+    s["populate"].pop("pairs", None)
+    return s
+
+
+def _pump_band_1():
+    """xy band 2 with a TWPA pump port in band 1."""
+    s = _pair(2, 2, 2)
+    s["twpas"] = [{"id": "twpa1"}]
+    s["lines"] = s["lines"] + [{"element": "twpa1", "line": "twpa_pump",
+                                "channel": {"kind": "mw_fem", "out_port": 5}}]
+    s["populate"]["twpa"] = {"twpa1": {"pump_frequency": 4.2e9, "band": 1}}
+    return s
+
+
+def _typed_tof():
+    s = _one_qubit(2, 3)
+    s["populate"]["resonator"]["q1"]["time_of_flight"] = 300
+    return s
+
+
+EXTRA = {"shared_feedline_2_and_3": _shared_feedline_2_and_3, "dedicated_cr": _dedicated_cr,
+         "pump_band_1": _pump_band_1, "typed_tof": _typed_tof}
+
+
+@pytest.mark.parametrize("name", list(EXTRA))
+def test_result_lists_what_the_build_wrote(tmp_path, name):
+    from quam_state_manager.core import output_timing
+    python = _first_usable_qm_env()
+    if not python:
+        pytest.skip("no usable QM env found")
+    spec = EXTRA[name]()
+    out = tmp_path / name
+    outcome = run_generator(python, "build", spec, out, timeout=600)
+    assert outcome.get("ok"), outcome
+    state = json.loads((out / "state.json").read_text(encoding="utf-8"))
+    wiring = json.loads((out / "wiring.json").read_text(encoding="utf-8"))
+    summ = output_timing.summary(state, wiring, tof_typed=output_timing.typed_tof(spec))
+    # every MW output in use: latency + delay is one number, equal to every flux delay
+    arrivals = {LAT[m["band"]] + m["delay"] for m in summ["mw"]}
+    assert len(arrivals) == 1 and {f["delay"] for f in summ["flux"]} <= arrivals, summ
+    # the summary is the state: every listed delay is the stored one
+    for m in summ["mw"]:
+        node = state
+        for part in m["port"].split("/"):
+            node = node[part]
+        assert node.get("delay", 0) == m["delay"]
+    if name == "shared_feedline_2_and_3":
+        assert {m["delay"] for m in summ["mw"]} == {0} and summ["tof"] == [], summ
+    if name == "dedicated_cr":
+        cr = state["qubit_pairs"]["q1-2"]["cross_resonance"]["opx_output"]
+        _, port = output_timing._resolve({"wiring": wiring["wiring"], **state}, cr)
+        assert port["band"] == 1 and port["delay"] == 20, port
+        assert {m["delay"] for m in summ["mw"] if m["band"] == 1} == {20}
+    if name == "pump_band_1":
+        assert any(m["band"] == 1 and m["delay"] == 20 for m in summ["mw"]), summ
+    if name == "typed_tof":
+        assert state["qubits"]["q1"]["resonator"]["time_of_flight"] == 300
+        assert summ["tof"] == [{"qubit": "q1", "shift": 20, "value": 300, "moved": False}]
+        assert any("left as typed (300 ns)" in w for w in outcome["result"]["warnings"])

@@ -203,3 +203,59 @@ def test_both_offers_are_one_question(tmp_path, monkeypatch):
     assert res.get("ok") is True
     _, mw, lf = _ports(tmp_path / "out")
     assert lf["9"]["delay"] == 61 and mw["2"]["delay"] == 20 and lf["2"]["delay"] == 83
+
+
+def test_keep_coupler_with_shift_names_what_the_shift_did(tmp_path, monkeypatch):
+    state, wiring = _chip(moving="target")
+    state["ports"]["analog_outputs"]["con1"]["3"]["9"]["delay"] = 0   # the old coupler 0
+    client, body = _route(tmp_path, monkeypatch, (state, wiring))
+    body["coupler_delay_ack"] = "keep"
+    body["mw_shift_ack"] = "shift"
+    res = client.post("/regenerate/build", json=body).get_json()
+    assert res.get("ok") is True
+    _, _, lf = _ports(tmp_path / "out")
+    assert lf["9"]["delay"] == 20
+    text = " ".join(res["result"]["warnings"])
+    assert "left at 0" not in text
+    assert "kept as stored, as chosen; moved with the band shift: 0 to 20 on " \
+           "con1 / slot 3 / port 9." in text
+
+
+def test_a_shift_that_no_longer_applies_says_so(tmp_path, monkeypatch):
+    client, body = _route(tmp_path, monkeypatch, _chip())
+
+    def fake_run(py, src, spec, out_dir, timeout=300, **kw):
+        _write(out_dir, *_chip(xy_bands=(2, 2)))      # the rebuilt chip is one class
+        return {"ok": True, "status": "ok", "error": None, "merge": None, "result": {}}
+
+    monkeypatch.setattr(regenerate, "run_regenerate", fake_run)
+    body["mw_shift_ack"] = "shift"
+    res = client.post("/regenerate/build", json=body).get_json()
+    assert res.get("ok") is True
+    assert any(w.startswith("The band shift was not applied: ") and "no longer mix" in w
+               for w in res["result"]["warnings"]), res["result"]["warnings"]
+    # the result lists what the chip holds
+    assert {m["delay"] for m in res["result"]["output_timing"]["mw"]} == {0}
+
+
+def test_an_unwired_band_2_port_does_not_trigger_the_offer():
+    state, wiring = _chip(xy_bands=(1, 1), ro_band=3)
+    assert regenerate.mw_band_shift_plan(state, wiring) is None
+    state["ports"]["mw_outputs"]["con1"]["1"]["7"] = _mw(7, 2)     # no element uses it
+    assert regenerate.mw_band_shift_plan(state, wiring) is None
+
+
+def test_hand_set_delays_name_the_new_ports_starting_values():
+    old, wiring = _chip()
+    old["ports"]["mw_outputs"]["con1"]["1"]["2"]["delay"] = 7        # set by hand
+    merged, wiring2 = _chip(xy_bands=(2, 1, 1), z=(61, 63, 161))
+    merged["ports"]["mw_outputs"]["con1"]["1"]["2"]["delay"] = 7
+    merged["ports"]["mw_outputs"]["con1"]["1"]["3"]["delay"] = 20    # the fresh build's value
+    note = regenerate.hand_set_time_base_note(old, merged, wiring2)
+    assert note == ("This chip's MW output delays were set by hand, so new ports got starting "
+                    "values (MW 20 ns, flux 161 ns): check their timing.")
+    # a source on the build's time base, or all zero: no note
+    old["ports"]["mw_outputs"]["con1"]["1"]["2"]["delay"] = 20
+    assert regenerate.hand_set_time_base_note(old, merged, wiring2) is None
+    old["ports"]["mw_outputs"]["con1"]["1"]["2"]["delay"] = 0
+    assert regenerate.hand_set_time_base_note(old, merged, wiring2) is None
