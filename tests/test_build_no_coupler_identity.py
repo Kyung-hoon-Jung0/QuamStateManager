@@ -29,6 +29,11 @@ def no_coupler_spec():
     spec = copy.deepcopy(_spec())
     spec["pair_gate"] = "cz_fixed"
     spec["lines"] = [ln for ln in spec["lines"] if ln["line"] != "coupler"]
+    # one MW latency class: a chip mixing band 2 with bands 1 / 3 now gets
+    # its earlier MW outputs delayed (test_mw_band_align_live.py)
+    for group in ("qubit", "resonator"):
+        for row in spec["populate"][group].values():
+            row["band"] = 2
     return spec
 
 

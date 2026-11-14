@@ -45,8 +45,9 @@ def test_coupler_delay_equals_the_moving_qubit_z_delay(tmp_path, moving, qid):
     python, out, state, wiring = _build(tmp_path, moving)
     z, c = _ports(state, wiring)
     zd = {q: _resolve(state, wiring, p)["delay"] for q, p in z.items()}
-    # the spec's band fix-up gives the two qubits different z delays
-    assert zd["q1"] != zd["q2"], zd
+    # the spec's band fix-up puts the two drives in different bands; the
+    # flux ports still share one time base (the latest MW band's latency)
+    assert zd["q1"] == zd["q2"] == 161, zd
     assert _resolve(state, wiring, c)["delay"] == zd[qid], (zd, c)
 
     # the same in the config generated from the saved chip
@@ -66,9 +67,9 @@ def test_coupler_delay_equals_the_moving_qubit_z_delay(tmp_path, moving, qid):
     assert cfg_delay(c) == cfg_delay(z[qid]) == zd[qid]
 
 
-def test_a_zero_z_delay_gives_a_zero_coupler_in_a_real_build(tmp_path):
-    # q1 has no drive line, so nothing sets its flux port delay (it stays 0);
-    # q1 is the moving qubit, so the coupler port takes 0 as well
+def test_a_qubit_without_drive_still_joins_the_time_base(tmp_path):
+    # q1 has no drive line; its flux port still joins the chip's time base
+    # (every flux LF port gets the latest MW band's latency), and so does the coupler
     python = _first_usable_qm_env()
     if not python:
         pytest.skip("no usable QM env found")
@@ -82,6 +83,6 @@ def test_a_zero_z_delay_gives_a_zero_coupler_in_a_real_build(tmp_path):
     state = json.loads((out / "state.json").read_text(encoding="utf-8"))
     wiring = json.loads((out / "wiring.json").read_text(encoding="utf-8"))
     z, c = _ports(state, wiring)
-    assert _resolve(state, wiring, z["q1"])["delay"] == 0
-    assert _resolve(state, wiring, z["q2"])["delay"] != 0
-    assert _resolve(state, wiring, c)["delay"] == 0
+    assert _resolve(state, wiring, z["q1"])["delay"] == 161
+    assert _resolve(state, wiring, z["q2"])["delay"] == 161
+    assert _resolve(state, wiring, c)["delay"] == 161

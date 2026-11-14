@@ -280,6 +280,94 @@ class TestAlignCouplerDelays:
     def test_build_aligns_after_the_band_fixup(self):
         src = _RUN_BUILD.read_text(encoding="utf-8")
         fix = src.index("        _fix_coupled_bands(machine, spec, warnings)\n")
-        call = src.index("        warnings.extend(_align_coupler_delays(machine))\n")
+        call = src.index("        warnings.extend(_align_output_timing(machine))\n")
         assert call > fix
-        assert src.count("_align_coupler_delays(machine))") == 1   # one call site
+        # the build has one timing call; the coupler rule is only its fallback
+        assert src.count("_align_output_timing(machine))") == 1
+        assert "warnings.extend(_align_coupler_delays(" not in src
+        assert "return _align_coupler_delays(machine)" in src
+
+
+# --- one time base across MW bands (``_align_output_timing``) --------------
+
+def _ns(**kw):
+    return types.SimpleNamespace(**kw)
+
+
+def _chip(xy_bands, ro_band, tof=32):
+    """A fake machine: qubit i drives on an MW port of xy_bands[i], one
+    readout port (band ro_band) shared by every resonator, an LF z port per
+    qubit, and one coupler per neighbouring pair."""
+    mw = {}
+    qubits = {}
+    ro = MWFEMAnalogOutputPort(band=ro_band, delay=0)
+    mw[8] = ro
+    for i, b in enumerate(xy_bands, start=1):
+        xy = MWFEMAnalogOutputPort(band=b, delay=0)
+        mw[i] = xy
+        qubits[f"q{i}"] = _ns(xy=_ns(opx_output=xy),
+                              z=_ns(opx_output=LFFEMAnalogOutputPort(delay=0)),
+                              resonator=_ns(opx_output=ro, time_of_flight=tof))
+    names = list(qubits)
+    pairs = {f"{a}-{b}": _ns(coupler=_ns(opx_output=LFFEMAnalogOutputPort(delay=0)),
+                             qubit_control=qubits[a], qubit_target=qubits[b], moving_qubit=None)
+             for a, b in zip(names, names[1:])}
+    return _ns(ports=_ns(mw_outputs={"con1": {1: mw}}), qubits=qubits, qubit_pairs=pairs)
+
+
+def _arrivals(mod, m):
+    mw = [mod._BAND_TO_DELAY_NS[p.band] + p.delay for p in m.ports.mw_outputs["con1"][1].values()]
+    lf = [q.z.opx_output.delay for q in m.qubits.values()]
+    lf += [p.coupler.opx_output.delay for p in m.qubit_pairs.values()]
+    return set(mw), set(lf)
+
+
+class TestAlignOutputTiming:
+    def setup_method(self):
+        self.mod = _load_helpers()
+
+    def test_plan_is_relative_to_the_largest_latency(self):
+        assert self.mod._output_timing_plan({1, 2}) == (161, {1: 20, 2: 0})
+        assert self.mod._output_timing_plan({1, 3}) == (141, {1: 0, 3: 0})
+        assert self.mod._output_timing_plan({None}) == (None, {})
+
+    def test_pair_in_bands_2_and_1(self):
+        m = _chip([2, 1], ro_band=2)
+        self.mod._align_output_timing(m)
+        mw = m.ports.mw_outputs["con1"][1]
+        assert (mw[1].delay, mw[2].delay, mw[8].delay) == (0, 20, 0)
+        assert {q.z.opx_output.delay for q in m.qubits.values()} == {161}
+        assert m.qubit_pairs["q1-q2"].coupler.opx_output.delay == 161
+        assert _arrivals(self.mod, m) == ({161}, {161})
+        assert {q.resonator.time_of_flight for q in m.qubits.values()} == {32}
+
+    def test_xy_band_2_readout_band_3(self):
+        m = _chip([2], ro_band=3)
+        self.mod._align_output_timing(m)
+        mw = m.ports.mw_outputs["con1"][1]
+        assert (mw[1].delay, mw[8].delay) == (0, 20)
+        assert m.qubits["q1"].z.opx_output.delay == 161
+        assert m.qubits["q1"].resonator.time_of_flight == 52
+        assert _arrivals(self.mod, m) == ({161}, {161})
+
+    @pytest.mark.parametrize("xy,ro,lf", [([1, 3], 3, 141), ([2, 2], 2, 161)])
+    def test_one_band_class_gives_mw_zero(self, xy, ro, lf):
+        m = _chip(xy, ro_band=ro)
+        self.mod._align_output_timing(m)
+        assert {p.delay for p in m.ports.mw_outputs["con1"][1].values()} == {0}
+        assert _arrivals(self.mod, m) == ({lf}, {lf})
+        assert {q.resonator.time_of_flight for q in m.qubits.values()} == {32}
+
+    def test_shared_feedline_shifts_once_and_moves_five_tofs(self):
+        m = _chip([2, 2, 2, 2, 2], ro_band=3)
+        self.mod._align_output_timing(m)
+        assert m.ports.mw_outputs["con1"][1][8].delay == 20
+        assert [q.resonator.time_of_flight for q in m.qubits.values()] == [52] * 5
+
+    def test_no_mw_band_falls_back_to_the_coupler_rule(self):
+        m = _chip([2, 1], ro_band=2)
+        m.ports = _ns(mw_outputs={})
+        m.qubits["q1"].z.opx_output.delay = 61
+        self.mod._align_output_timing(m)
+        assert m.qubit_pairs["q1-q2"].coupler.opx_output.delay == 61
+        assert m.qubits["q2"].z.opx_output.delay == 0
