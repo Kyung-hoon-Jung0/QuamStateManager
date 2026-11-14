@@ -1554,3 +1554,145 @@ def test_every_macro_key_written_is_accounted_for(copied):
         if k == "__class__" or k in pulse_fields or v is None:
             continue
         assert k in res["fields"]["macro"] or k in res["reset"], k
+
+
+# --- reverse direction writes references; copy fills slots; no flux line ---
+
+def _op_owned_ref(state, pid, name, coupler=True):
+    """A reverse-layout gate whose macro fields reference the operations."""
+    p = state["qubit_pairs"][pid]
+    c, t = p["qubit_control"].split("/")[-1], p["qubit_target"].split("/")[-1]
+    m = cgb._cz_skeleton()
+    key = f"{name}_flux_pulse_{c}_{t}"
+    state["qubits"][c]["z"]["operations"][key] = {
+        "id": key, "length": 40, "amplitude": 0.15, "__class__": SQUARE}
+    m["flux_pulse_qubit"] = f"#/qubits/{c}/z/operations/{key}"
+    if coupler:
+        ck = f"{name}_coupler_pulse_{c}_{t}"
+        p["coupler"]["operations"][ck] = {
+            "id": ck, "length": 40, "amplitude": 0.25, "__class__": SQUARE}
+        m["coupler_flux_pulse"] = f"#/qubit_pairs/{pid}/coupler/operations/{ck}"
+    p["macros"][name] = m
+
+
+def _both():
+    return {**_square(), "coupler_flux_pulse": {"class": SQUARE, "fields": {"length": 48}}}
+
+
+def test_reverse_reference_chip_gets_references_in_both_fields():
+    s = _chip()
+    _op_owned_ref(s, "q1-2", "cz_old")
+    res = _plan(s, pulses=_both())
+    macro = dict(res["creates"])["qubit_pairs.q1-2.macros.cz_new"]
+    assert macro["flux_pulse_qubit"] == "#/qubits/q1/z/operations/cz_new_pulse_q1_q2"
+    assert macro["coupler_flux_pulse"] == (
+        "#/qubit_pairs/q1-2/coupler/operations/cz_new_coupler_pulse_q1_q2")
+    assert res["operations"]["flux_pulse_qubit"]["macro_holds"] == "reference"
+    paths = [p for p, _ in res["creates"]]
+    for f in ("flux_pulse_qubit", "coupler_flux_pulse"):
+        assert macro[f][2:].replace("/", ".") in paths
+
+
+def test_coupler_only_class_on_fixed_qubits_gets_a_reference():
+    s = _chip()
+    for q in s["qubits"].values():
+        del q["z"]
+    p = s["qubit_pairs"]["q1-2"]
+    p["coupler"]["operations"]["cz_old_coupler_pulse_q1_q2"] = {
+        "id": "cz_old_coupler_pulse_q1_q2", "length": 40, "amplitude": 0.2,
+        "__class__": SQUARE}
+    m = cgb._coupler_cz_skeleton()
+    m["coupler_flux_pulse"] = "#/qubit_pairs/q1-2/coupler/operations/cz_old_coupler_pulse_q1_q2"
+    p["macros"]["cz_old"] = m
+    res = _plan(s, gate_class=cgb.COUPLER_CZ_GATE,
+                pulses={"coupler_flux_pulse": {"class": SQUARE, "fields": {"length": 48}}})
+    assert res["direction"] == cgb.OPERATION_OWNS
+    macro = dict(res["creates"])["qubit_pairs.q1-2.macros.cz_new"]
+    assert macro["coupler_flux_pulse"] == (
+        "#/qubit_pairs/q1-2/coupler/operations/cz_new_coupler_pulse_q1_q2")
+
+
+def test_name_form_chip_keeps_names_where_every_gate_has_one():
+    s = _dir_fixture(2)  # two gates with a plain name in flux_pulse_qubit only
+    res = _plan(s, pulses=_both())
+    macro = dict(res["creates"])["qubit_pairs.q1-2.macros.cz_new"]
+    assert macro["flux_pulse_qubit"] == "cz_new_pulse_q1_q2"
+    assert res["operations"]["flux_pulse_qubit"]["macro_holds"] == "name"
+    assert macro["coupler_flux_pulse"].startswith("#/qubit_pairs/q1-2/coupler/operations/")
+    assert res["operations"]["coupler_flux_pulse"]["macro_holds"] == "reference"
+
+
+def test_mixed_name_and_reference_gates_get_a_reference():
+    s = _chip()
+    _op_owned(s, "q1-2", "cz_a")
+    _op_owned_ref(s, "q1-2", "cz_b", coupler=False)
+    res = _plan(s)
+    macro = dict(res["creates"])["qubit_pairs.q1-2.macros.cz_new"]
+    assert macro["flux_pulse_qubit"] == "#/qubits/q1/z/operations/cz_new_pulse_q1_q2"
+
+
+def _copy_chip(form):
+    s = _chip()
+    _op_owned_ref(s, "q1-2", "cz_src")
+    m = s["qubit_pairs"]["q1-2"]["macros"]["cz_src"]
+    ops = s["qubits"]["q1"]["z"]["operations"]
+    key = "cz_src_flux_pulse_q1_q2"
+    if form == "inline":
+        m["flux_pulse_qubit"] = dict(ops.pop(key))
+    elif form == "name":
+        m["flux_pulse_qubit"] = key
+    elif form == "elsewhere":  # a reference to an operation off the pair's lines
+        s["qubits"]["q3"]["z"]["operations"]["shared"] = ops.pop(key)
+        m["flux_pulse_qubit"] = "#/qubits/q3/z/operations/shared"
+    elif form == "relative":
+        m["flux_pulse_qubit"] = f"#../../../../qubits/q1/z/operations/{key}"
+    return s
+
+
+@pytest.mark.parametrize("form", ["inline", "absolute", "elsewhere", "relative", "name"])
+def test_copy_from_without_pulses_takes_the_source_class_and_values(form):
+    s = _copy_chip(form)
+    res = _plan(s, copy_from="cz_src", pulses=None)
+    assert "error" not in res, res
+    by = dict(res["creates"])
+    op = by["qubit_pairs.q1-2.macros.cz_new"]["flux_pulse_qubit"]
+    if not isinstance(op, dict):  # operation-owned: the operation holds it
+        op = by["qubits.q1.z.operations.cz_new_pulse_q1_q2"]
+    assert op["__class__"] == SQUARE and op["amplitude"] == 0.15 and op["length"] == 40
+    assert res["fields"]["flux_pulse_qubit"]["amplitude"] == cgb.COPIED
+    cop = by["qubit_pairs.q1-2.macros.cz_new"]["coupler_flux_pulse"]
+    if not isinstance(cop, dict):
+        cop = by["qubit_pairs.q1-2.coupler.operations.cz_new_coupler_pulse_q1_q2"]
+    assert cop["amplitude"] == 0.25
+    assert "cz_src" not in json.dumps(res["creates"])
+
+
+def test_copy_from_a_given_value_wins_over_the_copied_one():
+    s = _copy_chip("absolute")
+    res = _plan(s, copy_from="cz_src",
+                pulses={"flux_pulse_qubit": {"fields": {"amplitude": 0.5}}})
+    op = dict(res["creates"])["qubits.q1.z.operations.cz_new_pulse_q1_q2"]
+    assert op["amplitude"] == 0.5 and op["length"] == 40
+    assert res["fields"]["flux_pulse_qubit"]["amplitude"] == cgb.GIVEN
+
+
+def test_copy_from_leaves_an_optional_slot_the_source_does_not_fill_empty():
+    s = _chip()
+    _op_owned_ref(s, "q1-2", "cz_src", coupler=False)
+    res = _plan(s, copy_from="cz_src", pulses=None)
+    assert "error" not in res, res
+    assert "coupler_flux_pulse" not in res["operations"]
+    s2 = _chip()
+    s2["qubit_pairs"]["q1-2"]["macros"]["cz_src"] = cgb._cz_skeleton()
+    assert "needs a pulse" in _plan(s2, copy_from="cz_src", pulses=None)["error"]
+
+
+def test_qubits_without_flux_lines_point_at_the_coupler_only_class():
+    s = _chip()
+    for q in s["qubits"].values():
+        del q["z"]
+    for moving in (None, "control"):
+        s["qubit_pairs"]["q1-2"]["moving_qubit"] = moving
+        err = _plan(s)["error"]
+        assert "have no flux line" in err and "coupler-only gate class" in err
+        assert "moving_qubit" not in err
