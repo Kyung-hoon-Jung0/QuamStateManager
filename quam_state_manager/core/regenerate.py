@@ -61,6 +61,7 @@ def reconstruct_from_folder(
             merged = dict(state)
             merged["wiring"] = wiring.get("wiring", {})
             sidecar["populate"] = regen_spec._extract_populate(state, merged)
+            _keep_source_cores(sidecar)
             return regen_spec.ReconstructedSpec(spec=sidecar, exact=True,
                                                 source_hash=source_hash)
     rec = regen_spec.reconstruct_spec(state, wiring)
@@ -79,7 +80,19 @@ def reconstruct_from_folder(
                 f"{len(carried)} addition{'s' if len(carried) != 1 else ''} carried from this "
                 "chip's build record, with the chip's current values.")
             break
+    _keep_source_cores(rec.spec)
     return rec
+
+
+def _keep_source_cores(spec: dict) -> None:
+    """A rebuild keeps the source chip's cores: shared cores start off."""
+    pop = spec.get("populate")
+    if not isinstance(pop, dict):
+        pop = spec["populate"] = {}
+    opts = pop.get("options")
+    if not isinstance(opts, dict):
+        opts = pop["options"] = {}
+    opts["pin_cores"] = False
 
 
 def source_drift(
@@ -908,6 +921,9 @@ def run_regenerate(
                                       twpa_ids=_spec_twpa_ids(spec),
                                       env_fields=env_fields,
                                       declared_fems=_spec_fems(spec))
+    # an element keeps its source core name and core-key presence
+    core_keys_dropped, core_keys_from_thread = regen_merge.drop_new_core_keys(
+        old_state, result.merged)
     result.stats.populate_conflicts.extend(pop_conflicts)
     result.stats.wiring_values_carried = wiring_carried
     if add_report and add_report.get("added"):
@@ -990,6 +1006,9 @@ def run_regenerate(
     # carry an RF the reconstructed spec lacked (a pointer-valued f_01).
     config_generator.annotate_unplayable(outcome, result.merged, new_wiring)
     _tb_note = hand_set_time_base_note(old_state, result.merged, new_wiring)
+    if core_keys_from_thread and isinstance(outcome.get("result"), dict):
+        outcome["result"]["warnings"] = list(outcome["result"].get("warnings") or []) + [
+            "Core names moved from thread to core (the new quam has no thread field): " + ", ".join(core_keys_from_thread)]
     if _tb_note and isinstance(outcome.get("result"), dict):
         outcome["result"]["warnings"] = list(outcome["result"].get("warnings") or []) + [_tb_note]
 
@@ -1043,6 +1062,8 @@ def run_regenerate(
     class_groups = regen_merge.class_change_groups(
         s.class_changed, s.schema_dropped + s.residual_lost, old_state)
     outcome["merge"] = {
+        "core_keys_dropped": core_keys_dropped,
+        "core_keys_from_thread": core_keys_from_thread,
         "carried": s.carried,
         "id_filled": s.id_filled,
         "grafted": s.grafted,

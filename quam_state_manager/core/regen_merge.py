@@ -3265,3 +3265,49 @@ def class_change_groups(class_changed: list[tuple[str, str, str]],
             if anc in owner_of:
                 groups[owner_of[anc]]["dropped"] += 1
     return list(groups.values())
+
+
+def drop_new_core_keys(old_state: dict, merged_state: dict) -> tuple[list[str], list[str]]:
+    """Keep each source element's effective core after a rebuild.
+
+    The fresh build writes ``core`` on every element; the merge keeps an old
+    ``core`` value where the source had the key, but an element whose source
+    has no ``core`` key (``thread`` only, or neither) would gain one and change
+    its effective core (``core`` wins over ``thread``). For every dict in
+    ``merged_state`` that holds ``core`` and whose path is a dict in
+    ``old_state``:
+
+    - source has ``core``: left as merged;
+    - source has no ``core`` and merged has ``thread``: ``core`` deleted;
+    - source has no ``core``, its ``thread`` is a string and merged has no
+      ``thread`` (the new schema dropped it): ``core`` set to the old thread;
+    - otherwise: ``core`` deleted.
+
+    Paths only in the merged state are untouched. ``old_state`` must be the
+    source as the merge read it (renamed qubits, normalised pair ids).
+    Returns ``(dropped_paths, moved_from_thread_paths)``, dotted paths.
+    """
+    dropped: list[str] = []
+    from_thread: list[str] = []
+
+    def walk(old, new, path):
+        if "core" in new:
+            if "core" not in old:
+                old_thread = old.get("thread")
+                if "thread" in new:
+                    del new["core"]
+                    dropped.append(path)
+                elif isinstance(old_thread, str):
+                    new["core"] = old_thread
+                    from_thread.append(path)
+                else:
+                    del new["core"]
+                    dropped.append(path)
+        for key, sub in new.items():
+            old_sub = old.get(key)
+            if isinstance(sub, dict) and isinstance(old_sub, dict):
+                walk(old_sub, sub, f"{path}.{key}" if path else str(key))
+
+    if isinstance(old_state, dict) and isinstance(merged_state, dict):
+        walk(old_state, merged_state, "")
+    return dropped, from_thread
