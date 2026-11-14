@@ -190,6 +190,42 @@ def measure_bare_buttons(known=None):
     return out
 
 
+# A text-like input: no type, or one of these (checkbox, radio, range, file,
+# hidden and the button types are other parts or carry no box).
+_TEXT_INPUT_TYPES = {"", "text", "number", "search", "email", "url", "tel", "password"}
+
+
+def measure_bare_controls(known=None):
+    """Template <select> and text / number <input> elements with no class that
+    has a CSS rule (a kit class such as ui-select / ui-input, or a feature
+    class): these fall back to Pico's full-width, tall form defaults."""
+    known = known if known is not None else _known_classes()
+    out = {}
+    for p in _templates():
+        text = re.sub(r"\{#.*?#\}", "", _read(p), flags=re.DOTALL)
+        n = 0
+        for m in re.finditer(r"<(select|input)\b((?:[^>{]|\{\{.*?\}\}|\{%.*?%\})*)>", text, flags=re.DOTALL):
+            attrs = m.group(2)
+            if m.group(1) == "input":
+                tm = re.search(r"\btype=\"([^\"]*)\"", attrs)
+                if (tm.group(1).strip().lower() if tm else "") not in _TEXT_INPUT_TYPES:
+                    continue
+            cm = re.search(r"\bclass=\"([^\"]*)\"", attrs)
+            if cm:
+                toks = _literal_tokens(cm.group(1))
+                if not toks or any(t in known for t in toks):
+                    continue
+            n += 1
+        if n:
+            out[_rel(p)] = n
+    return out
+
+
+def measure_select_tags():
+    """All <select> tags in templates (the migration backlog, for the report)."""
+    return {_rel(p): n for p in _templates() if (n := len(re.findall(r"<select\b", _read(p))))}
+
+
 def measure_inline_styles():
     out = {}
     for p in _templates():
@@ -245,6 +281,8 @@ def measure_all():
         "style_css": measure_style_css(),
         "color_literals": measure_colors(),
         "bare_buttons": measure_bare_buttons(known),
+        "bare_controls": measure_bare_controls(known),
+        "bare_script_controls": measure_script_controls(),
         "inline_styles": measure_inline_styles(),
         "overlay_shells": measure_overlay_shells(),
         "confirm_alert": measure_confirm_alert(),
@@ -421,6 +459,25 @@ def test_1_color_literals_do_not_grow():
 
 def test_2_no_new_bare_or_unstyled_button():
     _ratchet("bare buttons", measure_bare_buttons(), _baseline()["bare_buttons"])
+
+
+def test_2b_no_new_bare_select_or_text_input():
+    """A template <select> / text or number <input> wears a kit class
+    (ui-select, ui-input) or a styled feature class; the count only goes down
+    and a new template adds none (docs/308 section 8)."""
+    _ratchet("bare selects / inputs", measure_bare_controls(), _baseline()["bare_controls"])
+
+
+def test_2c_bare_control_measure_can_fail(tmp_path, monkeypatch):
+    """The measure sees a bare select and a bare text input, and ignores kit,
+    classed and non-text controls."""
+    tpl = tmp_path / "t.html"
+    tpl.write_text('<select><option>a</option></select><input value="1"><input type="number">'
+                   '<select class="ui-select"></select><input class="ui-input"><input type="checkbox">'
+                   '<input type="hidden" value="x"><input class="{{ c }}">', encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "_templates", lambda: [tpl])
+    monkeypatch.setattr(sys.modules[__name__], "_rel", lambda p: p.name)
+    assert measure_bare_controls(known={"ui-select", "ui-input"}) == {"t.html": 3}
 
 
 def test_3_no_new_inline_visual_style():
@@ -669,6 +726,44 @@ def test_macros_escape_text(ui_kit_html):
     assert "<img" not in out and "&lt;img" in out
 
 
+def test_6b_ui_menu_behaviour_selfcheck():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available")
+    res = subprocess.run([node, str(_ROOT / "tests" / "ui_menu_selfcheck.cjs")], capture_output=True,
+                         text=True, encoding="utf-8", cwd=str(_ROOT))
+    if res.returncode == 2:
+        pytest.skip("jsdom not installed for node")
+    assert res.returncode == 0, res.stdout + "\n" + res.stderr
+    assert "ok ui_menu_selfcheck" in res.stdout and " 0 failed" in res.stdout
+
+
+def test_6c_field_macro_ids_and_relations():
+    from quam_state_manager.web.app import create_app
+    with tempfile.TemporaryDirectory() as tmp:
+        app = create_app(testing=True, instance_path=str(Path(tmp) / "_inst"))
+        with app.test_request_context():
+            from flask import render_template_string
+            r = lambda tpl, **kw: render_template_string('{% import "_ui.html" as ui %}' + tpl, **kw)
+            out = r("{{ ui.ui_field('Len', {'part': 'input', 'id': 'x'}) }}")
+            assert 'id="x"' in out and 'for="x"' in out, out
+            out = r("{{ ui.ui_field('Len', {'part': 'input', 'describedby': 'mine'}, hint='h') }}")
+            m = re.search(r'aria-describedby="mine (uif-[0-9a-f]{4}-\d+)-hint"', out)
+            assert m and f'id="{m.group(1)}"' in out, out
+            out = r("{{ ui.ui_field('Show', {'part': 'check', 'text': 'Spectators'}) }}")
+            fid = re.search(r'for="([^"]+)"', out).group(1)
+            assert f'<input type="checkbox" id="{fid}"' in out, out
+            out = r("{{ ui.ui_render({'part': 'field', 'id': 'X', 'label': 'A', 'control': {'part': 'input'}}) }}")
+            assert 'for="X"' in out and 'id="X"' in out, out
+            for bad, msg in (("{'part': 'input', 'id': 'a b'}", "ui menu id must be a non-empty string without whitespace: \"a b\""),
+                             ("{'id': 'q'}", "ui field control needs a part")):
+                with pytest.raises(ValueError) as ei:
+                    r("{{ ui.ui_field('A', " + bad + ") }}")
+                assert str(ei.value) == msg
+            out = r("{{ ui.ui_field('Source', {'part': 'chip', 'text': 's'}) }}")
+            assert "for=" not in out and 'class="ui-field-control" role="group" aria-labelledby=' in out, out
+
+
 def test_6_macro_and_ui_js_build_the_same_tree(ui_kit_html, tmp_path):
     node = shutil.which("node")
     if node is None:
@@ -681,6 +776,110 @@ def test_6_macro_and_ui_js_build_the_same_tree(ui_kit_html, tmp_path):
                          text=True, encoding="utf-8", cwd=str(_ROOT))
     assert res.returncode == 0, res.stdout + "\n" + res.stderr
     assert "ok ui_kit_selfcheck" in res.stdout and " 0 failed" in res.stdout
+
+
+# Small text a person must read in the kit's choosing / reading-order parts.
+_READ_TEXT_SELECTORS = (".ui-text-quiet", ".ui-panel-hint", ".ui-stat-label", ".ui-stat-unit", ".ui-input-unit-text",
+                        ".ui-input.ui-input::placeholder", ".ui-field-hint", ".ui-option-desc", ".ui-cell-note",
+                        ".ui-placeholder", ".ui-field-label", ".ui-panel-title", ".ui-panel-sum")
+_READ_SURFACES = ("--ui-surface-0", "--ui-surface-1", "--ui-surface-2")
+
+
+def read_text_contrast():
+    rules = {sel.strip(): body for sel, body, _s in _ui_kit_rules() for sel in [sel]}
+    out = []
+    for want in _READ_TEXT_SELECTORS:
+        colour = None
+        for sel, b in rules.items():    # the last rule that names the selector and sets a colour wins
+            if want in [x.strip() for x in sel.split(",")]:
+                colour = dict(_decls(b)).get("color", colour)
+        assert colour and re.fullmatch(r"var\(--ui-[\w-]+\)", colour), f"{want}: colour {colour!r} is not one kit token"
+        tok = colour[4:-1]
+        for t in THEMES:
+            env = theme_env(t)
+            page = _resolve("var(--ui-surface-0)", env)
+            for surf in _READ_SURFACES:
+                bg = _over(_resolve(f"var({surf})", env), page)
+                fg = _over(_resolve(f"var({tok})", env), bg)
+                la, lb = sorted((_lum(fg), _lum(bg)), reverse=True)
+                out.append((want, tok, t, surf, round((la + 0.05) / (lb + 0.05), 2)))
+    return out
+
+
+def test_7g_reading_text_of_the_new_parts_is_aa_in_every_theme():
+    bad = [r for r in read_text_contrast() if r[4] < 4.5]
+    assert not bad, bad
+
+
+# ui.js is the kit's own builder: it creates the kit-classed controls every other script should use.
+_SCRIPT_CONTROL_BUILDERS = {"ui.js"}
+
+
+def measure_script_controls():
+    """A tag name held in a variable (createElement(tag)) cannot be seen by this measure.
+    Selects / text inputs BUILT in static/*.js (createElement or markup
+    literals) with no styled class: a second number that only goes down."""
+    known = _known_classes()
+    out = {}
+    for p in sorted(_STATIC.glob("*.js")):
+        if p.name.endswith(".min.js") or p.name in _SCRIPT_CONTROL_BUILDERS:
+            continue
+        t = _read(p)
+        n = len(re.findall(r"createElement\(\s*[\"'`](?:select|input|textarea)[\"'`]\s*\)", t, flags=re.I))
+        for m in re.finditer(r"<(select|input|textarea)\b([^<>]*)>", t, flags=re.I):
+            if m.group(1).lower() == "input":
+                tm = re.search(r"\btype=\\?[\"']([^\"'\\]*)", m.group(2))
+                if (tm.group(1).lower() if tm else "") not in _TEXT_INPUT_TYPES:
+                    continue
+            cm = re.search(r"\bclass=\\?[\"']([^\"'\\]*)", m.group(2))
+            toks = _literal_tokens(cm.group(1)) if cm else []
+            if cm and (not toks or any(x in known for x in toks)):
+                continue
+            n += 1
+        if n:
+            out[_rel(p)] = n
+    return out
+
+
+def test_2d_no_new_bare_select_or_input_built_in_scripts():
+    _ratchet("bare selects / inputs in scripts", measure_script_controls(), _baseline()["bare_script_controls"])
+
+
+
+# A line colour closer than this (Euclidean RGB, 0-255 per channel) to a state
+# tone reads as that state. ~40 is about one step of a hue ramp.
+_LINE_STATE_MIN_DIST = 40
+# The one case that is exactly a state colour (exact equality is asserted for all others).
+_LINE_STATE_IDENTICAL = {("qm", 5)}
+_LINE_STATE_KNOWN = {
+    ("light", 5), ("dark", 5),  # line 5 = palette 5 (yellow), 22 / 29 from the warning border: last-but-one on purpose
+    ("light", 6), ("dark", 6),  # line 6 = palette 2 (amber), 39 / 37 from the warning border: last on purpose
+    ("qm", 5),                  # QM theme: palette 5 IS the warning text and border colour (distance 0); fix in the palette
+}
+
+
+def _rgb_dist(a, b):
+    return sum((float(x) - float(y)) ** 2 for x, y in zip(a[:3], b[:3])) ** 0.5
+
+
+def test_7h_line_colours_are_not_state_colours():
+    states = ("--ui-ok-text", "--ui-ok-border", "--ui-warn-text", "--ui-warn-border", "--ui-danger-text", "--ui-danger-border")
+    for t in THEMES:
+        env = theme_env(t)
+        page = _resolve("var(--ui-surface-0)", env)
+        tones = {_over(_resolve(f"var({x})", env), page) for x in states}
+        for n in range(1, 7):
+            c = _over(_resolve(f"var(--ui-line-{n})", env), page)
+            # known (2026-11-14): in the QM theme plot-colorway-5 IS the warning text colour;
+            # line 5 is rarely used and aliases may not add colours; fix in the theme palette.
+            if (t, n) not in _LINE_STATE_IDENTICAL:
+                assert c not in tones, f"{t}: --ui-line-{n} equals a state tone"
+            if (t, n) in _LINE_STATE_KNOWN:
+                continue
+            near = [x for x in tones if _rgb_dist(c, x) < _LINE_STATE_MIN_DIST]
+            assert not near, f"{t}: --ui-line-{n} is within {_LINE_STATE_MIN_DIST} (RGB distance) of a state tone {near}"
+        firsts = [_resolve(f"var(--ui-line-{n})", env) for n in (1, 2, 3)]
+        assert len(set(map(tuple, firsts))) == 3, f"{t}: lines 1-3 are distinct"
 
 
 if __name__ == "__main__":
@@ -864,6 +1063,19 @@ _STAGE6_SELECTORS = {
     '.ui-option.ui-option--active',
     '.ui-option:hover',
     '.ui-option[aria-selected="true"]',
+    # choosing parts: ARIA state selectors (docs/308 section 4b)
+    '.ui-select.ui-select[aria-invalid="true"]',
+    '.ui-input.ui-input[aria-invalid="true"]',
+    '.ui-select.ui-select[aria-invalid="true"]:focus-visible',
+    '.ui-input.ui-input[aria-invalid="true"]:focus',
+    '.ui-menu-trigger[aria-expanded="true"]',
+    '.ui-menu-list > .ui-option[aria-selected="true"]',
+    '.ui-menu-list > .ui-option[aria-selected="true"] > .ui-option-check::after',
+    '.ui-menu-list > .ui-option[aria-selected="true"] > .ui-option-title',
+    '.ui-menu-list > .ui-option[aria-disabled="true"]',
+    '.ui-menu-list > .ui-option[aria-disabled="true"] > .ui-option-title',
+    '.ui-input-unit > .ui-input.ui-input[aria-invalid="true"]',
+    '.ui-input-unit > .ui-input.ui-input[aria-invalid="true"]:focus',
 }
 
 
