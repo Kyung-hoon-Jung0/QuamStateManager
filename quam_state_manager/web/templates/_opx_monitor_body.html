@@ -5,6 +5,8 @@
 {%- set cap = st.capabilities -%}
 {%- set owners_stale = st.state != 'ok' -%}{%- set owners_age = ('%.0f'|format(st.age_s) ~ ' s ago') if st.age_s is not none else 'at an unknown time' -%}
 {%- set polls = tab in ('live', 'jobs', 'history', 'cleanup') and st.state != 'unconfigured' -%}
+{%- set ps = posted if posted_form == 'settings' else none -%}{%- set pn = posted if posted_form == 'names' else none -%}
+{%- macro flash_line() -%}<p class="ui-state {{ 'ui-state--error' if flash_error else 'ui-opxmon-flash' }}" role="status">{{ flash }}</p>{%- endmacro -%}
 {%- set unavailable_key = 'Not available for this target.' if settings.target and settings.target.get('kind', 'qmm') != 'qmm' else ('Server unreachable.' if st.state == 'error' else 'Not available yet.') -%}
 <div id="ui-opxmon-body" class="ui-opxmon-body" data-tab="{{ tab }}" data-state="{{ st.state }}"
      {% if st.age_s is not none %}data-age="{{ '%.1f'|format(st.age_s) }}"{% endif %}
@@ -19,7 +21,7 @@
   {%- if st.health.color == 'grey' and not st.health.problem %} &middot; <span class="ui-opxmon-health-note">{{ st.health.reason }}</span>{% endif -%}
   {%- if hottest and not temperature_failed and tab != 'live' %} &middot; <span class="ui-opxmon-hottest">{{ 'Above limit:' if hottest_limit is not none and hottest.value > hottest_limit else 'Hottest:' }} {{ hottest.label }} {{ '%.1f'|format(hottest.value) }} °C / {{ 'limit ' ~ ('%g'|format(hottest_limit)) ~ ' °C' if hottest_limit is not none else 'no limit set' }}</span>{% endif -%}
 </span></div>
-{%- if flash %}<p class="ui-state {{ 'ui-state--error' if flash_error else 'ui-opxmon-flash' }}" role="status">{{ flash }}</p>{% endif %}
+{%- if flash and flash_at not in ('settings', 'names') %}{{ flash_line() }}{% endif %}
 {%- if raw_error %}<details class="ui-disclosure ui-opxmon-details ui-opxmon-raw-error"><summary class="ui-disclosure-summary">Technical details</summary><div class="ui-disclosure-body"><p class="ui-note">{{ raw_error }}</p></div></details>{% endif %}
 {%- if st.alarms %}
 <div class="ui-notice ui-notice--danger ui-opxmon-alarms" role="alert"><span class="ui-notice-icon" aria-hidden="true">⚠</span><strong class="ui-notice-key">Alarm.</strong>
@@ -198,38 +200,39 @@
     <div class="ui-zone-body">
       <p class="ui-text-quiet">A QM server (host and port). A task-queue cloud backend exposes no monitor API and cannot be watched here.</p>
       <div class="ui-opxmon-grid">
-        <label>Admin URL <input name="admin_url" value="{{ settings.admin_url or '' }}" placeholder="HTTP(S) origin" autocomplete="off"></label>
-        <label>Host <input name="host" value="{{ target.host or '' }}" autocomplete="off"></label>
-        <label>Port <input name="port" value="{{ target.port or '' }}" inputmode="numeric" autocomplete="off"></label>
-        <label>Cluster name <input name="cluster_name" placeholder="{{ 'auto: ' ~ (st.admin.cluster.name if st.admin.cluster else ans.cluster_name) if st.admin.cluster or ans.cluster_name else 'auto: detected cluster' }}" value="{{ target.cluster_name or '' }}" autocomplete="off"></label>
-        <label><input type="checkbox" name="tls" value="1" {% if target.tls %}checked{% endif %}> TLS</label>
+        <label>Admin URL <input name="admin_url" value="{{ ps.get('admin_url', '') if ps is not none else (settings.admin_url or '') }}" placeholder="HTTP(S) origin" autocomplete="off"></label>
+        <label>Host <input name="host" value="{{ ps.get('host', '') if ps is not none else (target.host or '') }}" autocomplete="off"></label>
+        <label>Port <input name="port" value="{{ ps.get('port', '') if ps is not none else (target.port or '') }}" inputmode="numeric" autocomplete="off"></label>
+        <label>Cluster name <input name="cluster_name" placeholder="{{ 'auto: ' ~ (st.admin.cluster.name if st.admin.cluster else ans.cluster_name) if st.admin.cluster or ans.cluster_name else 'auto: detected cluster' }}" value="{{ ps.get('cluster_name', '') if ps is not none else (target.cluster_name or '') }}" autocomplete="off"></label>
+        <label><input type="checkbox" name="tls" value="1" {% if (ps.get('tls') if ps is not none else target.tls) %}checked{% endif %}> TLS</label>
         <label class="ui-opxmon-wide">Connection headers (JSON, stored under this SM's instance folder, never shown again)
           <textarea name="headers" rows="2" placeholder="{{ 'stored — leave empty to keep' if has_headers else 'optional' }}" autocomplete="off"></textarea></label>
-        {% if has_headers %}<label><input type="checkbox" name="clear_headers" value="1"> Remove the stored headers</label>{% endif %}
+        {% if has_headers %}<label><input type="checkbox" name="clear_headers" value="1"{% if ps is not none and ps.get('clear_headers') %} checked{% endif %}> Remove the stored headers</label>{% endif %}
       </div>
     </div></section>
     <section class="ui-zone" aria-label="Python environment with the QM SDK"><div class="ui-zone-head"><h3 class="ui-zone-title">Python environment with the QM SDK</h3><span class="ui-zone-sum">{{ 'set' if settings.python else 'not set' }}</span></div>
     <div class="ui-zone-body">
-      <label>Interpreter path <input name="python" list="ui-opxmon-interpreters" value="{{ settings.python or '' }}" placeholder="Full path to Python" autocomplete="off"></label>
+      <label>Interpreter path <input name="python" list="ui-opxmon-interpreters" value="{{ ps.get('python', '') if ps is not none else (settings.python or '') }}" placeholder="Full path to Python" autocomplete="off"></label>
       <datalist id="ui-opxmon-interpreters">{% for e in envs %}<option value="{{ e.python }}">{{ e.name or e.python }}</option>{% endfor %}</datalist>
     </div></section>
     <section class="ui-zone" aria-label="Polling and alarms"><div class="ui-zone-head"><h3 class="ui-zone-title">Polling and alarms</h3><span class="ui-zone-sum">every {{ settings.interval_s|int }} s &middot; alarms {{ 'armed' if settings.alarms_armed else 'off' }}</span></div>
     <div class="ui-zone-body">
       <div class="ui-opxmon-grid">
-      <label>Idle minutes <input class="ui-opxmon-input-number" name="idle_minutes" value="{{ '%g'|format(settings.idle_minutes) }}" type="number" min="0.01" step="any"></label>
-      <label>Interval (s, minimum {{ min_interval|int }}) <input class="ui-opxmon-input-number" name="interval_s" value="{{ settings.interval_s|int }}" inputmode="numeric"></label>
-      <label>All FEMs limit (°C; no default is assumed) <input class="ui-opxmon-input-number" name="th__temp:all_fems" value="{{ settings.thresholds.get('temp:all_fems', '') }}" inputmode="decimal"></label>
+      <label>Idle minutes <input class="ui-opxmon-input-number" name="idle_minutes" value="{{ ps.get('idle_minutes', '') if ps is not none else '%g'|format(settings.idle_minutes) }}" type="number" min="0.01" step="any"></label>
+      <label>Interval (s, minimum {{ min_interval|int }}) <input class="ui-opxmon-input-number" name="interval_s" value="{{ ps.get('interval_s', '') if ps is not none else settings.interval_s|int }}" inputmode="numeric"></label>
+      <label>All FEMs limit (°C; no default is assumed) <input class="ui-opxmon-input-number" name="th__temp:all_fems" value="{{ ps.get('th__temp:all_fems', '') if ps is not none else settings.thresholds.get('temp:all_fems', '') }}" inputmode="decimal"></label>
       </div>
-      <label><input type="checkbox" name="alarms_armed" value="1" {% if settings.alarms_armed %}checked{% endif %}> Arm alarms (keeps polling while SM runs; alarms show in the top bar and as a toast)</label>
+      <label><input type="checkbox" name="alarms_armed" value="1" {% if (ps.get('alarms_armed') if ps is not none else settings.alarms_armed) %}checked{% endif %}> Arm alarms (keeps polling while SM runs; alarms show in the top bar and as a toast)</label>
       {%- if offered %}
       <table class="ui-table ui-opxmon-table" aria-label="Alarm limits"><thead><tr><th class="ui-table-head">Metric</th><th class="ui-table-head">Alarm when</th><th class="ui-table-head ui-table-num">Limit</th></tr></thead>
         <tbody>{% for m in offered %}<tr><td data-label="Metric" class="ui-table-cell"><span class="ui-text-strong">{{ m.label }}</span> <span class="ui-text-quiet">({{ m.unit }})</span></td><td data-label="Alarm when" class="ui-table-cell">{{ m.direction }}</td>
-          <td data-label="Limit" class="ui-table-cell ui-table-num"><input class="ui-opxmon-input-number" name="th__{{ m.key }}" value="{{ settings.thresholds.get(m.key, '') }}" inputmode="decimal" aria-label="Limit for {{ m.label }}"></td></tr>{% endfor %}</tbody></table>
+          <td data-label="Limit" class="ui-table-cell ui-table-num"><input class="ui-opxmon-input-number" name="th__{{ m.key }}" value="{{ ps.get('th__' ~ m.key, '') if ps is not none else settings.thresholds.get(m.key, '') }}" inputmode="decimal" aria-label="Limit for {{ m.label }}"></td></tr>{% endfor %}</tbody></table>
       {%- else %}
       <p class="ui-state ui-state--empty ui-opxmon-no-metrics"><span class="ui-state-key">No metrics to set limits on.</span> The server has not returned any temperature or metric reading yet.</p>
       {%- endif %}
     </div></section>
     <button type="submit" class="btn-sm">Save</button>
+    {%- if flash and flash_at == 'settings' %}{{ flash_line() }}{% endif %}
   </form>
   <form class="ui-opxmon-pcnames" hx-post="/opx-monitor/pc-names" hx-target="#ui-opxmon-body" hx-swap="outerHTML">
     <section class="ui-zone" aria-label="PC names"><div class="ui-zone-head"><h3 class="ui-zone-title">PC names</h3><span class="ui-zone-sum">{{ pc_names|length }} named &middot; {{ seen_tags|length }} seen in open QMs</span></div>
@@ -238,14 +241,15 @@
       {% if pc_names_problem %}<p class="ui-note ui-opxmon-pcnames-problem">{{ pc_names_problem }} The next save rewrites the file (the previous file is kept as pc_names.json.bak on each save).</p>{% endif %}
       <table class="ui-table ui-opxmon-table" aria-label="PC names"><thead><tr><th class="ui-table-head">Tag</th><th class="ui-table-head">Name</th><th class="ui-table-head">Remove</th></tr></thead>
         <tbody>{% for tag in pc_name_rows %}<tr class="ui-opxmon-pcname-row" data-tag="{{ tag }}"><td data-label="Tag" class="ui-table-cell"><code class="ui-chip">{{ tag|owner_shown }}</code>{% if this_tag == tag %} <span class="ui-pill ui-pill--accent ui-opxmon-this-pc" title="{{ same_tag_hint }}">same tag as this PC</span>{% endif %}{% if tag in seen_tags %} <span class="ui-text-quiet">in an open QM</span>{% endif %}</td>
-          <td data-label="Name" class="ui-table-cell">{% set shown = pc_names.get(tag, '')|label_shown %}<input class="ui-input" name="label__{{ tag }}" value="{{ shown }}" maxlength="40" autocomplete="off" aria-label="Name for tag {{ tag }}"{% if shown != pc_names.get(tag, '') %} title="Stored as {{ pc_names.get(tag, '')|label_full }}"{% endif %}><input type="hidden" name="was__{{ tag }}" value="{{ shown }}"></td>
-          <td data-label="Remove" class="ui-table-cell">{% if tag in pc_names %}<label><input type="checkbox" name="remove__{{ tag }}" value="1"> remove</label>{% endif %}</td></tr>{% endfor %}
+          <td data-label="Name" class="ui-table-cell">{% set shown = pc_names.get(tag, '')|label_shown %}<input class="ui-input" name="label__{{ tag }}" value="{{ pn.get('label__' ~ tag, shown) if pn is not none else shown }}" maxlength="40" autocomplete="off" aria-label="Name for tag {{ tag }}"{% if shown != pc_names.get(tag, '') %} title="Stored as {{ pc_names.get(tag, '')|label_full }}"{% endif %}><input type="hidden" name="was__{{ tag }}" value="{{ pn.get('was__' ~ tag, shown) if pn is not none else shown }}"></td>
+          <td data-label="Remove" class="ui-table-cell">{% if tag in pc_names %}<label><input type="checkbox" name="remove__{{ tag }}" value="1"{% if pn is not none and pn.get('remove__' ~ tag) %} checked{% endif %}> remove</label>{% endif %}</td></tr>{% endfor %}
           {% for ref, key in pc_name_bad %}<tr class="ui-opxmon-pcname-row" data-bad-key="1" data-key-ref="{{ ref }}"><td data-label="Tag" class="ui-table-cell"><code class="ui-chip">{{ key|owner_shown }}</code> <span class="ui-text-quiet">not a valid tag; rename it or remove it</span><input type="hidden" name="badkey__{{ ref }}" value="1"></td>
-          <td data-label="Name" class="ui-table-cell"><span class="ui-text-quiet" title="{{ pc_names[key]|label_full }}">{{ pc_names[key]|label_shown }}</span> <input class="ui-input" name="rename__{{ ref }}" maxlength="16" placeholder="new tag" autocomplete="off" aria-label="New tag for the invalid key"></td>
-          <td data-label="Remove" class="ui-table-cell"><label><input type="checkbox" name="removebad__{{ ref }}" value="1"> remove</label></td></tr>{% endfor %}
-          <tr class="ui-opxmon-pcname-new"><td data-label="Tag" class="ui-table-cell"><input class="ui-input" name="new_tag" maxlength="16" placeholder="new tag" autocomplete="off" aria-label="New tag"></td><td data-label="Name" class="ui-table-cell"><input class="ui-input" name="new_label" maxlength="40" placeholder="name" autocomplete="off" aria-label="Name for the new tag"></td><td class="ui-table-cell"></td></tr></tbody></table>
+          <td data-label="Name" class="ui-table-cell"><span class="ui-text-quiet" title="{{ pc_names[key]|label_full }}">{{ pc_names[key]|label_shown }}</span> <input class="ui-input" name="rename__{{ ref }}" value="{{ pn.get('rename__' ~ ref, '') if pn is not none else '' }}" maxlength="16" placeholder="new tag" autocomplete="off" aria-label="New tag for the invalid key"></td>
+          <td data-label="Remove" class="ui-table-cell"><label><input type="checkbox" name="removebad__{{ ref }}" value="1"{% if pn is not none and pn.get('removebad__' ~ ref) %} checked{% endif %}> remove</label></td></tr>{% endfor %}
+          <tr class="ui-opxmon-pcname-new"><td data-label="Tag" class="ui-table-cell"><input class="ui-input" name="new_tag" value="{{ pn.get('new_tag', '') if pn is not none else '' }}" maxlength="16" placeholder="new tag" autocomplete="off" aria-label="New tag"></td><td data-label="Name" class="ui-table-cell"><input class="ui-input" name="new_label" value="{{ pn.get('new_label', '') if pn is not none else '' }}" maxlength="40" placeholder="name" autocomplete="off" aria-label="Name for the new tag"></td><td class="ui-table-cell"></td></tr></tbody></table>
       {% if not pc_name_rows and not pc_name_bad %}<p class="ui-note">No tags named yet and none seen in an open QM.</p>{% endif %}
       <button type="submit" class="btn-sm">Save PC names</button>
+      {%- if flash and flash_at == 'names' %}{{ flash_line() }}{% endif %}
     </div></section>
   </form>
 {%- endif %}

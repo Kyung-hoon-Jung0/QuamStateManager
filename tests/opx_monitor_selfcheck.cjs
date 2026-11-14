@@ -86,6 +86,21 @@ const tick = () => new Promise(r => setTimeout(r, 20));
   await tick();
   ok(w.__posts[0][1].body.get('idle') === '1' && w.__posts[0][1].body.get('qm_ids') === 'QM-x, QM-y', 'idle POST names only confirmed ids');
   ok(/QM-y: active/.test(w.document.querySelector('.ui-opxmon-close-result').textContent), 'a newly active QM is reported as skipped');
+  {
+    // a refusal that already says "Nothing was closed." is shown as one sentence, never "Not closed: ... Nothing was closed."
+    const s = world();
+    const b2 = s.document.createElement('button');
+    b2.className = 'ui-opxmon-close-idle';
+    b2.setAttribute('data-qm-ids', 'QM-x');
+    s.document.body.appendChild(b2);
+    s.__reply = {ok: false, error: 'The status is not fresh; wait for the next refresh. Nothing was closed.'};
+    b2.click();
+    await tick();
+    s.document.querySelector('.ui-opxmon-confirm-accept').click();
+    await tick();
+    const out = s.document.querySelector('.ui-opxmon-close-result');
+    ok(out.textContent === 'The status is not fresh; wait for the next refresh. Nothing was closed.' && out.classList.contains('ui-state--error'), 'a stale close-idle refusal reads as one sentence: ' + JSON.stringify(out.textContent));
+  }
   let healthWorld = new JSDOM('<div id="ui-opxmon-alarm-slot"><a class="ui-opxmon-health" data-health="green" data-valid-ms="6000">OPX healthy</a></div>', {runScripts: 'outside-only'}).window;
   const timers = [];
   healthWorld.setTimeout = (fn, ms) => { timers.push([fn, ms]); };
@@ -226,7 +241,7 @@ const tick = () => new Promise(r => setTimeout(r, 20));
         this.status = 409;
         this.responseURL = 'http://localhost/opx-monitor/pc-names';
         this.response = this.responseText = '<div id="ui-opxmon-body"><p class="ui-state ui-state--error" role="status">' +
-          'The label for tag(s) abc was changed in another window; reload to see it. Nothing was saved.</p></div>';
+          'Another window changed the name of tag abc; the current names are shown below. Type your change again. Nothing was saved.</p></div>';
         setTimeout(() => this.onload(), 0);
       }
       abort() {}
@@ -242,14 +257,23 @@ const tick = () => new Promise(r => setTimeout(r, 20));
     await tick();
     const flash = v.document.querySelector('#ui-opxmon-body .ui-state--error');
     ok(requests.length === 1 && requests[0].method === 'POST' && /label__abc=Edited/.test(requests[0].body), 'PC names form posts its edited row');
-    ok(flash && !flash.hidden && /reload to see it/.test(flash.textContent), 'a 409 PC names reply leaves its error flash visible');
+    ok(flash && !flash.hidden && /the current names are shown below/.test(flash.textContent), 'a 409 PC names reply leaves its error flash visible');
+    const monitorBody = '<div id="ui-opxmon-body"><p class="ui-state ui-state--error">Refused.</p></div>';
     for (const id of ['ui-opxmon-body', 'unrelated-target', 'table-pane']) {
       for (const status of [400, 401, 403, 404, 409, 422, 500]) {
         const target = v.document.createElement('div'); target.id = id;
-        const detail = {target, xhr: {status, responseText: ''}, shouldSwap: false, isError: true};
+        const detail = {target, xhr: {status, responseText: monitorBody}, shouldSwap: false, isError: true};
         v.document.dispatchEvent(new v.CustomEvent('htmx:beforeSwap', {detail}));
         const allowed = id === 'ui-opxmon-body' && [400, 409].includes(status);
         ok(detail.shouldSwap === allowed && detail.isError === !allowed, id + ': HTTP ' + status + ' swap stays scoped');
+      }
+    }
+    for (const status of [400, 409]) {
+      for (const body of ['Bad Request', '<html><body><h1>Bad Request</h1></body></html>', '']) {
+        const target = v.document.createElement('div'); target.id = 'ui-opxmon-body';
+        const detail = {target, xhr: {status, responseText: body}, shouldSwap: false, isError: true};
+        v.document.dispatchEvent(new v.CustomEvent('htmx:beforeSwap', {detail}));
+        ok(!detail.shouldSwap && detail.isError, 'ui-opxmon-body: an HTTP ' + status + ' body that is not the monitor body never swaps (' + JSON.stringify(body.slice(0, 12)) + ')');
       }
     }
     v.close();
@@ -257,6 +281,22 @@ const tick = () => new Promise(r => setTimeout(r, 20));
   if (process.argv[2]) {
     const pages = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
     const doc = key => new JSDOM(pages[key]).window.document;
+    if (pages.flash_names) {
+      // a refusal or a result is drawn right after the Save button of the form it is about
+      const after = (key, formCls, label) => {
+        const d = doc(key);
+        const flashes = d.querySelectorAll('#ui-opxmon-body .ui-state[role="status"]');
+        const btn = [...d.querySelectorAll('form.' + formCls + ' button[type="submit"]')].find(x => x.textContent.trim() === label);
+        return flashes.length === 1 && btn && btn.nextElementSibling === flashes[0] ? flashes[0] : null;
+      };
+      const refused = after('flash_names', 'ui-opxmon-pcnames', 'Save PC names');
+      ok(refused && refused.classList.contains('ui-state--error') && /A tag uses only/.test(refused.textContent), 'the PC names refusal sits right after Save PC names');
+      ok(after('flash_names_ok', 'ui-opxmon-pcnames', 'Save PC names'), 'the PC names result sits right after Save PC names');
+      const set = after('flash_settings', 'ui-opxmon-settings', 'Save');
+      ok(set && /Port must be a whole number/.test(set.textContent), 'the Settings refusal sits right after the Settings Save button');
+      console.log(`${passes} passed, ${fails} failed`);
+      process.exit(fails ? 1 : 0);
+    }
     if (pages.owner_cleanup) {
       // owner cells and the PC names table, from markup the server rendered
       const jobs = doc('owner_jobs');

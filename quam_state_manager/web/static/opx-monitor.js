@@ -229,12 +229,18 @@
                 if (j && j.ok) say("Closed: " + ((j.closed || []).join(", ") || "none") +
                     ((j.skipped && j.skipped.length) ? " (skipped: " + j.skipped.map(function (id) { return id + ": " + ((j.skip_reasons || {})[id] || "already gone"); }).join(", ") + ")" : "") +
                     ". Written to History.", false);
-                else say(((j && j.closed && j.closed.length) ? "Closed: " + j.closed.join(", ") + ". " : "") + "Not closed: " + ((j && j.error) || "no reason given"), true);
+                else say(((j && j.closed && j.closed.length) ? "Closed: " + j.closed.join(", ") + ". " : "") + notClosed(j && j.error), true);
                 refresh();
             }, function (err) {
                 say("Not closed: SM did not answer (" + err + ").", true);
                 refresh();
             });
+    }
+
+    // a reason that already says "Nothing was closed." is shown as it is, never with a second "Not closed"
+    function notClosed(error) {
+        if (error && /Nothing was closed\.$/.test(error)) return error;
+        return "Not closed: " + (error || "no reason given");
     }
 
     function markUnreachable(e) {

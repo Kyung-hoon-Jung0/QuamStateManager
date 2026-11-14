@@ -379,8 +379,10 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     if (!evt.detail || !evt.detail.target) return;
     var t = evt.detail.target;
     var status = evt.detail.xhr ? evt.detail.xhr.status : 0;
-    // PC name refusals carry the settings body and its error message.
-    if (t.id === 'ui-opxmon-body' && (status === 400 || status === 409)) {
+    // OPX monitor settings refusals carry the settings body and its error message.
+    // Narrow, like its siblings: only a body that is the monitor body may swap.
+    if (t.id === 'ui-opxmon-body' && (status === 400 || status === 409) && evt.detail.xhr
+        && /id="ui-opxmon-body"/.test(evt.detail.xhr.responseText || '')) {
         evt.detail.shouldSwap = true;
         evt.detail.isError = false;
     }

@@ -157,10 +157,10 @@ def _idle_states(m, st, s) -> dict:
     return idle_states
 
 
-def _shown_ids(m, idle: bool) -> set:
-    """The QM ids the Clean up page shows right now for "close all" (every open QM) or
-    "close idle" (the idle ones, only on a fresh answer); the same rule as the template."""
-    st = m.status()
+def _shown_ids(m, idle: bool, st: dict) -> set:
+    """The QM ids the Clean up page shows for "close all" (every open QM) or "close idle"
+    (the idle ones, only on a fresh answer) in the status answer ``st``; the same rule as
+    the template. The caller passes the one answer it also judged freshness on."""
     open_qms = (st.get('answer') or {}).get('open_qms') or []
     if not idle:
         return {str(q['id']) for q in open_qms}
@@ -170,6 +170,7 @@ def _shown_ids(m, idle: bool) -> set:
 
 
 LIST_CHANGED = "The list changed; check it again. Nothing was closed."
+STALE_STATUS = "The status is not fresh; wait for the next refresh. Nothing was closed."
 
 
 def _view(tab: str) -> dict:
@@ -283,20 +284,30 @@ def _form_bool(name):
 
 @opxmon_bp.route("/opx-monitor/settings", methods=["POST"])
 def opx_monitor_save_settings():
+    """Every field is checked before anything is stored: a 400 stores nothing, leaves the
+    monitor as it was and draws the form back with what the user typed."""
     m = monitor()
     s = m.settings()
     f = request.form
     msgs = []
+    hdr_txt = f.get("headers")
+    typed_headers = bool(hdr_txt and hdr_txt.strip())
+
+    def refuse(message):
+        if typed_headers:
+            message += " Type the connection headers again; they are never shown."
+        return _settings_reply(message, error=True, form="settings")
+
     host = (f.get("host") or "").strip()
     port = (f.get("port") or "").strip()
     if port and not port.isdigit():
-        return _settings_reply("Port must be a whole number.", error=True)
+        return refuse("Port must be a whole number.")
     target = ({"kind": "qmm", "host": host, "port": int(port) if port else None,
                "cluster_name": (f.get("cluster_name") or "").strip() or None,
                "tls": _form_bool("tls")} if host else None)
     py = (f.get("python") or "").strip() or None
     if py and not Path(py).is_file():
-        return _settings_reply("That Python interpreter does not exist.", error=True)
+        return refuse("That Python interpreter does not exist.")
     # a limit for a metric the server does not report right now is kept
     th = dict(s.get("thresholds") or {})
     for k, v in f.items():
@@ -310,33 +321,34 @@ def opx_monitor_save_settings():
         except ValueError:
             val = float("nan")
         if val != val or val in (float("inf"), float("-inf")):
-            return _settings_reply(f"The limit for {k[4:]} is not a number.", error=True)
+            return refuse(f"The limit for {k[4:]} is not a number.")
         th[k[4:]] = val
+    headers = None
+    if target is not None and not _form_bool("clear_headers") and typed_headers:
+        try:
+            headers = json.loads(hdr_txt)
+            if not isinstance(headers, dict):
+                raise ValueError
+        except ValueError:
+            return refuse("Connection headers must be a JSON object.")
     new = {"target": target, "python": py, "interval_s": om.clamp_interval(f.get("interval_s")),
            "admin_url": (f.get("admin_url") or "").strip(), "idle_minutes": _idle_minutes(f.get("idle_minutes"), s["idle_minutes"]), "thresholds": th, "alarms_armed": _form_bool("alarms_armed")}
     changed_conn = (new["target"] != s.get("target")) or (new["python"] != s.get("python")) or new["admin_url"] != s.get("admin_url")
     om.save_settings(m.instance, new)
-    hdr_txt = f.get("headers")
     if target is not None:
         key = om.target_key(target)
         if _form_bool("clear_headers"):
             om.save_secret_headers(m.instance, key, {})
             changed_conn = True
-        elif hdr_txt and hdr_txt.strip():
-            try:
-                h = json.loads(hdr_txt)
-                if not isinstance(h, dict):
-                    raise ValueError
-            except ValueError:
-                return _settings_reply("Connection headers must be a JSON object.", error=True)
-            om.save_secret_headers(m.instance, key, h)
+        elif headers is not None:
+            om.save_secret_headers(m.instance, key, headers)
             changed_conn = True
             msgs.append("Connection headers stored (not shown again).")
     if changed_conn:
         m.reset()
     m.want()
     m.ensure_running_if_armed()
-    return _settings_reply(" ".join(["Settings saved."] + msgs))
+    return _settings_reply(" ".join(["Settings saved."] + msgs), at="settings")
 
 
 _TAG_RE = re.compile(r"[a-z0-9]{1,16}")
@@ -386,6 +398,10 @@ def _save_pc_names_locked():
     ``was__<tag>`` it was drawn with is left alone), each one onto the file as read at
     that moment. The caller holds the process lock through conflict checks and writing."""
     f = request.form
+
+    def refuse(message, status=None, current=()):
+        return _settings_reply(message, error=True, status=status, form="names", current=current)
+
     changes = []
     rows = set()
     for k, v in f.items():
@@ -405,7 +421,7 @@ def _save_pc_names_locked():
         if not problem and _ESCAPE_RE.search(label):
             problem = "A PC name cannot hold an escaped character such as \\u202e; type the name without it."
         if problem:
-            return _settings_reply(f"Name for tag {tag}: {problem}", error=True)
+            return refuse(f"Name for tag {tag}: {problem}")
         changes.append((tag, label or None))
     # names-file keys that are not valid tags: rename to a valid tag, or remove
     names_now, _ = om.load_pc_names()
@@ -418,7 +434,7 @@ def _save_pc_names_locked():
                     names_now[key] = stored[key]
     except (OSError, ValueError):
         pass
-    conflicts = set()
+    taken = set()  # a tag that already has another name in the file
     by_ref = {_key_ref(k): k for k in names_now if not _TAG_RE.fullmatch(k)}
     for k in f:
         if not k.startswith("badkey__"):
@@ -429,9 +445,9 @@ def _save_pc_names_locked():
         new = (f.get("rename__" + k[len("badkey__"):]) or "").strip()
         if new:
             if not _TAG_RE.fullmatch(new):
-                return _settings_reply("A tag uses only a-z and 0-9, at most 16 characters.", error=True)
+                return refuse("A tag uses only a-z and 0-9, at most 16 characters.")
             if new in names_now and names_now[new] != names_now[key]:
-                conflicts.add(new)
+                taken.add(new)
             changes.append((new, names_now[key]))
             changes.append((key, None))
         elif _form_bool("removebad__" + k[len("badkey__"):]):
@@ -439,26 +455,42 @@ def _save_pc_names_locked():
     tag, raw_label = (f.get("new_tag") or "").strip(), f.get("new_label") or ""
     if tag or raw_label.strip():
         if not _TAG_RE.fullmatch(tag):
-            return _settings_reply("A tag uses only a-z and 0-9, at most 16 characters.", error=True)
+            return refuse("A tag uses only a-z and 0-9, at most 16 characters.")
         label, problem = om.check_pc_label(raw_label)
         if problem:
-            return _settings_reply(problem, error=True)
+            return refuse(problem)
         if not label:
-            return _settings_reply("Give the new tag a name.", error=True)
+            return refuse("Give the new tag a name.")
         changes.append((tag, label))
+        if tag in names_now and names_now[tag] != label:
+            taken.add(tag)
+    # two changes of this one save that give the same tag different names
+    twice, aimed = set(), {}
+    for t, label in changes:
+        if label is not None:
+            if t in aimed and aimed[t] != label:
+                twice.add(t)
+            aimed.setdefault(t, label)
     # Compare the same display value carried by each row's hidden was__ field.
     # Validate edited fields first so invalid input keeps its field-specific 400.
-    conflicts.update(t for t in rows if t in names_now and "was__" + t not in f)
+    conflicts = {t for t in rows if t in names_now and "was__" + t not in f}
     for t, _ in changes:
         if t in rows and ("was__" + t not in f or
                           f["was__" + t] != _label_shown(names_now.get(t, ''))):
             conflicts.add(t)
-    if tag and tag in names_now and names_now[tag] != label:
-        conflicts.add(tag)
-    if conflicts:
-        tags = ', '.join(sorted(conflicts))
-        return _settings_reply(f'The label for tag(s) {tags} was changed in another window; '
-                               'reload to see it. Nothing was saved.', error=True, status=409)
+    if twice or taken or conflicts:
+        said = []
+        if twice:
+            said.append(f"Two changes in this save give {_tags_text(twice)} a name; keep one of them.")
+        taken -= twice
+        if taken:
+            has = "already has a name" if len(taken) == 1 else "already have a name"
+            said.append(f"{_tags_text(taken)[:1].upper()}{_tags_text(taken)[1:]} {has}; "
+                        "remove it first or pick another tag.")
+        if conflicts:
+            said.append(f"Another window changed the name of {_tags_text(conflicts)}; "
+                        "the current names are shown below. Type your change again.")
+        return refuse(" ".join(said + ["Nothing was saved."]), status=409, current=conflicts)
     count = None
     try:
         for t, label in changes:
@@ -485,14 +517,34 @@ def _save_pc_names_locked():
                     os.unlink(temporary)
             count = len(names_now)
     except OSError:
-        return _settings_reply("The PC names file could not be written.", error=True)
+        return refuse("The PC names file could not be written.")
     if count is None:
-        return _settings_reply("No PC name changed.")
-    return _settings_reply(f"PC names saved ({count}).")
+        return _settings_reply("No PC name changed.", at="names")
+    return _settings_reply(f"PC names saved ({count}).", at="names")
 
 
-def _settings_reply(message, error=False, status=None):
+def _tags_text(tags) -> str:
+    tags = sorted(tags)
+    return ("tag " if len(tags) == 1 else "tags ") + ", ".join(tags)
+
+
+def _settings_reply(message, error=False, status=None, form=None, at=None, current=()):
+    """The settings body with the message next to the Save button of the form it is about
+    (``at``, default ``form``). A refusal draws that form back with the values the user
+    sent, except the PC-name rows in ``current`` (drawn from the file as it is now) and
+    the connection headers (never shown)."""
+    posted = {}
+    if error and form:
+        posted = {k: v for k, v in request.form.items() if k != "headers"}
+        # a row the user did not touch shows the file as it is now
+        untouched = [k[len("label__"):] for k, v in posted.items() if k.startswith("label__")
+                     and not posted.get("remove__" + k[len("label__"):])
+                     and (v or "").strip() == (posted.get("was__" + k[len("label__"):]) or "").strip()]
+        for t in list(current) + untouched:
+            for k in ("label__" + t, "was__" + t, "remove__" + t):
+                posted.pop(k, None)
     html = render_template("_opx_monitor_body.html", flash=message, flash_error=error,
+                           flash_at=at or form, posted=posted, posted_form=form if posted else None,
                            **_view("settings"))
     return make_response(html, status if status is not None else (400 if error else 200))
 
@@ -510,11 +562,11 @@ def opx_monitor_close():
         return jsonify({"ok": False, "error": "Nothing named to close."}), 400
     if request.form.get('all') == '1' and request.form.get('confirm_count') != str(len(confirmed)):
         return jsonify({'ok': False, 'error': 'Type the count to confirm close all.'}), 400
-    if idle and m.status()["state"] != "ok":
-        return jsonify({"ok": False, "error":
-                        "The status is not fresh; wait for the next refresh. Nothing was closed."}), 409
+    st = m.status()  # one answer for the freshness check and the shown list
+    if idle and st["state"] != "ok":
+        return jsonify({"ok": False, "error": STALE_STATUS}), 409
     # the consent is for the exact set the user saw: a set that changed since is refused
-    if every and set(confirmed) != _shown_ids(m, idle):
+    if every and set(confirmed) != _shown_ids(m, idle, st):
         return jsonify({'ok': False, 'error': LIST_CHANGED, 'list_changed': True}), 409
     who = (request.form.get("by") or "").strip()[:80]
     res = (m.close(None, who=who, qm_ids=confirmed, idle=idle) if every else m.close(qm_id, who=who))

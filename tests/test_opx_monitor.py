@@ -154,8 +154,10 @@ def test_names_reject_same_row_from_same_base(names_file):
     assert response.mimetype == 'text/html'
     text = response.get_data(as_text=True)
     assert 'id="ui-opxmon-body"' in text and 'ui-state--error' in text
-    assert 'value="First"' in text
-    assert 'abc' in text and 'changed in another window' in text and 'reload to see it' in text
+    assert 'value="First"' in text and 'name="new_tag" value="def"' in text
+    assert ('Another window changed the name of tag abc; the current names are shown below. '
+            'Type your change again. Nothing was saved.') in text
+    assert 'reload' not in text
     assert path.read_bytes() == before and path.with_suffix('.json.bak').read_bytes() == backup
     assert json.loads(path.read_text()) == {'abc': 'First'}
 
@@ -180,7 +182,8 @@ def test_names_new_tag_collision(names_file):
     response = _names_post(app, {}, new_tag='abc', new_label='Different')
     assert response.status_code == 409 and response.mimetype == 'text/html'
     text = response.get_data(as_text=True)
-    assert 'abc' in text and 'changed in another window' in text and 'reload to see it' in text
+    assert 'Tag abc already has a name; remove it first or pick another tag. Nothing was saved.' in text
+    assert 'another window' not in text.lower()
     assert path.read_bytes() == before and not path.with_suffix('.json.bak').exists()
     assert _names_post(app, {}, new_tag='abc', new_label='Original').status_code == 200
 
@@ -2332,7 +2335,9 @@ def test_names_invalid_key_rename_collision_refuses_every_change(names_file):
         'new_tag': 'def', 'new_label': 'Added'})
     assert response.status_code == 409 and response.mimetype == 'text/html'
     text = response.get_data(as_text=True)
-    assert 'ui-state--error' in text and 'reload to see it' in text and 'abc' in text
+    assert 'ui-state--error' in text
+    assert 'Tag abc already has a name; remove it first or pick another tag.' in text
+    assert 'another window' not in text.lower()
     assert path.read_bytes() == before and not path.with_suffix('.json.bak').exists()
 
 
@@ -2398,3 +2403,144 @@ def test_close_idle_stale_status_has_its_own_reason(env):
 def test_names_have_one_writer():
     assert not hasattr(om, 'apply_pc_name_change')
     assert not hasattr(om, 'save_pc_names')
+
+
+@pytest.mark.parametrize('stored, data', [
+    ({'My PC': 'A', 'Other PC': 'B'}, lambda ref: {
+        'badkey__' + ref('My PC'): '1', 'rename__' + ref('My PC'): 'xyz',
+        'badkey__' + ref('Other PC'): '1', 'rename__' + ref('Other PC'): 'xyz'}),
+    ({'My PC': 'A'}, lambda ref: {
+        'badkey__' + ref('My PC'): '1', 'rename__' + ref('My PC'): 'xyz',
+        'new_tag': 'xyz', 'new_label': 'C'}),
+])
+def test_names_two_changes_onto_one_tag_refuse_the_save(names_file, stored, data):
+    from quam_state_manager.web.opx_monitor_routes import _key_ref
+    app, path = names_file
+    path.write_text(json.dumps(stored), encoding='utf-8')
+    before = path.read_bytes()
+    response = _names_post(app, _names_base(app), **data(_key_ref))
+    assert response.status_code == 409 and response.mimetype == 'text/html'
+    text = response.get_data(as_text=True)
+    assert ('Two changes in this save give tag xyz a name; keep one of them. '
+            'Nothing was saved.') in text
+    assert 'another window' not in text.lower()
+    assert path.read_bytes() == before and not path.with_suffix('.json.bak').exists()
+
+
+def test_names_single_invalid_key_rename_onto_a_free_tag_saves(names_file):
+    from quam_state_manager.web.opx_monitor_routes import _key_ref
+    app, path = names_file
+    path.write_text(json.dumps({'abc': 'Original', 'My PC': 'A'}), encoding='utf-8')
+    ref = _key_ref('My PC')
+    response = _names_post(app, _names_base(app), **{'badkey__' + ref: '1', 'rename__' + ref: 'xyz'})
+    assert response.status_code == 200, response.get_data(as_text=True)
+    assert json.loads(path.read_text()) == {'abc': 'Original', 'xyz': 'A'}
+
+
+def test_names_refusal_draws_back_what_was_typed(names_file):
+    from quam_state_manager.web.opx_monitor_routes import _key_ref
+    app, path = names_file
+    path.write_text(json.dumps({'abc': 'Original', 'def': 'Second', 'ghi': 'Third', 'My PC': 'A'}),
+                    encoding='utf-8')
+    ref = _key_ref('My PC')
+    base = _names_base(app)
+    path.write_text(json.dumps({'abc': 'Original', 'def': 'Second', 'ghi': 'Third now', 'My PC': 'A'}),
+                    encoding='utf-8')
+    before = path.read_bytes()
+    response = _names_post(app, base, **{
+        'label__abc': 'Typed edit', 'label__def': 'Second', 'remove__def': '1',
+        'label__ghi': 'Third', 'badkey__' + ref: '1', 'rename__' + ref: 'newtag',
+        'new_tag': 'Bad Tag', 'new_label': 'Typed new'})
+    assert response.status_code == 400
+    text = response.get_data(as_text=True)
+    assert 'A tag uses only a-z and 0-9' in text
+    assert 'name="label__abc" value="Typed edit"' in text and 'name="was__abc" value="Original"' in text
+    assert re.search(r'name="remove__def" value="1"\s*checked', text)
+    # a row the user did not touch shows the file as it is now
+    assert 'name="label__ghi" value="Third now"' in text and 'name="was__ghi" value="Third now"' in text
+    assert 'name="rename__' + ref + '" value="newtag"' in text
+    assert 'name="new_tag" value="Bad Tag"' in text and 'name="new_label" value="Typed new"' in text
+    assert path.read_bytes() == before
+
+
+def test_settings_bad_headers_store_nothing_and_keep_the_typing(env, monkeypatch):
+    app, m, *_ = env
+    before = om.load_settings(app.instance_path)
+    resets = []
+    monkeypatch.setattr(m, 'reset', lambda: resets.append(1))
+    r = app.test_client().post('/opx-monitor/settings', headers=ORIGIN, data={
+        'host': 'newhost.invalid', 'port': '9510', 'headers': '[1]', 'interval_s': '30',
+        'admin_url': 'http://admin.invalid', 'alarms_armed': '1'})
+    assert r.status_code == 400
+    text = r.get_data(as_text=True)
+    assert ('Connection headers must be a JSON object. Type the connection headers again; '
+            'they are never shown.') in text
+    assert om.load_settings(app.instance_path) == before
+    assert not resets
+    assert 'name="host" value="newhost.invalid"' in text and 'name="port" value="9510"' in text
+    assert 'name="interval_s" value="30"' in text and 'name="admin_url" value="http://admin.invalid"' in text
+    assert re.search(r'name="alarms_armed" value="1"\s*checked', text)
+    assert '[1]' not in text
+
+
+def test_settings_bad_port_keeps_the_typing_and_a_good_save_stores(env, monkeypatch):
+    app, m, *_ = env
+    before = om.load_settings(app.instance_path)
+    c = app.test_client()
+    r = c.post('/opx-monitor/settings', headers=ORIGIN, data={'host': 'other', 'port': 'x80'})
+    assert r.status_code == 400
+    text = r.get_data(as_text=True)
+    assert 'Port must be a whole number.' in text and 'Type the connection headers again' not in text
+    assert 'name="host" value="other"' in text and 'name="port" value="x80"' in text
+    assert om.load_settings(app.instance_path) == before
+    resets = []
+    monkeypatch.setattr(m, 'reset', lambda: resets.append(1))
+    r = c.post('/opx-monitor/settings', headers=ORIGIN, data={'host': 'other', 'port': '81'})
+    assert r.status_code == 200 and 'Settings saved.' in r.get_data(as_text=True)
+    assert om.load_settings(app.instance_path)['target']['host'] == 'other' and resets
+    assert 'name="host" value="other"' in r.get_data(as_text=True)
+
+
+def test_close_idle_judges_one_status_answer(env, monkeypatch):
+    app, m, w, clock, _ = env
+    w.script[:] = [answer(qms=(("QM-a", [], ["con1/1"]),))]
+    _slow(m)
+    _watch(m, clock, 7300)
+    assert 'data-qm-ids="QM-a"' in page(app, 'cleanup')
+    fresh = m.status()
+    assert fresh['state'] == 'ok'
+    calls = []
+
+    def status():
+        calls.append(1)
+        return fresh if len(calls) == 1 else {**fresh, 'state': 'stale'}
+    monkeypatch.setattr(m, 'status', status)
+    closed = []
+    monkeypatch.setattr(m, 'close', lambda *a, **k: closed.append(k) or {'ok': True, 'closed': ['QM-a']})
+    response = app.test_client().post('/opx-monitor/close', headers=ORIGIN,
+                                      data={'idle': '1', 'qm_ids': 'QM-a'})
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()['closed'] == ['QM-a'] and len(closed) == 1
+
+
+def test_refusal_flash_sits_next_to_its_save_button(names_file, tmp_path):
+    import shutil
+    import subprocess
+    from pathlib import Path
+    app, path = names_file
+    c = app.test_client()
+    pages = {
+        'flash_names': _names_post(app, _names_base(app), new_tag='Bad Tag', new_label='x').get_data(as_text=True),
+        'flash_names_ok': _names_post(app, _names_base(app), label__abc='Fine').get_data(as_text=True),
+        'flash_settings': c.post('/opx-monitor/settings', headers=ORIGIN,
+                                 data={'host': 'h', 'port': 'x'}).get_data(as_text=True),
+    }
+    fixture = tmp_path / 'flash_pages.json'
+    fixture.write_text(json.dumps(pages), encoding='utf-8')
+    node = shutil.which('node')
+    if not node:
+        pytest.fail('node is required for the flash placement selfcheck')
+    r = subprocess.run([node, str(Path(__file__).with_name('opx_monitor_selfcheck.cjs')), str(fixture)],
+                       capture_output=True, text=True, encoding='utf-8', timeout=60)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert ' 0 failed' in r.stdout and 'the PC names refusal sits right after Save PC names' in r.stdout
