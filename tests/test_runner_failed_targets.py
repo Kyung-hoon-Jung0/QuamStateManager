@@ -151,6 +151,10 @@ def _record(chip, writes_for, folder=None):
     it = scheduler.add_item(inst, {"name": "05_qubit_spec", "kind": "node"}, ["q1", "q2"])
     info = scheduler.failed_target_writes({"q1": "failed", "q2": "successful"}, writes_for)
     scheduler.set_item_failed_targets(inst, it["id"], info, folder or str(chip.live))
+    with scheduler._QLOCK:      # the worker finished the item
+        st = scheduler.load_queue(inst)
+        scheduler._find(st, it["id"])["status"] = "done"
+        scheduler.save_queue(inst, st)
     return inst, it["id"]
 
 
@@ -208,9 +212,68 @@ class TestRevertTheFailedTargets:
         # a first revert that stopped as a whole leaves both values to put back
         scheduler.set_item_failed_revert(inst, iid, {"ok": False, "reverted": [], "remaining": ["qubits.q1.T1"],
                                                      "refused": [{"path": None, "reason": "x"}]})
+        chip.set_live("qubits.q1.f_01", 5.0e9)        # moved away since: not offered
         body = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={}).get_json()
         assert [x["path"] for x in body["result"]["reverted"]] == ["qubits.q1.T1"], body
-        assert chip.live_state()["qubits"]["q1"]["f_01"] == 5.11e9    # not in what was left: untouched
+        assert chip.live_state()["qubits"]["q1"]["f_01"] == 5.0e9     # never written
+
+    def _status_item(self, chip, iid):
+        st = chip.c.get("/scheduler/status").get_json()
+        return [x for x in st["queue"] if x["id"] == iid][0]
+
+    def test_a_refused_value_that_comes_back_is_retried(self, chip):
+        patches = self._node_wrote(chip)
+        inst, iid = _record(chip, patches)
+        chip.set_live("qubits.q1.T1", 9.9e-05)
+        first = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={}).get_json()
+        assert first["result"]["remaining"] == []
+        assert self._status_item(chip, iid)["revert_retryable"] == []
+        chip.set_live("qubits.q1.T1", 3.0e-05)         # holds the run's value again
+        chip.c.post("/state/sync", data={"mode": "pull"})
+        assert self._status_item(chip, iid)["revert_retryable"] == ["qubits.q1.T1"]
+        r = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={})
+        body = r.get_json()
+        assert r.status_code == 200 and [x["path"] for x in body["result"]["reverted_now"]] == \
+            ["qubits.q1.T1"], body
+        assert chip.live_state()["qubits"]["q1"]["T1"] == 2.1e-05
+        res = body["result"]
+        # accumulated across presses: both reverted, the earlier refusal superseded
+        assert {x["path"] for x in res["reverted"]} == {"qubits.q1.f_01", "qubits.q1.T1"}
+        assert res["refused"] == [] and res["remaining"] == []
+        assert len(res["presses"]) == 1 and "not reverted" in res["presses"][0]["message"]
+        assert self._status_item(chip, iid)["revert_retryable"] == []
+
+    def test_a_value_that_moved_away_and_stayed_offers_nothing(self, chip):
+        patches = self._node_wrote(chip)
+        inst, iid = _record(chip, patches)
+        chip.set_live("qubits.q1.T1", 9.9e-05)
+        chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={})
+        chip.c.post("/state/sync", data={"mode": "pull"})
+        assert self._status_item(chip, iid)["revert_retryable"] == []
+        r = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={})
+        assert r.status_code == 409 and "nothing is left to revert" in r.get_json()["error"]
+        assert chip.live_state()["qubits"]["q1"]["T1"] == 9.9e-05
+
+    def test_earlier_classifications_are_kept_across_presses(self, chip):
+        patches = self._node_wrote(chip)
+        inst, iid = _record(chip, patches)
+        scheduler.set_item_failed_revert(inst, iid, {
+            "ok": False, "reverted": [], "remaining": ["qubits.q1.T1"], "message": "first",
+            "unchanged": [{"path": "qubits.q9.x", "value": 1}],
+            "refused": [{"path": "qubits.q8.y", "reason": "r", "text": "t"}]})
+        res = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={}).get_json()["result"]
+        assert [u["path"] for u in res["unchanged"]] == ["qubits.q9.x"]
+        assert [c["path"] for c in res["refused"]] == ["qubits.q8.y"]
+        assert res["presses"][-1]["message"] == "first"
+
+    def test_a_fresh_row_has_no_retry_stamp_and_blind_writes_never_retry(self, chip):
+        patches = self._node_wrote(chip)
+        inst, iid = _record(chip, patches)
+        assert "revert_retryable" not in self._status_item(chip, iid)
+        from quam_state_manager.web.routes import _revert_retryable_paths
+        ws = [{"dotted": "a", "has_old": False, "value": 2}, {"dotted": "b", "old": 2, "value": 2},
+              {"dotted": "c", "old": 1, "value": 2}]
+        assert _revert_retryable_paths(ws, lambda k: 2) == ["c"]
 
     def test_a_legacy_record_keeps_what_was_reverted_and_never_calls_it_changed(self, chip):
         patches = self._node_wrote(chip)
@@ -294,7 +357,7 @@ def test_the_queue_row_says_it_and_offers_the_revert():
                        capture_output=True, text=True, encoding="utf-8", timeout=60,
                        env=dict(os.environ, NODE_PATH=os.environ.get("NODE_PATH") or str(
                            Path(__file__).resolve().parents[1] / "node_modules")))
-    assert r.returncode == 0 and "11 checks passed" in r.stdout, r.stdout + r.stderr
+    assert r.returncode == 0 and "16 checks passed" in r.stdout, r.stdout + r.stderr
 
 
 class TestCompactRowNamesTheMetricTarget:
