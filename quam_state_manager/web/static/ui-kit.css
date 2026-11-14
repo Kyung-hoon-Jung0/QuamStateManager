@@ -185,9 +185,9 @@
     /* scroll region (docs/308 section 4e): thin always-on thumb, a bottom fade over the region's own ground */
     --ui-scroll-thumb: var(--ui-text-3);
     --ui-scroll-bg: var(--ui-surface-1);
-    --ui-scroll-fade-h: var(--ui-gap-4);
+    --ui-scroll-fade-h: calc(var(--ui-gap-4) * 2);
     --ui-scroll-bar-w: 8px;
-    --ui-scroll-fade: linear-gradient(transparent, var(--ui-scroll-bg));
+    --ui-scroll-fade: linear-gradient(transparent, var(--ui-scroll-bg) 80%);
     --ui-czg-form-w: 360px;
     --ui-czg-evidence-min: 640px;
     --ui-disclosure-marker: "\25B8";
