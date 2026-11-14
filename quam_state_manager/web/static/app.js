@@ -9412,6 +9412,8 @@ window.Bundles = (function () {
         [/^\/wiring(\/|$|\?)/, ["chipstatus", "components"]],
         [/^\/trends?(\/|$|\?)/, ["chipstatus", "datasets"]],
         [/^\/(qubits|pairs|resonators|flux|couplers|qdac)(\/|$|\?)/, ["components"]],
+        // the CZ gate dialog opens from the Pulses, CZ gate plan, Pairs and Qubits pages
+        [/^\/(pulses|cz-plan|qubits|pairs)(\/|$|\?)/, ["czgate"]],
         // (the /qubit/<id> and /pair/<id> inspector partials reference no lazy global -- 4l-review audit)
         // FB-10 C: the inspector's "Remove..." panel is driven by diagram-add.js
         [/^\/diagram-remove(\/|$|\?)/, ["components"]],

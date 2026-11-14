@@ -1281,3 +1281,29 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 
 /* The qubits page draws large stones: its map scales to the pane width. */
 .cm-svg.cm-hl-qubits { max-width: var(--ui-opxmon-full-width); height: auto; }
+
+/* The CZ gate dialog: the form on the left, the lab's evidence on the right. */
+.czg .czg-body { display: flex; flex-direction: column; gap: var(--ui-gap-3); }
+.czg-alert { display: flex; flex-direction: column; gap: var(--ui-gap-2); }
+.czg-alert:empty, .czg-done:empty { display: none; }
+.czg-cols { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: var(--ui-gap-4); align-items: start; }
+.czg-form, .czg-evidence, .czg-slots { display: flex; flex-direction: column; gap: var(--ui-gap-2); margin: 0; }
+.czg-input { width: 100%; margin: 0; padding: var(--ui-gap-1) var(--ui-gap-2); height: auto; font-size: var(--ui-fs-sm); }
+.czg-bad { border-color: var(--ui-danger-border); }
+.czg-readonly, .czg-why { margin-top: calc(-1 * var(--ui-gap-1)); }
+.czg-why:empty, .czg-readonly:empty { display: none; }
+.czg-why-line { display: block; color: var(--ui-text-2); }
+.czg-slot { margin: 0; padding: var(--ui-gap-2) var(--ui-gap-3); border: var(--ui-bw) solid var(--ui-border); border-radius: var(--ui-r-md); display: flex; flex-direction: column; gap: var(--ui-gap-2); }
+.czg-slot-title { padding: 0 var(--ui-gap-1); font-size: var(--ui-fs-sm); font-weight: var(--ui-fw); font-family: var(--ui-font-mono); }
+.czg-fieldbox { margin: 0; }
+.czg-src { font-size: var(--ui-fs-xs); color: var(--ui-text-2); }
+.czg-src--entered { color: var(--ui-accent); }
+.czg-src--copied { color: var(--ui-ok-text); }
+.czg-more-list { display: flex; flex-direction: column; gap: var(--ui-gap-1); }
+.czg-more-row { display: flex; align-items: baseline; gap: var(--ui-gap-2); }
+.czg-section-title { margin: var(--ui-gap-2) 0 0; font-size: var(--ui-fs-sm); font-weight: var(--ui-fw); color: var(--ui-text-2); }
+.czg-chart > .ui-note { padding: var(--ui-gap-3) 0; }
+.czg-intent, .czg-checks, .czg-writes { display: flex; flex-direction: column; gap: var(--ui-gap-1); }
+.czg-stale { opacity: 0.45; }
+.czg-diff { background: var(--ui-warn-bg); color: var(--ui-warn-text); }
+.czg-row-acts { display: inline-flex; gap: var(--ui-gap-1); margin-left: var(--ui-gap-2); vertical-align: middle; }

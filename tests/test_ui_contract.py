@@ -696,6 +696,13 @@ if __name__ == "__main__":
 # These selectors were reviewed together when their feature styles moved
 # into the kit. New selectors require an explicit addition, as in stage 4.
 _STAGE6_SELECTORS = {
+    # the CZ gate dialog (cz-gate.js, _cz_gate_dialog.html)
+    '.czg .czg-body', '.czg-alert', '.czg-alert:empty', '.czg-done:empty', '.czg-cols',
+    '.czg-form', '.czg-evidence', '.czg-slots', '.czg-input', '.czg-bad', '.czg-readonly',
+    '.czg-why', '.czg-why:empty', '.czg-readonly:empty', '.czg-why-line', '.czg-slot',
+    '.czg-slot-title', '.czg-fieldbox', '.czg-src', '.czg-src--entered', '.czg-src--copied',
+    '.czg-more-list', '.czg-more-row', '.czg-section-title', '.czg-chart > .ui-note',
+    '.czg-intent', '.czg-checks', '.czg-writes', '.czg-stale', '.czg-diff', '.czg-row-acts',
     '.gen-rule-allcant',
     '.gen-rule-dim',
     '.gen-rule-grp-mark',
