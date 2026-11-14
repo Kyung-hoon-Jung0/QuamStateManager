@@ -417,7 +417,8 @@ def test_a_number_referred_to_directly_is_covered():
 
 def test_the_hop_limit_hashes_a_marker():
     s, _ = add_gate(chip())
-    n = gp.RESOLVE_DEPTH + 3
+    assert gp.RESOLVE_DEPTH == 8
+    n = 11                     # more hops than the limit
     for i in range(n):
         s["qubits"]["q3"][f"h{i}"] = f"#/qubits/q3/h{i + 1}"
     s["qubits"]["q3"][f"h{n}"] = 0.5
@@ -427,4 +428,7 @@ def test_the_hop_limit_hashes_a_marker():
     s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["deep"] = "#/qubits/q3/h0"
     h1 = gp.content_hash(s, "q1-q2", "cz_sq")
     s["qubits"]["q3"][f"h{n}"] = 0.6          # past the limit: not seen
+    s2 = {"qubits": {"q3": {f"h{i}": f"#/qubits/q3/h{i + 1}" for i in range(n)}}}
+    s2["qubits"]["q3"][f"h{n}"] = 0.5
+    assert gp._resolved(s2, "#/qubits/q3/h0", ("x",))[0] == "depth"
     assert gp.content_hash(s, "q1-q2", "cz_sq") == h1 != h
