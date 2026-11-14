@@ -337,6 +337,8 @@ def test_marker_text_in_formula_refused_and_markers_are_whole_lines():
     src = T.render(spec_b()).replace(
         "import numpy as np\n", "import numpy as np\nX = 1  " + T.REGION_END + "\n")
     assert T.parse(src).editable
+    src = src.replace("import numpy as np\n", "import numpy as np\nY = 2  " + T.REGION_BEGIN + "\n")
+    assert T.parse(src).editable
 
 
 @pytest.mark.parametrize("bad", [100.5, -3, 10, 18, 0])
