@@ -156,9 +156,10 @@ def _choosing():
                                      "control": {"part": "check", "text": "Spectators"}}),
         (sec, "Field with another part (a group wrapper names it)", {"part": "field", "label": "Source file",
                                                                      "control": {"part": "chip", "text": "state.json"}}),
-        (sec, "Field keeps the caller's describedby", {"part": "field", "label": "Length", "hint": "Multiple of 4 ns.",
-                                                       "control": {"part": "input", "num": True, "value": "40", "unit": "ns",
-                                                                   "describedby": "uk-length-note"}}),
+        (sec, "Field keeps the caller's describedby", {"part": "field-stack", "items": [
+            {"part": "field", "label": "Length", "hint": "Multiple of 4 ns.",
+             "control": {"part": "input", "num": True, "value": "40", "unit": "ns", "describedby": "uk-length-note"}},
+            {"part": "note", "id": "uk-length-note", "text": "Lengths come from the pulse class."}]}),
         (sec, "Inline field", {"part": "field", "label": "Pulse class", "inline": True, "source": {"text": "default"},
                                "control": {"part": "select", "id": "uk-f-cls", "options": CLASSES, "value": "CZGate"}}),
         (sec, "Menu: pick one", {"part": "menu", "id": "uk-menu-pick", "label": "Pair", "items": PAIRS,

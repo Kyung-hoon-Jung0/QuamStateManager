@@ -38,7 +38,7 @@
     function chip(text) { return el("code", "ui-chip", text); }
     function badge(text, tone) { return el("span", "ui-badge ui-badge--" + (tone || "neutral"), text); }
     function count(text) { return el("span", "ui-count", text); }
-    function note(text) { return el("p", "ui-note", text); }
+    function note(text, id) { var n = el("p", "ui-note", text); if (id) n.id = id; return n; }
     function check(text, checked, disabled, id, describedby) {
         var l = el("label", "ui-check");
         var i = document.createElement("input");
@@ -445,7 +445,7 @@
             case "chip": return chip(s.text);
             case "badge": return badge(s.text, s.tone);
             case "count": return count(s.text);
-            case "note": return note(s.text);
+            case "note": return note(s.text, s.id);
             case "check": return check(s.text, s.checked, s.disabled);
             case "pill": return pill(s.text, s.tone);
             case "path": return path(s.text);
@@ -461,6 +461,7 @@
             case "checks": return checks(s.checks, s.label);
             case "slot": return slot(s);
             case "grid2": return grid2(s.items);
+            case "field-stack": { var fs = el("div", "ui-field-stack ui-field-stack--dense"); (s.items || []).forEach(function (x) { add(fs, render(x)); }); return fs; }
             case "placeholder": return el("div", "ui-placeholder", s.text);
             case "line": { var ln = el("span"); ln.appendChild(lineDot(s.line)); ln.appendChild(document.createTextNode(String(s.text))); return ln; }
             case "dialog": return dialog(s);

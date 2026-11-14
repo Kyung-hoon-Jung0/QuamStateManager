@@ -21,7 +21,7 @@
 
 {%- macro ui_count(text) -%}<span class="ui-count">{{ text }}</span>{%- endmacro -%}
 
-{%- macro ui_note(text) -%}<p class="ui-note">{{ text }}</p>{%- endmacro -%}
+{%- macro ui_note(text, id=None) -%}<p class="ui-note"{% if id %} id="{{ id }}"{% endif %}>{{ text }}</p>{%- endmacro -%}
 
 {%- macro ui_check(text, checked=False, disabled=False, id=None, describedby=None) -%}
 <label class="ui-check"><input type="checkbox"{% if id %} id="{{ id }}"{% endif %}{% if describedby %} aria-describedby="{{ describedby }}"{% endif %}{% if checked %} checked{% endif %}{% if disabled %} disabled{% endif %}>{{ text }}</label>
@@ -253,7 +253,7 @@
 {%- elif p == 'chip' %}{{ ui_chip(s.text) }}
 {%- elif p == 'badge' %}{{ ui_badge(s.text, s.tone or 'neutral') }}
 {%- elif p == 'count' %}{{ ui_count(s.text) }}
-{%- elif p == 'note' %}{{ ui_note(s.text) }}
+{%- elif p == 'note' %}{{ ui_note(s.text, s.id) }}
 {%- elif p == 'check' %}{{ ui_check(s.text, s.checked, s.disabled) }}
 {%- elif p == 'pill' %}{{ ui_pill(s.text, s.tone or 'neutral') }}
 {%- elif p == 'path' %}{{ ui_path(s.text) }}
@@ -270,6 +270,7 @@
 {%- elif p == 'slot' %}{{ ui_slot(s.title, s.chip, s.line or 1, s.body or ()) }}
 {%- elif p == 'placeholder' %}<div class="ui-placeholder">{{ s.text }}</div>
 {%- elif p == 'line' %}<span>{{ ui_line_dot(s.line) }}{{ s.text }}</span>
+{%- elif p == 'field-stack' %}<div class="ui-field-stack ui-field-stack--dense">{% for x in s['items'] %}{{ ui_render(x) }}{% endfor %}</div>
 {%- elif p == 'grid2' %}<div class="ui-grid2">{% for x in s['items'] %}{{ ui_render(x) }}{% endfor %}</div>
 {%- elif p == 'dialog' %}{{ ui_dialog(s.head, s.size or 'm', s.body or (), s.foot or (), s.foot_actions, s.close is not sameas false) }}
 {%- endif -%}
