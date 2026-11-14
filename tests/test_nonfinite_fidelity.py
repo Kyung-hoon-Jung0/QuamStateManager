@@ -121,7 +121,7 @@ class TestPickMarks:
     def test_the_report_labels_the_non_finite_row_and_states_the_basis(self, tmp_path):
         b = _chip(tmp_path, {"InterleavedRB": float("nan"), "IRB": 0.9434}) \
             .get("/chip-status/report").get_data(as_text=True)
-        assert "not shown on the pages: IRB is this pulse's per-gate value (picked: key order" in b
+        assert "not shown on the pages: IRB is this pulse's per-gate value (picked: the only entry that is a number (InterleavedRB holds no number)" in b
 
     def test_the_report_states_the_basis_of_the_pick(self, tmp_path):
         b = _chip(tmp_path, {"InterleavedRB": 0.97, "InterleavedRB_load_id": 5,
@@ -169,3 +169,42 @@ def test_chip_status_survives_a_non_finite_entry():
     if r.returncode == 2 and "jsdom not installed" in (r.stderr or ""):
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+class TestTheBasisWhenASiblingHoldsNoNumber:
+    """A NaN / infinite sibling never competed, so "key order" is not why
+    the other entry was picked, and the text must not contradict the pick."""
+
+    def test_nan_under_the_lower_ranked_key(self):
+        from quam_state_manager.core.query import gate_pick_basis_text, pair_gate_fidelity
+        r = pair_gate_fidelity({"InterleavedRB": 0.9123, "IRB": float("nan")})
+        assert (r["key"], r["basis"], r["no_number"]) == ("InterleavedRB", "only number", ["IRB"])
+        assert gate_pick_basis_text(r) == (
+            "picked: the only entry that is a number (IRB holds no number)")
+
+    def test_inf_under_the_higher_ranked_key_never_reads_key_order(self):
+        from quam_state_manager.core.query import gate_pick_basis_text, pair_gate_fidelity
+        r = pair_gate_fidelity({"InterleavedRB": float("inf"), "IRB": 0.9010})
+        assert (r["key"], r["basis"]) == ("IRB", "only number")
+        text = gate_pick_basis_text(r)
+        assert "key order" not in text and "InterleavedRB holds no number" in text
+
+    def test_one_key_alone_states_no_basis(self):
+        from quam_state_manager.core.query import gate_pick_basis_text, pair_gate_fidelity
+        r = pair_gate_fidelity({"IRB": 0.95, "IRB_load_id": 612})
+        assert r["basis"] == "key order" and r["no_number"] == []
+        assert gate_pick_basis_text(r) == ""
+
+    def test_two_numbers_and_a_nan_keep_the_real_basis(self):
+        from quam_state_manager.core.query import pair_gate_fidelity
+        r = pair_gate_fidelity({"InterleavedRB": 0.97, "IRB": 0.93,
+                                "IRB_flattop": float("nan")})
+        assert r["basis"] == "key order"
+
+    def test_the_topology_rows_carry_the_same_text(self):
+        from quam_state_manager.core import query
+        rows = [{"level": "gate", "metric": "InterleavedRB"},
+                {"level": "gate", "metric": "IRB"}]
+        query._mark_gate_pick(rows, {"InterleavedRB": float("inf"), "IRB": 0.9010})
+        assert [r["gate_pick"] for r in rows] == [False, True]
+        assert all("holds no number" in r["gate_pick_basis_text"] for r in rows)
