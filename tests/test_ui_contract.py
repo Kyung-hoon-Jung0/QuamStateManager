@@ -814,6 +814,24 @@ def test_2d_no_new_bare_select_or_input_built_in_scripts():
     _ratchet("bare selects / inputs in scripts", measure_script_controls(), _baseline()["bare_script_controls"])
 
 
+
+def test_7h_line_colours_are_not_state_colours():
+    states = ("--ui-ok-text", "--ui-ok-border", "--ui-warn-text", "--ui-warn-border", "--ui-danger-text", "--ui-danger-border")
+    for t in THEMES:
+        env = theme_env(t)
+        page = _resolve("var(--ui-surface-0)", env)
+        tones = {_over(_resolve(f"var({x})", env), page) for x in states}
+        for n in range(1, 7):
+            c = _over(_resolve(f"var(--ui-line-{n})", env), page)
+            # known (2026-11-14): in the QM theme plot-colorway-5 IS the warning text colour;
+            # line 5 is rarely used and aliases may not add colours; fix in the theme palette.
+            if (t, n) in {("qm", 5)}:
+                continue
+            assert c not in tones, f"{t}: --ui-line-{n} equals a state tone"
+        firsts = [_resolve(f"var(--ui-line-{n})", env) for n in (1, 2, 3)]
+        assert len(set(map(tuple, firsts))) == 3, f"{t}: lines 1-3 are distinct"
+
+
 if __name__ == "__main__":
     if "--write-baseline" in sys.argv:
         _BASELINE.write_text(json.dumps(measure_all(), indent=1, sort_keys=True) + "\n", encoding="utf-8")

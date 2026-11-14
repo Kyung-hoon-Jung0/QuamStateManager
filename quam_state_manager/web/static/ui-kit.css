@@ -148,19 +148,20 @@
     --ui-r-dot: 2px;
     --ui-tag-pad: 0 .3rem;
     --ui-fs-tag: 11px;
-    /* identity colours of lines: the SAME variables the charts read (plot-theme.js palette) */
+    /* identity colours of lines: the SAME variables the charts read (plot-theme.js palette), in the
+       order 1,4,6,3,5,2 (blue, magenta, teal first; amber / green / rose read as states, so they come last) */
     --ui-line-1: var(--plot-colorway-1);
-    --ui-line-2: var(--plot-colorway-2);
-    --ui-line-3: var(--plot-colorway-3);
-    --ui-line-4: var(--plot-colorway-4);
+    --ui-line-2: var(--plot-colorway-4);
+    --ui-line-3: var(--plot-colorway-6);
+    --ui-line-4: var(--plot-colorway-3);
     --ui-line-5: var(--plot-colorway-5);
-    --ui-line-6: var(--plot-colorway-6);
+    --ui-line-6: var(--plot-colorway-2);
     --ui-line-1-tint: color-mix(in srgb, var(--plot-colorway-1) 14%, transparent);
-    --ui-line-2-tint: color-mix(in srgb, var(--plot-colorway-2) 14%, transparent);
-    --ui-line-3-tint: color-mix(in srgb, var(--plot-colorway-3) 14%, transparent);
-    --ui-line-4-tint: color-mix(in srgb, var(--plot-colorway-4) 14%, transparent);
+    --ui-line-2-tint: color-mix(in srgb, var(--plot-colorway-4) 14%, transparent);
+    --ui-line-3-tint: color-mix(in srgb, var(--plot-colorway-6) 14%, transparent);
+    --ui-line-4-tint: color-mix(in srgb, var(--plot-colorway-3) 14%, transparent);
     --ui-line-5-tint: color-mix(in srgb, var(--plot-colorway-5) 14%, transparent);
-    --ui-line-6-tint: color-mix(in srgb, var(--plot-colorway-6) 14%, transparent);
+    --ui-line-6-tint: color-mix(in srgb, var(--plot-colorway-2) 14%, transparent);
     --ui-topbar-h: var(--topbar-height, 48px);   /* app.js publishes the measured height */
     --ui-ring: 0 0 0 2px var(--ui-accent);
     --ui-shadow: 0 8px 28px color-mix(in srgb, black 35%, transparent);

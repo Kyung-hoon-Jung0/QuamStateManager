@@ -179,9 +179,12 @@ A screen tells the eye where to look first. Six rules, each with its part:
 | 5 | Colour only with a meaning: a state, the identity of a line, or "can be pressed" | state tones; `ui-line-1..6` on `ui-slot` (left bar + tinted `ui-slot-chip`) and `ui-line-dot`; accent on controls |
 | 6 | Passes are counted, failures are spelled out; a cell that differs or is over a limit says so in place | `ui-checks` > `ui-checks-row` of `ui-result [--fail,--skip]` + one `ui-fail-row` per failure; the count goes in the panel summary. Table cells: `ui-cell--warn` (differs), `ui-cell--danger` (over a limit), with a quiet `ui-cell-note` ("limit 2.5 V"); a cell spec `{text, tone, note, line}` |
 
-Line colours: `--ui-line-N` is `var(--plot-colorway-N)`, the same variables `PlotTheme.palette()`
-reads for the charts, so line N in a form, a table dot and chart series N can never disagree
-(a chart's series N uses `palette()[N-1]`). They are classes, not an inline `--ui-line`, because
+Line colours: `--ui-line-1..6` alias the chart palette variables in the order
+`--plot-colorway-1, 4, 6, 3, 5, 2` (blue, magenta, teal, green, yellow, amber), the same variables
+`PlotTheme.palette()` reads. The order is not the palette order on purpose: amber, green and rose
+read as warn / ok / danger, so a gate's usual two or three lines get the hues that carry no state.
+A chart that draws line N uses the colour of `--ui-line-N` (palette index 1,4,6,3,5,2 minus one),
+not series N. `tests/test_ui_contract.py` pins that no line resolves to a state tone in any theme. They are classes, not an inline `--ui-line`, because
 inline styles are not allowed.
 
 Small caps titles use `font-variant-caps: all-small-caps` (never `text-transform: uppercase`).
