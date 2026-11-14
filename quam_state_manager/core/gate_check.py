@@ -587,6 +587,11 @@ def port_range(info: dict) -> float | None:
     return None
 
 
+def _v(x: float) -> str:
+    """A voltage in plain units: ``3 V``, ``0.55 V`` (4 significant digits)."""
+    return f"{float(x):.4g} V".replace("-0 V", "0 V")
+
+
 def _port_text(port) -> str:
     if isinstance(port, (list, tuple)):
         return "/".join(str(p) for p in port)
@@ -634,12 +639,12 @@ def _range_check(found: list, tl, no_config: bool) -> dict:
             hi, lo = max(vals) + offset, min(vals) + offset
             if hi > rng + _SAMPLE_EPS:
                 one_bad = True
-                bad.append(f"For {name}, port {port}: the maximum plus the offset is {hi:+.4f}, "
-                           f"above +{rng:g} (offset {offset:+.4f}, scale {k:g})")
+                bad.append(f"For {name}, port {port}: {_v(hi)} is above this port's limit of "
+                           f"{_v(rng)} (channel offset {_v(offset)}, play scale {k:g})")
             if lo < -rng - _SAMPLE_EPS:
                 one_bad = True
-                bad.append(f"For {name}, port {port}: the minimum plus the offset is {lo:+.4f}, "
-                           f"below -{rng:g} (offset {offset:+.4f}, scale {k:g})")
+                bad.append(f"For {name}, port {port}: {_v(lo)} is below this port's limit of "
+                           f"{_v(-rng)} (channel offset {_v(offset)}, play scale {k:g})")
         if not one_bad:
             ok_names.append(name)
     if bad:

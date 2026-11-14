@@ -238,10 +238,10 @@ def test_range_outside_fails():
 def test_range_inside_but_offset_pushes_outside():
     res = gate_check.evaluate([GATE], _ran(cfg=_cfg(sample=0.4, offset=0.15)))
     assert _checks(res)["range"] == "fail"
-    assert "cz_pulse on q1.z, port con1/1/1: the maximum plus the offset is +0.5500" in _msg(res, "range")
+    assert "cz_pulse on q1.z, port con1/1/1: 0.55 V is above this port's limit of 0.5 V (channel offset 0.15 V, play scale 1)" in _msg(res, "range")
     assert _checks(gate_check.evaluate([GATE], _ran(cfg=_cfg(sample=0.4))))["range"] == "pass"
     res = gate_check.evaluate([GATE], _ran(cfg=_cfg(sample=-0.4, offset=-0.15)))
-    assert _checks(res)["range"] == "fail" and "the minimum plus the offset" in _msg(res, "range")
+    assert _checks(res)["range"] == "fail" and "-0.55 V is below this port's limit of -0.5 V" in _msg(res, "range")
 
 
 def test_range_amplified_port_allows_more():
