@@ -70,6 +70,7 @@ function seg(op, t, v, extra) {
 }
 
 const title = (fig, key) => fig.layout.annotations.find((a) => a.meta && a.meta.role === 'lane-title' && a.meta.lane === key);
+const lastRoot = () => [...host.querySelectorAll('[data-gate-timeline]')].pop();
 const facts = (fig, key) => fig.layout.annotations.find((a) => a.meta && a.meta.role === 'lane-facts' && a.meta.lane === key);
 const segText = (fig, key) => fig.layout.annotations.filter((a) => a.meta && a.meta.role === 'segment-text' && a.meta.lane === key);
 
@@ -104,7 +105,7 @@ ok(title(fig, 'q1.z').yref === 'y domain' && title(fig, 'coupler_q1_q2').yref ==
 // lane titles: horizontal, left aligned at the chart's left edge, one fact per line
 const t3 = title(fig, 'coupler_q1_q2'), f3 = facts(fig, 'coupler_q1_q2');
 ok([t3, f3].every((a) => a.xref === 'paper' && a.x === 0 && a.xanchor === 'left' && a.align === 'left' &&
-   a.xshift === -fig.layout.margin.l + 2 && !a.textangle) && ya.every((k) => !fig.layout[k].title || !fig.layout[k].title.text),
+   a.xshift === -fig.layout.margin.l + 9 && !a.textangle) && ya.every((k) => !fig.layout[k].title || !fig.layout[k].title.text),
    'lane titles left aligned at the chart edge, horizontal, no axis title');
 ok(t3.text === '<b>coupler_q1_q2</b>' && t3.font.size === 12 && f3.text === 'con1 / 1 / 13<br>limit -0.25 to 0.25 V<br>offset 0.05 V' && f3.font.size === 11,
    'title lines: label 12 px; port, limit, offset each on its own line at 11 px');
@@ -152,8 +153,9 @@ ok([...Array(116).keys()].every((t) => hov.x.includes(t)), 'hover grid has every
     ok(f2.layout.xaxis.range[0] === -20, 'a negative start extends the axis to it');
     ok(!f2.layout.annotations.some((a) => a.meta && a.meta.role === 'starts-at'), 'no "starts at" text when a lane starts at or before 0');
     neg.destroy();
-    ok(fig.layout.annotations.filter((a) => a.meta && a.meta.role === 'starts-at').map((a) => a.meta.lane).join() === 'q1.z,q2.z,coupler_q1_q2',
-       '"starts at" only on lanes whose first pulse is later than 0');
+    // here the axis runs to 1000 ns: starts at 10, 20 and 63 ns leave too little idle room for the words
+    ok(fig.layout.annotations.filter((a) => a.meta && a.meta.role === 'starts-at').length === 0,
+       '"starts at" only where the idle stretch can hold the words (it would sit on the pulse otherwise)');
 }
 
 // scales fit the data, not the limits
@@ -243,6 +245,48 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
     hs[0]({ width: 300 });
     ok(window.__relayouts.length === before + 2, 'a resize re-fits');
     delete g._fullLayout;
+}
+
+// identity colours
+{
+    const pal = window.PlotTheme.palette();
+    ok(GT.laneColor(0) === pal[0] && GT.laneColor(3) === pal[3] && GT.laneColor(pal.length + 1) === pal[1], 'laneColor: palette by index, modulo its length');
+    const lineOf = (key, op) => segs.find((s) => s.meta.lane === key && s.meta.operation === op).line.color;
+    ok(lineOf('q1.z', 'cz_x_pulse_q1_q2') === pal[0] && lineOf('q2.z', 'flux_b') === pal[1] && lineOf('coupler_q1_q2', 'late') === pal[2],
+       'gate lanes without a colour take 0, 1, 2 in order');
+    ok(lineOf('coupler_q1_q2', 'bip') === window.PlotTheme.lossColor(), 'a flagged segment keeps the flag colour');
+    const chip = title(fig, 'coupler_q1_q2');
+    ok(chip.font.color === pal[2] && chip.bgcolor === window.PlotTheme.withAlpha(pal[2], 0.16) && chip.borderpad >= 2 && chip.font.size >= 12 &&
+       /^<b>.*<\/b>$/.test(chip.text), 'lane name is a chip in the identity colour (text and tint), also on a flagged lane');
+    ok(facts(fig, 'coupler_q1_q2').font.color !== pal[2] && facts(fig, 'coupler_q1_q2').font.size === 11, 'port and limit lines stay quiet');
+    const bars = fig.layout.shapes.filter((s) => s.name === 'lane-bar');
+    ok(bars.length === 3 && bars.every((b, i) => b.yref === axRef(i) + ' domain' && b.y0 === 0 && b.y1 === 1 && b.xsizemode === 'pixel' &&
+       b.x0 === -fig.layout.margin.l && b.x1 - b.x0 <= 4) && bars[1].fillcolor === pal[1], 'a thin bar in the lane colour along each lane at the gutter edge');
+    ok(role(fig, 'hover').find((t) => t.meta.lane === 'q2.z').marker.color === pal[1], 'hover row in the lane colour');
+    ok(role(fig, 'fill').find((t) => t.meta.lane === 'q1.z').fillcolor === window.PlotTheme.withAlpha(pal[0], 0.18), 'fill in the lane colour');
+    // explicit indices, and spectators in one quiet colour
+    const hostTb = doc.createElement('div'); doc.body.appendChild(hostTb);
+    const many = { lanes: [lane('a.z', 'gate', [seg('p', [0, 10], [0.1, 0.1])], { color: 0 }), lane('b.z', 'gate', [seg('p', [0, 10], [0.1, 0.1])], { color: 3 })]
+        .concat([1, 2, 3].map((i) => lane('s' + i + '.z', 'spectator', [seg('p', [0, 10], [0.01, 0.01])]))), notes: [] };
+    const hc = GT.render(host, many, { foldSpectators: false, toolbarHost: hostTb });
+    const fc = last();
+    const col = (key) => role(fc, 'segment').find((t) => t.meta.lane === key).line.color;
+    ok(col('a.z') === GT.laneColor(0) && col('b.z') === GT.laneColor(3) && col('a.z') !== col('b.z'), 'lane.color picks the palette index');
+    ok(col('s1.z') === col('s2.z') && col('s2.z') === col('s3.z') && ![col('a.z'), col('b.z')].includes(col('s1.z')), 'spectators share one quiet colour');
+    ok(title(fc, 's1.z').font.color === col('s1.z') && title(fc, 's1.z').bgcolor === window.PlotTheme.withAlpha(col('s1.z'), 0.1) &&
+       title(fc, 'a.z').bgcolor === window.PlotTheme.withAlpha(col('a.z'), 0.16), 'spectator chips: same shape, quiet colour, fainter tint');
+    // controls outside the component
+    ok(hostTb.querySelector('[data-gate-timeline-bar] .ui-segmented') && !lastRoot().querySelector('[data-gate-timeline-bar]'), 'toolbarHost: the controls render there, nothing above the chart');
+    hostTb.querySelector('[data-scale="common"]').click();
+    ok(JSON.stringify(last().layout.yaxis.tickvals) !== JSON.stringify(fc.layout.yaxis.tickvals) || last().layout.yaxis.tickvals.length === 2, 'controls in the toolbar host work');
+    hc.destroy();
+    ok(hostTb.childNodes.length === 0, 'destroy removes the controls from the toolbar host');
+    const hn = GT.render(host, many, { toolbar: false });
+    ok(!lastRoot().querySelector('[data-gate-timeline-bar]') && lastRoot().querySelector('[data-gate-timeline-plot]'), 'toolbar false: no controls');
+    hn.setFold(false);
+    ok(hn.laneCount().drawn === 5, 'toolbar false: the setters still work');
+    hn.destroy();
+    hostTb.remove();
 }
 
 // sim
