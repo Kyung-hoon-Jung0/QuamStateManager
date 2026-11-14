@@ -1090,7 +1090,7 @@ class TestNotDoors:
 #: A new site, or a second call in a classified function, is not in this
 #: table, so this file fails until someone decides what the new write is.
 DOOR_SITES = {
-    ("web/diagram_remove_routes.py", "run_env_check", "named"): (2, "temporary environment-check inputs; removed after the probe"),
+    ("core/chip_copy.py", "write_chip_folder", "named"): (2, "fresh temporary chip copies for checks; never live or tracked working files"),
     ("web/routes.py", "state_load_check", "named"): (1, "temporary state folder used only by the isolated load probe"),
     ("web/routes.py", "state_load_check", "save"): (1, "fresh store saved into the temporary probe folder"),
     # ---- the live-write doors: each names its record
@@ -1136,6 +1136,7 @@ DOOR_SITES = {
     ("core/entity_notes.py", "readdress", "named"): (1, "an instance sidecar that NAMES the live folder"),
     ("core/entity_notes.py", "save", "named"): (1, "an instance sidecar that NAMES the live folder"),
     ("core/regenerate.py", "run_regenerate", "named"): (4, "a NEW folder (Re-generate's output)"),
+    ("core/regenerate.py", "set_coupler_delays", "named"): (1, "the NEW folder Re-generate built, while its output is still claimed"),
     ("core/type_policy.py", "delete_assignment", "named"): (1, "an instance sidecar that NAMES the live folder"),
     ("core/type_policy.py", "save_assignment", "named"): (1, "an instance sidecar that NAMES the live folder"),
     ("generator/run_build.py", "_inject_qdac_state", "named"): (1, "the NEW folder Generate builds"),
