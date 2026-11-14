@@ -600,7 +600,7 @@ def test_copy_failure_message_has_no_path(tmp_path, monkeypatch):
     text = json.dumps(res)
     assert res["status"] == "crash" and "no space left on device" in res["error"]
     assert "sm_chipcopy_" not in text and str(Path(made[0]).parent) not in text.replace("\\\\", "\\")
-    assert not made[0].exists()
+    assert not made[0].exists() and made[0].name not in text
 
 
 def test_timeout_text_names_the_timeout_used(monkeypatch, tmp_path):
@@ -657,6 +657,112 @@ def test_timeline_not_drawn_is_unchecked_and_unknown_level_is_null():
     tl = static_timeline(SCRIPT, [{"element": "q1.z", "operation": "cz_pulse", "length": 16,
                                    "waveform": {"type": None, "error": "gone"}}])
     assert tl["rows"][0].level is None and any("level is not known" in n for n in tl["notes"])
+
+
+def _top(res):
+    return res["failed"], res["all_checked"], res["why_not_checked"]
+
+
+def test_product_fields_all_passed():
+    res = gate_check.evaluate([GATE], _ran(), PREVIEW)
+    assert _top(res) == (False, True, None) and _g(res)["ran"] and res["ok"]
+
+
+def test_product_fields_no_preview_is_not_all_checked():
+    res = gate_check.evaluate([GATE], _ran(), {})
+    failed, all_checked, why = _top(res)
+    assert not failed and not all_checked and "preview" in why and _g(res)["ran"]
+
+
+@pytest.mark.parametrize("status,word", [("busy", "busy"), ("no-env", "environment"),
+                                         ("timeout", "in time"), ("crash", "could not run")])
+def test_product_fields_typed_failures(status, word):
+    res = gate_check.evaluate([GATE], {"status": status, "error": "e", "data": None})
+    failed, all_checked, why = _top(res)
+    assert not failed and not all_checked and word in why and not _g(res)["ran"]
+
+
+def test_product_fields_one_gate_fails_another_not_run():
+    other = ("q3-4", "cz_b")
+    ran = _ran(cfg=_cfg(length=18))
+    ran["data"]["gates"][gate_check.macro_path(*other)] = "unreadable"
+    res = gate_check.evaluate([GATE, other], ran, PREVIEW)
+    assert res["failed"] and not res["all_checked"] and res["why_not_checked"] is None
+    assert not _g(res, other)["ran"] and _g(res)["ran"]
+
+
+def test_product_fields_chip_as_is_does_not_load_and_after_breaks():
+    res = gate_check.evaluate([GATE], _ran(before={"load_error": "E", "config_error": None}))
+    assert _top(res)[:2] == (False, False) and "as it is does not load" in res["why_not_checked"]
+    res = gate_check.evaluate([GATE], _ran(after={"load_error": "E", "config_error": None}))
+    assert res["failed"] and not _g(res)["ran"]
+
+
+def test_product_fields_unreadable_program_and_apply_failure():
+    ran = _ran(ops=[])
+    ran["data"]["gates"][PATH]["script_unreadable"] = True
+    res = gate_check.evaluate([GATE], ran)
+    assert _top(res)[:2] == (False, False) and "program text" in res["why_not_checked"]
+    assert not _g(res)["ran"]
+    res = gate_check.evaluate([GATE], _ran(error="KeyError: x"))
+    assert res["failed"] and not _g(res)["ran"]
+
+
+def test_product_fields_invalid_create(tmp_path):
+    res = gate_check.check_gates(_store(tmp_path), "python.exe", [GATE],
+                                 [("qubit_pairs.q1-2", {})], runner=lambda *a, **k: None)
+    assert res["failed"] and not res["all_checked"] and res["why_not_checked"] is None
+
+
+def test_copy_failure_leftover_is_reported(tmp_path, monkeypatch):
+    from quam_state_manager.core import chip_copy
+    monkeypatch.setattr(chip_copy, "REMOVE_PAUSE_S", 0)
+
+    def full(folder, s, w):
+        raise OSError("disk full")
+    monkeypatch.setattr(chip_copy, "write_chip_folder", full)
+    real = chip_copy.shutil.rmtree
+    monkeypatch.setattr(chip_copy.shutil, "rmtree",
+                        lambda *a, **k: (_ for _ in ()).throw(PermissionError("in use")))
+    res = gate_check.check_gates(_store(tmp_path), "python.exe", [GATE], runner=lambda *a, **k: None)
+    monkeypatch.setattr(chip_copy.shutil, "rmtree", real)
+    try:
+        assert res["leftover"] and Path(res["leftover"]).exists()
+        assert "disk full" in res["error"] and "free some disk space" in res["error"]
+        assert "OSError" not in res["error"]
+    finally:
+        real(res["leftover"], ignore_errors=True)
+
+
+@pytest.mark.parametrize("exc,words", [
+    (OSError("something odd"), "something odd"),
+    (OSError(28, "No space left on device"), "free some disk space and try again"),
+    (PermissionError(13, "Permission denied"), "check that SM may write to the temporary folder"),
+    (OSError(), "an unknown error"),
+])
+def test_copy_error_texts(exc, words):
+    from quam_state_manager.core import chip_copy
+    msg = str(chip_copy._copy_error(exc))
+    assert words in msg and type(exc).__name__ not in msg
+
+
+def test_crash_path_scrubs_the_copy_folder_name_only(tmp_path, monkeypatch):
+    import tempfile
+    lab_path = str(Path(tempfile.gettempdir()) / "lab_code" / "pulse.py")
+
+    def boom(*a, **k):
+        raise RuntimeError("x")
+    seen = {}
+
+    def runner(py, before, after, macros, **kw):
+        seen["root"] = Path(before).parent
+        return {"status": "ok", "data": {}}
+    monkeypatch.setattr(gate_check, "evaluate", lambda *a, **k: (_ for _ in ()).throw(
+        RuntimeError(f"failed in {seen['root']}\\before\\state.json near {lab_path}")))
+    res = gate_check.check_gates(_store(tmp_path), "python.exe", [GATE], runner=runner)
+    assert res["status"] == "crash"
+    assert seen["root"].name not in res["error"] and "sm_chipcopy_" not in res["error"]
+    assert lab_path in res["error"], "a lab path under the same temp base is kept"
 
 
 # --------------------------------------------------------------- real env

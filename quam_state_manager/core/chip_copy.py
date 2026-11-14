@@ -47,12 +47,31 @@ class ChipCopies:
 
 class CopyError(OSError):
     """The temporary copy could not be written. The message names what
-    failed in words and never holds a path."""
+    failed in words and never holds a path; ``leftover`` is the folder that
+    could not be removed afterwards (or None)."""
+
+    def __init__(self, message: str, leftover: str | None = None):
+        super().__init__(message)
+        self.leftover = leftover
 
 
-def _copy_error(exc: BaseException) -> CopyError:
-    reason = getattr(exc, "strerror", None) or type(exc).__name__
-    return CopyError(f"SM could not write the temporary copy of the chip: {str(reason).lower()}")
+def _copy_error(exc: BaseException, leftover: str | None = None) -> CopyError:
+    """A path-free message: the OS reason (or the error's own words), and
+    the next step for a full disk or a refused write."""
+    import errno
+    reason = getattr(exc, "strerror", None)
+    if not reason:
+        args = [a for a in getattr(exc, "args", ()) if isinstance(a, str)]
+        reason = args[0] if args else "an unknown error"
+    msg = f"SM could not write the temporary copy of the chip: {str(reason).lower()}"
+    code = getattr(exc, "errno", None)
+    words = str(reason).lower()
+    if code == errno.ENOSPC or "space" in words or "disk full" in words:
+        msg += "; free some disk space and try again"
+    elif (isinstance(exc, PermissionError) or code in (errno.EACCES, errno.EPERM)
+          or "permission" in words or "denied" in words):
+        msg += "; check that SM may write to the temporary folder"
+    return CopyError(msg + ".", leftover=leftover)
 
 
 class CreateError(ValueError):
@@ -131,9 +150,9 @@ def make_chip_copies(store, creates: Iterable[tuple[str, Any]] = (), *,
                           root_class=root_class if isinstance(root_class, str) else None,
                           store_id=sid)
     except BaseException as exc:
-        shutil.rmtree(str(root.resolve()), ignore_errors=True)
+        left = _remove_tree(root)
         if isinstance(exc, OSError):
-            raise _copy_error(exc) from None
+            raise _copy_error(exc, left) from None
         raise
 
 
@@ -148,7 +167,12 @@ def remove_chip_copies(copies: ChipCopies | None) -> str | None:
     None), so the caller can show it and retry."""
     if copies is None:
         return None
-    target = Path(copies.root).resolve()
+    return _remove_tree(copies.root)
+
+
+def _remove_tree(path) -> str | None:
+    """Remove *path* with retries; the path left behind, or None."""
+    target = Path(path).resolve()
     for n in range(REMOVE_TRIES):
         try:
             shutil.rmtree(str(target))

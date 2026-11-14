@@ -43,6 +43,14 @@ the checks that did not run (skipped, or a timeline that could not be drawn),
 ``partly_checked`` the checks that compared only some of the gate's
 operations (their status is ``note``).
 ``seq`` and ``store_id`` are what :func:`chip_copy.store_at_seq` needs.
+
+For the product rule the result also carries, for every ``status``:
+``failed`` (any check of any gate is ``fail``, including the chip-level
+check that the write broke), ``all_checked`` (the lab's code ran every gate
+and no check was skipped, not run or only partly done), ``why_not_checked``
+(a plain sentence when neither ``failed`` nor ``all_checked``, else null) and,
+per gate, ``ran`` (``load_config`` and ``ops`` both ``pass`` or ``note``).
+``ok`` == not ``failed`` and every gate's ``ops`` ran.
 ``leftover`` is a temporary folder that could not be removed; it is the one
 path in the result, meant to be shown only to the local user.
 
@@ -147,6 +155,61 @@ def _unchecked(keys, status: str, error: str, msg: str | None = None) -> dict:
     msg = msg or f"Not checked with the lab's code: {error}."
     out = _base(status, checked=False, error=error)
     out["gates"] = [_entry(k, _all("skipped", msg)) for k in keys]
+    return _finalize(out)
+
+
+#: a copy folder name (and the path token around it) in a message
+_COPY_NAME = re.compile(r"[^\s'\"]*sm_chipcopy_[A-Za-z0-9_]+[^\s'\"]*")
+
+_WHY_STATUS = {
+    "no-env": "No Python environment is selected, so the lab's code did not run.",
+    "busy": "The lab environment is busy with another check, so the gate was not checked; "
+            "try again.",
+    "timeout": "The lab's code did not answer in time, so the gate was not checked.",
+}
+
+_CHECK_WORDS = {"load_config": "loading the chip", "ops": "running the gate",
+                "length": "the pulse lengths", "preview": "the preview comparison",
+                "timeline": "the timeline", "range": "the output range"}
+
+
+def _finalize(out: dict) -> dict:
+    """Add ``failed``, ``all_checked``, ``why_not_checked`` and each gate's
+    ``ran`` (see the module docstring)."""
+    gates = out.get("gates") or []
+    for g in gates:
+        g["ran"] = all(g["checks"][c]["status"] in ("pass", "note")
+                       for c in ("load_config", "ops"))
+    failed = any(c["status"] == "fail" for g in gates for c in g["checks"].values())
+    all_checked = (out.get("status") == "ok" and bool(out.get("checked")) and bool(gates)
+                   and all(g["ran"] and not g["unchecked"] and not g["partly_checked"]
+                           for g in gates))
+    why = None
+    if not failed and not all_checked:
+        status = out.get("status")
+        if status in _WHY_STATUS:
+            why = _WHY_STATUS[status]
+        elif status != "ok":
+            why = f"The lab check could not run: {out.get('error') or status}."
+        elif out.get("chip_error"):
+            why = ("The chip as it is does not load or build its config with the lab's code, "
+                   "so the gate could not be checked.")
+        else:
+            for g in gates:
+                if g["checks"]["ops"]["status"] == "skipped" and "program text" in \
+                        g["checks"]["ops"]["message"]:
+                    why = f"The program text of the gate {g['gate']} could not be read."
+                    break
+                parts = list(dict.fromkeys(g["unchecked"] + g["partly_checked"]))
+                if parts:
+                    why = (f"For the gate {g['gate']}, not fully checked: "
+                           + ", ".join(_CHECK_WORDS.get(p, p) for p in parts) + ".")
+                    break
+            if why is None:
+                why = "No gate was checked."
+    out["failed"] = failed
+    out["all_checked"] = all_checked
+    out["why_not_checked"] = why
     return out
 
 
@@ -172,7 +235,7 @@ def evaluate(gates: Iterable, ran: dict, previews: dict | None = None) -> dict:
         out = _base("ok", checked=False, chip_error=chip_err,
                     quam_config=data.get("quam_config"))
         out["gates"] = [_entry(k, _all("skipped", msg)) for k in keys]
-        return out
+        return _finalize(out)
     out = _base("ok", checked=True, quam_config=data.get("quam_config"))
     after_err = after.get("load_error") or after.get("config_error")
     for k in keys:
@@ -181,7 +244,7 @@ def evaluate(gates: Iterable, ran: dict, previews: dict | None = None) -> dict:
     out["ok"] = bool(out["gates"]) and all(
         c["status"] != "fail" for g in out["gates"] for c in g["checks"].values()) and all(
         g["checks"]["ops"]["status"] in ("pass", "note") for g in out["gates"])
-    return out
+    return _finalize(out)
 
 
 def _guard(fn, *args) -> dict:
@@ -576,7 +639,9 @@ def check_gates(store, python_path: str | None, gates: Iterable,
         try:
             copies = chip_copy.make_chip_copies(store, creates)
         except chip_copy.CopyError as exc:
-            return _unchecked(keys, "crash", str(exc))
+            res = _unchecked(keys, "crash", str(exc))
+            res["leftover"] = exc.leftover
+            return _finalize(res)
         except chip_copy.CreateError as exc:
             res = _unchecked(keys, "invalid-create", str(exc),
                              "Not checked: the gate cannot be written.")
@@ -584,7 +649,7 @@ def check_gates(store, python_path: str | None, gates: Iterable,
                 g["checks"]["load_config"] = _r(
                     "fail", f"The write would be refused at {exc.path}: {exc.reason}")
                 g["unchecked"] = [c for c in CHECKS if g["checks"][c]["status"] == "skipped"]
-            return res
+            return _finalize(res)
         try:
             ran = runner(python_path, str(copies.before), str(copies.after),
                          [macro_path(*k) for k in keys], root_class=copies.root_class)
@@ -594,10 +659,11 @@ def check_gates(store, python_path: str | None, gates: Iterable,
         res["seq"] = copies.seq
         res["store_id"] = copies.store_id
     except Exception as exc:  # noqa: BLE001 -- never a temp path in a message
-        import tempfile
         from quam_state_manager.generator.path_scrub import scrub_paths
-        text = scrub_paths(f"{type(exc).__name__}: {exc}",
-                           [str(Path(tempfile.gettempdir()) / "x")])
+        text = f"{type(exc).__name__}: {exc}"
+        if copies is not None:
+            text = scrub_paths(text, [str(copies.before), str(copies.after)])
+        text = _COPY_NAME.sub("<chip>", text)
         res = _unchecked(keys, "crash", text)
     res["leftover"] = chip_copy.remove_chip_copies(copies)
-    return res
+    return _finalize(res)
