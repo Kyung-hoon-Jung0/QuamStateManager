@@ -228,6 +228,21 @@ def test_pair_detail_head_says_no_active_gate(rig):
     assert "ui-pill--accent" not in body.split("gate-status-list")[1].split("</section>")[0]
 
 
+def test_a_pair_with_no_gate_keeps_the_zone_and_its_create_door(rig):
+    """The pair page is where a user looks for the pair's gates: with none, the
+    zone stays (quiet) and still carries the one button that creates the first."""
+    mod = _ctx(rig)["modifier"]
+    macros = _merged(rig)["qubit_pairs"]["q1-q2"]["macros"]
+    for name in [k for k in macros]:
+        mod.delete_subtree(f"qubit_pairs.q1-q2.macros.{name}")
+    body = rig.get("/pair/q1-q2", headers={"HX-Request": "true"}).get_data(as_text=True)
+    zone = body.split('aria-label="CZ gates"')[1].split("</section>")[0]
+    assert "ui-zone--quiet" in body.split('aria-label="CZ gates"')[0].rsplit("<section", 1)[1]
+    assert 'data-czg-open data-czg-pair="q1-q2"' in zone
+    assert "No CZ gate on this pair yet." in zone
+    assert '<span class="ui-count">0</span>' in zone and "no active gate" not in zone
+
+
 def test_list_scope_make_active_updates_the_head_and_the_old_active_row(rig):
     _ctx(rig)["modifier"].delete_subtree(ALIAS)
     hx = {"HX-Request": "true"}
