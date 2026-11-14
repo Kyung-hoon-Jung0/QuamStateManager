@@ -269,8 +269,8 @@ def save_from_pane(instance, scope, class_name, text: str, base_sha: str | None,
         if base_text is None:
             info = _describe(text)
             if not info["protect"] or info["spec"] is None:
-                why = ("There is no saved draft to compare with, and this text has no "
-                       "template region. To save it as code only, press "
+                why = ("There is no saved draft to compare with, and the form cannot read "
+                       "a template region in this text. To save it as code only, press "
                        "\"Edit the template lines by hand\" first, then Save draft.")
         if why:
             return {"ok": False, "error": why, "region": True}

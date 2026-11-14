@@ -270,21 +270,52 @@ def test_pane_save_outside_the_region_keeps_the_region_bytes(inst):
     assert data[a:b] == src[a:b] and data == mine
 
 
-@pytest.mark.parametrize("known_base", [True, False], ids=["known-base", "unknown-base"])
-def test_missing_file_locked_save_refuses_region_damage(inst, monkeypatch, known_base):
+_NO_BASE_REFUSAL = (
+    "There is no saved draft to compare with, and the form cannot read a template region in this text. "
+    "To save it as code only, press \"Edit the template lines by hand\" first, then Save draft.")
+
+
+def _post_unknown_base(inst, monkeypatch, shape):
     from flask import Flask
     from quam_state_manager.web import pulse_class_page as P
 
     src, base = _draft(inst)
     path = D.draft_path(inst, "c", "FlatPulse")
     path.unlink()
-    if known_base:
-        mine = T.render(_spec(0.9))
-        expected = "This save changes the template line of field 'amplitude'."
-    else:
-        W._WATCHES.clear()
+    W._WATCHES.clear()
+    if shape == "markers-removed":
         mine = src.replace(T.REGION_BEGIN, "").replace(T.REGION_END, "")
-        expected = None
+    elif shape == "field-line-changed":
+        mine = src.replace("amplitude", "amplitudeX", 1)
+    else:
+        mine = src.replace(chr(10), chr(13) + chr(10))
+    monkeypatch.setattr(P, "_inst", lambda: inst)
+    monkeypatch.setattr(P, "_scope", lambda: "c")
+    app = Flask(__name__)
+    app.add_url_rule("/pulse-class/save", view_func=P.pulse_class_save, methods=["POST"])
+    response = app.test_client().post("/pulse-class/save", json={
+        "cls": "FlatPulse", "text": mine, "base_sha": base})
+    return response, path
+
+
+@pytest.mark.parametrize("shape", ["markers-removed", "field-line-changed", "crlf"])
+def test_missing_file_unknown_base_refusal_text_for_every_shape(inst, monkeypatch, shape):
+    response, path = _post_unknown_base(inst, monkeypatch, shape)
+    result = response.get_json()
+    assert response.status_code == 400
+    assert not result["ok"] and result["region"]
+    assert result["error"] == _NO_BASE_REFUSAL
+    assert not path.exists()
+
+
+def test_missing_file_known_base_locked_save_refuses_region_damage(inst, monkeypatch):
+    from flask import Flask
+    from quam_state_manager.web import pulse_class_page as P
+
+    _src, base = _draft(inst)
+    path = D.draft_path(inst, "c", "FlatPulse")
+    path.unlink()
+    mine = T.render(_spec(0.9))
     monkeypatch.setattr(P, "_inst", lambda: inst)
     monkeypatch.setattr(P, "_scope", lambda: "c")
     app = Flask(__name__)
@@ -294,13 +325,9 @@ def test_missing_file_locked_save_refuses_region_damage(inst, monkeypatch, known
     result = response.get_json()
     assert response.status_code == 400
     assert not result["ok"] and result["region"]
-    if expected is None:
-        assert result["error"] == (
-            "There is no saved draft to compare with, and this text has no template region. "
-            "To save it as code only, press \"Edit the template lines by hand\" first, then Save draft.")
-    else:
-        assert result["error"] == (expected + " The form owns these lines: change them in the form, or press "
-                                   "\"Edit the template lines by hand\" first.")
+    assert result["error"] == ("This save changes the template line of field 'amplitude'. The form owns "
+                               "these lines: change them in the form, or press "
+                               "\"Edit the template lines by hand\" first.")
     assert not path.exists()
 
 
