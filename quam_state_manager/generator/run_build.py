@@ -2673,23 +2673,93 @@ def _apply_dual_upconverters(machine, spec):
     return warnings
 
 
-def _pin_cores(machine):
-    """Customer core-pinning scheme (populate.options.pin_cores): each qubit's
-    resonator + xy share a named core ``{q}_{controller}_slot{fem}``; every CR
-    channel rides its CONTROL qubit's core. Best-effort, never raises."""
-    qubits = getattr(machine, "qubits", None) or {}
-    for qname, q in qubits.items():
-        for chan_name in ("resonator", "xy"):
-            chan = getattr(q, chan_name, None)
-            port = getattr(chan, "opx_output", None)
+def _pin_ports(chan):
+    """Every opx_output / opx_input port object of a channel (None skipped)."""
+    out = []
+    for attr in ("opx_output", "opx_input", "opx_output_I", "opx_output_Q",
+                 "opx_input_I", "opx_input_Q"):
+        try:
+            port = getattr(chan, attr, None)
+        except Exception:  # noqa: BLE001 -- unresolvable reference
+            port = None
+        if port is not None and not isinstance(port, str):
+            out.append(port)
+    return out
+
+
+def _pin_same_fem(*channels):
+    """(controller_id, fem_id) when every output and input port of every given
+    channel sits on that one controller and FEM, else None. Two elements can
+    share a core only on one controller and FEM. A channel with no port at
+    all, or a port without a resolvable controller / FEM, gives None."""
+    seen = set()
+    for chan in channels:
+        if chan is None:
+            return None
+        ports = _pin_ports(chan)
+        if not ports:
+            return None
+        for port in ports:
             con = getattr(port, "controller_id", None)
             fem = getattr(port, "fem_id", None)
-            if chan is None or con is None or fem is None:
+            if con is None or fem is None:
+                return None
+            seen.add((con, fem))
+    if len(seen) != 1:
+        return None
+    return next(iter(seen))
+
+
+def _pin_set(chans, name):
+    """Write one core name on every channel; best-effort."""
+    for chan in chans:
+        try:
+            chan.core = name
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _pin_twpa_cores(machine):
+    """Two cores per TWPA: pump + pump_ share ``<twpa>_pump_core`` and
+    isolation + isolation_ share ``<twpa>_isolation_core``. Only elements
+    that exist get a name, each pair only when it is an MW output pair on
+    one controller and FEM. Best-effort, never raises."""
+    for tid, tw in (getattr(machine, "twpas", None) or {}).items():
+        for base in ("pump", "isolation"):
+            chans = [c for c in (getattr(tw, base, None),
+                                 getattr(tw, base + "_", None))
+                     if c is not None]
+            if not chans:
                 continue
-            try:
-                chan.core = f"{qname}_{con}_slot{fem}"
-            except Exception:  # noqa: BLE001
-                pass
+            if any(getattr(c, "opx_output", None) is None for c in chans):
+                continue
+            if _pin_same_fem(*chans) is None:
+                continue
+            _pin_set(chans, f"{tid}_{base}_core")
+
+
+def _pin_cores(machine):
+    """Core-pinning scheme (populate.options.pin_cores, on unless the spec
+    sets it false): each qubit's xy and resonator share the core
+    ``<qubit>_core`` when both drive an MW output and every output and input
+    port of both is on one controller and FEM; otherwise both keep their own
+    core. Each TWPA gets one core for its pump pair and one for its
+    isolation pair. A CR / ZZ channel rides its CONTROL qubit's xy core when
+    all its ports are on that xy's controller and FEM. Nothing else is
+    assigned. Best-effort, never raises."""
+    qubits = getattr(machine, "qubits", None) or {}
+    for qname, q in qubits.items():
+        xy = getattr(q, "xy", None)
+        res = getattr(q, "resonator", None)
+        if xy is None or res is None:
+            continue
+        if (getattr(xy, "opx_output", None) is None
+                or getattr(res, "opx_output", None) is None):
+            continue
+        if _pin_same_fem(xy, res) is None:
+            continue
+        _pin_set((xy, res), f"{qname}_core")
+    _pin_twpa_cores(machine)
     for pair in (getattr(machine, "qubit_pairs", None) or {}).values():
         qc = getattr(pair, "qubit_control", None)
         xy = getattr(qc, "xy", None)
@@ -2698,11 +2768,8 @@ def _pin_cores(machine):
             continue
         for chan_name in ("cross_resonance", "zz_drive", "zz"):
             chan = getattr(pair, chan_name, None)
-            if chan is not None:
-                try:
-                    chan.core = core
-                except Exception:  # noqa: BLE001
-                    pass
+            if chan is not None and _pin_same_fem(xy, chan) is not None:
+                _pin_set((chan,), core)
 
 
 def _make_xy_detuned(target, vals):
@@ -3700,7 +3767,7 @@ def run_build(spec: dict, out_dir: Path) -> dict:
         elif pair_gate == _COUPLER_ONLY["mode"]:
             warnings.extend(_finalize_coupler_only(machine, spec))
         _apply_coupler_models(machine, spec.get("populate") or {})
-        if ((spec.get("populate") or {}).get("options") or {}).get("pin_cores"):
+        if ((spec.get("populate") or {}).get("options") or {}).get("pin_cores", True):
             _pin_cores(machine)
         # docs/141 4ak: say it when a declared pair produced nothing. Silence
         # here reads as success, and the chip that comes out has no pairs at

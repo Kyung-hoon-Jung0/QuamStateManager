@@ -52,8 +52,11 @@ def test_no_coupler_chip_is_byte_identical_to_the_base_build(tmp_path):
     with tarfile.open(fileobj=io.BytesIO(arch.stdout)) as tf:
         tf.extractall(base_dir)
 
+    # the base generator writes no core names; shared cores are on by default now
+    spec = no_coupler_spec()
+    spec.setdefault("populate", {}).setdefault("options", {})["pin_cores"] = False
     spec_path = tmp_path / "_spec.json"
-    spec_path.write_text(json.dumps(no_coupler_spec(), indent=2), encoding="utf-8")
+    spec_path.write_text(json.dumps(spec, indent=2), encoding="utf-8")
     base_out = tmp_path / "base_out"
     r = subprocess.run([python, str(base_dir / "quam_state_manager" / "generator" / "run_build.py"),
                         "--mode", "build", "--spec", str(spec_path), "--out", str(base_out)],
@@ -61,7 +64,7 @@ def test_no_coupler_chip_is_byte_identical_to_the_base_build(tmp_path):
     assert r.returncode == 0, r.stderr[-2000:]
 
     out = tmp_path / "built"
-    outcome = run_generator(python, "build", no_coupler_spec(), out, timeout=600)
+    outcome = run_generator(python, "build", spec, out, timeout=600)
     assert outcome.get("ok"), outcome
     for name in ("state.json", "wiring.json"):
         assert (out / name).read_bytes() == (base_out / name).read_bytes(), \

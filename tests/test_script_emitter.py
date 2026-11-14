@@ -179,6 +179,23 @@ def test_twpa_id_is_stripped_like_the_wizard_build():
         assert f"add_twpa_lines(twpas=[{wire}]" in src
 
 
+def test_twpa_isolation_without_pinned_fields_is_still_wired():
+    """A TWPA line whose channel names only a kind (no port pinned) makes the
+    wizard pass an empty spec object, and add_twpa_lines wires the line; the
+    emitted call must pass the same object, not None (None = no isolation)."""
+    spec = {"twpas": [{"id": "twpa1", "qubits": []}, {"id": "twpa2", "qubits": []}],
+            "qubits": [], "qubit_pairs": [], "lines": [
+                {"element": "twpa1", "line": "twpa_pump", "channel": None},
+                {"element": "twpa1", "line": "twpa_isolation", "channel": {"kind": "mw_fem"}},
+                {"element": "twpa2", "line": "twpa_pump", "channel": {"kind": "mw_fem"}}]}
+    src = _bundle(spec, alloc={})["01_make_wiring.py"]
+    assert ("connectivity.add_twpa_lines(twpas=['1'], "
+            "isolation_constraints=mw_fem_spec())") in src
+    assert ("connectivity.add_twpa_lines(twpas=['2'], "
+            "pump_constraints=mw_fem_spec())") in src
+    assert "twpas=['2'], pump_constraints=mw_fem_spec(), isolation" not in src
+
+
 def test_twpa_ids_match_build_connectivity_exactly(monkeypatch):
     """Parity with the wizard build itself: the ids build_connectivity hands
     add_twpa_lines are the ids the emitted 01 hands it."""
