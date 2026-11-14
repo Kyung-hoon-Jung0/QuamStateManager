@@ -989,6 +989,7 @@
 .ui-field.ui-field--inline { display: grid; grid-template-columns: var(--ui-field-label-w) minmax(0, 1fr); align-items: center; column-gap: var(--ui-gap-3); row-gap: var(--ui-gap-1); }
 .ui-field--inline > .ui-field-head { grid-column: 1; }
 .ui-field--inline > .ui-field-hint, .ui-field--inline > .ui-field-error { grid-column: 2; }
+.ui-field-control { min-width: 0; }
 .ui-field-stack { display: flex; flex-direction: column; gap: var(--ui-gap-3); }
 .ui-field-stack--dense { gap: var(--ui-gap-2); }
 

@@ -68,8 +68,7 @@
   "static/opx-monitor.js": 1,
   "static/port-play.js": 15,
   "static/pulses.js": 2,
-  "static/scheduler.js": 5,
-  "static/ui.js": 2
+  "static/scheduler.js": 5
  },
  "color_literals": {
   "static/app.js": 130,

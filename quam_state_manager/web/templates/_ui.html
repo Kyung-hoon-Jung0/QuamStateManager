@@ -23,8 +23,8 @@
 
 {%- macro ui_note(text) -%}<p class="ui-note">{{ text }}</p>{%- endmacro -%}
 
-{%- macro ui_check(text, checked=False, disabled=False) -%}
-<label class="ui-check"><input type="checkbox"{% if checked %} checked{% endif %}{% if disabled %} disabled{% endif %}>{{ text }}</label>
+{%- macro ui_check(text, checked=False, disabled=False, id=None, describedby=None) -%}
+<label class="ui-check"><input type="checkbox"{% if id %} id="{{ id }}"{% endif %}{% if describedby %} aria-describedby="{{ describedby }}"{% endif %}{% if checked %} checked{% endif %}{% if disabled %} disabled{% endif %}>{{ text }}</label>
 {%- endmacro -%}
 
 {#- K9 pill: a human label (D-44). -#}
@@ -109,24 +109,34 @@
 {#- Field: label above (or left with inline=True), one control spec, an
     optional hint and error line, a source tag at the label's right. -#}
 {%- macro ui_field(label, control, hint=None, error=None, source=None, inline=False, id=None) -%}
-{#- Every field has an id (the caller's control id, else a generated one).
-    A single control (input, select) is named by <label for> and described
-    by the hint and the error (aria-describedby). A group control (segmented,
-    menu, toolbar) is named by the label TEXT (aria-labelledby); clicking that
-    text does nothing. -#}
-{%- set fid = id or ui_uid('uif') -%}
+{#- Every field has an id: the id argument, else control.id, else a generated
+    one. A part with one focusable element (input, select, check) takes the id
+    and is named by <label for>, described by hint + error. A group (segmented,
+    menu, toolbar) and any other part are named by the label TEXT through
+    aria-labelledby (an unknown part gets a role=group wrapper); clicking that
+    text does nothing. A caller's own describedby / labelledby come first. -#}
+{%- set fid = id or control.id or ui_uid('uif') -%}
 {%- set kind = control.part -%}
-{%- set group = kind in ('segmented', 'menu', 'toolbar') -%}
-{%- set desc = (([fid ~ '-hint'] if hint else []) + ([fid ~ '-error'] if error else [])) | join(' ') -%}
+{%- set single = kind in ('input', 'select', 'check') -%}
+{%- set lb = fid ~ '-flabel' -%}
+{%- set mine_d = (control.describedby or '').split() -%}
+{%- set mine_l = (control.labelledby or '').split() -%}
+{%- set field_d = ([fid ~ '-hint'] if hint else []) + ([fid ~ '-error'] if error else []) -%}
+{%- set ns = namespace(d=[], l=[]) -%}
+{%- for x in mine_d + field_d %}{% if x not in ns.d %}{% set ns.d = ns.d + [x] %}{% endif %}{% endfor -%}
+{%- for x in mine_l + [lb] %}{% if x not in ns.l %}{% set ns.l = ns.l + [x] %}{% endif %}{% endfor -%}
+{%- set desc = ns.d | join(' ') -%}
+{%- set lab = ns.l | join(' ') -%}
 <div class="ui-field{% if inline %} ui-field--inline{% endif %}"><div class="ui-field-head">
-{%- if group %}<span class="ui-field-label" id="{{ fid }}-flabel">{{ label }}</span>{% else %}<label class="ui-field-label" for="{{ fid }}">{{ label }}</label>{% endif -%}
+{%- if single %}<label class="ui-field-label" for="{{ fid }}">{{ label }}</label>{% else %}<span class="ui-field-label" id="{{ lb }}">{{ label }}</span>{% endif -%}
 {%- if source %}{{ ui_badge(source.text, source.tone or 'neutral') }}{% endif %}</div>
-{%- if kind == 'segmented' %}{{ ui_segmented(control.options, control.label or label, fid ~ '-flabel') }}
-{%- elif kind == 'toolbar' %}{{ ui_toolbar(control['items'], control.label or label, fid ~ '-flabel') }}
-{%- elif kind == 'menu' %}{{ ui_menu(fid, control['items'], control.label or label, control.kind or 'pick', control.value, control.trigger, control.placeholder or 'Choose', control.block, control.end, control.up, fid ~ '-flabel') }}
+{%- if kind == 'segmented' %}{{ ui_segmented(control.options, control.label or label, lab) }}
+{%- elif kind == 'toolbar' %}{{ ui_toolbar(control['items'], control.label or label, lab) }}
+{%- elif kind == 'menu' %}{{ ui_menu(fid, control['items'], control.label or label, control.kind or 'pick', control.value, control.trigger, control.placeholder or 'Choose', control.block, control.end, control.up, lab) }}
 {%- elif kind == 'select' %}{{ ui_select(control.options, control.value, None, fid, control.name, control.block, control.disabled, control.invalid, desc or None) }}
 {%- elif kind == 'input' %}{{ ui_input(control.value, control.type or 'text', None, fid, control.name, control.num, control.unit, control.placeholder, control.block, control.disabled, control.invalid, desc or None) }}
-{%- else %}{{ ui_render(control) }}{% endif -%}
+{%- elif kind == 'check' %}{{ ui_check(control.text, control.checked, control.disabled, fid, desc or None) }}
+{%- else %}<div class="ui-field-control" role="group" aria-labelledby="{{ lab }}"{% if desc %} aria-describedby="{{ desc }}"{% endif %}>{{ ui_render(control) }}</div>{% endif -%}
 {%- if hint %}<p class="ui-field-hint" id="{{ fid }}-hint">{{ hint }}</p>{% endif -%}
 {%- if error %}<p class="ui-field-error" id="{{ fid }}-error" role="alert">{{ error }}</p>{% endif -%}
 </div>

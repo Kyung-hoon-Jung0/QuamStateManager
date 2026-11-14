@@ -212,6 +212,23 @@ ok(mt.getAttribute("aria-expanded") === "false", "a click on the label text does
 const f3 = window.UI.field({ label: "Shape", control: { part: "segmented", options: [{ label: "A" }, { label: "B" }] } });
 const sg = f3.querySelector(".ui-segmented");
 ok(sg.getAttribute("aria-labelledby") === f3.querySelector(".ui-field-label").id && !sg.hasAttribute("aria-label"), "a segmented field is named by the label text");
+// a check field: the check takes the id, the label points at it
+const f4 = window.UI.field({ label: "Show", hint: "h", control: { part: "check", text: "Spectators" } });
+host.appendChild(f4);
+const cb = f4.querySelector("input[type=checkbox]"), l4 = f4.querySelector("label.ui-field-label");
+ok(cb.id && l4.getAttribute("for") === cb.id && l4.control === cb, "check field: <label for> names the checkbox");
+ok(cb.getAttribute("aria-describedby") === cb.id + "-hint", "check field: described by its hint");
+// an unknown part: no for, a role=group wrapper named by the label text
+const f5 = window.UI.field({ label: "Source", control: { part: "chip", text: "state.json" } });
+host.appendChild(f5);
+const w5 = f5.querySelector(".ui-field-control");
+ok(!f5.querySelector("[for]") && w5 && w5.getAttribute("role") === "group" && w5.getAttribute("aria-labelledby") === f5.querySelector(".ui-field-label").id, "unknown part: no for, a named group wrapper");
+// caller ids are merged first, without duplicates
+const f6 = window.UI.field({ label: "Len", hint: "h", control: { part: "input", describedby: "mine mine", id: "len6" } });
+ok(f6.querySelector("input").getAttribute("aria-describedby") === "mine len6-hint", "caller describedby first, then the hint: " + f6.querySelector("input").getAttribute("aria-describedby"));
+const f7 = window.UI.field({ label: "Pair", control: { part: "segmented", labelledby: "pre", options: [{ label: "A" }] } });
+ok(/^pre uif-js[0-9]+-flabel$/.test(f7.querySelector(".ui-segmented").getAttribute("aria-labelledby")), "caller labelledby first, then the label text");
+
 // ids with whitespace are refused
 let threw = "";
 try { window.UI.menu({ id: "a b", label: "X", items: [] }); } catch (e) { threw = e.message; }
