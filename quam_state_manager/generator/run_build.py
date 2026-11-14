@@ -1020,15 +1020,24 @@ def _output_key(port):
 
 
 def _readout_delay(value, old):
-    """The delay a readout output gets when the time base asks ``value``: the
-    nearest value whose change from ``old`` is a multiple of 4 ns, so the time
-    of flight that moves by that change stays on the 4 ns grid [derived: the
-    acquisition starts on the 4 ns clock; QM config time values "are required
-    to be divisible by 4" for some fields, docs Introduction/config.md line 93;
-    the time of flight is not named there, so the grid is a precaution].
-    A 0 / 20 ns change (an MW readout) is returned as asked; an LF readout
-    asked for 141 or 161 ns gets 140 or 160 ns, 1 ns off the other outputs."""
-    return old + 4 * int(round((value - old) / 4.0))
+    """``(delay, clamped)``: the delay a readout output gets when the time base
+    asks ``value``. The change from ``old`` is kept a multiple of 4 ns, so the
+    time of flight that moves by that change keeps its 4 ns step; a change off
+    that step is rounded toward the smaller absolute change (162 from 0 gives
+    160, not 164: both are 2 ns off). A result below 0 is raised to the
+    smallest non-negative value on that step and ``clamped`` is True.
+    Provisional [derived]: the QM docs do not state a 4 ns rule for the time
+    of flight. Introduction/config.md line 93 says only that "some" config time
+    values "are required to be divisible by 4" (pulse length, integration
+    weights), and a port delay is set in 1 ns steps (Guides/features.md line
+    1283), so this step is a precaution, and the readout output then runs
+    ``delay - value`` ns off the other outputs, which the build names."""
+    change = value - old
+    step = 4 * int(change / 4.0)          # int() truncates toward 0
+    out = old + step
+    if out < 0:
+        return old + 4 * math.ceil(-old / 4.0), True
+    return out, False
 
 
 def _user_set_tof(spec):
@@ -1036,6 +1045,35 @@ def _user_set_tof(spec):
     unrecorded ones (``_tof_provenance``)."""
     typed, unrecorded = _tof_provenance(spec)
     return typed | unrecorded
+
+
+def _undo_readout(port, old, value, qid, undo):
+    """Put a readout back after its time of flight could not move: every time
+    of flight moved so far, then the port delay, each guarded and read back.
+    Returns the failure line; it starts with "UNDO " when a step back failed
+    (the line then names what each failed item now holds)."""
+    bad = []
+    for rq, r, t in undo:
+        try:
+            r.time_of_flight = t
+        except Exception:   # noqa: BLE001 - a failed step back is named, never raised
+            pass
+        now = getattr(r, "time_of_flight", None)
+        if not _same_number(now, t):
+            bad.append(f"the time of flight of {rq} on {_out_label(port)} holds {now} "
+                       f"(was {t:g})")
+    try:
+        _set_delay(port, old)
+    except Exception:   # noqa: BLE001 - named below through the read-back
+        pass
+    now = getattr(port, "delay", None)
+    if not _same_number(now, old):
+        bad.append(f"the delay of {_out_label(port)} holds {now} ns (was {old:g} ns, "
+                   f"asked {value:g} ns) after the time of flight of {qid} could not move")
+    if bad:
+        return "UNDO " + "; ".join(bad)
+    return (f"the time of flight of {qid}, so the delay of "
+            f"{_out_label(port)} stays {old:g} ns (asked {value:g} ns)")
 
 
 def _lf_output_ports(machine):
@@ -1106,9 +1144,22 @@ def _align_output_timing(machine, spec=None):
         old = getattr(port, "delay", 0)
         old = old if isinstance(old, (int, float)) and not isinstance(old, bool) else 0
         if key in readers:
-            asked, value = value, _readout_delay(value, old)
+            asked, (value, clamped) = value, _readout_delay(value, old)
             if value != asked:
-                rounded.append(f"{_out_label(port)} {value:g} ns (asked {asked:g})")
+                off = value - asked
+                line = (f"{_out_label(port)} {value:g} ns (asked {asked:g}"
+                        + (", a delay cannot be negative" if clamped else "")
+                        + f"), so it runs {abs(off):g} ns "
+                        + ("later" if off > 0 else "earlier") + " than the other outputs")
+                drives = sorted(qid for qid, q in qubits.items()
+                                if _output_key(getattr(getattr(q, "xy", None),
+                                                       "opx_output", None)) == key)
+                if drives:
+                    line += (f"; this output also drives {len(drives)} "
+                             + ("qubit" if len(drives) == 1 else "qubits")
+                             + f" ({', '.join(drives)}): their drive is {abs(off):g} ns "
+                             "off the band alignment")
+                rounded.append(line)
         if not (_set_delay(port, value) or getattr(port, "delay", None) == value):
             failed.append(f"the delay of {_out_label(port)} (asked {value:g} ns, "
                           f"kept {old:g} ns)")
@@ -1125,13 +1176,9 @@ def _align_output_timing(machine, spec=None):
                 continue
             try:
                 rr.time_of_flight = tof + ds
-                undo.append((rr, tof))
+                undo.append((qid, rr, tof))
             except (ValueError, TypeError):
-                for r, t in undo:
-                    r.time_of_flight = t
-                _set_delay(port, old)
-                failed.append(f"the time of flight of {qid}, so the delay of "
-                              f"{_out_label(port)} stays {old:g} ns (asked {value:g} ns)")
+                failed.append(_undo_readout(port, old, value, qid, undo))
                 return
         moved[key] = ds
 
@@ -1152,6 +1199,11 @@ def _align_output_timing(machine, spec=None):
             quiet.append(qid)
         elif qid in typed:
             kept.setdefault(ds, []).append(qid)
+    if any(f.startswith("UNDO ") for f in failed):
+        # a step back failed: the chip is half moved, the build is not clean
+        warnings.append("output timing left a readout half moved: " + "; ".join(
+            f[5:] for f in failed if f.startswith("UNDO ")) + ".")
+        failed = [f for f in failed if not f.startswith("UNDO ")]
     if failed:
         warnings.append("output timing could not set " + "; ".join(failed) + ".")
     if rounded:

@@ -592,3 +592,77 @@ class TestReadoutOutputTiming:
         assert [q.resonator.time_of_flight for q in m.qubits.values()] == [300, 300]
         m = _chip([2, 2], ro_band=3, tof=300)
         assert self.mod._align_output_timing(m, spec)
+
+
+class _OneWriteTof(types.SimpleNamespace):
+    """A resonator whose time of flight takes one write, then refuses."""
+
+    def __setattr__(self, name, value):
+        if name == "time_of_flight" and self.__dict__.get("_wrote"):
+            raise RuntimeError("refused")
+        if name == "time_of_flight" and "time_of_flight" in self.__dict__:
+            self.__dict__["_wrote"] = True
+        super().__setattr__(name, value)
+
+
+class TestReadoutUndoAndGrid:
+    def setup_method(self):
+        self.mod = _load_helpers()
+
+    def test_readout_delay_rounds_to_the_smaller_change_and_clamps(self):
+        f = self.mod._readout_delay
+        assert f(162, 0) == (160, False)        # 160 and 164 both 2 off: smaller change
+        assert f(161, 0) == (160, False)
+        assert f(163, 3) == (163, False)        # change already on the step
+        assert f(-6, 0) == (0, True)            # never a negative delay
+        assert f(20, 0) == (20, False)
+
+    def _lf_readout(self, asked_tof=28):
+        m = _chip([2, 2], ro_band=2, tof=asked_tof)
+        lf_ro = LFFEMAnalogOutputPort(delay=0, controller_id="con1", fem_id=2, port_id=5)
+        m.ports.analog_outputs = {"con1": {2: {5: lf_ro}}}
+        for q in m.qubits.values():
+            q.resonator.opx_output = lf_ro
+        return m, lf_ro
+
+    def test_the_grid_line_states_the_residual(self):
+        m, _ = self._lf_readout()
+        warns = self.mod._align_output_timing(m)
+        assert any("160 ns (asked 161), so it runs 1 ns earlier than the other outputs" in w
+                   for w in warns), warns
+        assert not any("also drives" in w for w in warns)
+
+    def test_a_readout_port_that_also_drives_is_named(self):
+        m, lf_ro = self._lf_readout()
+        m.qubits["q1"].xy.opx_output = lf_ro
+        warns = self.mod._align_output_timing(m)
+        assert any("this output also drives 1 qubit (q1): their drive is 1 ns off the band "
+                   "alignment" in w for w in warns), warns
+
+    def test_a_failed_step_back_is_named_with_what_it_holds(self):
+        m = _chip([2, 2], ro_band=3)
+        ro = m.qubits["q1"].resonator.opx_output
+        m.qubits["q1"].resonator = _OneWriteTof(opx_output=ro, time_of_flight=32)
+        m.qubits["q2"].resonator = _StuckTof(opx_output=ro, time_of_flight=32)
+        warns = self.mod._align_output_timing(m)        # never raises
+        assert m.qubits["q1"].resonator.time_of_flight == 52
+        bad = [w for w in warns if "half moved" in w]
+        assert bad and "the time of flight of q1 on" in bad[0] and "holds 52 (was 32)" in bad[0]
+        assert not any("stays 0 ns" in w for w in warns), warns
+
+    def test_a_delay_that_cannot_go_back_is_named(self):
+        m = _chip([2, 2], ro_band=3)
+        ro = m.qubits["q1"].resonator.opx_output
+        m.qubits["q2"].resonator = _StuckTof(opx_output=ro, time_of_flight=32)
+        real = self.mod._set_delay
+
+        def once(port, value):
+            if port is ro and getattr(port, "delay", None) == 20:
+                raise RuntimeError("refused")
+            return real(port, value)
+        self.mod._set_delay = once
+        warns = self.mod._align_output_timing(m)
+        assert ro.delay == 20
+        bad = [w for w in warns if "half moved" in w]
+        assert bad and "holds 20 ns (was 0 ns, asked 20 ns)" in bad[0], warns
+        assert not any("stays 0 ns" in w for w in warns)

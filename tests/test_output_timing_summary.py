@@ -88,3 +88,26 @@ def test_an_output_used_only_from_a_list_names_its_element():
     s = output_timing.summary(state, wiring)
     row = [f for f in s["flux"] if f["port"] == "ports/analog_outputs/con1/3/5"]
     assert row and row[0]["of"] == "pump/lines/0" and row[0]["kind"] == "lf", s["flux"]
+
+
+def test_a_source_delay_stored_as_text_is_the_same_delay():
+    import copy
+    state, wiring = _chip(xy_bands=(2, 2), ro_band=3)
+    state["ports"]["mw_outputs"]["con1"]["1"]["8"]["delay"] = 20
+    src = copy.deepcopy((state, wiring))
+    src[0]["ports"]["mw_outputs"]["con1"]["1"]["8"]["delay"] = "20"
+    s = output_timing.summary(state, wiring, tof_moved=[], source=src)
+    assert s["tof_unchanged"] == ["q1", "q2"] and "tof_check" not in s
+
+
+def test_a_readout_delay_moved_back_to_zero_is_listed_and_unchanged_zero_is_not():
+    import copy
+    state, wiring = _chip(xy_bands=(2, 2), ro_band=3)
+    src = copy.deepcopy((state, wiring))
+    s = output_timing.summary(state, wiring, tof_moved=[], source=src)
+    assert s["tof"] == [] and "tof_check" not in s and "tof_unchanged" not in s
+    src[0]["ports"]["mw_outputs"]["con1"]["1"]["8"]["delay"] = 20
+    s = output_timing.summary(state, wiring, tof_moved=["q1"], source=src)
+    assert [(t["qubit"], t["shift"]) for t in s["tof"]] == [("q1", 0)]
+    assert s["tof_check"] == ["q2"]
+    assert output_timing.summary(state, wiring)["tof"] == []      # fresh build, delay 0

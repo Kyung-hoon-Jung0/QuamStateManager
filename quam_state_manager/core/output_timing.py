@@ -126,7 +126,8 @@ def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=(),
     ``mw``: ``{port, label, band, delay}`` per MW output in use; ``flux``:
     ``{port, label, delay, of, kind}`` per LF-FEM output in use (``kind``
     ``flux`` for a qubit z or a coupler, ``lf`` for any other element);
-    ``tof``: per resonator whose readout output has a delay ``s > 0`` and
+    ``tof``: per resonator whose readout output has a delay ``s > 0`` (or,
+    on a Re-generate, a delay of 0 that differs from the source chip's) and
     whose time of flight this run moved or would have moved:
     ``{qubit, shift, value, moved}``.
 
@@ -177,13 +178,17 @@ def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=(),
                 continue
             path, _ = _resolve(doc, rr.get("opx_output"))
             s = delay_of.get(path, 0)
-            if not (_num(s) and s > 0 and _num(rr.get("time_of_flight"))):
+            if not (_num(s) and s >= 0 and _num(rr.get("time_of_flight"))):
                 continue
+            same = qid in before and same_number(before[qid][0], s)
+            if s == 0 and not (tof_moved is not None and (
+                    qid in set(tof_moved) or (qid in before and not same))):
+                continue   # no delay, and none moved away: nothing to measure again
             entry = {"qubit": qid, "shift": s, "value": rr["time_of_flight"]}
             if tof_moved is not None:
                 if qid in set(tof_moved):
                     tof.append({**entry, "moved": True})
-                elif qid in before and before[qid][0] == s:
+                elif same:
                     unchanged.append(qid)
                 else:
                     check.append(qid)
@@ -205,6 +210,12 @@ def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=(),
         return out
     except (AttributeError, TypeError, ValueError, KeyError):
         return None
+
+
+def same_number(a, b) -> bool:
+    """The build's number comparison (``generator.run_build._same_number``):
+    a delay stored as text "20" equals 20."""
+    return _rb()._same_number(a, b)
 
 
 def tof_provenance(spec: dict | None) -> tuple[set, set]:
