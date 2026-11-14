@@ -271,12 +271,26 @@ def test_build_turns_a_refused_length_into_a_gate_answer(monkeypatch):
     assert shown["state"] == "not_run" and "ports" not in shown and "figure" not in shown
 
 
-@pytest.mark.parametrize("field,val", [("t0_ns", "x"), ("elements", 5), ("t0_ns", [1])])
+@pytest.mark.parametrize("field,val", [
+    ("t0_ns", "x"), ("elements", 5), ("t0_ns", [1]), ("volts", "12"), ("elements", "ab"),
+    ("volts", [0.1, float("nan")]), ("volts", [0.1, float("inf")]), ("volts", [True]), ("volts", ["0.1"]),
+    ("elements", ["q1.z", 3]), ("t0_ns", float("nan")), ("t0_ns", True), ("t0_ns", "3"), ("volts", []), ("volts", {0.1: 0})])
 def test_malformed_port_entry_is_dropped_others_kept(field, val):
     good = {"controller": "con1", "fem": 1, "port": 1, "volts": [0.1], "dt_ns": 1.0}
     bad = dict(good, port=2, **{field: val})
     shaped = sim._shape_ports([bad, good])
     assert [p["port"] for p in shaped] == [1]
+    assert shaped[0]["volts"] == [0.1] and shaped[0]["controller"] == "con1"
+
+
+def test_port_entry_that_is_not_a_dict_is_dropped():
+    class Lookalike:  # indexable but no .get
+        def __getitem__(self, k):
+            return {"controller": "con1", "fem": 1, "port": 2, "volts": [0.1]}[k]
+    good = {"controller": "con1", "fem": 1, "port": 1, "volts": [0.1], "elements": ("q1.z",), "t0_ns": 4}
+    shaped = sim._shape_ports([Lookalike(), "x", good])
+    assert [p["port"] for p in shaped] == [1]
+    assert shaped[0]["elements"] == ["q1.z"]
 
 
 def test_fractional_delay_falls_back_to_sum_and_rounds_up():

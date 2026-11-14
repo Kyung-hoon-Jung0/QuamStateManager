@@ -113,7 +113,6 @@ def sim_length_ns(rows, ops, pad_ns: int, start_ns: int = 0) -> tuple[int, str]:
     length plus the largest port delay, an upper bound for a program without
     loops. An unreadable delay raises ``ValueError`` (see ``_delay_ns``)."""
     ends = [int(r.end_ns) for r in rows or []]
-    lengths = [_length_ns(o) for o in ops or []]  # refuses a bad length on both paths
     max_delay = max([_delay_ns(o) for o in ops or []] or [0])
     lengths = [_length_ns(o) for o in ops or []]  # an unreadable length is refused on both paths
     if ends:

@@ -109,14 +109,27 @@ def target_of(settings: dict, creds: Optional[dict]) -> tuple[Optional[dict], st
 def _shape_ports(ports: Any) -> list:
     """Each port as the contract states it; a malformed entry is dropped,
     never padded."""
+    def _real(x: Any) -> bool:
+        return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
+
     out = []
     for p in ports if isinstance(ports, list) else []:
+        if not isinstance(p, dict):
+            continue
+        raw_volts, raw_el = p.get("volts"), p.get("elements") or []
+        raw_t0 = p.get("t0_ns") or 0.0
+        if not isinstance(raw_volts, (list, tuple)) or not all(_real(v) for v in raw_volts):
+            continue
+        if not isinstance(raw_el, (list, tuple)) or not all(isinstance(e, str) for e in raw_el):
+            continue
+        if not _real(raw_t0):
+            continue
         try:
-            volts = [float(v) for v in p["volts"]]
+            volts = [float(v) for v in raw_volts]
             con, fem, port = str(p["controller"]), int(p["fem"]), int(p["port"])
-            elements = [str(e) for e in p.get("elements") or []]
-            t0 = float(p.get("t0_ns") or 0.0)
-        except (KeyError, TypeError, ValueError, AttributeError):
+            elements = list(raw_el)
+            t0 = float(raw_t0)
+        except (KeyError, TypeError, ValueError):
             continue
         if not volts:
             continue
