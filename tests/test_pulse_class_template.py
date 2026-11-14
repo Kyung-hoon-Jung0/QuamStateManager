@@ -986,3 +986,110 @@ def test_non_field_slot_stays_reserved():
         __slots__ = ("width",)
 
     assert T.public_attribute_names(Derived) == frozenset({"width"})
+
+
+def test_inherited_dataclass_classvar_mixin_does_not_hide_field():
+    from dataclasses import dataclass
+    from typing import ClassVar
+
+    @dataclass
+    class Base:
+        y: float = 0.0
+
+    class Mixin(Base):
+        x: ClassVar[int] = 3
+
+    @dataclass
+    class FieldBase:
+        x: float = 1.0
+
+    @dataclass
+    class Combined(Mixin, FieldBase):
+        pass
+
+    assert T.public_attribute_names(Combined) == frozenset()
+    s = spec_b()
+    s.parent = "lab_pulses.base.Combined"
+    s.fields.append(F("x", "float", 1.0))
+    assert T.validate(s, parent_names=T.public_attribute_names(Combined)) == []
+
+
+def test_foreign_descriptor_over_slots_dataclass_field_stays_reserved():
+    from dataclasses import dataclass
+
+    class Foreign:
+        __slots__ = ("amplitude",)
+
+    @dataclass(slots=True)
+    class Base:
+        amplitude: float = 0.1
+
+    class Derived(Base):
+        amplitude = Foreign.amplitude
+
+    names = T.public_attribute_names(Derived)
+    assert names == frozenset({"amplitude"})
+    s = spec_b()
+    s.parent = "lab_pulses.base.Derived"
+    with pytest.raises(T.TemplateError, match="'amplitude' is reserved"):
+        T.validate(s, parent_names=names)
+
+
+def test_string_slot_substring_does_not_exempt_foreign_descriptor():
+    from dataclasses import dataclass
+
+    class Foreign:
+        __slots__ = "amp"
+
+    @dataclass
+    class Base:
+        amp: float = 1.0
+
+    class Derived(Base):
+        __slots__ = "xamp"
+        amp = Foreign.amp
+
+    names = T.public_attribute_names(Derived)
+    assert names == frozenset({"amp", "xamp"})
+    s = spec_b()
+    s.parent = "lab_pulses.base.Derived"
+    s.fields.append(F("amp", "float", 1.0))
+    with pytest.raises(T.TemplateError, match="'amp' is reserved"):
+        T.validate(s, parent_names=names)
+
+
+@pytest.mark.parametrize("depth", [0, 1, 3])
+@pytest.mark.parametrize("slots", [False, True])
+@pytest.mark.parametrize("factory", [False, True])
+def test_dataclass_function_and_factory_defaults_remain_exempt(depth, slots, factory):
+    from dataclasses import field, make_dataclass
+
+    def default_value():
+        return 0.1
+
+    default = field(default_factory=default_value) if factory else default_value
+    parent = make_dataclass("Base", [("amplitude", object, default)], slots=slots)
+    for _ in range(depth):
+        parent = make_dataclass("Derived", [], bases=(parent,), slots=slots)
+    assert T.public_attribute_names(parent) == frozenset()
+    s = spec_b()
+    s.parent = "lab_pulses.base.Base"
+    assert T.validate(s, parent_names=T.public_attribute_names(parent)) == []
+
+
+@pytest.mark.parametrize("annotated", [False, True])
+def test_other_function_override_of_function_default_stays_reserved(annotated):
+    from dataclasses import dataclass
+
+    def default_value():
+        return 0.1
+
+    @dataclass
+    class Base:
+        amplitude: object = default_value
+
+    attributes = {"amplitude": lambda self: 0.2}
+    if annotated:
+        attributes["__annotations__"] = {"amplitude": object}
+    parent = type("Derived", (Base,), attributes)
+    assert T.public_attribute_names(parent) == frozenset({"amplitude"})
