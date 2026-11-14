@@ -150,6 +150,8 @@ def _choosing():
                                       "error": "A name has no spaces; use cz_unipolar.",
                                       "control": {"part": "input", "id": "uk-f-name", "value": "cz unipolar",
                                                   "invalid": True, "block": True}}),
+        (sec, "Field without a control id (the field is the label)", {"part": "field", "label": "Amplitude", "hint": "Click the label: the input takes focus.",
+                                                                     "control": {"part": "input", "num": True, "value": "0.1", "unit": "V"}}),
         (sec, "Inline field", {"part": "field", "label": "Pulse class", "inline": True, "source": {"text": "default"},
                                "control": {"part": "select", "id": "uk-f-cls", "options": CLASSES, "value": "CZGate"}}),
         (sec, "Menu: pick one", {"part": "menu", "id": "uk-menu-pick", "label": "Pair", "items": PAIRS,
@@ -160,6 +162,7 @@ def _choosing():
                                 "trigger": {"label": "Actions", "cls": "btn-sm secondary"}, "items": [
                                     {"value": "duplicate", "title": "Duplicate gate"},
                                     {"value": "rename", "title": "Rename"},
+                                    {"title": "Open the manual", "desc": "An item without a value"},
                                     {"sep": True},
                                     {"value": "remove", "title": "Remove from the chip", "disabled": True,
                                      "reason": "Used by 2 macros"}]}),
