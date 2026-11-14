@@ -79,8 +79,8 @@ def run_env_check(python_path, state, wiring) -> dict:
     t0 = time.monotonic()
     how = "warm"
     try:
-        (tmp / "state.json").write_text(json.dumps(state), encoding="utf-8")
-        (tmp / "wiring.json").write_text(json.dumps(wiring), encoding="utf-8")
+        from quam_state_manager.core.chip_copy import write_chip_folder
+        write_chip_folder(tmp, state, wiring)
         try:
             warm = lab_waveform.warm_config(python_path, str(tmp))
         except Exception:  # noqa: BLE001 -- the cold path still answers

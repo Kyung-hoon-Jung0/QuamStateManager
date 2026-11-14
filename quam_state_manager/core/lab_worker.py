@@ -206,12 +206,14 @@ def run(argv, *, timeout, **kwargs):
             _close_owner(proc)
 
 
-def command(argv, *, timeout):
-    """Outcome adapter for the existing waveform result-file reader."""
+def command(argv, *, timeout, env_extra=None):
+    """Outcome adapter for the existing waveform result-file reader.
+    *env_extra*: variables set in the child on top of this process's env."""
     import subprocess
     try:
         result = run(argv, timeout=timeout, text=True, encoding="utf-8",
-                     env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+                     env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1",
+                              **(env_extra or {})))
         return result.returncode, result.stdout, result.stderr
     except subprocess.TimeoutExpired:
         return -1, "", "Lab worker timed out"
