@@ -63,14 +63,24 @@
 </div>
 {%- endmacro -%}
 
-{%- macro ui_callout(tone, title, text) -%}
-<div class="ui-callout ui-callout--{{ tone }}" role="note"><div class="ui-callout-title">{{ title }}</div><p class="ui-callout-text">{{ text }}</p></div>
+{#- body: optional child specs under the text (for example a facts list); actions: buttons at the foot. -#}
+{%- macro ui_callout(tone, title, text, body=(), actions=None) -%}
+<div class="ui-callout ui-callout--{{ tone }}" role="note"><div class="ui-callout-title">{{ title }}</div>{% if text %}<p class="ui-callout-text">{{ text }}</p>{% endif %}
+{%- if body %}<div class="ui-callout-body">{% for s in body %}{{ ui_render(s) }}{% endfor %}</div>{% endif -%}
+{%- if actions %}{{ ui_actions(actions) }}{% endif -%}
+</div>
+{%- endmacro -%}
+
+{#- Facts: label / value pairs, values strong, labels normal: [{label, value, note?}]. -#}
+{%- macro ui_facts(items, label=None) -%}
+<dl class="ui-facts"{% if label %} aria-label="{{ label }}"{% endif %}>{% for f in items %}<div class="ui-facts-row"><dt class="ui-facts-label">{{ f.label }}</dt><dd class="ui-facts-value">{{ f.value }}{% if f.note %}<span class="ui-facts-note">{{ f.note }}</span>{% endif %}</dd></div>{% endfor %}</dl>
 {%- endmacro -%}
 
 {#- strong=True: the screen region's conclusion (the banner): an icon disc,
     the key phrase in the tone's colour, one sentence under it. -#}
-{%- macro ui_verdict(tone, key, why=None, strong=False) -%}
-<div class="ui-verdict ui-verdict--{{ tone }}{% if strong %} ui-verdict--strong{% endif %}"{% if strong %} role="{{ 'alert' if tone == 'danger' else 'status' }}"{% endif %}><span class="ui-dot" aria-hidden="true"></span><strong class="ui-verdict-key">{{ key }}</strong>{% if why %}<span class="ui-verdict-why">{{ why }}</span>{% endif %}</div>
+{#- meta: one quiet line under the reason (freshness, source). -#}
+{%- macro ui_verdict(tone, key, why=None, strong=False, meta=None) -%}
+<div class="ui-verdict ui-verdict--{{ tone }}{% if strong %} ui-verdict--strong{% endif %}"{% if strong %} role="{{ 'alert' if tone == 'danger' else 'status' }}"{% endif %}><span class="ui-dot" aria-hidden="true"></span><strong class="ui-verdict-key">{{ key }}</strong>{% if why %}<span class="ui-verdict-why">{{ why }}</span>{% endif %}{% if meta %}<span class="ui-verdict-meta">{{ meta }}</span>{% endif %}</div>
 {%- endmacro -%}
 
 {%- macro ui_cell(c, tag, num) -%}
@@ -82,7 +92,7 @@
 {%- macro ui_table(columns, rows, kv=False, numeric=(), label=None) -%}
 <table class="ui-table{% if kv %} ui-table--kv{% endif %}"{% if label %} aria-label="{{ label }}"{% endif %}>
 {%- if columns %}<thead><tr>{% for c in columns %}{{ ui_cell(c, 'th', loop.index0 in numeric) }}{% endfor %}</tr></thead>{% endif -%}
-<tbody>{% for r in rows %}<tr>{% for c in r %}{% if kv and loop.first %}{{ ui_cell({'text': c, 'row': True} if c is string else c, 'th', False) }}{% else %}{{ ui_cell(c, 'td', loop.index0 in numeric) }}{% endif %}{% endfor %}</tr>{% endfor %}</tbody>
+<tbody>{% for r in rows %}{% if r is mapping %}<tr class="ui-table-sub"><td class="ui-table-cell" colspan="{{ columns|length if columns else 1 }}">{% for s in r.sub %}{{ ui_render(s) }}{% endfor %}</td></tr>{% else %}<tr>{% for c in r %}{% if kv and loop.first %}{{ ui_cell({'text': c, 'row': True} if c is string else c, 'th', False) }}{% else %}{{ ui_cell(c, 'td', loop.index0 in numeric) }}{% endif %}{% endfor %}</tr>{% endif %}{% endfor %}</tbody>
 </table>
 {%- endmacro -%}
 
@@ -198,22 +208,24 @@
 
 {#- Zone (docs/308 section 4d): the strong container for one main region; panels group inside it.
     quiet = the empty-state line of a zone that has no content yet (it stays a visible region). -#}
-{%- macro ui_zone(title, step=None, summary=None, body=(), fill=False, quiet=None) -%}
-<section class="ui-zone{% if fill %} ui-zone--fill{% endif %}{% if quiet %} ui-zone--quiet{% endif %}" aria-label="{{ title }}">
-<div class="ui-zone-head">
+{#- tone='danger' marks a zone whose actions cannot be undone; fold=True folds it to its head (open=True starts open). -#}
+{%- macro ui_zone(title, step=None, summary=None, body=(), fill=False, quiet=None, tone=None, fold=False, open=False) -%}
+<{{ 'details' if fold else 'section' }} class="ui-zone{% if fill %} ui-zone--fill{% endif %}{% if quiet %} ui-zone--quiet{% endif %}{% if tone %} ui-zone--{{ tone }}{% endif %}{% if fold %} ui-zone--fold{% endif %}" aria-label="{{ title }}"{% if fold and open %} open{% endif %}>
+<{{ 'summary' if fold else 'div' }} class="ui-zone-head">
 {%- if step is not none and step is defined %}<span class="ui-zone-step" aria-hidden="true">{{ step }}</span>{% endif -%}
 <h3 class="ui-zone-title">{{ title }}</h3>
 {%- if summary %}<span class="ui-zone-sum">{% for t in summary %}{% if t is mapping and t.part %}{{ ui_render(t) }}{% else %}{{ ui_text(t) }}{% endif %}{% endfor %}</span>{% endif -%}
-</div>
+</{{ 'summary' if fold else 'div' }}>
 <div class="ui-zone-body">
 {%- if quiet %}<p class="ui-zone-empty">{{ quiet }}</p>{% else %}{% for s in body %}{% if s is string %}<p class="ui-text-quiet">{{ s }}</p>{% else %}{{ ui_render(s) }}{% endif %}{% endfor %}{% endif -%}
 </div>
-</section>
+</{{ 'details' if fold else 'section' }}>
 {%- endmacro -%}
 
-{#- Stats: at most four tiles [{label, value, unit?, tone?}]; tone only on an abnormal one. -#}
+{#- Stats: at most four tiles [{label, value, unit?, note?, tone?, title?}]; tone warn / danger only on an abnormal one,
+    quiet on an unknown one (grey, never a state colour). -#}
 {%- macro ui_stats(tiles, label=None) -%}
-<div class="ui-stats" role="group"{% if label %} aria-label="{{ label }}"{% endif %}>{% for t in tiles[:4] %}<div class="ui-stat{% if t.tone %} ui-stat--{{ t.tone }}{% endif %}"><div class="ui-stat-label">{{ t.label }}</div><p class="ui-stat-value">{{ t.value }}{% if t.unit %}<span class="ui-stat-unit">{{ t.unit }}</span>{% endif %}</p></div>{% endfor %}</div>
+<div class="ui-stats" role="group"{% if label %} aria-label="{{ label }}"{% endif %}>{% for t in tiles[:4] %}<div class="ui-stat{% if t.tone %} ui-stat--{{ t.tone }}{% endif %}"{% if t.title %} title="{{ t.title }}"{% endif %}><div class="ui-stat-label">{{ t.label }}</div><p class="ui-stat-value">{{ t.value }}{% if t.unit %}<span class="ui-stat-unit">{{ t.unit }}</span>{% endif %}</p>{% if t.note %}<p class="ui-stat-note">{{ t.note }}</p>{% endif %}</div>{% endfor %}</div>
 {%- endmacro -%}
 
 {#- Checks: [{name, state: pass|fail|skip, why?}]; each failure gets a fail row. -#}
@@ -262,8 +274,9 @@
 {%- set p = s.part -%}
 {%- if p == 'head' %}{{ ui_head(s.title, s.level or 2, s.eyebrow, s.gist, s.count, s.actions, s.data, s.badge, s.page) }}
 {%- elif p == 'notice' %}{{ ui_notice(s.tone, s.key, s.text, s.actions) }}
-{%- elif p == 'callout' %}{{ ui_callout(s.tone, s.title, s.text) }}
-{%- elif p == 'verdict' %}{{ ui_verdict(s.tone, s.key, s.why, s.strong) }}
+{%- elif p == 'callout' %}{{ ui_callout(s.tone, s.title, s.text, s.body or (), s.actions) }}
+{%- elif p == 'facts' %}{{ ui_facts(s['items'], s.label) }}
+{%- elif p == 'verdict' %}{{ ui_verdict(s.tone, s.key, s.why, s.strong, s.meta) }}
 {%- elif p == 'item' %}{{ ui_item(s.chip, s.badge, s.title, s.count, s.body or (), s.note, s.actions) }}
 {%- elif p == 'table' %}{{ ui_table(s.columns, s.rows, s.kv, s.numeric or (), s.label) }}
 {%- elif p == 'actions' %}{{ ui_actions(s.buttons, s.label) }}
@@ -281,7 +294,7 @@
 {%- elif p == 'field' %}{{ ui_field(s.label, s.control, s.hint, s.error, s.source, s.inline, s.id) }}
 {%- elif p == 'menu' %}{{ ui_menu(s.id, s['items'], s.label, s.kind or 'pick', s.value, s.trigger, s.placeholder or 'Choose', s.block, s.end, s.up) }}
 {%- elif p == 'toolbar' %}{{ ui_toolbar(s['items'], s.label) }}
-{%- elif p == 'zone' %}{{ ui_zone(s.title, s.step, s.summary or (), s.body or (), s.fill, s.quiet) }}
+{%- elif p == 'zone' %}{{ ui_zone(s.title, s.step, s.summary or (), s.body or (), s.fill, s.quiet, s.tone, s.fold, s.open) }}
 {%- elif p == 'panel' %}{{ ui_panel(s.title, s.body or (), s.step, s.hint, s.summary or (), s.fold, s.open, s.flush) }}
 {%- elif p == 'stats' %}{{ ui_stats(s.tiles, s.label) }}
 {%- elif p == 'checks' %}{{ ui_checks(s.checks, s.label or 'Checks') }}

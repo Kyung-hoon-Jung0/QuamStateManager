@@ -1158,6 +1158,37 @@
 .ui-stat--warn > .ui-stat-label, .ui-stat--warn > .ui-stat-value, .ui-stat--warn .ui-stat-unit { color: var(--ui-warn-text); }
 .ui-stat--danger { border-color: var(--ui-danger-border); background: var(--ui-danger-bg); }
 .ui-stat--danger > .ui-stat-label, .ui-stat--danger > .ui-stat-value, .ui-stat--danger .ui-stat-unit { color: var(--ui-danger-text); }
+.ui-stat-note { margin: 0; color: var(--ui-text-2); font-size: var(--ui-fs-xs); line-height: var(--ui-lh-dense); overflow-wrap: anywhere; }
+.ui-stat--warn > .ui-stat-note { color: var(--ui-warn-text); }
+.ui-stat--danger > .ui-stat-note { color: var(--ui-danger-text); }
+/* quiet tile: the value is unknown; grey, never a state colour */
+.ui-stat--quiet > .ui-stat-value { color: var(--ui-text-2); }
+/* banner meta: one quiet line under the reason (freshness, source) */
+.ui-verdict-meta { flex: 1 1 100%; min-width: 0; color: var(--ui-text-2); font-size: var(--ui-fs-xs); line-height: var(--ui-lh-dense); overflow-wrap: anywhere; }
+.ui-verdict--strong > .ui-verdict-meta { grid-column: 2; }
+/* facts: label / value pairs; labels normal, values strong */
+.ui-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--ui-gap-1) var(--ui-gap-3); margin: 0; font-size: var(--ui-fs-sm); line-height: var(--ui-lh-dense); }
+.ui-facts-row { display: contents; }
+.ui-facts-label { color: var(--ui-text-2); font-weight: var(--ui-fw-normal); }
+.ui-facts-value { margin: 0; min-width: 0; color: var(--ui-text); font-weight: var(--ui-fw); overflow-wrap: anywhere; }
+.ui-facts-note { display: block; color: var(--ui-text-2); font-size: var(--ui-fs-xs); font-weight: var(--ui-fw-normal); }
+.ui-callout--warn .ui-facts-label, .ui-callout--warn .ui-facts-note { color: var(--ui-warn-text); }
+.ui-callout--danger .ui-facts-label, .ui-callout--danger .ui-facts-note { color: var(--ui-danger-text); }
+/* callout with a body (facts) and its buttons at the foot */
+.ui-callout-body { margin: var(--ui-gap-2) 0 0; }
+.ui-callout > .ui-actions { margin-top: var(--ui-gap-2); }
+/* a table row that carries a callout (or another part) under the row above it */
+.ui-table-sub > .ui-table-cell { padding-top: 0; }
+.ui-table-sub > .ui-table-cell > .ui-callout { margin: 0; }
+/* danger zone: actions that cannot be undone; fold: the zone folds to its head */
+.ui-zone--danger { border-color: var(--ui-danger-border); }
+.ui-zone--danger > .ui-zone-head { background: var(--ui-danger-bg); border-bottom-color: var(--ui-danger-border); }
+.ui-zone--danger > .ui-zone-head > .ui-zone-title { color: var(--ui-danger-text); }
+.ui-zone--fold > .ui-zone-head { cursor: pointer; list-style: none; }
+.ui-zone--fold > .ui-zone-head::-webkit-details-marker { display: none; }
+.ui-zone--fold > .ui-zone-head::after { display: none; }
+.ui-zone--fold > .ui-zone-head::before { content: var(--ui-disclosure-marker); order: 9; color: var(--ui-text-3); font-size: var(--ui-fs-xs); }
+.ui-zone--fold > .ui-zone-head:last-child { border-bottom: 0; }
 
 /* checks: a row of result chips; every failure spelled out under the row */
 .ui-checks { display: flex; flex-direction: column; gap: var(--ui-gap-2); margin: 0; }

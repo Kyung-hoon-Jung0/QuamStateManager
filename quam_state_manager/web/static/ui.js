@@ -97,14 +97,33 @@
         if (acts && acts.length) n.appendChild(actions(acts));
         return n;
     }
-    function callout(tone, title, text) {
+    function callout(tone, title, text, body, acts) {
         var n = el("div", "ui-callout ui-callout--" + tone);
         n.setAttribute("role", "note");
         n.appendChild(el("div", "ui-callout-title", title));
-        n.appendChild(el("p", "ui-callout-text", text));
+        if (text) n.appendChild(el("p", "ui-callout-text", text));
+        if (body && body.length) {
+            var b = el("div", "ui-callout-body");
+            body.forEach(function (x) { add(b, render(x)); });
+            n.appendChild(b);
+        }
+        if (acts && acts.length) n.appendChild(actions(acts));
         return n;
     }
-    function verdict(tone, key, why, strong) {
+    function facts(list, label) {
+        var d = el("dl", "ui-facts");
+        if (label) d.setAttribute("aria-label", label);
+        (list || []).forEach(function (f) {
+            var row = el("div", "ui-facts-row");
+            row.appendChild(el("dt", "ui-facts-label", f.label));
+            var v = el("dd", "ui-facts-value", f.value);
+            if (f.note) v.appendChild(el("span", "ui-facts-note", f.note));
+            row.appendChild(v);
+            d.appendChild(row);
+        });
+        return d;
+    }
+    function verdict(tone, key, why, strong, meta) {
         var n = el("div", "ui-verdict ui-verdict--" + tone + (strong ? " ui-verdict--strong" : ""));
         if (strong) n.setAttribute("role", tone === "danger" ? "alert" : "status");
         var d = el("span", "ui-dot");
@@ -112,6 +131,7 @@
         n.appendChild(d);
         n.appendChild(el("strong", "ui-verdict-key", key));
         if (why) n.appendChild(el("span", "ui-verdict-why", why));
+        if (meta) n.appendChild(el("span", "ui-verdict-meta", meta));
         return n;
     }
     function isObj(c) { return c !== null && typeof c === "object"; }
@@ -141,6 +161,15 @@
         }
         var tb = el("tbody");
         (rows || []).forEach(function (r) {
+            if (!Array.isArray(r)) {
+                var sr = el("tr", "ui-table-sub");
+                var sc = el("td", "ui-table-cell");
+                sc.setAttribute("colspan", String(columns && columns.length ? columns.length : 1));
+                (r.sub || []).forEach(function (x) { add(sc, render(x)); });
+                sr.appendChild(sc);
+                tb.appendChild(sr);
+                return;
+            }
             var tr = el("tr");
             r.forEach(function (c, i) {
                 if (kv && i === 0) tr.appendChild(cell(typeof c === "string" ? { text: c, row: true } : c, "th", false));
@@ -340,9 +369,11 @@
         return p;
     }
     function zone(o) {
-        var z = el("section", "ui-zone" + (o.fill ? " ui-zone--fill" : "") + (o.quiet ? " ui-zone--quiet" : ""));
+        var z = el(o.fold ? "details" : "section", "ui-zone" + (o.fill ? " ui-zone--fill" : "") + (o.quiet ? " ui-zone--quiet" : "")
+            + (o.tone ? " ui-zone--" + o.tone : "") + (o.fold ? " ui-zone--fold" : ""));
         z.setAttribute("aria-label", o.title);
-        var h = el("div", "ui-zone-head");
+        if (o.fold && o.open) z.setAttribute("open", "");
+        var h = el(o.fold ? "summary" : "div", "ui-zone-head");
         if (has(o.step)) { var st = el("span", "ui-zone-step", o.step); st.setAttribute("aria-hidden", "true"); h.appendChild(st); }
         h.appendChild(el("h3", "ui-zone-title", o.title));
         if (o.summary && o.summary.length) {
@@ -363,10 +394,12 @@
         if (label) g.setAttribute("aria-label", label);
         (tiles || []).slice(0, 4).forEach(function (t) {
             var d = el("div", "ui-stat" + (t.tone ? " ui-stat--" + t.tone : ""));
+            if (t.title) d.title = t.title;
             d.appendChild(el("div", "ui-stat-label", t.label));
             var v = el("p", "ui-stat-value", t.value);
             if (t.unit) v.appendChild(el("span", "ui-stat-unit", t.unit));
             d.appendChild(v);
+            if (t.note) d.appendChild(el("p", "ui-stat-note", t.note));
             g.appendChild(d);
         });
         return g;
@@ -457,8 +490,9 @@
         switch (s && s.part) {
             case "head": return head(s.title, s.level, s.eyebrow, s.gist, s.count, s.actions, s.data, s.badge, s.page);
             case "notice": return notice(s.tone, s.key, s.text, s.actions);
-            case "callout": return callout(s.tone, s.title, s.text);
-            case "verdict": return verdict(s.tone, s.key, s.why, s.strong);
+            case "callout": return callout(s.tone, s.title, s.text, s.body, s.actions);
+            case "facts": return facts(s.items, s.label);
+            case "verdict": return verdict(s.tone, s.key, s.why, s.strong, s.meta);
             case "item": return item(s);
             case "table": return table(s.columns, s.rows, s.kv, s.numeric, s.label);
             case "actions": return actions(s.buttons, s.label);
@@ -492,7 +526,7 @@
 
     window.UI = {
         button: button, actions: actions, chip: chip, badge: badge, count: count, note: note, check: check, pill: pill, path: path, headFold: headFold,
-        head: head, notice: notice, callout: callout, verdict: verdict, table: table, segmented: segmented,
+        head: head, notice: notice, callout: callout, facts: facts, verdict: verdict, table: table, segmented: segmented,
         disclosure: disclosure, item: item, dialog: dialog, render: render,
         select: select, input: input, field: field, menu: menu, toolbar: toolbar,
         zone: zone, panel: panel, stats: stats, checks: checks, slot: slot, lineDot: lineDot, text: text, grid2: grid2,
