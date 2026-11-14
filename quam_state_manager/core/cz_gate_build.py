@@ -248,7 +248,7 @@ def name_form_fields(merged: dict, pair_id: str, slot_lines: dict) -> set:
         for m, _d, pid in found:
             v = m.get(field)
             ln = _lines(merged, pid).get(role)
-            if not (_is_plain_name(v) and isinstance(ln, tuple) and v in ln[1]):
+            if not (_is_plain_name(v) and isinstance(ln, tuple) and isinstance(ln[1].get(v), dict)):
                 ok = False
                 break
         if ok:
@@ -459,25 +459,59 @@ def _dot(segs: tuple, key: str | None = None) -> str:
     return ".".join(segs + ((key,) if key is not None else ()))
 
 
-def _resolve_reference(merged: dict, ref: str, holder: tuple | None) -> Any:
-    """The object a reference held at *holder* (the path of the holding
+_LIST_INDEX = re.compile(r"0|[1-9][0-9]*")
+
+
+def _walk_path(merged: Any, segs) -> Any:
+    """The node at *segs*; a list step must be a plain non-negative decimal
+    index without a leading zero or sign. _SENTINEL when it does not exist."""
+    node = merged
+    for seg in segs:
+        if isinstance(node, dict) and seg in node:
+            node = node[seg]
+        elif (isinstance(node, list) and isinstance(seg, str)
+              and _LIST_INDEX.fullmatch(seg) and int(seg) < len(node)):
+            node = node[int(seg)]
+        else:
+            return _SENTINEL
+    return node
+
+
+def _resolve_reference(merged: dict, ref: str, holder: tuple | None
+                       ) -> tuple[tuple, Any] | None:
+    """(path, object) a reference held at *holder* (the path of the holding
     field) names in *merged*, with the meaning the state gives it; None when
     it does not resolve."""
     try:
         if ref.startswith("#/"):
-            hop = _follow(merged, ref)
-            return hop[1] if hop else None
-        if holder is None:
-            return None
-        ptr = "#" + ref[3:] if ref.startswith("#./../") else ref
-        t = (_walk_relative(merged, ptr, holder) if ptr.startswith("#../")
-             else target_path(merged, ptr, holder))
-        if t is None:
-            return None
-        node = _get(merged, list(t))
-        return None if node is _SENTINEL else node
+            t = tuple(x for x in ref[2:].split("/") if x)
+        else:
+            if holder is None:
+                return None
+            ptr = "#" + ref[3:] if ref.startswith("#./../") else ref
+            t = (_walk_relative(merged, ptr, holder) if ptr.startswith("#../")
+                 else target_path(merged, ptr, holder))
+            if t is None:
+                return None
+            t = tuple(t)
+        node = _walk_path(merged, t)
+        return None if node is _SENTINEL else (t, node)
     except Exception:  # noqa: BLE001 -- a reference that cannot be walked does not resolve
         return None
+
+
+def _is_pulse_place(path: tuple) -> bool:
+    """A pulse sits in an ``operations`` container of a channel, or inline in
+    a macro's pulse field (list steps below either place are allowed). A gate
+    macro, a channel, a qubit or a pair is not a pulse, whatever its class."""
+    p = list(path)
+    # Which list steps are valid is the walker's decision; here any step a
+    # list could take is skipped.
+    while len(p) > 1 and str(p[-1]).strip().lstrip("-").isdigit() and p[-2] != "operations":
+        p.pop()
+    if len(p) >= 2 and p[-2] == "operations":
+        return True
+    return len(p) >= 3 and p[-3] == "macros" and "pulse" in str(p[-1])
 
 
 def _resolve_slot_pulse(macro: dict, field: str, lines: dict, merged: dict | None = None,
@@ -498,10 +532,10 @@ def _resolve_slot_pulse(macro: dict, field: str, lines: dict, merged: dict | Non
         key = v.rstrip("/").rsplit("/", 1)[-1] if v.startswith("#") else v
         pulse = None
         if merged is not None and v.startswith("#"):
-            node = _resolve_reference(merged, v, None if holder is None
-                                      else tuple(holder) + (field,))
-            if isinstance(node, dict):
-                pulse = node
+            hit = _resolve_reference(merged, v, None if holder is None
+                                     else tuple(holder) + (field,))
+            if hit is not None and isinstance(hit[1], dict) and _is_pulse_place(hit[0]):
+                pulse = hit[1]
             for line in ("control", "target", "coupler"):
                 ln = lines.get(line)
                 if isinstance(ln, tuple) and key and key in ln[1]:

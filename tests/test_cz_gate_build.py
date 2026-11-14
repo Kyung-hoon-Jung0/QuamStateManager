@@ -1767,6 +1767,67 @@ def test_copy_from_failures_carry_only_refusals_that_fit(path, expected):
     assert "coupler-only" not in json.dumps(res)
 
 
+@pytest.mark.parametrize("ref", ["#./", "#../cz_src", "#/qubit_pairs/q1-2/macros/cz_src",
+                                 "#/qubits/q1/z", "#/qubits/q1"])
+def test_a_reference_to_a_gate_or_channel_is_not_a_pulse(ref):
+    s = _chip()
+    _op_owned_ref(s, "q1-2", "cz_src")
+    s["qubit_pairs"]["q1-2"]["macros"]["cz_src"]["flux_pulse_qubit"] = ref
+    s["qubits"]["q1"]["__class__"] = "lab_pkg.Transmon"
+    s["qubits"]["q1"]["z"]["__class__"] = "lab_pkg.FluxLine"
+    res = _plan(s, copy_from="cz_src", pulses=None)
+    assert res["refusals"] == [
+        f"The gate cz_src holds the reference {ref} in flux_pulse_qubit, which does "
+        "not lead to a pulse. Pick a pulse class for flux_pulse_qubit, or start "
+        "from another gate."]
+
+
+def test_an_unknown_pulse_class_in_an_operations_entry_keeps_its_refusal():
+    s = _chip()
+    _op_owned_ref(s, "q1-2", "cz_src")
+    s["qubits"]["q1"]["z"]["operations"]["cz_src_flux_pulse_q1_q2"]["__class__"] = LAB_PULSE
+    res = _plan(s, copy_from="cz_src", pulses=None)
+    assert f"does not know the fields of the pulse class {LAB_PULSE}" in res["error"]
+
+
+def _list_chip(ref):
+    s = _chip()
+    _op_owned_ref(s, "q1-2", "cz_src")
+    ops = s["qubits"]["q1"]["z"]["operations"]
+    ops["lst"] = [ops.pop("cz_src_flux_pulse_q1_q2")]
+    m = s["qubit_pairs"]["q1-2"]["macros"]["cz_src"]
+    m["pulse_lst"] = [copy.deepcopy(ops["lst"][0])]
+    m["flux_pulse_qubit"] = ref
+    return s
+
+
+@pytest.mark.parametrize("ref,ok", [
+    ("#/qubits/q1/z/operations/lst/0", True), ("#./pulse_lst/0", True),
+    ("#/qubits/q1/z/operations/lst/00", False), ("#/qubits/q1/z/operations/lst/-1", False),
+    ("#/qubits/q1/z/operations/lst/ 0", False), ("#/qubits/q1/z/operations/lst/0x", False),
+    ("#./pulse_lst/-1", False), ("#./pulse_lst/1", False)])
+def test_list_indices_in_references_are_plain_decimals(ref, ok):
+    res = _plan(_list_chip(ref), copy_from="cz_src", pulses=None)
+    if ok:
+        assert "error" not in res, res
+        op = dict(res["creates"])["qubits.q1.z.operations.cz_new_pulse_q1_q2"]
+        assert op["amplitude"] == 0.15
+    else:
+        assert "does not lead to a pulse" in res["error"]
+
+
+@pytest.mark.parametrize("held", [None, "#/elsewhere"])
+def test_a_name_whose_operation_is_not_a_dict_is_written_as_a_reference(held):
+    s = _dir_fixture(2)
+    for m in s["qubit_pairs"]["q1-2"]["macros"].values():
+        m["coupler_flux_pulse"] = "opname"
+    s["qubit_pairs"]["q1-2"]["coupler"]["operations"]["opname"] = held
+    res = _plan(s, pulses=_both())
+    macro = dict(res["creates"])["qubit_pairs.q1-2.macros.cz_new"]
+    assert macro["coupler_flux_pulse"].startswith("#/qubit_pairs/q1-2/coupler/operations/")
+    assert macro["flux_pulse_qubit"] == "cz_new_pulse_q1_q2"
+
+
 def test_qubits_without_flux_lines_point_at_the_coupler_only_class():
     s = _chip()
     for q in s["qubits"].values():
