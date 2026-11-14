@@ -943,6 +943,8 @@ _STAGE6_SELECTORS = {
     '.ui-menu-list > .ui-option[aria-selected="true"] > .ui-option-title',
     '.ui-menu-list > .ui-option[aria-disabled="true"]',
     '.ui-menu-list > .ui-option[aria-disabled="true"] > .ui-option-title',
+    '.ui-input-unit > .ui-input.ui-input[aria-invalid="true"]',
+    '.ui-input-unit > .ui-input.ui-input[aria-invalid="true"]:focus',
 }
 
 

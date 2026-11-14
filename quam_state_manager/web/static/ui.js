@@ -102,8 +102,9 @@
         n.appendChild(el("p", "ui-callout-text", text));
         return n;
     }
-    function verdict(tone, key, why) {
-        var n = el("div", "ui-verdict ui-verdict--" + tone);
+    function verdict(tone, key, why, strong) {
+        var n = el("div", "ui-verdict ui-verdict--" + tone + (strong ? " ui-verdict--strong" : ""));
+        if (strong) n.setAttribute("role", tone === "danger" ? "alert" : "status");
         var d = el("span", "ui-dot");
         d.setAttribute("aria-hidden", "true");
         n.appendChild(d);
@@ -186,7 +187,7 @@
         if (o.invalid) i.setAttribute("aria-invalid", "true");
         if (o.disabled) i.setAttribute("disabled", "");
         if (!o.unit) return i;
-        var w = el("span", "ui-input-unit" + (o.block ? " ui-input-unit--block" : ""));
+        var w = el("span", "ui-input-unit" + (o.block ? " ui-input-unit--block" : "") + (o.invalid ? " ui-input-unit--invalid" : "") + (o.disabled ? " ui-input-unit--disabled" : ""));
         w.appendChild(i);
         w.appendChild(el("span", "ui-input-unit-text", o.unit));
         return w;
@@ -371,6 +372,82 @@
         else if (k.length === 1 && /\S/.test(k) && !e.ctrlKey && !e.metaKey && !e.altKey) mType(m, row, k);
     });
 
+    // K19 reading order (docs/308 section 4c).
+    function text(t) {
+        return isObj(t) ? el("span", "ui-text-" + (t.level || "strong"), t.text) : document.createTextNode(String(t));
+    }
+    function panel(o) {
+        var fold = !!o.fold;
+        var p = el(fold ? "details" : "section", "ui-panel" + (fold ? " ui-panel--fold" : ""));
+        if (fold && o.open) p.setAttribute("open", "");
+        if (!fold) p.setAttribute("aria-label", o.title);
+        var h = el(fold ? "summary" : "div", "ui-panel-head");
+        if (has(o.step)) { var st = el("span", "ui-panel-step", o.step); st.setAttribute("aria-hidden", "true"); h.appendChild(st); }
+        h.appendChild(el("h3", "ui-panel-title", o.title));
+        if (o.hint) h.appendChild(el("span", "ui-panel-hint", o.hint));
+        if (o.summary && o.summary.length) {
+            var sm = el("span", "ui-panel-sum");
+            o.summary.forEach(function (t) { add(sm, isObj(t) && t.part ? render(t) : text(t)); });
+            h.appendChild(sm);
+        }
+        p.appendChild(h);
+        if (o.body && o.body.length) {
+            var b = el("div", "ui-panel-body" + (o.flush ? " ui-panel-body--flush" : ""));
+            o.body.forEach(function (x) { add(b, typeof x === "string" ? el("p", "ui-text-quiet", x) : render(x)); });
+            p.appendChild(b);
+        }
+        return p;
+    }
+    function stats(tiles, label) {
+        var g = el("div", "ui-stats");
+        g.setAttribute("role", "group");
+        if (label) g.setAttribute("aria-label", label);
+        (tiles || []).slice(0, 4).forEach(function (t) {
+            var d = el("div", "ui-stat" + (t.tone ? " ui-stat--" + t.tone : ""));
+            d.appendChild(el("div", "ui-stat-label", t.label));
+            var v = el("p", "ui-stat-value", t.value);
+            if (t.unit) v.appendChild(el("span", "ui-stat-unit", t.unit));
+            d.appendChild(v);
+            g.appendChild(d);
+        });
+        return g;
+    }
+    var RESULT_WORD = { pass: "passed", fail: "failed", skip: "skipped" };
+    function checks(list, label) {
+        var w = el("div", "ui-checks");
+        var ul = el("ul", "ui-checks-row");
+        ul.setAttribute("aria-label", label || "Checks");
+        (list || []).forEach(function (c) {
+            var li = el("li", "ui-result" + (c.state !== "pass" ? " ui-result--" + c.state : ""));
+            li.appendChild(el("span", "ui-sr", RESULT_WORD[c.state] + ": "));
+            li.appendChild(document.createTextNode(c.name));
+            ul.appendChild(li);
+        });
+        w.appendChild(ul);
+        (list || []).forEach(function (c) {
+            if (c.state !== "fail") return;
+            var r = el("p", "ui-fail-row");
+            r.appendChild(el("strong", "ui-fail-name", c.name + "."));
+            r.appendChild(document.createTextNode(" " + (c.why || "")));
+            w.appendChild(r);
+        });
+        return w;
+    }
+    function slot(o) {
+        var d = el("div", "ui-slot ui-line-" + (o.line || 1));
+        var h = el("div", "ui-slot-head", o.title);
+        h.appendChild(el("code", "ui-slot-chip", o.chip));
+        d.appendChild(h);
+        if (o.body && o.body.length) {
+            var b = el("div", "ui-slot-body");
+            o.body.forEach(function (x) { add(b, render(x)); });
+            d.appendChild(b);
+        }
+        return d;
+    }
+    function lineDot(line) { var d = el("span", "ui-line-dot ui-line-" + (line || 1)); d.setAttribute("aria-hidden", "true"); return d; }
+    function grid2(items) { var g = el("div", "ui-grid2"); (items || []).forEach(function (x) { add(g, render(x)); }); return g; }
+
     function disclosure(summary, cnt, body, open) {
         var d = el("details", "ui-disclosure");
         if (open) d.setAttribute("open", "");
@@ -422,7 +499,7 @@
             case "head": return head(s.title, s.level, s.eyebrow, s.gist, s.count, s.actions, s.data, s.badge, s.page);
             case "notice": return notice(s.tone, s.key, s.text, s.actions);
             case "callout": return callout(s.tone, s.title, s.text);
-            case "verdict": return verdict(s.tone, s.key, s.why);
+            case "verdict": return verdict(s.tone, s.key, s.why, s.strong);
             case "item": return item(s);
             case "table": return table(s.columns, s.rows, s.kv, s.numeric, s.label);
             case "actions": return actions(s.buttons, s.label);
@@ -440,6 +517,11 @@
             case "field": return field(s);
             case "menu": return menu(s);
             case "toolbar": return toolbar(s.items, s.label);
+            case "panel": return panel(s);
+            case "stats": return stats(s.tiles, s.label);
+            case "checks": return checks(s.checks, s.label);
+            case "slot": return slot(s);
+            case "grid2": return grid2(s.items);
             case "dialog": return dialog(s);
             default: return null;
         }
@@ -450,6 +532,7 @@
         head: head, notice: notice, callout: callout, verdict: verdict, table: table, segmented: segmented,
         disclosure: disclosure, item: item, dialog: dialog, render: render,
         select: select, input: input, field: field, menu: menu, toolbar: toolbar,
+        panel: panel, stats: stats, checks: checks, slot: slot, lineDot: lineDot, text: text, grid2: grid2,
         /* Menu behaviour for script callers: open / close / pick by element. */
         menuOpen: function (root) { if (root) mOpen(mParts(root), "first"); },
         menuClose: function (root) { if (root) mClose(mParts(root), false); },
