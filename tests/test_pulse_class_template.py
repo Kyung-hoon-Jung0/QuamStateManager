@@ -597,19 +597,17 @@ def test_template_names_come_from_the_template_text():
 def test_reserved_names_cover_the_installed_pulse_base():
     py = str(LAB_PY) if LAB_PY.is_file() else __import__("sys").executable
     out = subprocess.run(
-        [py, "-c", "import importlib.util, sys\n"
-                   f"spec = importlib.util.spec_from_file_location('tmpl', {str(Path(T.__file__))!r})\n"
-                   "m = importlib.util.module_from_spec(spec)\n"
-                   "sys.modules['tmpl'] = m\n"
-                   "spec.loader.exec_module(m)\n"
-                   "from quam.components.pulses import Pulse\n"
-                   "print('NAMES=' + ','.join(sorted(m.public_attribute_names(Pulse))))"],
+        [py, "-c", "from quam.components.pulses import Pulse\n"
+                   "names = {n for n in dir(Pulse) if not n.startswith('_')} - {'length'}\n"
+                   "print('NAMES=' + ','.join(sorted(names)))"],
         capture_output=True, text=True, timeout=300)
     line = [x for x in out.stdout.splitlines() if x.startswith("NAMES=")]
     assert line, out.stderr[-2000:]
     base = set(line[0][6:].split(","))
     assert "length" not in base
-    assert base == T.PULSE_BASE_NAMES, sorted(base ^ T.PULSE_BASE_NAMES)
+    assert base == T.PULSE_BASE_NAMES, (
+        f"missing: {sorted(base - T.PULSE_BASE_NAMES)}; "
+        f"extra: {sorted(T.PULSE_BASE_NAMES - base)}")
     assert base <= T.reserved_field_names(), sorted(base - T.reserved_field_names())
 
 
@@ -850,3 +848,62 @@ def test_windows_line_ending_only_on_the_begin_marker_is_named():
     with pytest.raises(T.TemplateError) as ei:
         T.rewrite(src, spec_a())
     assert str(ei.value) == T.CRLF_LINE
+
+
+@pytest.mark.parametrize("override", ["property", "method", "classmethod", "staticmethod",
+                                      "descriptor"])
+def test_dataclass_field_overrides_are_reserved(override):
+    from dataclasses import dataclass
+
+    @dataclass
+    class A:
+        width: float = 1.0
+
+    class Descriptor:
+        def __get__(self, instance, owner):
+            raise AssertionError("Attribute discovery must not invoke descriptors")
+
+    class B(A):
+        @property
+        def width(self):
+            raise AssertionError("Attribute discovery must not invoke properties")
+
+    @dataclass
+    class C(A):
+        def width(self):
+            return 2.0
+
+    parents = {
+        "property": B,
+        "method": C,
+        "classmethod": type("B", (A,), {"width": classmethod(lambda cls: 2.0)}),
+        "staticmethod": type("B", (A,), {"width": staticmethod(lambda: 2.0)}),
+        "descriptor": type("B", (A,), {"width": Descriptor()}),
+    }
+    assert T.public_attribute_names(A) == frozenset()
+    names = T.public_attribute_names(parents[override])
+    assert names == frozenset({"width"})
+    s = spec_b()
+    s.parent = "lab_pulses.base.Base"
+    s.fields.append(F("width", "float", 1.0))
+    with pytest.raises(T.TemplateError, match="'width' is reserved"):
+        T.validate(s, parent_names=names)
+
+
+def test_dataclass_class_variables_stay_reserved():
+    from dataclasses import make_dataclass
+    from typing import ClassVar
+
+    parent = make_dataclass("Base", [("width", ClassVar[float], 1.0)])
+    assert T.public_attribute_names(parent) == frozenset({"width"})
+
+
+@pytest.mark.parametrize("module,known", [
+    ("quam.components.pulses", True),
+    ("quam.components.pulses.custom", True),
+    ("quam.components.pulses_lab", False),
+])
+def test_pulse_module_boundary_controls_fixed_names(module, known):
+    pulse = type("Pulse", (), {"__module__": module, "width": 1.0})
+    expected = T.PULSE_BASE_NAMES if known else frozenset({"width"})
+    assert T.public_attribute_names(pulse) == expected

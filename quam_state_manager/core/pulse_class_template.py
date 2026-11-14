@@ -254,12 +254,21 @@ def validate(spec: ClassSpec, *, parent_names=None) -> list:
 
 
 def public_attribute_names(cls) -> frozenset:
-    """Public attributes a field may not shadow, excluding dataclass fields
+    """Public attributes a field may not shadow, excluding plain dataclass defaults
     and ``length`` for other parents. Standard library only; the quam Pulse
     keeps :data:`PULSE_BASE_NAMES` because SM never imports quam."""
-    if cls.__name__ == "Pulse" and cls.__module__.startswith("quam.components.pulses"):
+    import inspect
+
+    if cls.__name__ == "Pulse" and (cls.__module__ == "quam.components.pulses"
+                                    or cls.__module__.startswith("quam.components.pulses.")):
         return PULSE_BASE_NAMES
-    field_names = {f.name for f in fields(cls)} if is_dataclass(cls) else set()
+    field_names = set()
+    if is_dataclass(cls):
+        for field in fields(cls):
+            default = inspect.getattr_static(cls, field.name, None)
+            if not any(hasattr(type(default), method)
+                       for method in ("__get__", "__set__", "__delete__")):
+                field_names.add(field.name)
     return frozenset(n for n in dir(cls) if not n.startswith("_")) - {"length"} - field_names
 
 
