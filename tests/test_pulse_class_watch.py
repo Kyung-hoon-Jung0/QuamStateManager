@@ -284,7 +284,7 @@ def test_missing_file_locked_save_refuses_region_damage(inst, monkeypatch, known
     else:
         W._WATCHES.clear()
         mine = src.replace(T.REGION_BEGIN, "").replace(T.REGION_END, "")
-        expected = "This save breaks the template region markers or their lines."
+        expected = None
     monkeypatch.setattr(P, "_inst", lambda: inst)
     monkeypatch.setattr(P, "_scope", lambda: "c")
     app = Flask(__name__)
@@ -294,9 +294,36 @@ def test_missing_file_locked_save_refuses_region_damage(inst, monkeypatch, known
     result = response.get_json()
     assert response.status_code == 400
     assert not result["ok"] and result["region"]
-    assert result["error"] == (expected + " The form owns these lines: change them in the form, or press "
-                               "\"Edit the template lines by hand\" first.")
+    if expected is None:
+        assert result["error"] == (
+            "There is no saved draft to compare with, and this text has no template region. "
+            "To save it as code only, press \"Edit the template lines by hand\" first, then Save draft.")
+    else:
+        assert result["error"] == (expected + " The form owns these lines: change them in the form, or press "
+                                   "\"Edit the template lines by hand\" first.")
     assert not path.exists()
+
+
+def test_known_code_only_base_with_missing_file_saves_locked(inst, monkeypatch):
+    from flask import Flask
+    from quam_state_manager.web import pulse_class_page as P
+
+    _src, start = _draft(inst)
+    path = D.draft_path(inst, "c", "FlatPulse")
+    code_only = "import numpy as np\n\n\nclass FlatPulse:\n    pass\n"
+    first = W.save_from_pane(inst, "c", "FlatPulse", code_only, start, region_ok=True)
+    assert first["ok"] and not W._describe(code_only)["protect"]
+    base = first["sha"]
+    path.unlink()
+    monkeypatch.setattr(P, "_inst", lambda: inst)
+    monkeypatch.setattr(P, "_scope", lambda: "c")
+    app = Flask(__name__)
+    app.add_url_rule("/pulse-class/save", view_func=P.pulse_class_save, methods=["POST"])
+    mine = code_only + "# edit\n"
+    response = app.test_client().post("/pulse-class/save", json={
+        "cls": "FlatPulse", "text": mine, "base_sha": base})
+    assert response.status_code == 200
+    assert path.read_bytes() == mine.encode()
 
 
 @pytest.mark.parametrize("missing", [True, False], ids=["missing-file-200", "existing-file-409"])
