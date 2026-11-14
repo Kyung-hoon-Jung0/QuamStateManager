@@ -99,3 +99,47 @@ def test_the_row_point_names_the_leaf_without_a_lobe_pass(monkeypatch, name, pul
     assert ln["lobes"] == []
     assert why in ln["point"]["reason"]
     assert "the operation amplitude is missing" not in ln["point"]["reason"]
+
+
+@pytest.mark.parametrize("name,pulse,why", UNREADABLE, ids=[u[0] for u in UNREADABLE])
+def test_the_solve_preview_never_claims_a_stored_amplitude(name, pulse, why):
+    doc, rows, conv, row = _plan(pulse)
+    s = C.solve(doc, "q1-q2", row["path"], rows=rows, conversions=conv)
+    text = s["operating_point"]["amp_text"]
+    assert "stored amplitude" not in text and "peak of waveform" not in text
+    assert "nothing stored" in text and why in text
+
+
+def test_the_summary_leaf_note_needs_a_moving_line():
+    """A line that does not move gets no unreadable-leaf parenthesis after "stored"."""
+    doc, rows, conv, row = _plan(UNREADABLE[0][1])
+    row["lines"][0]["moves"] = False
+    s = C.solve(doc, "q1-q2", row["path"], line=row["lines"][0]["role"], rows=rows, conversions=conv)
+    assert "stored unknown | " in s["summary"], s["summary"]
+
+
+def test_a_missing_f01_and_a_waveform_reason_are_both_kept_f01_first():
+    doc = _doc(dict(WAVE, waveform_I="#/qubits/q1/extras/gone"))
+    del doc["qubits"]["q1"]["f_01"]
+    rows, _ = C.operations(doc)
+    ln = next(r for r in rows if r["operation"] == "cz_unipolar")["lines"][0]
+    reason = ln["lobes"][0]["point"]["reason"]
+    assert "f_01" in reason and LEAF + ".waveform_I: " in reason
+    assert reason.index("f_01") < reason.index(LEAF)
+
+
+@pytest.mark.parametrize("name,pulse,ok", [
+    ("nan sample", dict(WAVE, waveform_I=[0.1, float("nan")]), False),
+    ("null length", dict(WAVE, length=None), True),
+    ("square null length", dict(SQUARE, length=None), True),
+])
+def test_edge_inputs_get_an_honest_outcome(name, pulse, ok):
+    doc, rows, conv, row = _plan(pulse)
+    ln = row["lines"][0]
+    s = C.solve(doc, "q1-q2", row["path"], rows=rows, conversions=conv)
+    assert s["ok"]
+    if ok:
+        assert ln["amplitude_v"] == pytest.approx(0.19) and "stored +190.0 mV" in s["summary"]
+    else:
+        assert ln["amplitude_v"] is None and "not a finite number" in ln["point"]["reason"]
+        assert row["duration_ns"] is None

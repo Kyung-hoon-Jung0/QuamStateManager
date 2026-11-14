@@ -375,3 +375,26 @@ def test_c_the_filtered_output_comes_from_the_zline_model(client):
 def test_c_a_port_without_filters_says_so(client):
     d = _data(client, "cz_two")
     assert "no output filters" in d["trajectory"][1]["filtered"]["note"]
+
+
+def test_d7_two_flux_lengths_use_the_port_sampling_rate():
+    """192 samples on a 2 GS/s port play 96 ns, as long as 96 samples at 1 GS/s."""
+    state, wiring = lab_chip(control_flat=188, target_flat=92)
+    state["ports"]["analog_outputs"]["con1"]["5"]["1"]["sampling_rate"] = 2e9
+    t = rows_of(merged(state, wiring))[0]["cz_two"]["two_flux_lengths"]
+    assert (t["control"], t["target"]) == (96, 96) and "mismatch" not in t
+
+
+def test_d7_a_mismatch_states_both_lengths_and_the_gap():
+    state, wiring = lab_chip(control_flat=92, target_flat=92)
+    state["ports"]["analog_outputs"]["con1"]["5"]["1"]["sampling_rate"] = 2e9
+    t = rows_of(merged(state, wiring))[0]["cz_two"]["two_flux_lengths"]
+    assert "control q1 48 ns vs target q2 96 ns" in t["mismatch"] and "by 48 ns" in t["mismatch"]
+
+
+def test_d7_an_underivable_length_says_the_check_was_not_made():
+    state, wiring = lab_chip()
+    state["qubit_pairs"][PAIR]["macros"]["cz_two"]["flux_pulse_target"]["flat_length"] = None
+    row = rows_of(merged(state, wiring))[0]["cz_two"]
+    assert row.get("two_flux_lengths") is None
+    assert any("two-flux length check not made" in n and "q2" in n for n in row["notes"]), row["notes"]

@@ -68,7 +68,7 @@ def test_peek_follows_a_pointer_and_doubts_an_implausible_volt(tmp_path):
 
 
 @pytest.mark.parametrize("value, unit", [(0.05, "V"), (10.0, "V"),
-                                       (10.01, "Hz"), (3e8, "Hz"), (-3e8, "Hz")])
+                                       (1e5, "Hz"), (3e8, "Hz"), (-3e8, "Hz")])
 def test_report_and_peek_agree_on_pair_detuning_unit(tmp_path, value, unit):
     folder = _chip(tmp_path / "chip")
     state = json.loads((folder / "state.json").read_text(encoding="utf-8"))

@@ -35,7 +35,7 @@ import re
 import numpy as np
 
 from quam_state_manager.core import value_history, cz_flux_math
-from quam_state_manager.core.pulse_catalog import waveform_shape
+from quam_state_manager.core.pulse_catalog import sample_period_ns, waveform_shape
 from quam_state_manager.core.query import pair_operational_gate
 
 QUAD_LABEL = "quad-term estimate"
@@ -1474,9 +1474,13 @@ def operations(doc, conversions=None, unavailable=None):
                     if ln.get("waveform_reason") or ln["amplitude_v"] is None:
                         why = unreadable_amplitude(ln)
                         for lobe in ln["lobes"]:
-                            if lobe["point"]["frequency_hz"] is None and (
-                                    ln.get("waveform_reason") or lobe["point"]["reason"] == "the operation amplitude is missing"):
+                            own = lobe["point"]["reason"]
+                            if lobe["point"]["frequency_hz"] is None and own == "the operation amplitude is missing":
                                 lobe["point"] = {**lobe["point"], "reason": why}
+                            elif lobe["point"]["frequency_hz"] is None and ln.get("waveform_reason") and why not in (own or ""):
+                                # a different cause (e.g. a missing f_01) is more basic: keep it first
+                                lobe["point"] = {**lobe["point"],
+                                                 "reason": (own + "; " + why) if own else why}
                     ln["moves"] = any(a is None or a != 0 for _, a in levels)
                     bad = next((l for l in ln["lobes"] if l["point"]["frequency_hz"] is None), None)
                     if bad:
@@ -1493,13 +1497,21 @@ def operations(doc, conversions=None, unavailable=None):
             if kind == "two-flux" and raw_duration is None:
                 from .waveform_synth import lab_waveform, resolved_lab_pulse
                 samples = [lab_waveform(resolved_lab_pulse(doc, ln["pulse_path"])) for ln in lines]
+                if any(s is None for s in samples):
+                    missing = [ln["name"] for ln, s in zip(lines, samples) if s is None]
+                    notes.append("two-flux length check not made: the played length of "
+                                 + " and ".join(missing) + " could not be derived")
                 if all(s is not None for s in samples):
-                    duration_ns = max(map(len, samples))
+                    # samples play at the port's own rate: a 2 GS/s port plays 40 samples in 20 ns
+                    def played_ns(ln, s):
+                        rate = current(doc, ln["qubit_path"] + ".z.opx_output.sampling_rate")
+                        return len(s) * sample_period_ns(rate)
+                    line_lengths = {ln["role"]: played_ns(ln, s) for ln, s in zip(lines, samples)}
+                    duration_ns = max(line_lengths.values())
                     duration_note = f"{duration_ns:g} ns from the played SNZ waveform (flat length, edges and padding)"
-                    line_lengths = {ln["role"]: len(s) for ln, s in zip(lines, samples)}
-                    for ln, s in zip(lines, samples):
-                        ln["played_length_ns"] = len(s)
-                    # D7: the two-flux gate inherits CZGate.inferred_duration, which reads
+                    for ln in lines:
+                        ln["played_length_ns"] = line_lengths[ln["role"]]
+                    # The two-flux gate inherits CZGate.inferred_duration, which reads
                     # the flux_pulse_qubit label (the CONTROL pulse in a two-flux gate) on
                     # the pair's moving qubit: the macro's own duration is the control
                     # pulse's length, never the target's [derived from the two classes]
@@ -1508,9 +1520,10 @@ def operations(doc, conversions=None, unavailable=None):
                                         "macro_duration_ns": macro_duration}
                     if len(set(line_lengths.values())) > 1:
                         names = {ln["role"]: ln["name"] for ln in lines}
-                        mismatch = (f"control {names['control']} {line_lengths['control']} ns vs target "
-                                    f"{names['target']} {line_lengths['target']} ns: the two pulses differ in "
-                                    "length, so their lobes are misaligned")
+                        gap = abs(line_lengths["control"] - line_lengths["target"])
+                        mismatch = (f"control {names['control']} {line_lengths['control']:g} ns vs target "
+                                    f"{names['target']} {line_lengths['target']:g} ns: the two pulses differ in "
+                                    f"length by {gap:g} ns, so their lobes are misaligned")
                         notes.append(mismatch)
                         two_flux_lengths["mismatch"] = mismatch
                     duration_note = (f"{duration_ns:g} ns played span (control {line_lengths['control']:g} ns, "
@@ -1924,7 +1937,9 @@ def _solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversio
         preview = next(p for p in operating_points(preview_row) if p["line"] == ln["role"])
         preview["method"] = selected
         preview["preview"] = True
-        preview.update(amp_text=f"{amplitude:g} V ({'peak of waveform' if ln.get('amplitude_source') else 'stored amplitude'})",
+        amp_label = ("peak of waveform" if ln.get("amplitude_source") else "stored amplitude" if path
+                     else "required, nothing stored: " + unreadable_amplitude(ln))
+        preview.update(amp_text=f"{amplitude:g} V ({amp_label})",
                        amp_title=path or ln.get("pulse_path"))
         return {"ok": True, "tier": selected, "amplitude_v": amplitude, "frequency_hz": frequency,
                 "operating_point": preview,
