@@ -616,7 +616,7 @@
 .ui-opxmon-alarm-badge { display: inline-block; padding: var(--ui-opxmon-badge-padding-y) var(--ui-gap-2); border-radius: var(--ui-r-md); font-size: var(--ui-opxmon-fem-font); text-decoration: none;
                       color: var(--ui-danger-text); background: var(--ui-danger-bg); border: var(--ui-bw) solid var(--ui-danger-border); }
 .ui-opxmon-alarm-badge--blind { color: var(--ui-warn-text); background: var(--ui-warn-bg); border-color: var(--ui-warn-border); }
-.ui-opxmon-close.outline, .ui-opxmon-close-all.outline { color: var(--ui-danger-text); border-color: var(--ui-danger-border); background: transparent; }
+.ui-opxmon-close.outline, .ui-opxmon-close-all.outline { white-space: nowrap; color: var(--ui-danger-text); border-color: var(--ui-danger-border); background: transparent; }
 
 .ui-opxmon-health-dot--grey { color: var(--ui-text-2); }
 .ui-opxmon-health-dot--green { color: var(--ui-ok-text); }
@@ -641,7 +641,7 @@
 .ui-opxmon-qm-stale {margin:var(--ui-gap-2) 0}
 .ui-opxmon-table--stale {opacity:0.6}
 .ui-opxmon-hot {color:var(--ui-danger-text)}
-.ui-opxmon-hottest {font-size:var(--ui-opxmon-input-font); color:var(--ui-opxmon-muted)}
+.ui-opxmon-hottest {font-size:inherit; color:inherit}
 .ui-opxmon-confirm {margin:var(--ui-gap-2) 0}
 
 .ui-opxmon-alarm-slot {display:flex; align-items:center; gap:var(--ui-gap-2); min-width:0; max-width:var(--ui-opxmon-alarm-max-width)}
@@ -668,7 +668,7 @@
 .ui-opxmon-other-temperatures {margin:var(--ui-opxmon-space-sm) 0; font-size:var(--ui-opxmon-input-font)}
 .ui-opxmon-other-temperatures > summary {margin:0}
 
-.ui-opxmon-body { min-width: 0; }
+.ui-opxmon-body { display: flex; flex-direction: column; gap: var(--ui-gap-3); min-width: 0; }
 .ui-opxmon-close-result { overflow-wrap: anywhere; }
 .ui-opxmon-confirm-count { min-width: 0; }
 .ui-opxmon-danger { overflow-wrap: anywhere; }
@@ -684,7 +684,7 @@
 .ui-opxmon-owner-marker { flex: 0 1 auto; max-width: 100%; min-width: 0; overflow-wrap: anywhere; }
 .ui-opxmon-owner-marker code { display: inline; white-space: normal; overflow-wrap: anywhere; }
 .ui-opxmon-owner-tag { font-weight: var(--ui-fw); }
-.ui-opxmon-pcnames { margin-top: var(--ui-opxmon-space-lg); }
+.ui-opxmon-settings, .ui-opxmon-pcnames { display: flex; flex-direction: column; align-items: stretch; gap: var(--ui-gap-3); margin: 0; }
 .ui-opxmon-pcname-row code, .ui-opxmon-pcname-new input { overflow-wrap: anywhere; }
 .ui-opxmon-this-pc, .ui-opxmon-several { vertical-align: baseline; }
 .ui-opxmon-owner-note, .ui-opxmon-pcnames-problem { margin: 0 0 var(--ui-opxmon-space-md); }

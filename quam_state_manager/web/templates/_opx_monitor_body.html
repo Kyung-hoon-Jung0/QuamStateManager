@@ -25,12 +25,13 @@
 <div class="ui-notice ui-notice--danger ui-opxmon-alarms" role="alert"><span class="ui-notice-icon" aria-hidden="true">⚠</span><strong class="ui-notice-key">Alarm.</strong>
   <span class="ui-notice-text">{% for a in st.alarms %}{{ a.controller }} {{ a.label }} = {{ '%.1f'|format(a.value) if a.unit == '°C' else ('%.1f'|format(a.value)).removesuffix('.0') }} {{ a.unit }} ({{ a.direction }} the limit {{ '%g'|format(a.limit) }} {{ a.unit }}){% if not loop.last %}; {% endif %}{% endfor %}</span></div>
 {%- endif %}
-{% for section, error in st.section_errors.items() if not (section == 'controllers' and tab == 'live') %}<p class="ui-note ui-opxmon-section-age" title="{{ error }}">{{ 'Open QMs' if section == 'open_qms' else section|replace('_', ' ')|capitalize }} unavailable; {{ 'last good read at ' ~ local_time(st.section_times.get(section)) if st.section_times.get(section) else 'no successful read yet' }}</p>{% endfor %}
+{%- set age_rows = st.section_errors.items()|rejectattr('0', 'equalto', 'controllers' if tab == 'live' else '')|list %}
+{%- if age_rows %}<p class="ui-text-quiet ui-opxmon-section-age">{% for section, error in age_rows %}<span title="{{ error }}">{{ 'Open QMs' if section == 'open_qms' else section|replace('_', ' ')|capitalize }} unavailable; {{ 'last good read at ' ~ local_time(st.section_times.get(section)) if st.section_times.get(section) else 'no successful read yet' }}</span>{% if not loop.last %}. {% endif %}{% endfor %}</p>{% endif %}
 {%- if tab == 'live' %}
   {{ ui.ui_stats(tiles, 'Key numbers') }}
   {#- Zone: Open QMs -#}
   {%- set qms = ans.open_qms %}
-  <section class="ui-zone" aria-label="Open QMs"><div class="ui-zone-head"><h3 class="ui-zone-title">Open QMs</h3><span class="ui-zone-sum">{% if qms is none %}unknown{% else %}{{ qms|length }} open{% set idle_n = idle_states.values()|selectattr('idle')|list|length %}{% if idle_n %} &middot; {{ idle_n }} idle{% endif %}{% if owners_stale %} &middot; as of {{ owners_age }}{% endif %}{% endif %}</span></div>
+  <section class="ui-zone" aria-label="Open QMs"><div class="ui-zone-head"><h3 class="ui-zone-title">Open QMs</h3><span class="ui-zone-sum">{% if not cap.live %}not available{% elif qms is none %}unknown{% else %}{{ qms|length }} open{% set idle_n = idle_states.values()|selectattr('idle')|list|length %}{% if idle_n %} &middot; {{ idle_n }} idle{% endif %}{% if owners_stale %} &middot; last good read {{ owners_age }}{% endif %}{% endif %}</span></div>
   <div class="ui-zone-body">
   {%- if not cap.live %}
     <p class="ui-state ui-state--empty"><span class="ui-state-key">{{ unavailable_key }}</span> {{ plain_error(cap.live_reason) }}</p>
@@ -39,7 +40,7 @@
   {%- elif not qms %}
     <p class="ui-zone-empty">{% if owners_stale %}No QM was open at the last good read ({{ owners_age }}); whether one is open now is unknown.{% else %}No QM is open: the hardware is free.{% endif %}</p>
   {%- else %}
-    {%- if owners_stale %}<p class="ui-state ui-state--error ui-opxmon-qm-stale" role="status"><span class="ui-state-key">Not current.</span> Owners below are from the last good read, {{ owners_age }}; QMs may have opened or closed since.</p>{% endif %}
+    {%- if owners_stale %}<div class="ui-notice ui-notice--warn ui-opxmon-qm-stale" role="status"><span class="ui-notice-icon" aria-hidden="true">⚠</span><strong class="ui-notice-key">Not current.</strong><span class="ui-notice-text">Owners below are from the last good read, {{ owners_age }}; QMs may have opened or closed since.</span></div>{% endif %}
     {{ qm_table(qms, 'Who holds each open QM', owners_stale, owners_age) }}
   {%- endif %}
   </div></section>
@@ -90,7 +91,7 @@
     {%- for p in q.ports or [] %}{% if running %}{% set _ = busy.update({p: q.id}) %}{% elif q.jobs is not none %}{% set _ = held.update({p: q.id}) %}{% endif %}{% endfor %}{% endfor %}
   {% if ans.version %}<p class="ui-opxmon-version">SDK {{ ans.version.get('qm-qua', 'not reported') }} (this PC){% if ans.version.get('QOP') %} / QOP {{ ans.version.get('QOP') }} (server, as read when the monitor connected){% endif %}</p>{% endif %}
   {% set fem_stale = st.state != 'ok' %}{% set fem_age = ('%.0f'|format(st.age_s) ~ ' s ago') if st.age_s is not none else 'at an unknown time' %}
-  {% if fem_stale %}<p class="ui-state ui-state--error ui-opxmon-fem-stale" role="status"><span class="ui-state-key">Not current.</span> FEM slot occupancy at the last good read ({{ fem_age }}); QMs may have opened or closed since.</p>{% endif %}
+  {% if fem_stale %}<div class="ui-notice ui-notice--warn ui-opxmon-fem-stale" role="status"><span class="ui-notice-icon" aria-hidden="true">⚠</span><strong class="ui-notice-key">Not current.</strong><span class="ui-notice-text">FEM slot occupancy at the last good read ({{ fem_age }}); QMs may have opened or closed since.</span></div>{% endif %}
   <table class="ui-table ui-opxmon-table{% if fem_stale %} ui-opxmon-table--stale{% endif %}" aria-label="Controllers and FEM slots">
     <thead><tr><th class="ui-table-head">Controller</th><th class="ui-table-head">Type</th><th class="ui-table-head">FEM slots</th></tr></thead>
     <tbody>
@@ -123,8 +124,8 @@
   {%- else %}{% set qm_stale = st.state != 'ok' %}{% set qm_age = ('%.0f'|format(st.age_s) ~ ' s ago') if st.age_s is not none else 'at an unknown time' %}
   <section class="ui-zone" aria-label="Open quantum machines"><div class="ui-zone-head"><h3 class="ui-zone-title">Open quantum machines{% if qm_stale %} at the last good read ({{ qm_age }}){% endif %}</h3><span class="ui-zone-sum"><span class="ui-count">{{ ans.open_qms|length }}</span></span></div>
   <div class="ui-zone-body">
-  {%- if qm_stale %}<p class="ui-state ui-state--error ui-opxmon-qm-stale" role="status"><span class="ui-state-key">Not current.</span> This list is from the last good read, {{ qm_age }}; QMs may have opened or closed since.</p>{% endif %}
-  {%- if ans.open_qms|length > 1 %}<p class="ui-state ui-state--error ui-opxmon-multi"><span class="ui-state-key">More than one QM is open.</span> Several programs or people may hold the hardware.</p>{% endif %}
+  {%- if qm_stale %}<div class="ui-notice ui-notice--warn ui-opxmon-qm-stale" role="status"><span class="ui-notice-icon" aria-hidden="true">⚠</span><strong class="ui-notice-key">Not current.</strong><span class="ui-notice-text">This list is from the last good read, {{ qm_age }}; QMs may have opened or closed since.</span></div>{% endif %}
+  {%- if ans.open_qms|length > 1 %}<div class="ui-notice ui-notice--warn ui-opxmon-multi" role="status"><span class="ui-notice-icon" aria-hidden="true">⚠</span><strong class="ui-notice-key">More than one QM is open.</strong><span class="ui-notice-text">Several programs or people may hold the hardware.</span></div>{% endif %}
   {%- if not ans.open_qms %}<p class="ui-zone-empty">{% if qm_stale %}<span class="ui-state-key">No QM was open at the last good read ({{ qm_age }}).</span> Whether one is open now is unknown.{% else %}<span class="ui-state-key">No QM is open.</span>{% endif %}</p>{% else %}
   <table class="ui-table ui-opxmon-table{% if qm_stale %} ui-opxmon-table--stale{% endif %}" aria-label="Open quantum machines{% if qm_stale %} (last good read, {{ qm_age }}){% endif %}"{% if qm_stale %} data-stale="1"{% endif %}>
     <thead><tr><th class="ui-table-head" scope="col">QM</th><th class="ui-table-head" scope="col">State</th>{{ owner_head(any_marker) }}<th class="ui-table-head" scope="col">FEMs</th><th class="ui-table-head" scope="col">Jobs</th></tr></thead>

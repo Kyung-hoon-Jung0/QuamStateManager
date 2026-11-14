@@ -113,6 +113,36 @@ const tick = () => new Promise(r => setTimeout(r, 20));
   savedResult.textContent = '';
   w.document.dispatchEvent(new w.CustomEvent('htmx:afterSwap'));
   ok(/QM-y: active/.test(savedResult.textContent), 'D-13 skipped action result survives the cleanup refresh');
+  {
+    // the periodic refresh re-draws the body: an open close question and an opened fold come back,
+    // built from the fresh rows; a QM that left the list withdraws the question and says so
+    const rowBody = (ports, withRow) => '<div id="ui-opxmon-body" hx-get="/opx-monitor/body?tab=cleanup" data-state="ok">' +
+      '<details class="ui-zone ui-zone--fold ui-opxmon-danger" data-fold="danger"><summary class="ui-zone-head">Danger</summary><div class="ui-zone-body"></div></details>' +
+      '<table class="ui-table"><tbody>' + (withRow ? '<tr><td class="ui-table-cell">QM-r</td><td class="ui-table-cell"><button class="btn-sm ui-opxmon-close" data-qm-id="QM-r" data-basis="idle for 3 min" data-ports="' + ports + '" data-last-job="j1 Completed">Close</button></td></tr>' : '') +
+      '</tbody></table><p class="ui-opxmon-close-result" hidden></p></div>';
+    const r = new JSDOM('<!doctype html><html><body>' + rowBody('con1/4', true) + '</body></html>', { url: 'http://localhost/opx-monitor/cleanup', runScripts: 'outside-only' }).window;
+    r.fetch = () => Promise.resolve({ status: 200, json: () => Promise.resolve({ ok: true, closed: [] }) });
+    r.htmx = { ajax: () => {} };
+    r.eval(SRC);
+    const swap = (html) => {
+      const old = r.document.getElementById('ui-opxmon-body');
+      r.document.dispatchEvent(new r.CustomEvent('htmx:beforeSwap', { detail: { target: old } }));
+      old.outerHTML = html;
+      r.document.dispatchEvent(new r.CustomEvent('htmx:afterSwap', { detail: { target: r.document.getElementById('ui-opxmon-body') } }));
+    };
+    const danger = r.document.querySelector('.ui-opxmon-danger');
+    danger.open = true; danger.dispatchEvent(new r.Event('toggle'));
+    r.document.querySelector('.ui-opxmon-close').click();
+    ok(r.document.querySelector('tr.ui-table-sub .ui-opxmon-confirm.ui-callout--warn'), 'the close question sits under its row as a warning callout');
+    const labels = [...r.document.querySelectorAll('.ui-opxmon-confirm .ui-facts-label')].map(x => x.textContent).join('|');
+    ok(labels === 'State|FEMs|Last job' && /idle for 3 min/.test(r.document.querySelector('.ui-opxmon-confirm').textContent), 'the question lists state, FEMs and last job as label / value facts');
+    swap(rowBody('con1/5', true));
+    const c = r.document.querySelector('.ui-opxmon-confirm');
+    ok(c && /con1\/5/.test(c.textContent) && !/con1\/4/.test(c.textContent), 'the close question survives a refresh, rebuilt from the fresh row');
+    ok(r.document.querySelector('.ui-opxmon-danger').open, 'a fold the user opened stays open across a refresh');
+    swap(rowBody('con1/5', false));
+    ok(!r.document.querySelector('.ui-opxmon-confirm') && /withdrawn/.test(r.document.querySelector('.ui-opxmon-close-result').textContent), 'a QM gone from the list withdraws the question and says so');
+  }
   if (process.argv[2]) {
     const pages = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
     const doc = key => new JSDOM(pages[key]).window.document;

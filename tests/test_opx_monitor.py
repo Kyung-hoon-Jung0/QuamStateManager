@@ -1989,3 +1989,69 @@ def test_fem_occupancy_kept_after_a_failed_read_is_marked_not_current(env):
     assert 'ui-opxmon-fem--stale' in html and 'ui-opxmon-table--stale' in html
     assert 'No open QM claims this FEM' not in html
     assert 'none at the last good read' in html
+
+
+# ------------------------------------------------------------------ reading order of every tab
+def _zones(html):
+    return re.findall(r'<(?:section|details) class="ui-zone[ "]', html)
+
+
+@pytest.mark.parametrize("tab", ["live", "jobs", "history", "cleanup", "settings"])
+def test_every_tab_opens_with_the_verdict_band_and_has_at_most_four_zones(env, tab):
+    app, m, w, *_ = env
+    w.script[:] = [answer(qms=(("QM-a", [("j1", "Running")], ["con1/1"]), ("QM-b", [], ["con1/2"])))]
+    m.poll_once()
+    html = page(app, tab)
+    body = html[html.index('id="ui-opxmon-body"'):]
+    first = re.search(r'>\s*<(\w+) class="([^"]*)"', body)
+    assert first.group(1) == "div" and "ui-verdict--strong" in first.group(2) and "ui-opxmon-verdict" in first.group(2)
+    assert 1 <= len(_zones(html)) <= 4, (tab, len(_zones(html)))
+    assert _max_zone_depth(html) == 1, tab   # no zone inside a zone
+
+
+def _max_zone_depth(html):
+    from html.parser import HTMLParser
+
+    class P(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.stack, self.depth = [], 0
+
+        def handle_starttag(self, tag, attrs):
+            if tag in ("section", "details", "div", "form"):
+                zone = "ui-zone" in (dict(attrs).get("class") or "").split()
+                self.stack.append(zone)
+                self.depth = max(self.depth, sum(self.stack))
+
+        def handle_endtag(self, tag):
+            if tag in ("section", "details", "div", "form") and self.stack:
+                self.stack.pop()
+
+    p = P()
+    p.feed(html)
+    return p.depth
+
+
+def test_live_and_cleanup_use_the_same_open_qm_columns(env):
+    app, m, w, *_ = env
+    m.poll_once()
+
+    def heads(html, label):
+        t = html[html.index(f'aria-label="{label}'):]
+        t = t[:t.index("</thead>")]
+        return [re.sub(r"<[^>]+>.*", "", h).strip() for h in re.findall(r'<th class="ui-table-head"[^>]*>(.*?)</th>', t)]
+
+    live = heads(page(app, "live"), "Who holds each open QM")
+    clean = heads(page(app, "cleanup"), "Close quantum machines")
+    assert live == ["QM", "State", "Owner", "FEMs"] and clean[:4] == live and len(clean) == 5
+
+
+def test_live_tiles_are_coloured_only_from_a_known_abnormal_value(env):
+    app, m, w, *_ = env
+    m.poll_once()
+    html = page(app, "live")
+    stats = html[html.index('class="ui-stats"'):]
+    stats = stats[:stats.index('<section')]
+    assert stats.count('class="ui-stat"') + stats.count('class="ui-stat ui-stat--') == 4
+    assert "ui-stat--danger" not in stats and "ui-stat--warn" not in stats   # one running job, no limit set
+    assert "Hottest sensor" in stats and "unknown" in stats and "ui-stat--quiet" in stats  # no reading: grey, says unknown

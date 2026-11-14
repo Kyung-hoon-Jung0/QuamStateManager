@@ -20,7 +20,7 @@
             if (why) why.textContent = "OPX unknown: " + reason + ". The values below may be old.";
         } else {
             node.classList.add("ui-opxmon-health-dot--grey");
-            node.textContent = "● OPX unknown: " + reason;
+            node.textContent = String.fromCharCode(9679) + " OPX unknown: " + reason;
         }
         var scope = node.closest("#ui-opxmon-body, #ui-opxmon-alarm-slot");
         if (scope && scope.id === "ui-opxmon-body") {
