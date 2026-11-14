@@ -33,6 +33,9 @@
     var TEXT_PX = 11;
     var TICK_ROOM = 52;        // room for the y tick labels ("-0.05 V") between gutter and plot
     var FILL_OPACITY = 0.18;
+    var SPECT_KEY = "spectators";  // the legend key of the spectator group
+    var GUIDE_ROWS_PX = 32;    // two rows of edge-time labels above the overlay plot
+    var LEGEND_ROW_PX = 24;
     var BAR_PX = 3;            // the lane colour bar at the gutter's left edge
     var CHIP_ALPHA = 0.16;     // tint behind the lane name chip
 
@@ -190,7 +193,10 @@
         var state = {
             scale: opts.scale === "common" ? "common" : "lane",
             fold: opts.foldSpectators !== false,
-            showSim: opts.showSim !== false
+            showSim: opts.showSim !== false,
+            view: opts.view === "overlay" ? "overlay" : "lanes",
+            height: "real",
+            hidden: {}
         };
         var lanes = (data.lanes || []).slice();
         var gate = lanes.filter(function (l) { return l.group !== "spectator"; });
@@ -235,27 +241,43 @@
             };
         }
 
-        // Toolbar: vertical scale (kit segmented control), the spectator group
-        // summary with its unfold control, and the simulation switch.
-        // role=toolbar, not group: the base stylesheet stretches every
+        // Toolbar: the view (lanes or overlay), the vertical scale of that view
+        // (kit segmented controls), the spectator group switch and the simulation
+        // switch. role=toolbar, not group: the base stylesheet stretches every
         // [role=group] to the full width.
         var bar = el("div", "ui-actions ui-actions--start");
         bar.setAttribute("data-gate-timeline-bar", "");
-        var seg = el("div", "ui-segmented");
-        seg.setAttribute("role", "toolbar");
-        seg.setAttribute("aria-label", "Vertical scale");
-        var scaleBtns = [["lane", "Per lane"], ["common", "Shared"]].map(function (o) {
-            var b = el("button", "ui-segmented-opt", o[1]);
-            b.type = "button";
-            b.setAttribute("data-scale", o[0]);
-            on(b, "click", function () { handle.setScale(o[0]); });
-            seg.appendChild(b);
-            return b;
-        });
-        var scaleLab = el("span", "ui-note", "V scale");
-        scaleLab.setAttribute("data-scale-label", "");
+        function segmented(label, aria, attr, options, pick) {
+            var lab = el("span", "ui-note", label);
+            var g = el("div", "ui-segmented");
+            g.setAttribute("role", "toolbar");
+            g.setAttribute("aria-label", aria);
+            var btns = options.map(function (o) {
+                var b = el("button", "ui-segmented-opt", o[1]);
+                b.type = "button";
+                b.setAttribute(attr, o[0]);
+                on(b, "click", function () { pick(o[0]); });
+                g.appendChild(b);
+                return b;
+            });
+            return { label: lab, group: g, buttons: btns, attr: attr };
+        }
+        var viewSeg = segmented("View", "View", "data-view", [["lanes", "Lanes"], ["overlay", "Overlay"]],
+                                function (m) { handle.setView(m); });
+        viewSeg.label.setAttribute("data-view-label", "");
+        bar.appendChild(viewSeg.label);
+        bar.appendChild(viewSeg.group);
+        var scaleSeg = segmented("V scale", "Vertical scale", "data-scale", [["lane", "Per lane"], ["common", "Shared"]],
+                                 function (m) { handle.setScale(m); });
+        scaleSeg.label.setAttribute("data-scale-label", "");
+        var seg = scaleSeg.group, scaleBtns = scaleSeg.buttons, scaleLab = scaleSeg.label;
         bar.appendChild(scaleLab);
         bar.appendChild(seg);
+        var heightSeg = segmented("Height", "Line height", "data-height", [["real", "Real V"], ["same", "Same height"]],
+                                  function (m) { handle.setHeight(m); });
+        heightSeg.label.setAttribute("data-height-label", "");
+        bar.appendChild(heightSeg.label);
+        bar.appendChild(heightSeg.group);
         // the spectator group: the kit checkbox, unchecked = folded
         var foldBox = null;
         if (spect.length) {
@@ -575,6 +597,255 @@
                      span: span, widthPx: widthPx };
         }
 
+        /* ---------------- Overlay view: every line on ONE time axis ---------------- */
+
+        function lineSpan(l) {
+            var lo = Infinity, hi = -Infinity;
+            (l.segments || []).forEach(function (s) {
+                if (num(s.start_ns)) lo = Math.min(lo, s.start_ns);
+                if (num(s.end_ns)) hi = Math.max(hi, s.end_ns);
+            });
+            return lo === Infinity ? null : [lo, hi];
+        }
+        function maxAbs(l) {
+            var m = 0;
+            (l.segments || []).forEach(function (s) { (s.v || []).forEach(function (v) { if (num(v)) m = Math.max(m, Math.abs(v)); }); });
+            return m;
+        }
+        function nameOf(key) {
+            var l = lanes.filter(function (x) { return x.key === key; })[0];
+            return l ? (l.label || l.key) : key;
+        }
+        function visibleGate() { return gate.filter(function (l) { return !state.hidden[l.key] && lineSpan(l); }); }
+        function overlayLines() {
+            var out = visibleGate();
+            if (!state.fold && !state.hidden[SPECT_KEY]) out = out.concat(spect);
+            return out;
+        }
+
+        /* Gap / overlap between gate lines, from start_ns / end_ns only (never
+           pixels). Each line counts as its first start to its last end. With more
+           than three visible gate lines only neighbours in time order are paired. */
+        function timing() {
+            var ls = visibleGate().map(function (l) { return { key: l.key, span: lineSpan(l) }; })
+                .sort(function (a, b) { return a.span[0] - b.span[0] || a.span[1] - b.span[1]; });
+            var pairs = [];
+            if (ls.length > 3) {
+                for (var i = 0; i + 1 < ls.length; i++) pairs.push([ls[i], ls[i + 1]]);
+            } else {
+                for (var a = 0; a < ls.length; a++) for (var b = a + 1; b < ls.length; b++) pairs.push([ls[a], ls[b]]);
+            }
+            return pairs.map(function (p) {
+                var A = p[0], B = p[1];
+                if (A.span[1] < B.span[0]) {
+                    return { a: A.key, b: B.key, kind: "gap", ns: B.span[0] - A.span[1], from_ns: A.span[1], to_ns: B.span[0] };
+                }
+                if (A.span[1] === B.span[0]) {
+                    return { a: A.key, b: B.key, kind: "meet", ns: 0, from_ns: A.span[1], to_ns: A.span[1] };
+                }
+                var from = Math.max(A.span[0], B.span[0]), to = Math.min(A.span[1], B.span[1]);
+                return { a: A.key, b: B.key, kind: "overlap", ns: to - from, from_ns: from, to_ns: to };
+            });
+        }
+
+        /* Edge guides of the visible gate lines with their times written at the
+           top: a label that would run into the previous one goes to a second row;
+           when that row is taken too, the two times share one label ("160 / 161"). */
+        function guideLabels(times, xr, w, c) {
+            var pxPerNs = w / Math.max(1e-9, xr[1] - xr[0]);
+            var rows = [null, null], out = [];
+            times.filter(function (t) { return t >= xr[0] && t <= xr[1]; }).forEach(function (t) {
+                var text = fmt(t), px = (t - xr[0]) * pxPerNs, half = (text.length * CHAR_PX + 8) / 2;
+                var row = -1;
+                for (var r = 0; r < 2; r++) {
+                    if (!rows[r] || rows[r].right < px - half) { row = r; break; }
+                }
+                if (row < 0) {
+                    var prev = rows[1].ann;
+                    prev.text += " / " + text;
+                    prev.meta.times.push(t);
+                    rows[1].right += (text.length + 3) * CHAR_PX;
+                    return;
+                }
+                var ann = { xref: "x", yref: "paper", x: t, y: 1, yanchor: "bottom", yshift: 2 + row * 14, showarrow: false,
+                            text: text, font: { size: TEXT_PX, color: c.muted },
+                            meta: { role: "guide-label", times: [t], row: row } };
+                rows[row] = { right: px + half, ann: ann };
+                out.push(ann);
+            });
+            return out;
+        }
+
+        function overlayFigure() {
+            var c = theme();
+            var lines = overlayLines();
+            var gl = visibleGate();
+            var span = spanOf(gate.concat(state.fold ? [] : spect));
+            var margin = { l: 64, r: 12, t: 0, b: 38 };
+            var widthPx = Math.max(200, ((host.clientWidth || 900) - margin.l - margin.r));
+            var leg = legendAnnotations(widthPx, c);
+            margin.t = GUIDE_ROWS_PX + LEGEND_ROW_PX * leg.rows + 6;
+            var same = state.height === "same";
+            var family = uiFont();
+            var traces = [], shapes = [], fixed = [];
+            var factor = {};
+            lines.forEach(function (l) {
+                var m = maxAbs(l);
+                factor[l.key] = same ? (m > 0 ? 1 / m : 1) : 1;
+            });
+            function scaled(l, vs) { var f = factor[l.key]; return vs.map(function (v) { return num(v) ? v * f : v; }); }
+            // the V axis: real volts over all drawn lines, or normalised
+            var lo = 0, hi = 0;
+            lines.forEach(function (l) {
+                var e = dataExtent(l, state.showSim);
+                lo = Math.min(lo, e[0] * factor[l.key]); hi = Math.max(hi, e[1] * factor[l.key]);
+            });
+            var pairs = timing();
+            var bracketRows = pairs.length;
+            var plotPx = 240 + 18 * bracketRows;
+            var range = bandedRange([lo, hi], plotPx, 20 + 22 * bracketRows, 0);
+            var layout = {
+                margin: margin, height: plotPx + margin.t + margin.b, showlegend: false,
+                hovermode: "x unified", hoverdistance: -1,
+                font: { family: family, size: TEXT_PX, color: c.text },
+                hoverlabel: { font: { family: family, size: TEXT_PX } },
+                xaxis: { title: { text: "time (ns)", font: { size: TEXT_PX } }, zeroline: false, range: span.slice(),
+                         autorange: false, showgrid: true, gridcolor: c.grid, tickfont: { size: TEXT_PX } },
+                yaxis: { range: range, autorange: false, zeroline: false, showgrid: false, tickfont: { size: TEXT_PX },
+                         title: same ? { text: "normalised", font: { size: TEXT_PX } } : undefined,
+                         showticklabels: !same, ticksuffix: same ? "" : " V" },
+                shapes: shapes
+            };
+            shapes.push({ type: "line", name: "zero", xref: "paper", x0: 0, x1: 1, yref: "y", y0: 0, y1: 0,
+                          line: { color: c.grid, width: 1 }, layer: "below" });
+            lines.forEach(function (l) {
+                var spectLine = l.group === "spectator";
+                var idCol = laneCol(l);
+                (l.segments || []).forEach(function (s) {
+                    var flagged = (s.flags || []).length > 0;
+                    var col = flagged ? c.flag : idCol;
+                    if (!spectLine) {
+                        traces.push({ x: (s.t_ns || []).slice(), y: scaled(l, (s.v || []).slice()), xaxis: "x", yaxis: "y",
+                                      type: "scatter", mode: "lines", line: { color: col, width: 0, shape: "hv" },
+                                      fill: "tozeroy", fillcolor: faint(col), hoverinfo: "skip",
+                                      meta: { role: "fill", lane: l.key, operation: s.operation, flagged: flagged } });
+                    }
+                    traces.push({ x: (s.t_ns || []).slice(), y: scaled(l, (s.v || []).slice()), xaxis: "x", yaxis: "y",
+                                  type: "scatter", mode: "lines", line: { color: col, width: spectLine ? 1 : 2, shape: "hv" },
+                                  hoverinfo: "skip", meta: { role: "segment", lane: l.key, operation: s.operation, flagged: flagged } });
+                    var ts = s.t_ns || [];
+                    if (s.truncated && ts.length && ts[ts.length - 1] < s.end_ns) {
+                        shapes.push({ type: "rect", name: "not-received", xref: "x", x0: ts[ts.length - 1], x1: s.end_ns,
+                                      yref: "paper", y0: 0, y1: 1, fillcolor: c.grid, opacity: 0.35, line: { width: 0 }, layer: "below" });
+                        fixed.push({ xref: "x", yref: "paper", x: (ts[ts.length - 1] + s.end_ns) / 2, y: 0.5, showarrow: false,
+                                     text: "not received", font: { size: TEXT_PX, color: c.muted },
+                                     meta: { role: "not-received", lane: l.key, operation: s.operation } });
+                    }
+                });
+                if (l.sim && state.showSim) {
+                    traces.push({ x: (l.sim.t_ns || []).slice(), y: scaled(l, (l.sim.v || []).slice()), xaxis: "x", yaxis: "y",
+                                  type: "scatter", mode: "lines", line: { color: c.sim, width: 1.5, dash: "dot" },
+                                  hoverinfo: "skip", meta: { role: "sim", lane: l.key } });
+                }
+                if (!same && l.limit_v && !spectLine) {
+                    l.limit_v.forEach(function (lim) {
+                        if (!num(lim) || lim < range[0] || lim > range[1]) return;
+                        if (shapes.some(function (sh) { return sh.name === "limit" && sh.y0 === lim; })) return;
+                        shapes.push({ type: "line", name: "limit", xref: "paper", x0: 0, x1: 1, yref: "y", y0: lim, y1: lim,
+                                      line: { color: c.muted, width: 1, dash: "dot" }, opacity: 0.7, layer: "below" });
+                    });
+                }
+            });
+            // one hover trace per drawn line: the same readout as the lanes view, real volts
+            var times = hoverTimes(lines);
+            lines.forEach(function (l) {
+                traces.push({ x: times.slice(), y: times.map(function () { return 0; }),
+                              text: times.map(function (t) { return readout(laneValueAt(l, t)); }),
+                              xaxis: "x", yaxis: "y", type: "scatter", mode: "markers",
+                              marker: { opacity: 0, size: 1, color: laneCol(l) }, name: l.label || l.key,
+                              meta: { role: "hover", lane: l.key },
+                              hovertemplate: "%{text}<extra>" + (l.label || l.key) + "</extra>" });
+            });
+            // edge guides of the visible gate lines
+            var edges = [];
+            gl.forEach(function (l) {
+                (l.segments || []).forEach(function (s) {
+                    [s.start_ns, s.end_ns].forEach(function (t) { if (num(t) && edges.indexOf(t) < 0) edges.push(t); });
+                });
+            });
+            edges.sort(function (a, b) { return a - b; });
+            edges.forEach(function (t) {
+                shapes.push({ type: "line", name: "guide", xref: "x", x0: t, x1: t, yref: "paper", y0: 0, y1: 1,
+                              line: { color: c.muted, width: 1, dash: "dash" }, opacity: 0.6, layer: "below" });
+            });
+            // gap / overlap brackets, stacked under the guide labels
+            var warn = cssVar("--ui-warn-border") || cssVar("--ui-warn-text") || c.flag;
+            pairs.forEach(function (p, k) {
+                var col = p.kind === "gap" ? warn : c.muted;
+                var y = 1 - (14 + 22 * k) / plotPx;
+                var text = nameOf(p.a) + " to " + nameOf(p.b) + ": " + (p.kind === "gap" ? "gap " + fmt(p.ns) + " ns"
+                    : p.kind === "overlap" ? "overlap " + fmt(p.ns) + " ns" : "meet at " + fmt(p.from_ns) + " ns");
+                shapes.push({ type: "path", name: "bracket", xref: "x", yref: "paper",
+                              path: "M " + p.from_ns + " " + (y - 0.02) + " L " + p.from_ns + " " + y + " L " + p.to_ns + " " + y +
+                                    " L " + p.to_ns + " " + (y - 0.02),
+                              line: { color: col, width: p.kind === "gap" ? 1.5 : 1 }, meta: { kind: p.kind } });
+                fixed.push({ xref: "x", yref: "paper", x: (p.from_ns + p.to_ns) / 2, y: y, yanchor: "bottom", showarrow: false,
+                             text: text, font: { size: TEXT_PX, color: col },
+                             meta: { role: "bracket-label", kind: p.kind, a: p.a, b: p.b } });
+            });
+            if (window.PlotTheme && window.PlotTheme.houseLayout) layout = window.PlotTheme.houseLayout(layout);
+            function labels(xr, w) { return guideLabels(edges, xr, w, c); }
+            fixed = fixed.concat(leg.annotations);
+            layout.annotations = fixed.concat(labels(span, widthPx));
+            return { data: traces, layout: layout, drawn: lines, fixedAnnotations: fixed, labels: labels,
+                     span: span, widthPx: widthPx, view: "overlay", timing: pairs };
+        }
+
+        /* The overlay legend: one chip per gate line (and one for the spectator
+           group) in the margin above the plot, in the line's identity colour, the
+           same chip shape as the lane names. A chip toggles its line (click, or
+           Enter / Space once focused); hidden lines leave the guides and brackets. */
+        function lineSummary(l) {
+            var sp = lineSpan(l), segs = l.segments || [];
+            var parts = segs.length === 1 ? [levelText(segs[0])] : [segs.length + " pulses"];
+            if (sp) parts.push("starts " + fmt(sp[0]) + " ns");
+            return parts.join(", ");
+        }
+        function legendAnnotations(widthPx, c) {
+            var items = gate.map(function (l) { return { key: l.key, name: l.label || l.key, text: lineSummary(l), col: laneCol(l) }; });
+            if (spect.length && !state.fold) items.push({ key: SPECT_KEY, name: spect.length + " spectators", text: "", col: quietColor() });
+            var out = [], x = 0, row = 0;
+            items.forEach(function (it) {
+                var hidden = !!state.hidden[it.key];
+                var wName = it.name.length * CHAR_PX * LABEL_PX / TEXT_PX + 10;
+                var wText = it.text ? it.text.length * CHAR_PX + 8 : 0;
+                if (x > 0 && x + wName + wText > widthPx) { x = 0; row += 1; }
+                var y = row;   // row index; turned into a pixel lift below, first row on top
+                out.push({ xref: "paper", yref: "paper", x: 0, y: 1, xanchor: "left", yanchor: "bottom",
+                           xshift: x, yshift: y, showarrow: false, captureevents: true,
+                           text: "<b>" + it.name + "</b>", font: { size: LABEL_PX, color: it.col },
+                           bgcolor: faint(it.col, CHIP_ALPHA), borderpad: 3, borderwidth: 0, opacity: hidden ? 0.45 : 1,
+                           meta: { role: "legend-chip", key: it.key, hidden: hidden } });
+                if (it.text) {
+                    out.push({ xref: "paper", yref: "paper", x: 0, y: 1, xanchor: "left", yanchor: "bottom",
+                               xshift: x + wName + 2, yshift: y, showarrow: false,
+                               text: hidden ? "hidden" : it.text, font: { size: TEXT_PX, color: c.muted },
+                               meta: { role: "legend-text", key: it.key } });
+                }
+                x += wName + wText + 14;
+            });
+            var rows = row + 1;
+            out.forEach(function (a) {
+                var r = a.yshift;
+                a.meta.row = r;
+                a.yshift = GUIDE_ROWS_PX + LEGEND_ROW_PX * (rows - 1 - r) + (a.meta.role === "legend-text" ? 3 : 0);
+            });
+            return { annotations: out, rows: rows };
+        }
+
+        var overlayNote = el("p", "ui-note", "With more than three lines, gaps and overlaps are shown only between lines next to each other in time.");
+        overlayNote.setAttribute("data-overlay-note", "");
+
         var lastFigure = null;
         function draw() {
             if (destroyed) return;
@@ -585,11 +856,28 @@
             });
             if (simBox) simBox.checked = state.showSim;
             if (foldBox) foldBox.checked = !state.fold;
-            lastFigure = figure();
+            var ov = state.view === "overlay";
+            viewSeg.buttons.forEach(function (b) {
+                var onNow = b.getAttribute("data-view") === state.view;
+                b.classList.toggle("ui-segmented-on", onNow);
+                b.setAttribute("aria-pressed", onNow ? "true" : "false");
+            });
+            heightSeg.buttons.forEach(function (b) {
+                var onNow = b.getAttribute("data-height") === state.height;
+                b.classList.toggle("ui-segmented-on", onNow);
+                b.setAttribute("aria-pressed", onNow ? "true" : "false");
+            });
+            // each view shows only its own vertical-scale control
+            [scaleLab, seg].forEach(function (n) { n.hidden = ov; });
+            [heightSeg.label, heightSeg.group].forEach(function (n) { n.hidden = !ov; });
+            lastFigure = ov ? overlayFigure() : figure();
+            var many = ov && visibleGate().length > 3;
+            if (many && !overlayNote.parentNode) notesBox.appendChild(overlayNote);
+            if (!many && overlayNote.parentNode) overlayNote.parentNode.removeChild(overlayNote);
             if (window._plotlyRender) {
                 var p = window._plotlyRender(plot, lastFigure.data, lastFigure.layout,
                     { displayModeBar: false, responsive: true });
-                if (p && p.then) p.then(bindRelayout);
+                if (p && p.then) p.then(function () { bindRelayout(); focusableChips(); });
             }
         }
 
@@ -607,9 +895,36 @@
             lastFigure.layout.annotations = anns;
             if (window.Plotly && window.Plotly.relayout) window.Plotly.relayout(plot, { annotations: anns });
         }
+        function onChipClick(ev) {
+            var a = ev && ev.annotation;
+            var m = a && (a.meta || (a._input && a._input.meta));
+            if (m && m.role === "legend-chip") handle.setLineHidden(m.key, !state.hidden[m.key]);
+        }
+        /* Keyboard for the legend chips: Plotly draws them as SVG groups; make each
+           one a focusable button that toggles its line on Enter or Space. */
+        function focusableChips() {
+            if (destroyed || !lastFigure || lastFigure.view !== "overlay" || !plot.querySelectorAll) return;
+            var anns = lastFigure.layout.annotations || [];
+            Array.prototype.forEach.call(plot.querySelectorAll(".annotation[data-index]"), function (g) {
+                var a = anns[+g.getAttribute("data-index")];
+                if (!a || !a.meta || a.meta.role !== "legend-chip") return;
+                g.setAttribute("tabindex", "0");
+                g.setAttribute("role", "button");
+                g.setAttribute("aria-pressed", a.meta.hidden ? "false" : "true");
+                g.setAttribute("aria-label", "Show " + a.meta.key);
+                if (g.__gtKeys) return;
+                g.__gtKeys = true;
+                on(g, "keydown", function (e) {
+                    if (e.key !== "Enter" && e.key !== " ") return;
+                    e.preventDefault();
+                    handle.setLineHidden(a.meta.key, !state.hidden[a.meta.key]);
+                });
+            });
+        }
         function bindRelayout() {
             if (relayoutBound || destroyed || typeof plot.on !== "function") return;
             plot.on("plotly_relayout", onRelayout);
+            plot.on("plotly_clickannotation", onChipClick);
             relayoutBound = true;
         }
 
@@ -621,6 +936,7 @@
                 listeners = [];
                 if (relayoutBound && typeof plot.removeListener === "function") {
                     plot.removeListener("plotly_relayout", onRelayout);
+                    plot.removeListener("plotly_clickannotation", onChipClick);
                 }
                 relayoutBound = false;
                 if (window.PlotHost) {
@@ -633,12 +949,17 @@
             setScale: function (m) { state.scale = m === "common" ? "common" : "lane"; draw(); },
             setFold: function (b) { state.fold = !!b; draw(); },
             setShowSim: function (b) { state.showSim = !!b; draw(); },
+            setView: function (m) { state.view = m === "overlay" ? "overlay" : "lanes"; draw(); },
+            setHeight: function (m) { state.height = m === "same" ? "same" : "real"; draw(); },
+            setLineHidden: function (key, b) { state.hidden[key] = !!b; draw(); },
+            timing: function () { return timing(); },
             valuesAt: function (t) { return lanes.map(function (l) { return laneValueAt(l, t); }); },
             readout: function (t) {
                 return lanes.map(function (l) { return { key: l.key, text: readout(laneValueAt(l, t)) }; });
             },
             laneCount: function () {
-                return { gate: gate.length, spectator: spect.length, drawn: drawnLanes().length };
+                return { gate: gate.length, spectator: spect.length,
+                         drawn: state.view === "overlay" ? overlayLines().length : drawnLanes().length };
             },
             figure: function () { return lastFigure; },
             relayout: onRelayout

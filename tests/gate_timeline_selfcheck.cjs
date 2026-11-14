@@ -171,9 +171,9 @@ ok(JSON.stringify(fig.layout.yaxis.tickvals) === JSON.stringify(fig.layout.yaxis
 ok(fig.layout.yaxis.range[1] - 0.3 < fig.layout.yaxis2.range[1] - 0.3 || fig.layout.yaxis.range[0] !== fig.layout.yaxis2.range[0],
    'common: head room per lane (a lane with two label rows differs)');
 ok(fig.layout.yaxis.range[0] <= -0.3 && fig.layout.yaxis.range[1] >= 0.3 && fig.layout.yaxis.range[1] < 1.5, 'common: range covers the data of every lane');
-const segBtns = [...host.querySelectorAll('.ui-segmented .ui-segmented-opt')];
+const segBtns = [...host.querySelectorAll('[aria-label="Vertical scale"] .ui-segmented-opt')];
 ok(segBtns.length === 2 && segBtns[1].classList.contains('ui-segmented-on') && segBtns[1].getAttribute('aria-pressed') === 'true', 'segmented control shows common');
-ok(host.querySelector('.ui-segmented').getAttribute('role') !== 'group' && host.querySelector('.ui-segmented').getAttribute('aria-label') === 'Vertical scale',
+ok(host.querySelector('[aria-label="Vertical scale"]').getAttribute('role') !== 'group' && host.querySelector('[aria-label="Vertical scale"]').getAttribute('aria-label') === 'Vertical scale',
    'scale switch is not a stretched [role=group] and keeps its label');
 segBtns[0].click();
 fig = last();
@@ -289,6 +289,99 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
     hostTb.remove();
 }
 
+// overlay view: every line on one time axis
+{
+    const sq = (op, s, e, v) => seg(op, [s, e], [v, v]);
+    const L = (key, segs, extra) => lane(key, 'gate', segs, extra);
+    const OV = { lanes: [L('coupler_q1_q2', [sq('cp', 0, 100, 0.1)], { color: 3 }), L('q1.z', [sq('fx', 161, 261, 0.01)], { color: 0 }),
+                         lane('s1.z', 'spectator', [sq('sp', 161, 201, -0.02)]), lane('s2.z', 'spectator', [sq('sp', 161, 205, 0.03)])],
+                 notes: ['n'] };
+    const ho = GT.render(host, OV, { view: 'overlay' });
+    let f = last();
+    const r = lastRoot();
+    ok(xAxes(f.layout).length === 1 && yAxes(f.layout).length === 1 && f.data.every((t) => t.xaxis === 'x' && t.yaxis === 'y'), 'overlay: one time axis and one V axis');
+    const segO = role(f, 'segment'), fillO = role(f, 'fill');
+    ok(segO.find((t) => t.meta.lane === 'q1.z').line.color === GT.laneColor(0) && segO.find((t) => t.meta.lane === 'coupler_q1_q2').line.color === GT.laneColor(3) &&
+       fillO.length === 2 && fillO.every((t) => t.fill === 'tozeroy'), 'overlay: each gate line in its identity colour, filled');
+    ok(JSON.stringify(segO.find((t) => t.meta.lane === 'q1.z').x) === '[161,261]' && JSON.stringify(segO.find((t) => t.meta.lane === 'q1.z').y) === '[0.01,0.01]', 'overlay: real samples in Real V');
+    ok(f.layout.xaxis.range[0] === 0 && f.layout.xaxis.autorange === false, 'overlay: time axis from 0');
+    ok(JSON.stringify(ho.timing()) === JSON.stringify([{ a: 'coupler_q1_q2', b: 'q1.z', kind: 'gap', ns: 61, from_ns: 100, to_ns: 161 }]), 'timing: gap 61 ns from the data');
+    const br = f.layout.annotations.filter((a) => a.meta && a.meta.role === 'bracket-label');
+    ok(br.length === 1 && /gap 61 ns/.test(br[0].text) && br[0].font.color !== f.layout.annotations.find((a) => a.meta && a.meta.role === 'guide-label').font.color,
+       'gap bracket labelled, in the warn colour');
+    const guides = f.layout.shapes.filter((s) => s.name === 'guide').map((s) => s.x0);
+    ok(JSON.stringify(guides) === '[0,100,161,261]', 'guides at every gate edge');
+    const gtxt = f.layout.annotations.filter((a) => a.meta && a.meta.role === 'guide-label').map((a) => a.text);
+    ok(['0', '100', '161', '261'].every((t) => gtxt.includes(t)), 'guide times written at the top');
+    ok(ho.laneCount().drawn === 2 && role(f, 'segment').length === 2, 'spectators folded: not drawn');
+    // legend chips
+    const chips = f.layout.annotations.filter((a) => a.meta && a.meta.role === 'legend-chip');
+    ok(chips.length === 2 && chips[0].font.color === GT.laneColor(3) && chips[0].bgcolor === window.PlotTheme.withAlpha(GT.laneColor(3), 0.16) &&
+       chips.every((c) => c.captureevents), 'legend: one clickable chip per gate line in its colour');
+    const ltext = f.layout.annotations.filter((a) => a.meta && a.meta.role === 'legend-text').map((a) => a.text);
+    ok(ltext.includes('level 0.01 V, 100 ns, starts 161 ns') && ltext.includes('level 0.1 V, 100 ns, starts 0 ns'), 'legend text: level, length, start');
+    // hide a line from its chip (the chart's annotation click)
+    await new Promise((res) => setTimeout(res, 10));
+    const plotEl = r.querySelector('[data-gate-timeline-plot]');
+    const clickHs = (plotEl.__handlers || {}).plotly_clickannotation || [];
+    ok(clickHs.length === 1, 'listens to chip clicks');
+    clickHs[0]({ annotation: { meta: chips[1].meta } });
+    f = last();
+    ok(ho.timing().length === 0 && f.layout.shapes.filter((s) => s.name === 'guide').map((s) => s.x0).join() === '0,100' &&
+       f.layout.annotations.filter((a) => a.meta && a.meta.role === 'bracket-label').length === 0 && role(f, 'segment').every((t) => t.meta.lane !== 'q1.z'),
+       'a hidden line leaves the plot, its guides and its bracket');
+    ok(f.layout.annotations.find((a) => a.meta && a.meta.role === 'legend-chip' && a.meta.key === 'q1.z').opacity < 1, 'hidden chip shown faded');
+    ho.setLineHidden('q1.z', false);
+    // Same height: each line scaled to its own largest value; no volt numbers
+    ho.setHeight('same');
+    f = last();
+    const mx = (key) => Math.max(...role(f, 'segment').find((t) => t.meta.lane === key).y.map(Math.abs));
+    ok(mx('q1.z') === 1 && mx('coupler_q1_q2') === 1, 'Same height: 0.01 V and 0.1 V lines equally tall');
+    ok(f.layout.yaxis.showticklabels === false && /normalised/.test(f.layout.yaxis.title.text), 'Same height: the V axis says normalised, no volts');
+    ok(f.layout.annotations.filter((a) => a.meta && a.meta.role === 'legend-text').some((a) => a.text.startsWith('level 0.01 V')), 'Same height: real level still in the chip');
+    ok(role(f, 'hover').find((t) => t.meta.lane === 'q1.z').text[role(f, 'hover').find((t) => t.meta.lane === 'q1.z').x.indexOf(200)] === 'fx: 0.01 V', 'hover reads real volts');
+    ok(f.layout.shapes.every((s) => s.name !== 'limit'), 'Same height: no limit lines');
+    ho.setHeight('real');
+    // toolbar: view first; each view shows its own scale control
+    const bar = r.querySelector('[data-gate-timeline-bar]');
+    ok(bar.firstElementChild.textContent === 'View' && [...bar.querySelectorAll('[aria-label="View"] .ui-segmented-opt')].map((b) => b.textContent).join() === 'Lanes,Overlay',
+       'View control first: Lanes | Overlay');
+    ok(bar.querySelector('[aria-label="Vertical scale"]').hidden && !bar.querySelector('[aria-label="Line height"]').hidden &&
+       [...bar.querySelectorAll('[aria-label="Line height"] .ui-segmented-opt')].map((b) => b.textContent).join() === 'Real V,Same height', 'overlay: Height control replaces V scale');
+    // spectators shown: thin quiet lines, no fill, one chip
+    ho.setFold(false);
+    f = last();
+    const sp = role(f, 'segment').filter((t) => t.meta.lane.startsWith('s'));
+    ok(sp.length === 2 && sp.every((t) => t.line.width === 1 && t.line.color === sp[0].line.color) && !role(f, 'fill').some((t) => t.meta.lane.startsWith('s')),
+       'spectators: thin quiet lines without fill');
+    ok(f.layout.annotations.filter((a) => a.meta && a.meta.role === 'legend-chip').map((a) => a.text).join() === '<b>coupler_q1_q2</b>,<b>q1.z</b>,<b>2 spectators</b>',
+       'one legend chip for the spectator group');
+    ok(f.layout.shapes.filter((s) => s.name === 'guide').length === 4, 'spectator edges get no guides');
+    // back to lanes, unchanged
+    bar.querySelector('[data-view="lanes"]').click();
+    ok(yAxes(last().layout).length === 4 && !bar.querySelector('[aria-label="Vertical scale"]').hidden &&
+       bar.querySelector('[aria-label="Line height"]').hidden && bar.querySelector('[data-height-label]').hidden, 'Lanes view comes back with its own scale control only');
+    ho.destroy();
+
+    // overlap, meet, three lines and more than three
+    const tm = (lanes) => { const h2 = GT.render(host, { lanes, notes: [] }, { view: 'overlay' }); const t = h2.timing(); const fig2 = last(); const note = !!lastRoot().querySelector('[data-overlay-note]'); h2.destroy(); return { t, fig2, note }; };
+    let x = tm([L('a', [sq('p', 0, 100, 0.1)]), L('b', [sq('p', 40, 140, 0.1)])]);
+    ok(JSON.stringify(x.t) === JSON.stringify([{ a: 'a', b: 'b', kind: 'overlap', ns: 60, from_ns: 40, to_ns: 100 }]), 'timing: overlap 60 ns');
+    ok(x.fig2.layout.annotations.some((a) => a.meta && a.meta.role === 'bracket-label' && /overlap 60 ns/.test(a.text)), 'overlap bracket labelled');
+    x = tm([L('a', [sq('p', 0, 100, 0.1)]), L('b', [sq('p', 100, 140, 0.1)])]);
+    ok(x.t.length === 1 && x.t[0].kind === 'meet' && x.t[0].ns === 0 && x.t[0].from_ns === 100, 'timing: touching edges meet, neither gap nor overlap');
+    x = tm([L('a', [sq('p', 0, 10, 0.1)]), L('b', [sq('p', 20, 30, 0.1)]), L('c', [sq('p', 25, 50, 0.1)])]);
+    ok(x.t.length === 3 && x.t.map((p) => p.a + p.b + p.kind + p.ns).join() === 'abgap10,acgap15,bcoverlap5' && !x.note, 'three lines: every pair');
+    x = tm([L('a', [sq('p', 0, 10, 0.1)]), L('b', [sq('p', 20, 30, 0.1)]), L('c', [sq('p', 40, 50, 0.1)]), L('d', [sq('p', 45, 60, 0.1)])]);
+    ok(x.t.length === 3 && x.t.map((p) => p.a + p.b).join() === 'ab,bc,cd' && x.note, 'more than three lines: neighbours in time only, said in a note');
+    // close edges: labels stagger, then share one label
+    x = tm([L('a', [sq('p', 0, 100, 0.1)]), L('b', [sq('p', 101, 102, 0.1)]), L('c', [sq('p', 103, 300, 0.1)])]);
+    const gl = x.fig2.layout.annotations.filter((a) => a.meta && a.meta.role === 'guide-label');
+    const shown = gl.flatMap((a) => a.meta.times);
+    ok([0, 100, 101, 102, 103, 300].every((t) => shown.includes(t)), 'every edge time is written');
+    ok(gl.some((a) => a.meta.row === 1) && gl.some((a) => / \/ /.test(a.text)), 'close edges: a second row, then a shared label');
+}
+
 // sim
 ok(role(fig, 'sim').length === 1 && role(fig, 'sim')[0].yaxis === 'y3' && role(fig, 'sim')[0].line.dash === 'dot', 'sim drawn on its lane, visibly different');
 h.setShowSim(false);
@@ -302,10 +395,10 @@ const plotEl = host.querySelector('[data-gate-timeline-plot]');
 ok(bar.querySelector('label.ui-check[data-spectator-summary]').textContent === 'Show 1 spectator line' &&
    bar.querySelector('input[type=checkbox][data-fold]') && !bar.querySelector('[data-fold]').checked && !host.querySelector('button.btn-sm'),
    'spectator switch is the kit checkbox in the toolbar, unchecked when folded');
-ok([...bar.children].map((n) => n.matches('[data-scale-label]') ? 'label' : n.matches('.ui-segmented') ? 'scale' : n.matches('[data-spectator-summary]') ? 'spect' : n.querySelector('[data-show-sim]') ? 'sim' : '?').join() === 'label,scale,spect,sim',
+ok([...bar.children].map((n) => n.matches('[data-scale-label]') ? 'label' : n.matches('[aria-label="Vertical scale"]') ? 'scale' : n.matches('[data-view-label]') ? 'vlabel' : n.matches('[aria-label="View"]') ? 'view' : n.matches('[data-height-label]') ? 'hlabel' : n.matches('[aria-label="Line height"]') ? 'height' : n.matches('[data-spectator-summary]') ? 'spect' : n.querySelector('[data-show-sim]') ? 'sim' : '?').join() === 'vlabel,view,label,scale,hlabel,height,spect,sim',
    'toolbar order: scale label, scale, spectators, simulation');
 ok(bar.querySelector('[data-scale-label]').textContent === 'V scale' && bar.querySelector('[data-scale-label]').classList.contains('ui-note') &&
-   [...bar.querySelectorAll('.ui-segmented-opt')].map((b) => b.textContent).join('|') === 'Per lane|Shared',
+   [...bar.querySelectorAll('[aria-label="Vertical scale"] .ui-segmented-opt')].map((b) => b.textContent).join('|') === 'Per lane|Shared',
    'scale control: quiet "V scale" label, options Per lane and Shared');
 ok(bar.compareDocumentPosition(plotEl) & 4 && [...plotEl.parentNode.children].slice([...plotEl.parentNode.children].indexOf(plotEl) + 1)
    .every((n) => !n.querySelector('button')), 'below the chart only the notes');
