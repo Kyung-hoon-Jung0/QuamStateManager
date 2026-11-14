@@ -335,7 +335,9 @@ def _z_of(fig):
 def test_chevron_state_moving_and_stationary_values_match_the_dataset(tmp_path):
     run, z1, z2 = _chevron_run(tmp_path)
     for base, z in (("moving_qubit", z1), ("stationary_qubit", z2)):
-        assert np.array_equal(_z_of(_build(run, f"{base}::{PAIR}")), z[0])
+        fig = _build(run, f"{base}::{PAIR}")
+        assert np.array_equal(_z_of(fig), z[0])
+        assert base.split("_")[0] in fig["title"].lower()
 
 
 def test_chevron_with_only_one_role_draws_it_and_says_what_is_missing(tmp_path):
