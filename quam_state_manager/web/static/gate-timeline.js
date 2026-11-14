@@ -28,7 +28,11 @@
     var BAND_PX = 36;          // a two-line segment text band
     var TOP_AXIS_LANES = 6;    // more drawn lanes than this: time ticks at the top too
     var MAX_HOVER_POINTS = 4000;
-    var CHAR_PX = 6.2;         // average width of a 10-11 px character, for fitting text
+    var CHAR_PX = 5.8;         // average width of an 11 px UI-font character, for fitting text
+    var LABEL_PX = 12;         // lane label size; every other chart text is TEXT_PX (kit small text)
+    var TEXT_PX = 11;
+    var TICK_ROOM = 52;        // room for the y tick labels ("-0.05 V") between gutter and plot
+    var FILL_OPACITY = 0.18;
 
     var FLAG_TEXT = {
         over_range: "over the port range",
@@ -55,6 +59,23 @@
             grid: grid,
             muted: cssVar("--pico-muted-color") || text
         };
+    }
+
+    /* A see-through copy of a theme colour for a pulse body: PlotTheme.withAlpha
+       for the forms it reads; any other form is resolved by the browser first. */
+    function faint(col) {
+        var pt = window.PlotTheme || {};
+        var out = pt.withAlpha ? pt.withAlpha(col, FILL_OPACITY) : col;
+        if (out !== col) return out;
+        try {
+            var probe = document.createElement("span");
+            probe.style.setProperty("color", col);
+            document.body.appendChild(probe);
+            var rgb = getComputedStyle(probe).color;
+            probe.remove();
+            out = pt.withAlpha ? pt.withAlpha(rgb, FILL_OPACITY) : rgb;
+        } catch (e) { /* no DOM */ }
+        return out || col;
     }
 
     function el(tag, cls, text) {
@@ -105,13 +126,9 @@
         if (lane.port) lines.push(lane.port);
         var lim = lane.limit_v && num(lane.limit_v[0]) && num(lane.limit_v[1])
             ? "limit " + fmt(lane.limit_v[0]) + " to " + fmt(lane.limit_v[1]) + " V" : "range not known";
-        if (num(lane.offset_v) && lane.offset_v !== 0) lim += ", offset " + fmtV(lane.offset_v);
         lines.push(lim);
+        if (num(lane.offset_v) && lane.offset_v !== 0) lines.push("offset " + fmtV(lane.offset_v));
         return lines;
-    }
-    function laneTitle(lane) {
-        var l = titleLines(lane);
-        return "<b>" + l[0] + "</b><br>" + l.slice(1).join("<br>");
     }
 
     /* Line 2 of a segment's text, from the received samples only. */
@@ -209,16 +226,19 @@
             return b;
         });
         bar.appendChild(seg);
-        var foldText = null, foldBtn = null;
+        // the spectator group: the kit checkbox, unchecked = folded
+        var foldBox = null;
         if (spect.length) {
-            foldText = el("span", "ui-note");
-            foldText.setAttribute("data-spectator-summary", "");
-            foldBtn = el("button", "btn-sm secondary");
-            foldBtn.type = "button";
-            foldBtn.setAttribute("data-fold", "");
-            on(foldBtn, "click", function () { handle.setFold(!state.fold); });
-            bar.appendChild(foldText);
-            bar.appendChild(foldBtn);
+            var flab = el("label", "ui-check");
+            flab.setAttribute("data-spectator-summary", "");
+            foldBox = el("input");
+            foldBox.type = "checkbox";
+            foldBox.setAttribute("data-fold", "");
+            on(foldBox, "change", function () { handle.setFold(!foldBox.checked); });
+            flab.appendChild(foldBox);
+            flab.appendChild(document.createTextNode(
+                "Show " + spect.length + " spectator line" + (spect.length === 1 ? "" : "s")));
+            bar.appendChild(flab);
         }
         var simBox = null;
         if (anySim) {
@@ -277,6 +297,25 @@
             return lo === Infinity ? [0, 1] : [lo, Math.max(hi, lo + 1)];
         }
 
+        function uiFont() {
+            try { return getComputedStyle(document.body).fontFamily || cssVar("--pico-font-family"); }
+            catch (e) { return cssVar("--pico-font-family"); }
+        }
+
+        /* Up to three y ticks: the data's minimum (when below 0), 0 V and its
+           maximum (when above 0); a spectator lane only 0 V and its level. */
+        function laneTicks(lane, spectLane) {
+            var e = dataExtent(lane, state.showSim), vals = [0];
+            if (spectLane) {
+                var lvl = Math.abs(e[0]) > Math.abs(e[1]) ? e[0] : e[1];
+                if (lvl !== 0) vals.push(lvl);
+            } else {
+                if (e[0] < 0) vals.unshift(e[0]);
+                if (e[1] > 0) vals.push(e[1]);
+            }
+            return { tickvals: vals, ticktext: vals.map(fmtV) };
+        }
+
         function figure() {
             var c = theme();
             var drawn = drawnLanes();
@@ -285,14 +324,17 @@
             var plotPx = heights.reduce(function (a, b) { return a + b; }, 0) + Math.max(0, n - 1) * GAP_PX;
             var longest = 0;
             drawn.forEach(function (l) {
-                titleLines(l).forEach(function (s) { longest = Math.max(longest, s.length); });
+                titleLines(l).forEach(function (s, k) {
+                    longest = Math.max(longest, s.length * (k === 0 ? LABEL_PX / TEXT_PX : 1));
+                });
             });
+            var gutter = Math.ceil(longest * CHAR_PX) + 6;
             var topAxis = n > TOP_AXIS_LANES;
-            var margin = { l: Math.ceil(longest * CHAR_PX) + 64, r: 16, t: topAxis ? 34 : 8, b: 40 };
+            var margin = { l: gutter + TICK_ROOM, r: 12, t: topAxis ? 30 : 6, b: 38 };
             var span = spanOf(drawn);
             var widthPx = Math.max(200, ((host.clientWidth || 900) - margin.l - margin.r));
-            var pxPerNs = widthPx / (span[1] - span[0]);
-            var traces = [], shapes = [], annotations = [];
+            var family = uiFont();
+            var traces = [], shapes = [], fixed = [];
             var layout = {
                 margin: margin,
                 height: plotPx + margin.t + margin.b,
@@ -300,15 +342,16 @@
                 hovermode: "x unified",
                 hoversubplots: "axis",
                 hoverdistance: -1,
-                font: { size: 11, color: c.text },
-                xaxis: { title: { text: "time (ns)" }, zeroline: false, anchor: "y" + (n > 1 ? n : ""),
-                         range: span.slice() },
-                shapes: shapes,
-                annotations: annotations
+                font: { family: family, size: TEXT_PX, color: c.text },
+                hoverlabel: { font: { family: family, size: TEXT_PX } },
+                xaxis: { title: { text: "time (ns)", font: { size: TEXT_PX } }, zeroline: false,
+                         anchor: "y" + (n > 1 ? n : ""), range: span.slice(), showgrid: true,
+                         gridcolor: c.grid, tickfont: { size: TEXT_PX } },
+                shapes: shapes
             };
             if (topAxis) {
                 layout.xaxis2 = { overlaying: "x", matches: "x", side: "top", anchor: "y", showgrid: false,
-                                  zeroline: false };
+                                  zeroline: false, tickfont: { size: TEXT_PX } };
                 // an axis with no trace is not drawn: one empty trace carries the top ticks
                 traces.push({ x: span.slice(), y: [null, null], xaxis: "x2", yaxis: "y", type: "scatter",
                               mode: "lines", hoverinfo: "skip", meta: { role: "top-axis" } });
@@ -318,15 +361,14 @@
                 var segs = (lane.segments || []).slice().sort(function (a, b) { return a.start_ns - b.start_ns; });
                 return { segs: segs, bottom: segs.length > 1 };
             });
-            var common = null;
+            var commonExt = null;
             if (state.scale === "common") {
                 var lo = 0, hi = 0;
                 drawn.forEach(function (l) {
                     var e = dataExtent(l, state.showSim);
                     lo = Math.min(lo, e[0]); hi = Math.max(hi, e[1]);
                 });
-                common = bandedRange([lo, hi], Math.min.apply(null, heights), BAND_PX,
-                                     plan.some(function (p) { return p.bottom; }) ? BAND_PX : 0);
+                commonExt = [lo, hi];
             }
             var times = hoverTimes(drawn);
             var y = 0;
@@ -338,19 +380,33 @@
                 var bottom = Math.max(0, 1 - (y + lanePx) / plotPx);
                 y += lanePx + GAP_PX;
                 var spectLane = lane.group === "spectator";
-                var range = common ? common.slice()
-                    : bandedRange(dataExtent(lane, state.showSim), lanePx, BAND_PX, plan[i].bottom ? BAND_PX : 0);
+                // head room for the texts is per lane, in both scales
+                var range = bandedRange(commonExt || dataExtent(lane, state.showSim), lanePx, BAND_PX,
+                                        plan[i].bottom ? BAND_PX : 0);
+                var ticks = laneTicks(lane, spectLane);
+                if (commonExt) ticks = { tickvals: [commonExt[0], 0, commonExt[1]].filter(function (v, k, a) { return a.indexOf(v) === k; }),
+                                         ticktext: null };
+                if (!ticks.ticktext) ticks.ticktext = ticks.tickvals.map(fmtV);
                 layout[axKey] = {
                     domain: [bottom, top], range: range, autorange: false, fixedrange: false,
-                    zeroline: false, gridcolor: c.grid, automargin: false,
-                    ticksuffix: " V", nticks: spectLane ? 2 : 4, tickfont: { size: 10 }
+                    zeroline: false, showgrid: false, automargin: false,
+                    tickmode: "array", tickvals: ticks.tickvals, ticktext: ticks.ticktext,
+                    tickfont: { size: TEXT_PX }
                 };
-                // the lane title, horizontal, in the left margin
-                annotations.push({
-                    xref: "paper", yref: ax + " domain", x: 0, y: 0.5, xanchor: "right", yanchor: "middle",
-                    xshift: -46, align: "right", showarrow: false, text: laneTitle(lane),
-                    font: { size: spectLane ? 9 : 10, color: c.text },
-                    meta: { role: "lane-title", lane: lane.key }
+                // the lane title, left aligned at the chart's left edge, one fact per line
+                var tl = titleLines(lane);
+                var mid = spectLane ? 0.75 : 0.62;
+                fixed.push({
+                    xref: "paper", yref: ax + " domain", x: 0, y: mid, xanchor: "left", yanchor: "bottom",
+                    xshift: -margin.l + 2, align: "left", showarrow: false, text: "<b>" + tl[0] + "</b>",
+                    font: { size: LABEL_PX, color: c.text },
+                    meta: { role: "lane-title", lane: lane.key, lines: tl }
+                });
+                fixed.push({
+                    xref: "paper", yref: ax + " domain", x: 0, y: mid, xanchor: "left", yanchor: "top",
+                    xshift: -margin.l + 2, align: "left", showarrow: false, text: tl.slice(1).join("<br>"),
+                    font: { size: TEXT_PX, color: c.muted },
+                    meta: { role: "lane-facts", lane: lane.key }
                 });
                 // the 0 V line and the lane's limits when they fall inside what is shown
                 shapes.push({ type: "line", name: "zero", xref: "paper", x0: 0, x1: 1, yref: ax, y0: 0, y1: 0,
@@ -362,10 +418,17 @@
                                       line: { color: c.muted, width: 1, dash: "dot" }, opacity: 0.7, layer: "below" });
                     });
                 }
-                var segs = plan[i].segs;
-                segs.forEach(function (s, k) {
+                plan[i].segs.forEach(function (s) {
                     var flagged = (s.flags || []).length > 0;
                     var col = flagged ? c.flag : c.trace;
+                    // the pulse body: filled to 0 V at low opacity, the line on top
+                    traces.push({
+                        x: (s.t_ns || []).slice(), y: (s.v || []).slice(),
+                        xaxis: "x", yaxis: ax, type: "scatter", mode: "lines",
+                        line: { color: col, width: 0, shape: "hv" }, fill: "tozeroy", fillcolor: faint(col),
+                        meta: { role: "fill", lane: lane.key, operation: s.operation, flagged: flagged },
+                        hoverinfo: "skip"
+                    });
                     traces.push({
                         x: (s.t_ns || []).slice(), y: (s.v || []).slice(),
                         xaxis: "x", yaxis: ax, type: "scatter", mode: "lines",
@@ -380,28 +443,12 @@
                         shapes.push({ type: "rect", name: "not-received", xref: "x", x0: ts[ts.length - 1], x1: s.end_ns,
                                       yref: ax + " domain", y0: 0, y1: 1, fillcolor: c.grid, opacity: 0.35,
                                       line: { width: 0 }, layer: "below" });
-                        annotations.push({
+                        fixed.push({
                             xref: "x", yref: ax + " domain", x: (ts[ts.length - 1] + s.end_ns) / 2, y: 0.5,
-                            showarrow: false, text: "not received", font: { size: 10, color: c.muted },
+                            showarrow: false, text: "not received", font: { size: TEXT_PX, color: c.muted },
                             meta: { role: "not-received", lane: lane.key, operation: s.operation }
                         });
                     }
-                    // two-line text at the segment start; several segments alternate rows
-                    var row = plan[i].bottom && k % 2 === 1 ? "bottom" : "top";
-                    var next = segs[k + (plan[i].bottom ? 2 : 1)];
-                    var name = s.operation || "";
-                    if (next) name = shorten(name, Math.max(4, Math.floor((next.start_ns - s.start_ns) * pxPerNs / CHAR_PX) - 1));
-                    var extra = (s.flags || []).map(function (f) { return FLAG_TEXT[f] || f; });
-                    if (s.truncated) extra.push(TRUNCATED_TEXT);
-                    var line2 = levelText(s) + (extra.length ? ", " + extra.join(", ") : "");
-                    annotations.push({
-                        xref: "x", yref: ax + " domain", x: s.start_ns, xanchor: "left", align: "left",
-                        y: row === "top" ? 1 : 0, yanchor: row === "top" ? "top" : "bottom",
-                        showarrow: false, text: name + "<br>" + line2,
-                        font: { size: 10, color: flagged ? c.flag : c.text },
-                        meta: { role: "segment-text", lane: lane.key, operation: s.operation, row: row,
-                                name: name, line2: line2 }
-                    });
                 });
                 if (lane.sim && state.showSim) {
                     traces.push({
@@ -422,8 +469,45 @@
                     hovertemplate: "%{text}<extra>" + (lane.label || lane.key) + "</extra>"
                 });
             });
+
+            /* The segment texts for a visible time range and plot width: two lines
+               at the segment start (or the left edge when the start is scrolled
+               off), alternating rows when a lane has several segments, and a name
+               or line 2 shortened so it ends before the next text in its row. */
+            function labels(xr, w) {
+                var pxPerNs = w / Math.max(1e-9, xr[1] - xr[0]);
+                var out = [];
+                drawn.forEach(function (lane, i) {
+                    var ax = i === 0 ? "y" : "y" + (i + 1);
+                    var segs = plan[i].segs.filter(function (s) { return s.end_ns > xr[0] && s.start_ns < xr[1]; });
+                    segs.forEach(function (s, k) {
+                        var flagged = (s.flags || []).length > 0;
+                        var row = plan[i].bottom && k % 2 === 1 ? "bottom" : "top";
+                        var x0 = Math.max(s.start_ns, xr[0]);
+                        var next = segs[k + (plan[i].bottom ? 2 : 1)];
+                        var stop = next ? Math.max(next.start_ns, xr[0]) : xr[1];
+                        var room = Math.max(4, Math.floor((stop - x0) * pxPerNs / CHAR_PX) - 1);
+                        var extra = (s.flags || []).map(function (f) { return FLAG_TEXT[f] || f; });
+                        if (s.truncated) extra.push(TRUNCATED_TEXT);
+                        var line2 = levelText(s) + (extra.length ? ", " + extra.join(", ") : "");
+                        var name = shorten(s.operation || "", room);
+                        var l2 = line2.length > room ? line2.slice(0, Math.max(3, room - 1)) + "…" : line2;
+                        out.push({
+                            xref: "x", yref: ax + " domain", x: x0, xanchor: "left", align: "left",
+                            y: row === "top" ? 1 : 0, yanchor: row === "top" ? "top" : "bottom",
+                            showarrow: false, text: name + "<br>" + l2,
+                            font: { size: TEXT_PX, color: flagged ? c.flag : c.text },
+                            meta: { role: "segment-text", lane: lane.key, operation: s.operation, row: row,
+                                    name: name, line2: line2, shown2: l2 }
+                        });
+                    });
+                });
+                return out;
+            }
+            layout.annotations = fixed.concat(labels(span, widthPx));
             if (window.PlotTheme && window.PlotTheme.houseLayout) layout = window.PlotTheme.houseLayout(layout);
-            return { data: traces, layout: layout, drawn: drawn };
+            return { data: traces, layout: layout, drawn: drawn, fixedAnnotations: fixed, labels: labels,
+                     span: span, widthPx: widthPx };
         }
 
         var lastFigure = null;
@@ -435,16 +519,33 @@
                 b.setAttribute("aria-pressed", onNow ? "true" : "false");
             });
             if (simBox) simBox.checked = state.showSim;
-            if (foldBtn) {
-                foldText.textContent = spect.length + " spectator line" + (spect.length === 1 ? "" : "s");
-                foldBtn.textContent = state.fold ? "Show" : "Hide";
-                foldBtn.setAttribute("aria-expanded", state.fold ? "false" : "true");
-            }
+            if (foldBox) foldBox.checked = !state.fold;
             lastFigure = figure();
             if (window._plotlyRender) {
-                window._plotlyRender(plot, lastFigure.data, lastFigure.layout,
+                var p = window._plotlyRender(plot, lastFigure.data, lastFigure.layout,
                     { displayModeBar: false, responsive: true });
+                if (p && p.then) p.then(bindRelayout);
             }
+        }
+
+        /* Zoom, pan and resize: re-fit the segment texts to the real plot width
+           and the visible time range, so names and rows never collide. */
+        var relayoutBound = false;
+        function onRelayout(ev) {
+            if (destroyed || !lastFigure || !ev) return;
+            var keys = Object.keys(ev);
+            if (!keys.some(function (k) { return /^xaxis|^width$|^autosize$/.test(k); })) return;
+            var fl = plot._fullLayout;
+            var xr = fl && fl.xaxis && fl.xaxis.range ? fl.xaxis.range.slice() : lastFigure.span;
+            var w = fl && fl.xaxis && fl.xaxis._length ? fl.xaxis._length : lastFigure.widthPx;
+            var anns = lastFigure.fixedAnnotations.concat(lastFigure.labels(xr, w));
+            lastFigure.layout.annotations = anns;
+            if (window.Plotly && window.Plotly.relayout) window.Plotly.relayout(plot, { annotations: anns });
+        }
+        function bindRelayout() {
+            if (relayoutBound || destroyed || typeof plot.on !== "function") return;
+            plot.on("plotly_relayout", onRelayout);
+            relayoutBound = true;
         }
 
         var handle = {
@@ -453,6 +554,10 @@
                 destroyed = true;
                 listeners.forEach(function (x) { x[0].removeEventListener(x[1], x[2]); });
                 listeners = [];
+                if (relayoutBound && typeof plot.removeListener === "function") {
+                    plot.removeListener("plotly_relayout", onRelayout);
+                }
+                relayoutBound = false;
                 if (window.PlotHost) {
                     try { window.PlotHost.unobserve(root); } catch (e) { /* not observed */ }
                     try { window.PlotHost.purgeWithin(root); } catch (e) { /* no plot */ }
@@ -469,7 +574,8 @@
             laneCount: function () {
                 return { gate: gate.length, spectator: spect.length, drawn: drawnLanes().length };
             },
-            figure: function () { return lastFigure; }
+            figure: function () { return lastFigure; },
+            relayout: onRelayout
         };
         draw();
         if (window.PlotHost) { try { window.PlotHost.observe(root); } catch (e) { /* no observer */ } }

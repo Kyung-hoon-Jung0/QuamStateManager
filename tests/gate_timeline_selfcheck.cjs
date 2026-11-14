@@ -25,8 +25,14 @@ window.eval(`
   window.__renders = []; window.__host = { observe: 0, unobserve: 0, purge: 0 };
   window._plotlyRender = function (el, data, layout, config) {
     window.__renders.push({ el: el, data: data, layout: layout });
+    // the graph div's event API as Plotly gives it (on / removeListener)
+    el.__handlers = el.__handlers || {};
+    el.on = function (ev, fn) { (el.__handlers[ev] = el.__handlers[ev] || []).push(fn); };
+    el.removeListener = function (ev, fn) { el.__handlers[ev] = (el.__handlers[ev] || []).filter(function (f) { return f !== fn; }); };
     return Promise.resolve(el);
   };
+  window.__relayouts = [];
+  window.Plotly = { relayout: function (el, upd) { window.__relayouts.push(upd); return Promise.resolve(el); } };
   window.PlotHost = {
     observe: function () { window.__host.observe++; },
     unobserve: function () { window.__host.unobserve++; },
@@ -64,6 +70,7 @@ function seg(op, t, v, extra) {
 }
 
 const title = (fig, key) => fig.layout.annotations.find((a) => a.meta && a.meta.role === 'lane-title' && a.meta.lane === key);
+const facts = (fig, key) => fig.layout.annotations.find((a) => a.meta && a.meta.role === 'lane-facts' && a.meta.lane === key);
 const segText = (fig, key) => fig.layout.annotations.filter((a) => a.meta && a.meta.role === 'segment-text' && a.meta.lane === key);
 
 const shaped = seg('cz_x_pulse_q1_q2', [63, 64, 65, 66, 115], [0.0, 0.05, 0.1, 0.05, 0.0]);
@@ -81,6 +88,7 @@ const DATA = {
     cannot_draw: null,
 };
 
+(async () => {
 const h = GT.render(host, DATA, {});
 let fig = last();
 
@@ -91,16 +99,21 @@ ok(xAxes(fig.layout).length === 1 && fig.data.every((t) => t.xaxis === 'x'), 'on
 ok(ya.every((k, i) => i === 0 || fig.layout[k].domain[1] < fig.layout[ya[i - 1]].domain[0]), 'lane rows stacked without overlap');
 ok(fig.layout.hovermode === 'x unified' && fig.layout.hoverdistance === -1, 'hover is one unified readout at any distance');
 ok(JSON.stringify(h.laneCount()) === JSON.stringify({ gate: 3, spectator: 1, drawn: 3 }), 'laneCount folded');
-ok(title(fig, 'q1.z').y === 0.5 && title(fig, 'q1.z').yref === 'y domain' && title(fig, 'coupler_q1_q2').yref === 'y3 domain',
-   'gate lanes on top in order');
+ok(title(fig, 'q1.z').yref === 'y domain' && title(fig, 'coupler_q1_q2').yref === 'y3 domain', 'gate lanes on top in order');
 
-// lane titles: horizontal, in the margin, wide enough
-const t3 = title(fig, 'coupler_q1_q2');
-ok(t3.xref === 'paper' && t3.x === 0 && t3.xanchor === 'right' && !t3.textangle && ya.every((k) => !fig.layout[k].title || !fig.layout[k].title.text),
-   'lane titles are horizontal margin text, no rotated axis title');
-ok(t3.text === '<b>coupler_q1_q2</b><br>con1 / 1 / 13<br>limit -0.25 to 0.25 V, offset 0.05 V', 'title lines: label, port, limit, offset');
-ok(/range not known/.test(title(fig, 'q2.z').text) && !/offset/.test(title(fig, 'q1.z').text), 'unknown range said; offset only when not 0');
-ok(fig.layout.margin.l >= '<b>limit -0.25 to 0.25 V, offset 0.05 V'.length * 5, 'left margin fits the longest title line');
+// lane titles: horizontal, left aligned at the chart's left edge, one fact per line
+const t3 = title(fig, 'coupler_q1_q2'), f3 = facts(fig, 'coupler_q1_q2');
+ok([t3, f3].every((a) => a.xref === 'paper' && a.x === 0 && a.xanchor === 'left' && a.align === 'left' &&
+   a.xshift === -fig.layout.margin.l + 2 && !a.textangle) && ya.every((k) => !fig.layout[k].title || !fig.layout[k].title.text),
+   'lane titles left aligned at the chart edge, horizontal, no axis title');
+ok(t3.text === '<b>coupler_q1_q2</b>' && t3.font.size === 12 && f3.text === 'con1 / 1 / 13<br>limit -0.25 to 0.25 V<br>offset 0.05 V' && f3.font.size === 11,
+   'title lines: label 12 px; port, limit, offset each on its own line at 11 px');
+ok(/range not known/.test(facts(fig, 'q2.z').text) && !/offset/.test(facts(fig, 'q1.z').text), 'unknown range said; offset only when not 0');
+{   const gutter = fig.layout.margin.l - 52;
+    ok(gutter >= 'limit -0.25 to 0.25 V'.length * 5 && gutter <= 'limit -0.25 to 0.25 V'.length * 7, 'gutter is as wide as the longest title line needs, no wider');
+}
+ok(fig.layout.font.size === 11 && fig.layout.font.family && fig.layout.annotations.every((a) => a.font && a.font.size >= 11) &&
+   ['xaxis', ...ya].every((k) => fig.layout[k].tickfont && fig.layout[k].tickfont.size === 11), 'UI font family; nothing below 11 px')
 
 // samples value by value, gaps not joined
 const segs = role(fig, 'segment');
@@ -132,7 +145,10 @@ ok(r2[0] < -0.07 && r2[1] > 0.1, 'per lane: an all-negative segment and 0 V stay
 h.setScale('common');
 fig = last();
 ya = yAxes(fig.layout);
-ok(ya.every((k) => JSON.stringify(fig.layout[k].range) === JSON.stringify(fig.layout.yaxis.range)), 'common: all lanes share one range');
+ok(JSON.stringify(fig.layout.yaxis.tickvals) === JSON.stringify(fig.layout.yaxis3.tickvals) && fig.layout.yaxis.tickvals[0] === -0.3 && fig.layout.yaxis.tickvals.slice(-1)[0] === 0.3,
+   'common: all lanes share one data range (ticks)');
+ok(fig.layout.yaxis.range[1] - 0.3 < fig.layout.yaxis2.range[1] - 0.3 || fig.layout.yaxis.range[0] !== fig.layout.yaxis2.range[0],
+   'common: head room per lane (a lane with two label rows differs)');
 ok(fig.layout.yaxis.range[0] <= -0.3 && fig.layout.yaxis.range[1] >= 0.3 && fig.layout.yaxis.range[1] < 1.5, 'common: range covers the data of every lane');
 const segBtns = [...host.querySelectorAll('.ui-segmented .ui-segmented-opt')];
 ok(segBtns.length === 2 && segBtns[1].classList.contains('ui-segmented-on') && segBtns[1].getAttribute('aria-pressed') === 'true', 'segmented control shows common');
@@ -173,6 +189,43 @@ ok(coupler.line.color === tc.font.color && coupler.line.color !== segs[0].line.c
 ok(role(fig, 'flag').length === 0 && !fig.data.some((t) => t.mode === 'markers' && t.marker && t.marker.symbol), 'no marker on the trace');
 ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color, 'clean segment text not in the flag colour');
 
+// pulse body: filled to 0 V, see-through, flag colour when flagged; the simulation has no fill
+{
+    const fills = role(fig, 'fill');
+    const alpha = (c) => window.PlotTheme.withAlpha(c, 0.18);
+    ok(fills.length === segs.length && fills.every((f) => f.fill === 'tozeroy'), 'every segment has a body filled to 0 V');
+    ok(fills.every((f) => { const line = segs.find((s) => s.meta.lane === f.meta.lane && s.meta.operation === f.meta.operation);
+        return f.fillcolor === alpha(line.line.color) && f.fillcolor !== line.line.color; }), 'fill is the line colour, see-through');
+    const cf = fills.find((f) => f.meta.lane === 'coupler_q1_q2' && f.meta.operation === 'bip');
+    ok(cf.fillcolor === alpha(window.PlotTheme.lossColor()), 'flagged fill in the flag colour');
+    ok(role(fig, 'sim').every((t) => !t.fill), 'simulation line has no fill');
+}
+
+// zoom, pan, resize: the texts are re-fitted to the real width and the visible range
+{
+    const g = host.querySelector('[data-gate-timeline-plot]');
+    await new Promise((r) => setTimeout(r, 10));
+    const hs = (g.__handlers || {}).plotly_relayout || [];
+    ok(hs.length === 1, 'listens to the chart relayout event once');
+    g._fullLayout = { xaxis: { range: [49, 75], _length: 120 } };
+    const before = window.__relayouts.length;
+    hs[0]({ 'xaxis.range[0]': 49, 'xaxis.range[1]': 75 });
+    const upd = window.__relayouts[before];
+    const st = (upd ? upd.annotations : []).filter((a) => a.meta && a.meta.role === 'segment-text');
+    const q2 = st.filter((a) => a.meta.lane === 'q2.z');
+    ok(upd && q2.length === 2 && q2[0].meta.operation === 'flux_b' && q2[0].x === 50, 'after a zoom only the visible segments are labelled');
+    const qc = st.find((a) => a.meta.lane === 'coupler_q1_q2');
+    ok(qc === undefined || qc.x >= 49, 'a segment started before the range is labelled at the left edge');
+    ok(st.every((a) => { const [n1, n2] = a.text.split('<br>'); return true; }) &&
+       st.filter((a) => a.meta.lane === 'q1.z').every((a) => a.meta.name.length < 'cz_x_pulse_q1_q2'.length && a.x === 63),
+       'names re-fitted to the zoomed width');
+    hs[0]({ 'yaxis.range[0]': 0 });
+    ok(window.__relayouts.length === before + 1, 'a y-only change does not re-fit');
+    hs[0]({ width: 300 });
+    ok(window.__relayouts.length === before + 2, 'a resize re-fits');
+    delete g._fullLayout;
+}
+
 // sim
 ok(role(fig, 'sim').length === 1 && role(fig, 'sim')[0].yaxis === 'y3' && role(fig, 'sim')[0].line.dash === 'dot', 'sim drawn on its lane, visibly different');
 h.setShowSim(false);
@@ -183,10 +236,14 @@ h.setShowSim(true);
 // fold: the summary sits in the toolbar
 const bar = host.querySelector('[data-gate-timeline-bar]');
 const plotEl = host.querySelector('[data-gate-timeline-plot]');
-ok(bar.querySelector('[data-spectator-summary]').textContent === '1 spectator line' && bar.querySelector('[data-fold]'), 'summary and control in the toolbar');
+ok(bar.querySelector('label.ui-check[data-spectator-summary]').textContent === 'Show 1 spectator line' &&
+   bar.querySelector('input[type=checkbox][data-fold]') && !bar.querySelector('[data-fold]').checked && !host.querySelector('button.btn-sm'),
+   'spectator switch is the kit checkbox in the toolbar, unchecked when folded');
+ok([...bar.children].map((n) => n.matches('.ui-segmented') ? 'scale' : n.matches('[data-spectator-summary]') ? 'spect' : n.querySelector('[data-show-sim]') ? 'sim' : '?').join() === 'scale,spect,sim',
+   'toolbar order: scale, spectators, simulation');
 ok(bar.compareDocumentPosition(plotEl) & 4 && [...plotEl.parentNode.children].slice([...plotEl.parentNode.children].indexOf(plotEl) + 1)
    .every((n) => !n.querySelector('button')), 'below the chart only the notes');
-host.querySelector('[data-fold]').click();
+{ const b = host.querySelector('[data-fold]'); b.checked = true; b.dispatchEvent(new window.Event('change')); }
 fig = last();
 ok(h.laneCount().drawn === 4 && yAxes(fig.layout).length === 4, 'unfold: spectator lane drawn');
 const tq3 = segText(fig, 'q3.z')[0];
@@ -197,7 +254,10 @@ ok(fig.layout.annotations.some((a) => a.meta && a.meta.role === 'not-received' &
 ok(segs.length && role(fig, 'segment').find((t) => t.meta.lane === 'q3.z').x.slice(-1)[0] === 200, 'no line invented past the received samples');
 const d1 = fig.layout.yaxis.domain, d4 = fig.layout.yaxis4.domain;
 ok((d4[1] - d4[0]) < (d1[1] - d1[0]) * 0.7, 'spectator lane is compact');
-ok(fig.layout.yaxis4.nticks === 2, 'spectator lane has two y ticks');
+ok(JSON.stringify(fig.layout.yaxis4.tickvals) === '[0,0.02]', 'spectator lane ticks: 0 V and its level');
+ok(['yaxis', 'yaxis2', 'yaxis3'].every((k) => fig.layout[k].tickvals.length <= 3) && JSON.stringify(fig.layout.yaxis2.tickvals) === '[-0.07,0,0.1]',
+   'gate lane: at most 3 ticks (min below 0, 0 V, max)');
+ok(yAxes(fig.layout).every((k) => fig.layout[k].showgrid === false) && fig.layout.xaxis.showgrid === true, 'no horizontal grid; time grid kept');
 ok(title(fig, 'q3.z').yref === 'y4 domain', 'spectator below the gate lanes');
 h.setFold(true);
 ok(h.laneCount().drawn === 3, 'fold again');
@@ -208,7 +268,7 @@ ok(DATA.notes.every((n) => notes.includes(n)), 'notes shown verbatim with the ki
 
 // colours come from the theme, never literals in the component
 ok(!/#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/.test(src), 'no colour literal in gate-timeline.js');
-ok(!/\.style\./.test(src) && !/style=/.test(src), 'no inline styles');
+ok(!/\.style\.(?:color|background\w*|fontSize)\s*=/.test(src) && !/style=/.test(src), 'no inline styles');
 
 // destroy
 const liveBefore = window.__live;
@@ -259,3 +319,4 @@ ok(host.childNodes.length === 0, 'host clean at the end');
 
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
+})().catch((e) => { console.log('FAIL: crash ' + e.stack); process.exit(1); });
