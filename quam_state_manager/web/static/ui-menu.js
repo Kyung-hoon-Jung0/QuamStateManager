@@ -117,7 +117,7 @@
     });
 
     // Toolbar: Left / Right / Home / End move focus between its controls
-    // (role=toolbar); a text field or a select keeps its own arrow keys.
+    // (role=toolbar); a text field, a select or a radio keeps its own arrow keys.
     function tbItems(tb) {
         return Array.prototype.filter.call(tb.querySelectorAll("button, select, input, [tabindex]"), function (n) {
             if (n.disabled || n.closest(".ui-menu-list") || n.getAttribute("tabindex") === "-1") return false;
@@ -131,7 +131,7 @@
         var tb = t && t.closest ? t.closest(".ui-toolbar") : null;
         if (!tb || t.closest(".ui-menu-list")) return;
         var tag = t.tagName;
-        if (tag === "SELECT" || (tag === "INPUT" && t.type !== "checkbox" && t.type !== "radio")) return;
+        if (tag === "SELECT" || (tag === "INPUT" && t.type !== "checkbox")) return;   // text fields, selects and radios keep their own arrow keys
         var items = tbItems(tb), i = items.indexOf(t);
         if (i < 0) return;
         e.preventDefault();

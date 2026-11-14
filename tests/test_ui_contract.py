@@ -794,8 +794,8 @@ def measure_script_controls():
         if p.name.endswith(".min.js"):
             continue
         t = _read(p)
-        n = len(re.findall(r"createElement\(\s*[\"']select[\"']\s*\)", t))
-        for m in re.finditer(r"<(select|input)\b([^<>]*)>", t):
+        n = len(re.findall(r"createElement\(\s*[\"'](?:select|input|textarea)[\"']\s*\)", t))
+        for m in re.finditer(r"<(select|input|textarea)\b([^<>]*)>", t):
             if m.group(1) == "input":
                 tm = re.search(r"\btype=\\?[\"']([^\"'\\]*)", m.group(2))
                 if (tm.group(1).lower() if tm else "") not in _TEXT_INPUT_TYPES:
@@ -815,6 +815,20 @@ def test_2d_no_new_bare_select_or_input_built_in_scripts():
 
 
 
+# A line colour closer than this (Euclidean RGB, 0-255 per channel) to a state
+# tone reads as that state. ~40 is about one step of a hue ramp.
+_LINE_STATE_MIN_DIST = 40
+_LINE_STATE_KNOWN = {
+    ("light", 5), ("dark", 5),  # line 5 = palette 5 (yellow), 22 / 29 from the warning border: last-but-one on purpose
+    ("light", 6), ("dark", 6),  # line 6 = palette 2 (amber), 39 / 37 from the warning border: last on purpose
+    ("qm", 5),                  # QM theme: palette 5 IS the warning text and border colour (distance 0); fix in the palette
+}
+
+
+def _rgb_dist(a, b):
+    return sum((float(x) - float(y)) ** 2 for x, y in zip(a[:3], b[:3])) ** 0.5
+
+
 def test_7h_line_colours_are_not_state_colours():
     states = ("--ui-ok-text", "--ui-ok-border", "--ui-warn-text", "--ui-warn-border", "--ui-danger-text", "--ui-danger-border")
     for t in THEMES:
@@ -825,9 +839,11 @@ def test_7h_line_colours_are_not_state_colours():
             c = _over(_resolve(f"var(--ui-line-{n})", env), page)
             # known (2026-11-14): in the QM theme plot-colorway-5 IS the warning text colour;
             # line 5 is rarely used and aliases may not add colours; fix in the theme palette.
-            if (t, n) in {("qm", 5)}:
+            if (t, n) in _LINE_STATE_KNOWN:
                 continue
             assert c not in tones, f"{t}: --ui-line-{n} equals a state tone"
+            near = [x for x in tones if _rgb_dist(c, x) < _LINE_STATE_MIN_DIST]
+            assert not near, f"{t}: --ui-line-{n} is within {_LINE_STATE_MIN_DIST} (RGB distance) of a state tone {near}"
         firsts = [_resolve(f"var(--ui-line-{n})", env) for n in (1, 2, 3)]
         assert len(set(map(tuple, firsts))) == 3, f"{t}: lines 1-3 are distinct"
 

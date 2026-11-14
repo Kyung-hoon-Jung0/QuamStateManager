@@ -149,10 +149,10 @@
         t.appendChild(tb);
         return t;
     }
-    function segmented(options, label) {
+    function segmented(options, label, labelledby) {
         var g = el("div", "ui-segmented");
         g.setAttribute("role", "group");
-        g.setAttribute("aria-label", label);
+        if (labelledby) g.setAttribute("aria-labelledby", labelledby); else g.setAttribute("aria-label", label);
         (options || []).forEach(function (o) {
             var b = el("button", "ui-segmented-opt" + (o.selected ? " ui-segmented-on" : ""), o.label);
             b.type = "button";
@@ -168,6 +168,7 @@
         if (o.name) s.setAttribute("name", o.name);
         if (o.label) s.setAttribute("aria-label", o.label);
         if (o.invalid) s.setAttribute("aria-invalid", "true");
+        if (o.describedby) s.setAttribute("aria-describedby", o.describedby);
         if (o.disabled) s.setAttribute("disabled", "");
         (o.options || []).forEach(function (x) {
             var obj = isObj(x), v = obj ? x.value : x;
@@ -189,6 +190,7 @@
         if (o.placeholder) i.setAttribute("placeholder", o.placeholder);
         if (o.label) i.setAttribute("aria-label", o.label);
         if (o.invalid) i.setAttribute("aria-invalid", "true");
+        if (o.describedby) i.setAttribute("aria-describedby", o.describedby);
         if (o.disabled) i.setAttribute("disabled", "");
         if (!o.unit) return i;
         var w = el("span", "ui-input-unit" + (o.block ? " ui-input-unit--block" : "") + (o.invalid ? " ui-input-unit--invalid" : "") + (o.disabled ? " ui-input-unit--disabled" : ""));
@@ -196,22 +198,39 @@
         w.appendChild(el("span", "ui-input-unit-text", o.unit));
         return w;
     }
+    var uidN = 0;
+    function uid(prefix) { uidN += 1; return (prefix || "ui") + "-js" + uidN; }
+    function validId(v) {
+        if (typeof v !== "string" || !v || /\s/.test(v)) throw new Error("ui menu id must be a non-empty string without whitespace: " + JSON.stringify(v));
+    }
     function field(o) {
-        // With a control id: <div> + <label for>; without: the field is the <label>.
-        var id = o.control && o.control.id, w = !id, inner = w ? "span" : "div";
-        var f = el(w ? "label" : "div", "ui-field" + (o.inline ? " ui-field--inline" : ""));
-        var h = el(inner, "ui-field-head");
-        var l = el(w ? "span" : "label", "ui-field-label", o.label);
-        if (id) l.setAttribute("for", id);
+        // Every field has an id; a single control is named by <label for> and
+        // described by hint + error; a group is named by the label text.
+        var c = o.control || {};
+        var fid = c.id || uid("uif");
+        var group = c.part === "segmented" || c.part === "menu" || c.part === "toolbar";
+        var desc = [o.hint ? fid + "-hint" : null, o.error ? fid + "-error" : null].filter(Boolean).join(" ");
+        var f = el("div", "ui-field" + (o.inline ? " ui-field--inline" : ""));
+        var h = el("div", "ui-field-head");
+        var l;
+        if (group) { l = el("span", "ui-field-label", o.label); l.id = fid + "-flabel"; }
+        else { l = el("label", "ui-field-label", o.label); l.setAttribute("for", fid); }
         h.appendChild(l);
         if (o.source) h.appendChild(badge(o.source.text, o.source.tone));
         f.appendChild(h);
-        add(f, render(o.control));
-        if (o.hint) f.appendChild(el(w ? "span" : "p", "ui-field-hint", o.hint));
-        if (o.error) { var e = el(w ? "span" : "p", "ui-field-error", o.error); e.setAttribute("role", "alert"); f.appendChild(e); }
+        var lb = fid + "-flabel", ctl;
+        if (c.part === "segmented") ctl = segmented(c.options, c.label || o.label, lb);
+        else if (c.part === "toolbar") ctl = toolbar(c.items, c.label || o.label, lb);
+        else if (c.part === "menu") ctl = menu(Object.assign({}, c, { id: fid, label: c.label || o.label, labelledby: lb }));
+        else if (c.part === "select" || c.part === "input") ctl = render(Object.assign({}, c, { id: fid, label: null, describedby: desc || null }));
+        else ctl = render(c);
+        add(f, ctl);
+        if (o.hint) { var hn = el("p", "ui-field-hint", o.hint); hn.id = fid + "-hint"; f.appendChild(hn); }
+        if (o.error) { var e = el("p", "ui-field-error", o.error); e.id = fid + "-error"; e.setAttribute("role", "alert"); f.appendChild(e); }
         return f;
     }
     function menu(o) {
+        validId(o.id);
         var pick = o.kind !== "action";
         var items = o.items || [];
         var title = null;
@@ -227,10 +246,12 @@
         t.setAttribute("aria-expanded", "false");
         t.setAttribute("aria-controls", o.id + "-list");
         if (pick) {
-            t.setAttribute("aria-labelledby", o.id + "-label " + o.id + "-value");
-            var sl = el("span", "ui-sr", o.label);
-            sl.id = o.id + "-label";
-            t.appendChild(sl);
+            t.setAttribute("aria-labelledby", (o.labelledby || o.id + "-label") + " " + o.id + "-value");
+            if (!o.labelledby) {
+                var sl = el("span", "ui-sr", o.label);
+                sl.id = o.id + "-label";
+                t.appendChild(sl);
+            }
             var sv = el("span", "ui-menu-value" + (title === null ? " ui-menu-placeholder" : ""), title === null ? (o.placeholder || "Choose") : title);
             sv.id = o.id + "-value";
             t.appendChild(sv);
@@ -260,10 +281,10 @@
         root.appendChild(list);
         return root;
     }
-    function toolbar(items, label) {
+    function toolbar(items, label, labelledby) {
         var n = el("div", "ui-toolbar");
         n.setAttribute("role", "toolbar");
-        n.setAttribute("aria-label", label);
+        if (labelledby) n.setAttribute("aria-labelledby", labelledby); else n.setAttribute("aria-label", label);
         (items || []).forEach(function (s) {
             if (s.part === "toolbar-sep" || s.part === "toolbar-spacer") {
                 var x = el("span", s.part === "toolbar-sep" ? "ui-toolbar-sep" : "ui-toolbar-spacer");
@@ -455,8 +476,8 @@
                 slot.textContent = "";
                 add(slot, render(s));
                 // The template side already holds these ids: keep the page's ids unique.
-                Array.prototype.forEach.call(slot.querySelectorAll("[id], [for], [aria-controls], [aria-labelledby]"), function (x) {
-                    ["id", "for", "aria-controls", "aria-labelledby"].forEach(function (a) {
+                Array.prototype.forEach.call(slot.querySelectorAll("[id], [for], [aria-controls], [aria-labelledby], [aria-describedby]"), function (x) {
+                    ["id", "for", "aria-controls", "aria-labelledby", "aria-describedby"].forEach(function (a) {
                         if (x.hasAttribute(a)) x.setAttribute(a, x.getAttribute(a).split(" ").map(function (v) { return v + "-js"; }).join(" "));
                     });
                 });

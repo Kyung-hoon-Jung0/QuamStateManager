@@ -182,6 +182,41 @@ ok(act_() === tbb[0], "toolbar: Home, then ArrowLeft stays on the first");
 tbb[2].focus(); key("ArrowRight");
 ok(act_() === tbb[2], "toolbar: a select keeps its own arrow keys");
 
+// a radio inside a toolbar keeps its own arrow keys
+const rtb = window.UI.toolbar([{ part: "button", label: "A", cls: "btn-sm" }], "Radios");
+["r1", "r2"].forEach((v) => { const i = doc.createElement("input"); i.type = "radio"; i.name = "rg"; i.value = v; rtb.appendChild(i); });
+host.appendChild(rtb);
+const r1 = rtb.querySelector('input[value="r1"]');
+r1.focus();
+const ev = new window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true });
+r1.dispatchEvent(ev);
+ok(!ev.defaultPrevented && act_() === r1, "toolbar: a radio keeps its own arrow keys (the toolbar does not take ArrowRight)");
+
+// a field without a control id: generated id, label for, described by hint + error
+const f1 = window.UI.field({ label: "Amplitude", hint: "Volts at the port", error: "Too high", control: { part: "input", num: true, value: "3" } });
+host.appendChild(f1);
+const inp = f1.querySelector("input"), lab = f1.querySelector("label.ui-field-label");
+ok(inp.id && lab.getAttribute("for") === inp.id && !inp.hasAttribute("aria-label"), "field without id: the input gets an id and <label for> names it");
+const desc = (inp.getAttribute("aria-describedby") || "").split(" ").map((i) => doc.getElementById(i) && doc.getElementById(i).textContent);
+ok(desc.join("|") === "Volts at the port|Too high" && !lab.contains(f1.querySelector(".ui-field-hint")), "hint and error describe the input; they are not in its label");
+ok(lab.control === inp, "the label's control is the input (a label click focuses it in a browser)");
+// a group control: named by the label text, a click on it does nothing
+const f2 = window.UI.field({ label: "Pair", control: { part: "menu", items: PAIRS } });
+host.appendChild(f2);
+const mt = f2.querySelector(".ui-menu-trigger"), ltext = f2.querySelector(".ui-field-label");
+ok(ltext.tagName === "SPAN" && !f2.querySelector("label"), "group field: the label is text, not a <label>");
+const mname = mt.getAttribute("aria-labelledby").split(" ").map((i) => doc.getElementById(i) && doc.getElementById(i).textContent);
+ok(mname[0] === "Pair", "the menu's name starts with the field label: " + mname.join(" "));
+ltext.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true }));
+ok(mt.getAttribute("aria-expanded") === "false", "a click on the label text does not open the menu");
+const f3 = window.UI.field({ label: "Shape", control: { part: "segmented", options: [{ label: "A" }, { label: "B" }] } });
+const sg = f3.querySelector(".ui-segmented");
+ok(sg.getAttribute("aria-labelledby") === f3.querySelector(".ui-field-label").id && !sg.hasAttribute("aria-label"), "a segmented field is named by the label text");
+// ids with whitespace are refused
+let threw = "";
+try { window.UI.menu({ id: "a b", label: "X", items: [] }); } catch (e) { threw = e.message; }
+ok(threw === 'ui menu id must be a non-empty string without whitespace: "a b"', "a menu id with whitespace is refused: " + threw);
+
 // no inline handlers in what UI.menu builds
 ok(![...host.querySelectorAll("*")].some((n) => [...n.attributes].some((a) => a.name.startsWith("on"))), "no inline on* handlers");
 

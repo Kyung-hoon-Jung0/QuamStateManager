@@ -760,6 +760,16 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # highlighted while both values were NaN.
     from quam_state_manager.core.differ import compare_equal as _cmp_equal
     app.jinja_env.globals["cmp_equal"] = _cmp_equal
+    # docs/308 4b: kit field ids (unique per process) and the menu id guard
+    import itertools as _itertools
+    _ui_ids = _itertools.count(1)
+    app.jinja_env.globals["ui_uid"] = lambda prefix="ui": f"{prefix}-{next(_ui_ids)}"
+
+    def _ui_valid_id(v):
+        if not isinstance(v, str) or not v or any(c.isspace() for c in v):
+            raise ValueError("ui menu id must be a non-empty string without whitespace: " + repr(v))
+        return ""
+    app.jinja_env.globals["ui_valid_id"] = _ui_valid_id
     # S10 C7: old -> new, unused snapshot template globals are retired.
     # `json_attr_safe` — may this value ride a data-value JSON attribute for
     # the per-value take? json.dumps emits bare NaN/Infinity (not JSON), so a

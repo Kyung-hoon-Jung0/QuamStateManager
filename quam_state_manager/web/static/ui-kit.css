@@ -951,7 +951,7 @@
 .ui-input--num.ui-input--num { width: var(--ui-input-num-w); text-align: right; font-family: var(--ui-font-mono); font-variant-numeric: tabular-nums; -moz-appearance: textfield; }
 .ui-input--num::-webkit-inner-spin-button, .ui-input--num::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .ui-select--block.ui-select--block, .ui-input--block.ui-input--block { display: block; width: 100%; }
-.ui-input.ui-input::placeholder { color: var(--ui-text-2); }
+.ui-input.ui-input::placeholder { color: var(--ui-text-2); opacity: 1; }
 .ui-select.ui-select:hover, .ui-input.ui-input:hover { border-color: var(--ui-ctl-border-hover); }
 .ui-select.ui-select:focus-visible, .ui-input.ui-input:focus-visible, .ui-input.ui-input:focus {
     border-color: var(--ui-accent); outline: 0; box-shadow: var(--ui-ctl-ring);

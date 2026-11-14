@@ -32,13 +32,24 @@ const filled = window.UI.mountSamples(doc);
 const ATTRS = ["role", "aria-label", "aria-hidden", "aria-pressed", "type", "scope", "title", "disabled", "open", "checked", "data-ui-theme",
                "aria-expanded", "aria-selected", "aria-disabled", "aria-haspopup", "aria-invalid", "tabindex", "hidden", "selected",
                "value", "placeholder", "name", "data-ui-menu", "data-value",
-               "id", "for", "aria-controls", "aria-live", "aria-labelledby"];
-const IDREF = new Set(["id", "for", "aria-controls", "aria-labelledby"]);
+               "id", "for", "aria-controls", "aria-live", "aria-labelledby", "aria-describedby"];
+const IDREF = new Set(["id", "for", "aria-controls", "aria-labelledby", "aria-describedby"]);
+// Ids differ between the two renderers (counters); compare the RELATIONS:
+// every id token is renamed to its order of first appearance in the sample.
+function canon(t, map) {
+    if (typeof t === "string" || !t) return t;
+    Object.keys(t.attrs).forEach((a) => {
+        if (!IDREF.has(a)) return;
+        t.attrs[a] = String(t.attrs[a]).split(" ").map((v) => { if (!map.has(v)) map.set(v, "#" + map.size); return map.get(v); }).join(" ");
+    });
+    t.kids.forEach((k) => canon(k, map));
+    return t;
+}
 function tree(n) {
     if (n.nodeType === 3) return null;
     const out = { tag: n.tagName.toLowerCase(), cls: [...n.classList].sort().join(" "), attrs: {}, kids: [] };
     ATTRS.forEach((a) => { if (n.hasAttribute(a)) out.attrs[a] = a === "disabled" || a === "open" || a === "checked" || a === "hidden" || a === "selected" ? true
-        : IDREF.has(a) ? n.getAttribute(a).split(" ").map((v) => v.replace(/-js$/, "").replace(/^uk-[mj]-([0-9]+)$/, "uk-$1")).join(" ") : n.getAttribute(a); });
+        : n.getAttribute(a); });
     let text = "";
     const flush = () => { const t = text.replace(/\s+/g, " ").trim(); if (t) out.kids.push("#" + t); text = ""; };
     n.childNodes.forEach((c) => {
@@ -68,7 +79,7 @@ specs.forEach((s, i) => {
     ok(m && j, "sample " + i + " has both slots");
     if (!m || !j) return;
     ok(m.children.length === 1 && j.children.length === 1, "sample " + i + " (" + s.part + ") renders one root on each side");
-    const d = diff(tree(m), tree(j), "sample " + i + " (" + s.part + ")");
+    const d = diff(canon(tree(m), new Map()), canon(tree(j), new Map()), "sample " + i + " (" + s.part + ")");
     ok(d === null, d || "");
     parts.add(s.part);
 });
