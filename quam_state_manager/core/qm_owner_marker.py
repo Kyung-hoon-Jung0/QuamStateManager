@@ -41,10 +41,50 @@ def is_marker(name) -> bool:
     return isinstance(name, str) and SHAPE_RE.match(name) is not None
 
 
+VERSION_DIGITS_MAX = 6
+
+
 def marker_version(name) -> Optional[int]:
-    """The version number of a marker-shaped name, else None."""
+    """The version number of a marker-shaped name, else None.
+
+    A version longer than ``VERSION_DIGITS_MAX`` digits is not converted (an unbounded digit
+    run must never reach ``int()``); the name stays marker-shaped and the version is None."""
     hit = _VERSION_RE.match(name) if isinstance(name, str) else None
-    return int(hit.group(1)) if hit else None
+    if not hit or len(hit.group(1)) > VERSION_DIGITS_MAX:
+        return None
+    return int(hit.group(1))
+
+
+def version_text(name) -> str:
+    """The version of a marker-shaped name as display text: the number, or
+    "version with N digits" when it is too long to convert, or "unknown"."""
+    hit = _VERSION_RE.match(name) if isinstance(name, str) else None
+    if not hit:
+        return "unknown"
+    digits = hit.group(1)
+    if len(digits) > VERSION_DIGITS_MAX:
+        return f"version with {len(digits)} digits"
+    return f"version {int(digits)}"
+
+
+def display_text(text, limit: int = 120) -> str:
+    """Safe display form of a string read from a server.
+
+    Every non-printable code point (control characters, bidirectional overrides, format
+    characters, separators other than the plain space) becomes a ``\\uXXXX`` escape. At
+    most ``limit`` characters of the escaped text are kept; a longer text ends with
+    "... (N characters)", N being the length of the original."""
+    if not isinstance(text, str):
+        text = str(text)
+    out, used = [], 0
+    for ch in text:
+        piece = ch if (ch == " " or ch.isprintable()) else (
+            f"\\u{ord(ch):04x}" if ord(ch) <= 0xFFFF else f"\\U{ord(ch):08x}")
+        if used + len(piece) > limit:
+            return "".join(out) + f"... ({len(text)} characters)"
+        out.append(piece)
+        used += len(piece)
+    return "".join(out)
 
 
 def parse_marker(name) -> Optional[dict]:

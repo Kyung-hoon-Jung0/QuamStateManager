@@ -294,3 +294,168 @@ def test_owner_dom_selfcheck(env, marker_home, tmp_path):
                        capture_output=True, text=True, encoding="utf-8", timeout=60)
     assert r.returncode == 0, r.stdout + r.stderr
     assert " 0 failed" in r.stdout and "confirm names the QM and its owner" in r.stdout
+
+
+# ------------------------------------------------------------------ hostile or odd server data
+BIG = "qmowner__v" + "7" * 5000 + "__x"
+
+
+def _three(markers):
+    a = answer(qms=(("QM-a", [], ["con1/1"]), ("QM-b", [], ["con1/2"]), ("QM-c", [], ["con1/1"])))
+    for q, mk in zip(a["open_qms"], markers):
+        q["markers"] = mk
+    return a
+
+
+def test_huge_version_is_shaped_and_shown_as_digit_count(env, marker_home):
+    assert qom.is_marker(BIG) and qom.marker_version(BIG) is None and qom.parse_marker(BIG) is None
+    assert qom.version_text(BIG) == "version with 5000 digits"
+    assert qom.marker_version("qmowner__v123456__x") == 123456
+    app, m, w, clock, _ = env
+    w.script[:] = [_three([[M1], [BIG], [M2]])]
+    m.poll_once()
+    for tab in ("live", "jobs", "cleanup"):
+        r = app.test_client().get(f"/opx-monitor/body?tab={tab}")
+        assert r.status_code == 200
+        html = r.get_data(as_text=True)
+        assert "version with 5000 digits" in html and "ab12cd34" in html and "ff00ff00" in html
+        assert "7" * 400 not in html
+    assert "not readable" in _row(page(app, "jobs"), "QM-b")
+
+
+def test_owner_failure_for_one_qm_keeps_the_page(env, marker_home, monkeypatch, caplog):
+    app, m, w, clock, _ = env
+    secret = "qmowner__v1__csecretname__snone__xs__n"
+    w.script[:] = [_three([[M1], [secret], [M2]])]
+    m.poll_once()
+    real = om.owner_info
+
+    def boom(q):
+        if q["id"] == "QM-b":
+            raise RuntimeError("bad")
+        return real(q)
+    monkeypatch.setattr(om, "owner_info", boom)
+    om._OWNER_FAIL_LOGGED.clear()
+    caplog.set_level(logging.WARNING)
+    html = page(app, "jobs")
+    page(app, "cleanup")
+    assert "marker present, not readable" in _row(html, "QM-b") and "ab12cd34" in _row(html, "QM-a")
+    recs = [r for r in caplog.records if "could not be worked out" in r.getMessage()]
+    assert len(recs) == 1 and "secretname" not in caplog.text
+    w.script[:] = [_three([[M1], None, [M2]])]
+    m.poll_once()
+    assert "Owner could not be worked out." in _row(page(app, "jobs"), "QM-b")
+
+
+def test_live_owner_list_marks_a_stale_poll(env, marker_home):
+    app, m, w, clock, _ = env
+    w.script[:] = [five_cases()]
+    m.poll_once()
+    assert 'Owners below are from the last good read' not in page(app, "live")
+    w.script[:] = [om.WorkerError("connect failed")]
+    clock.t += 99
+    m.poll_once()
+    html = page(app, "live")
+    start = html.index('class="ui-opxmon-owners')
+    assert "Owners below are from the last good read, 99 s ago" in html[:start]
+    assert 'data-stale="1"' in html[start:start + 300] and "last good read, 99 s ago" in html[start:start + 300]
+
+
+@pytest.mark.parametrize("value,sentence", [
+    ("absent", "the monitor worker is from an older version; reopen the monitor."),
+    (None, "configuration could not be read"),
+    ([], "Not reported by the server (no owner marker)."),
+])
+def test_three_owner_absence_sentences(env, marker_home, value, sentence):
+    app, m, w, clock, _ = env
+    a = answer()
+    if value == "absent":
+        a["open_qms"][0].pop("markers", None)
+    else:
+        a["open_qms"][0]["markers"] = value
+    w.script[:] = [a]
+    m.poll_once()
+    html = page(app, "jobs")
+    assert sentence in html
+    if value == "absent":
+        assert "configuration could not be read" not in html and "no owner marker" not in html
+    if value is None:
+        assert "older version" not in html
+
+
+def test_long_hostile_name_is_escaped_and_capped(env, marker_home):
+    app, m, w, clock, _ = env
+    name = "qmowner__v2__" + "\u202e\x00" + "a" * 50000
+    w.script[:] = [_three([[name], [M1], []])]
+    m.poll_once()
+    for tab in ("live", "jobs", "cleanup"):
+        html = page(app, tab)
+        assert "\u202e" not in html and "\x00" not in html and "a" * 400 not in html
+        assert r"\u202e\u0000" in html and f"({len(name)} characters)" in html
+    assert len(qom.display_text(name)) <= 120 + len(f"... ({len(name)} characters)")
+    import re
+    titles = re.findall(r'title="marker element ([^"]*)"', page(app, "jobs"))
+    assert titles and all(len(t) <= 300 + 30 for t in titles)
+
+
+def test_script_payloads_stay_text(env, marker_home):
+    app, m, w, clock, _ = env
+    payload = '<script>alert(1)</script>'
+    (marker_home / "pc_names.json").write_text(json.dumps({"ab12cd34": payload}), encoding="utf-8")
+    w.script[:] = [_three([[M1], ["qmowner__v3__" + payload], []])]
+    m.poll_once()
+    for tab in ("live", "jobs", "cleanup", "settings"):
+        html = page(app, tab)
+        assert payload not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page(app, "jobs")
+
+
+def test_same_tag_chip_wording(env, marker_home):
+    app, m, w, clock, _ = env
+    (marker_home / "pc_tag").write_text("ab12cd34", encoding="ascii")
+    w.script[:] = [five_cases()]
+    m.poll_once()
+    for tab in ("jobs", "settings"):
+        html = page(app, tab)
+        assert "same tag as this PC" in html and "A client that sets its own tag is not recognised" in html
+        assert ">this PC<" not in html
+
+
+def test_two_windows_editing_different_tags_keep_both(env, marker_home):
+    app, *_ = env
+    (marker_home / "pc_names.json").write_text(json.dumps({"aa": "one", "bb": "two"}), encoding="utf-8")
+    a, b = app.test_client(), app.test_client()
+    # both forms were drawn from the same file
+    a.post("/opx-monitor/pc-names", data={"label__aa": "ONE", "was__aa": "one", "label__bb": "two", "was__bb": "two"},
+           headers=ORIGIN)
+    b.post("/opx-monitor/pc-names", data={"label__aa": "one", "was__aa": "one", "label__bb": "TWO", "was__bb": "two"},
+           headers=ORIGIN)
+    assert json.loads((marker_home / "pc_names.json").read_text()) == {"aa": "ONE", "bb": "TWO"}
+    assert not list(marker_home.glob("*.tmp"))
+
+
+def test_label_rules(env, marker_home):
+    app, *_ = env
+    c = app.test_client()
+    c.post("/opx-monitor/pc-names", data={"new_tag": "aa", "new_label": "  <b>x</b>" + "y" * 60}, headers=ORIGIN)
+    stored = json.loads((marker_home / "pc_names.json").read_text())["aa"]
+    assert stored.startswith("<b>x</b>") and len(stored) == 40
+    assert "<b>x</b>" not in page(app, "settings")
+    r = c.post("/opx-monitor/pc-names", data={"new_tag": "bb", "new_label": "bell\x07"}, headers=ORIGIN)
+    assert r.status_code == 400 and "cannot hold control" in r.get_data(as_text=True)
+    assert "bb" not in json.loads((marker_home / "pc_names.json").read_text())
+
+
+def test_non_text_entries_are_counted_and_backed_up_once(env, marker_home):
+    app, *_ = env
+    raw = json.dumps({"aa": "x", "bb": 5, "cc": None})
+    (marker_home / "pc_names.json").write_text(raw, encoding="utf-8")
+    names, problem = om.load_pc_names()
+    assert names == {"aa": "x"} and problem.startswith("2 entries")
+    assert problem in page(app, "settings")
+    c = app.test_client()
+    c.post("/opx-monitor/pc-names", data={"new_tag": "dd", "new_label": "d"}, headers=ORIGIN)
+    assert (marker_home / "pc_names.json.bak").read_text() == raw
+    (marker_home / "pc_names.json").write_text(json.dumps({"zz": 1}), encoding="utf-8")
+    c.post("/opx-monitor/pc-names", data={"new_tag": "ee", "new_label": "e"}, headers=ORIGIN)
+    assert (marker_home / "pc_names.json.bak").read_text() == raw  # one-time

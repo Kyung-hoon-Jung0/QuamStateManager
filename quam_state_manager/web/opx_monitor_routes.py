@@ -159,7 +159,7 @@ def _view(tab: str) -> dict:
     except Exception:
         runs, run_reason = [], 'Dataset index unavailable; no estimated links.'
     open_qms = (st.get('answer') or {}).get('open_qms') or []
-    owners = {q['id']: om.owner_info(q) for q in open_qms}
+    owners = {q['id']: om.safe_owner_info(q) for q in open_qms}
     # labels are read at render time only and never leave the page
     pc_names, pc_names_problem = om.load_pc_names()
     seen_tags = om.owner_tags(st.get('answer'))
@@ -294,42 +294,56 @@ def opx_monitor_save_settings():
 _TAG_RE = re.compile(r"[a-z0-9]{1,16}")
 
 
+@opxmon_bp.app_template_filter("owner_shown")
+def _owner_shown(text, limit=120):
+    """Owner text read from a server or the names file, escaped and capped for display."""
+    from quam_state_manager.core.qm_owner_marker import display_text
+    return display_text(text, limit)
+
+
 @opxmon_bp.route("/opx-monitor/pc-names", methods=["POST"])
 def opx_monitor_save_pc_names():
-    """Add, change or remove PC names. Replies never echo a name."""
+    """Add, change or remove PC names. Replies never echo a name.
+
+    Only the rows this window changed are applied (a row whose posted name equals the
+    ``was__<tag>`` it was drawn with is left alone), each one onto the file as read at
+    that moment, so two windows editing different tags keep both edits."""
     f = request.form
-    names, problem = om.load_pc_names()
-    new = dict(names)
+    changes = []
     for k, v in f.items():
-        if k.startswith("label__"):
-            tag = k[len("label__"):]
-            if not _TAG_RE.fullmatch(tag):
-                continue
-            label = v.strip()[:60]
-            if label:
-                new[tag] = label
-            else:
-                new.pop(tag, None)
-    # removals win over a label sent for the same tag
-    for k in list(new):
-        if _form_bool("remove__" + k):
-            new.pop(k, None)
-    tag, label = (f.get("new_tag") or "").strip(), (f.get("new_label") or "").strip()[:60]
-    if tag or label:
+        if not k.startswith("label__"):
+            continue
+        tag = k[len("label__"):]
+        if not _TAG_RE.fullmatch(tag):
+            continue
+        if _form_bool("remove__" + tag):
+            changes.append((tag, None))
+            continue
+        label, problem = om.check_pc_label(v)
+        if problem:
+            return _settings_reply(problem, error=True)
+        if label == (f.get("was__" + tag) or "").strip():
+            continue
+        changes.append((tag, label or None))
+    tag, raw_label = (f.get("new_tag") or "").strip(), f.get("new_label") or ""
+    if tag or raw_label.strip():
         if not _TAG_RE.fullmatch(tag):
             return _settings_reply("A tag uses only a-z and 0-9, at most 16 characters.", error=True)
+        label, problem = om.check_pc_label(raw_label)
+        if problem:
+            return _settings_reply(problem, error=True)
         if not label:
             return _settings_reply("Give the new tag a name.", error=True)
-        new[tag] = label
-    folder = om.marker_dir()
+        changes.append((tag, label))
+    count = None
     try:
-        if problem and (folder / "pc_names.json").exists():
-            import shutil
-            shutil.copyfile(folder / "pc_names.json", folder / "pc_names.json.bak")
-        om.save_pc_names(new, folder)
+        for t, label in changes:
+            count = om.apply_pc_name_change(t, label, om.marker_dir())
     except OSError:
         return _settings_reply("The PC names file could not be written.", error=True)
-    return _settings_reply(f"PC names saved ({len(new)}).")
+    if count is None:
+        return _settings_reply("No PC name changed.")
+    return _settings_reply(f"PC names saved ({count}).")
 
 
 def _settings_reply(message, error=False):

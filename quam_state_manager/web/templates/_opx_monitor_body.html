@@ -1,6 +1,7 @@
-{%- from "_opx_owner.html" import owner_cell, owner_note, owner_text -%}
+{%- from "_opx_owner.html" import owner_cell, owner_note, owner_text, same_tag_hint -%}
 {%- set ans = st.answer or {} -%}
 {%- set cap = st.capabilities -%}
+{%- set owners_stale = st.state != 'ok' -%}{%- set owners_age = ('%.0f'|format(st.age_s) ~ ' s ago') if st.age_s is not none else 'at an unknown time' -%}
 {%- set polls = tab in ('live', 'jobs', 'history', 'cleanup') and st.state != 'unconfigured' -%}
 <div id="ui-opxmon-body" class="ui-opxmon-body" data-tab="{{ tab }}" data-state="{{ st.state }}"
      {% if st.age_s is not none %}data-age="{{ '%.1f'|format(st.age_s) }}"{% endif %}
@@ -22,7 +23,8 @@
 {% for section, error in st.section_errors.items() if not (section == 'controllers' and tab == 'live') %}<p class="ui-note ui-opxmon-section-age" title="{{ error }}">{{ 'Open QMs' if section == 'open_qms' else section|replace('_', ' ')|capitalize }} unavailable; {{ 'last good read at ' ~ local_time(st.section_times.get(section)) if st.section_times.get(section) else 'no successful read yet' }}</p>{% endfor %}
 {%- if tab == 'live' %}
   {%- if cap.live and ans.open_qms %}
-  <ul class="ui-opxmon-owners" aria-label="Who holds each open QM">{% for q in ans.open_qms %}<li><code>{{ q.id }}</code> {{ owner_cell(owners[q.id], pc_names, this_tag) }}</li>{% endfor %}</ul>
+  {%- if owners_stale %}<p class="ui-state ui-state--error ui-opxmon-qm-stale" role="status"><span class="ui-state-key">Not current.</span> Owners below are from the last good read, {{ owners_age }}; QMs may have opened or closed since.</p>{% endif %}
+  <ul class="ui-opxmon-owners{% if owners_stale %} ui-opxmon-table--stale{% endif %}" aria-label="Who holds each open QM{% if owners_stale %} (last good read, {{ owners_age }}){% endif %}"{% if owners_stale %} data-stale="1"{% endif %}>{% for q in ans.open_qms %}<li><code>{{ q.id }}</code> {{ owner_cell(owners[q.id], pc_names, this_tag) }}</li>{% endfor %}</ul>
   {% if any_marker %}{{ owner_note() }}{% endif %}
   {%- endif %}
   {% if temperature_failed or ans.controllers is none %}<p class="ui-note">Temperatures unavailable ({{ 'last good read at ' ~ local_time(st.section_times.get('controllers')) if st.section_times.get('controllers') else 'no successful read yet' }}){% if ans.controllers %}; the values below are stale{% endif %}</p>{% elif not (ans.controllers or [])|selectattr('temperatures')|list and not unreadable_temps %}<p>No temperature readings.</p>{% endif %}
@@ -181,12 +183,12 @@
   <form class="ui-opxmon-pcnames" hx-post="/opx-monitor/pc-names" hx-target="#ui-opxmon-body" hx-swap="outerHTML">
     <fieldset><legend>PC names</legend>
       <p class="ui-note">Names for the tags in owner markers. Kept only on this PC, in this user's app-data folder; applied when a page is drawn, never written to History.</p>
-      {% if pc_names_problem %}<p class="ui-note ui-opxmon-pcnames-problem">{{ pc_names_problem }} Saving replaces it (the old file is kept as a backup).</p>{% endif %}
+      {% if pc_names_problem %}<p class="ui-note ui-opxmon-pcnames-problem">{{ pc_names_problem }} The next save rewrites the file (the old file is kept once as pc_names.json.bak).</p>{% endif %}
       <table class="ui-table ui-opxmon-table" aria-label="PC names"><thead><tr><th class="ui-table-head">Tag</th><th class="ui-table-head">Name</th><th class="ui-table-head">Remove</th></tr></thead>
-        <tbody>{% for tag in pc_name_rows %}<tr class="ui-opxmon-pcname-row" data-tag="{{ tag }}"><td data-label="Tag" class="ui-table-cell"><code>{{ tag }}</code>{% if this_tag == tag %} <span class="ui-badge ui-badge--accent">this PC</span>{% endif %}{% if tag in seen_tags %} <span class="ui-note">in an open QM</span>{% endif %}</td>
-          <td data-label="Name" class="ui-table-cell"><input class="ui-input" name="label__{{ tag }}" value="{{ pc_names.get(tag, '') }}" maxlength="60" autocomplete="off" aria-label="Name for tag {{ tag }}"></td>
+        <tbody>{% for tag in pc_name_rows %}<tr class="ui-opxmon-pcname-row" data-tag="{{ tag }}"><td data-label="Tag" class="ui-table-cell"><code>{{ tag }}</code>{% if this_tag == tag %} <span class="ui-badge ui-badge--accent ui-opxmon-this-pc" title="{{ same_tag_hint }}">same tag as this PC</span>{% endif %}{% if tag in seen_tags %} <span class="ui-note">in an open QM</span>{% endif %}</td>
+          <td data-label="Name" class="ui-table-cell"><input class="ui-input" name="label__{{ tag }}" value="{{ pc_names.get(tag, '') }}" maxlength="40" autocomplete="off" aria-label="Name for tag {{ tag }}"><input type="hidden" name="was__{{ tag }}" value="{{ pc_names.get(tag, '') }}"></td>
           <td data-label="Remove" class="ui-table-cell">{% if tag in pc_names %}<label><input type="checkbox" name="remove__{{ tag }}" value="1"> remove</label>{% endif %}</td></tr>{% endfor %}
-          <tr class="ui-opxmon-pcname-new"><td data-label="Tag" class="ui-table-cell"><input class="ui-input" name="new_tag" maxlength="16" placeholder="new tag" autocomplete="off" aria-label="New tag"></td><td data-label="Name" class="ui-table-cell"><input class="ui-input" name="new_label" maxlength="60" placeholder="name" autocomplete="off" aria-label="Name for the new tag"></td><td class="ui-table-cell"></td></tr></tbody></table>
+          <tr class="ui-opxmon-pcname-new"><td data-label="Tag" class="ui-table-cell"><input class="ui-input" name="new_tag" maxlength="16" placeholder="new tag" autocomplete="off" aria-label="New tag"></td><td data-label="Name" class="ui-table-cell"><input class="ui-input" name="new_label" maxlength="40" placeholder="name" autocomplete="off" aria-label="Name for the new tag"></td><td class="ui-table-cell"></td></tr></tbody></table>
       {% if not pc_name_rows %}<p class="ui-note">No tags named yet and none seen in an open QM.</p>{% endif %}
       <button type="submit" class="btn-sm">Save PC names</button>
     </fieldset>

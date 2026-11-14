@@ -1558,45 +1558,102 @@ def own_pc_tag(folder: Optional[Path] = None) -> Optional[str]:
     return text if re.fullmatch(r"[0-9a-f]{8}", text) else None
 
 
-def load_pc_names(folder: Optional[Path] = None) -> tuple:
-    """``({tag: label}, problem)``. A missing file is an empty map with no problem; an
-    unreadable one is an empty map with a one-line problem for the settings tab."""
-    p = (folder or marker_dir()) / "pc_names.json"
+def _read_pc_names_raw(p: Path) -> tuple:
+    """``(text-only map, ignored count, problem)`` from the file as it is on disk now."""
     try:
-        text = p.read_text(encoding="utf-8")
+        text = p.read_text(encoding="utf-8-sig")
     except FileNotFoundError:
-        return {}, None
+        return {}, 0, None
     except (OSError, UnicodeDecodeError):
-        return {}, "The PC names file could not be read; no names are applied."
+        return {}, 0, "The PC names file could not be read; no names are applied."
     try:
         d = json.loads(text)
     except ValueError:
-        return {}, "The PC names file is not valid JSON; no names are applied."
+        return {}, 0, "The PC names file is not valid JSON; no names are applied."
     if not isinstance(d, dict):
-        return {}, "The PC names file is not a tag-to-name object; no names are applied."
-    return {str(k): str(v).strip() for k, v in d.items()
-            if isinstance(v, str) and v.strip()}, None
+        return {}, 0, "The PC names file is not a tag-to-name object; no names are applied."
+    names = {str(k): v.strip() for k, v in d.items() if isinstance(v, str) and v.strip()}
+    ignored = sum(1 for v in d.values() if not isinstance(v, str))
+    return names, ignored, None
+
+
+def load_pc_names(folder: Optional[Path] = None) -> tuple:
+    """``({tag: label}, problem)``. A missing file is an empty map with no problem; an
+    unreadable one is an empty map with a one-line problem for the settings tab; entries
+    that are not text are ignored and counted in the problem line."""
+    names, ignored, problem = _read_pc_names_raw((folder or marker_dir()) / "pc_names.json")
+    if problem is None and ignored:
+        problem = (f"{ignored} entr{'y' if ignored == 1 else 'ies'} in the PC names file "
+                   f"{'is' if ignored == 1 else 'are'} not text and ignored.")
+    return names, problem
+
+
+PC_LABEL_MAX = 40
+
+
+def check_pc_label(label: str) -> tuple:
+    """``(trimmed label, problem)``; a label holding a non-printable character is refused."""
+    label = (label or "").strip()[:PC_LABEL_MAX]
+    if any(not (ch == " " or ch.isprintable()) for ch in label):
+        return label, "A PC name cannot hold control or other invisible characters."
+    return label, None
+
+
+def apply_pc_name_change(tag: str, label: Optional[str], folder: Optional[Path] = None) -> int:
+    """Apply ONE row change (``label`` None removes the tag) onto the file as read now.
+
+    Reading just before the write keeps another window's edit of a different tag. When
+    the file is unreadable, or holds entries that are not text, a one-time
+    ``pc_names.json.bak`` is written before the save drops them. Returns the entry count."""
+    d = folder or marker_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / "pc_names.json"
+    names, ignored, problem = _read_pc_names_raw(p)
+    bak = d / "pc_names.json.bak"
+    if (problem or ignored) and p.exists() and not bak.exists():
+        import shutil
+        shutil.copyfile(p, bak)
+    if label is None:
+        names.pop(tag, None)
+    else:
+        names[tag] = label
+    save_pc_names(names, d)
+    return len(names)
 
 
 def save_pc_names(names: dict, folder: Optional[Path] = None) -> None:
-    """Write the map atomically (temp file + replace)."""
+    """Write the map atomically (a uniquely named temp file in the same folder + replace)."""
+    import tempfile
     d = folder or marker_dir()
     d.mkdir(parents=True, exist_ok=True)
-    tmp = d / "pc_names.json.tmp"
-    tmp.write_text(json.dumps(dict(sorted(names.items())), indent=1), encoding="utf-8")
-    os.replace(tmp, d / "pc_names.json")
+    fd, tmp = tempfile.mkstemp(prefix="pc_names.", suffix=".tmp", dir=str(d))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(dict(sorted(names.items())), indent=1))
+        os.replace(tmp, d / "pc_names.json")
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def owner_info(q: dict) -> dict:
     """What a QM's config says about its owner, without labels (labels apply at render).
 
-    kind: 'unread' (config not read), 'none', 'one', 'unreadable' (one shaped, not v1),
-    'several'. ``markers`` lists every shaped name with its parsed fields and version."""
+    kind: 'unreported' (the worker's answer has no ``markers`` key: an older worker),
+    'unread' (config not read), 'none', 'one', 'unreadable' (one shaped, not v1),
+    'several'. ``markers`` lists every shaped name with its parsed fields, its version
+    (None when unknown or too long) and the version as display text."""
     from quam_state_manager.core import qm_owner_marker as qom
+    if "markers" not in q:
+        return {"kind": "unreported", "markers": []}
     names = q.get("markers")
     if names is None:
         return {"kind": "unread", "markers": []}
-    rows = [{"name": n, "parsed": qom.parse_marker(n), "version": qom.marker_version(n)}
+    rows = [{"name": n, "parsed": qom.parse_marker(n), "version": qom.marker_version(n),
+             "version_text": qom.version_text(n)}
             for n in names if qom.is_marker(n)]
     if not rows:
         kind = "none"
@@ -1607,10 +1664,35 @@ def owner_info(q: dict) -> dict:
     return {"kind": kind, "markers": rows}
 
 
+_OWNER_FAIL_LOGGED: set = set()
+
+
+def safe_owner_info(q: dict) -> dict:
+    """``owner_info`` that never raises: a failure for one QM gives that QM an honest row
+    ("marker present, not readable" per known name, or kind 'failed' when no name is
+    known) and one log record per QM and error type, without the name's content."""
+    try:
+        return owner_info(q)
+    except Exception as exc:  # one QM must never take the page down
+        key = (str(q.get("id")), type(exc).__name__)
+        if key not in _OWNER_FAIL_LOGGED:
+            _OWNER_FAIL_LOGGED.add(key)
+            logger.warning("owner of QM %s could not be worked out (%s)", key[0], key[1])
+        try:
+            names = [n for n in (q.get("markers") or []) if isinstance(n, str)]
+        except Exception:
+            names = []
+        rows = [{"name": n, "parsed": None, "version": None, "version_text": "version unknown"}
+                for n in names]
+        if not rows:
+            return {"kind": "failed", "markers": []}
+        return {"kind": "several" if len(rows) > 1 else "unreadable", "markers": rows}
+
+
 def owner_tags(answer: Optional[dict]) -> list:
     """The parsed tags in the currently open QMs (offered on the settings tab)."""
     return sorted({m["parsed"]["tag"] for q in (answer or {}).get("open_qms") or []
-                   for m in owner_info(q)["markers"] if m["parsed"]})
+                   for m in safe_owner_info(q)["markers"] if m["parsed"]})
 
 
 def default_python() -> str:
