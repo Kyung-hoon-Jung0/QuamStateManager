@@ -989,7 +989,7 @@ _STAGE6_SELECTORS = {
     '.czg-stale > :not([data-czg-lead])', '.czg-alert', '.czg-alert:empty', '.czg-done:empty', '.czg-cols',
     '.czg-form', '.czg-evidence', '.czg-slots', '.czg-why-line', '.czg-chips',
     '.czg-more-list', '.czg-more-row', '.czg-chart > .ui-note', '.czg-row-acts',
-    '.czg .ui-segmented-opt',
+    '.czg .ui-segmented-opt', '.czg .ui-menu-trigger[aria-invalid="true"]',
     '.czg-form > *', '.czg-evidence > *',
     # a native <dialog> in the kit shell (the two older ones keep their style.css rules)
     'dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)',

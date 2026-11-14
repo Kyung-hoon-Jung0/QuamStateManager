@@ -455,6 +455,30 @@ def _lines(merged: dict, pair_id: str) -> dict[str, Any]:
     return out
 
 
+#: the refusal when no gate class was given; it belongs to the class field
+NO_CLASS = "The gate class must be given by its class name. Pick a gate class from the list."
+
+
+def class_problem(merged: dict, pair_id: str, gate_class: str) -> str | None:
+    """Why a gate of *gate_class* cannot run on *pair_id*, or None.
+
+    Only the line facts the plan itself refuses on: a required pulse slot
+    whose line has no operations gives the very reason ``plan`` gives for
+    it. A class SM does not know (a copied layout) is judged by its plan."""
+    desc = GATE_CLASSES.get(gate_class)
+    if desc is None:
+        return None
+    try:
+        lines = _lines(merged, pair_id)
+    except (KeyError, TypeError, AttributeError):
+        return None
+    for s in desc["slots"]:
+        line = lines.get(s.line)
+        if s.required and isinstance(line, str):
+            return line
+    return None
+
+
 def _dot(segs: tuple, key: str | None = None) -> str:
     return ".".join(segs + ((key,) if key is not None else ()))
 
@@ -659,7 +683,7 @@ def _argument_problem(pair_id, gate_name, gate_class, pulses, model_gate,
     if not isinstance(gate_name, str) or not gate_name:
         return "The gate name must be text that starts with cz_. Type a name like cz_square."
     if not isinstance(gate_class, str) or not gate_class:
-        return "The gate class must be given by its class name. Pick a gate class from the list."
+        return NO_CLASS
     if pulses is not None and not isinstance(pulses, dict):
         return "The pulses must be given per pulse field. Pick the pulses again."
     for f, spec in (pulses or {}).items():

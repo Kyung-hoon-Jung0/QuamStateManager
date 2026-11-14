@@ -393,9 +393,37 @@ def _settings(p: dict) -> list[dict]:
     return out
 
 
-def _summary(pid: str, p: dict) -> dict:
+#: the plan's refusal when no gate class was given: it belongs to the class field
+_NO_CLASS = cgb.NO_CLASS
+
+
+def class_fit(merged: dict, pairs: list[dict], classes: list[dict]) -> dict:
+    """``{pair: {class: reason}}``, empty reason when the class can run there."""
+    out = {}
+    for p in pairs:
+        out[p["id"]] = {c["class"]: (cgb.class_problem(merged, p["id"], c["class"]) or "")
+                        for c in classes}
+    return out
+
+
+def _summary(pid: str, p: dict, merged: dict | None = None, gate_class: str = "") -> dict:
     if "error" in p:
-        return {"pair": pid, "ok": False, "refusals": p.get("refusals") or [p["error"]]}
+        refusals = p.get("refusals") or [p["error"]]
+        out = {"pair": pid, "ok": False, "refusals": refusals}
+        about = {_NO_CLASS}
+        if merged is not None and gate_class:
+            r = cgb.class_problem(merged, pid, gate_class)
+            if r:
+                about.add(r)
+                if r not in refusals:
+                    # the plan stops at the first group of reasons (a bad
+                    # name); the class reason is named too, for its own field
+                    refusals = refusals + [r]
+                    out["refusals"] = refusals
+        mine = [r for r in refusals if r in about]
+        if mine:
+            out["class_refusals"] = mine
+        return out
     pulses = {f: gate_intent.planned_pulse(p, f) for f in (p.get("operations") or {})}
     return {"pair": pid, "ok": True, "refusals": [],
             "field_specs": {f: field_specs(v) for f, v in pulses.items()},
@@ -557,10 +585,11 @@ def cz_gate_dialog():
         merged = store.merged
         pairs = _pairs(merged)
         classes = _classes(store, merged)
+        fit = class_fit(merged, pairs, classes)
     want = request.args.get("pair") or ""
     selected = want if any(p["id"] == want for p in pairs) else ""
     from quam_state_manager.web import diagram_remove_routes as DR
-    data = {"pairs": pairs, "selected": selected, "classes": classes,
+    data = {"pairs": pairs, "selected": selected, "classes": classes, "fit": fit,
             "env": DR.env_name(_env_python()), "sync": sync_now()}
     return render_template("_cz_gate_dialog.html", data=data, selected=selected,
                            unknown_pair=want if want and not selected else "")
@@ -577,8 +606,8 @@ def api_cz_gate_plan():
         return jsonify(ok=False, error="Pick a pair."), 400
     with store._lock:
         plans = _plan_all(store.merged, body)
-    return jsonify(ok=True, plan_sig=plan_signature(body, plans),
-                   pairs=[_summary(pid, p) for pid, p in plans])
+        rows = [_summary(pid, p, store.merged, body["gate_class"]) for pid, p in plans]
+    return jsonify(ok=True, plan_sig=plan_signature(body, plans), pairs=rows)
 
 
 @bp.route("/api/pulse/cz-gate/check", methods=["POST"])
