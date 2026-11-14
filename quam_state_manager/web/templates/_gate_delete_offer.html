@@ -1,0 +1,35 @@
+{# What a one-step delete of a CZ gate takes (core/gate_parts.gate_parts).
+   The button posts the delete-together door with the gate named; the door
+   computes the set again from the state and never takes a list from here. #}
+{% import "_ui.html" as ui %}
+<div class="gate-delete-offer">
+{% if not parts.ok %}
+    {{ ui.ui_callout('danger', 'Cannot delete ' ~ gate, parts.refusals | join(' ')) }}
+    <div class="ui-actions gate-delete-actions">
+        <button type="button" class="btn-sm outline secondary gate-delete-cancel"
+                hx-get="/pulse/cz-gate/offer-close" hx-target="closest .gate-status-slot"
+                hx-swap="innerHTML" title="Close this message (Esc)">Close</button>
+    </div>
+{% else %}
+    <p class="ui-note">Deleting {{ gate }} removes, in one step (one Ctrl+Z brings all back):</p>
+    <ul class="gate-delete-list">
+        <li><code>{{ parts.macro }}</code> <span class="muted">the gate</span></li>
+        {% for p in parts.pulses %}<li><code>{{ p }}</code> <span class="muted">its pulse</span></li>{% endfor %}
+        {% for p in parts.operations %}<li><code>{{ p }}</code> <span class="muted">its channel operation</span></li>{% endfor %}
+        {% if parts.active %}<li><code>{{ parts.alias }}</code> <span class="muted">the pair's active gate name</span></li>{% endif %}
+    </ul>
+    {% if parts.kept %}<p class="ui-note">Kept: {{ parts.kept | join(', ') }} (other code may use them).</p>{% endif %}
+    {% if parts.active %}
+    {{ ui.ui_callout('warn', gate ~ ' is the active CZ gate', 'After this, pair ' ~ pair ~ ' has no active CZ gate.') }}
+    {% endif %}
+    <div class="ui-actions gate-delete-actions">
+        <button type="button" class="btn-sm danger gate-delete-confirm"
+                hx-post="/api/pulse/delete-together"
+                hx-vals='{{ {"pair": pair, "gate": gate, "confirm_active": ("1" if parts.active else "")} | tojson }}'
+                hx-target="closest .gate-status-slot" hx-swap="innerHTML">{{ 'Delete the active gate' if parts.active else 'Delete gate' }}</button>
+        <button type="button" class="btn-sm outline secondary gate-delete-cancel"
+                hx-get="/pulse/cz-gate/offer-close" hx-target="closest .gate-status-slot"
+                hx-swap="innerHTML" title="Close this offer; nothing is deleted (Esc)">Cancel</button>
+    </div>
+{% endif %}
+</div>

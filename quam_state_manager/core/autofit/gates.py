@@ -32,6 +32,7 @@ import numpy as np
 
 from quam_state_manager.core.autofit import families as fam_mod
 from quam_state_manager.core.autofit.families import Family, FeatureCheck
+from quam_state_manager.core.fit_targets import node_operation
 
 logger = logging.getLogger(__name__)
 
@@ -608,7 +609,7 @@ def evaluate_target(run, fam: Family, target: str, *,
                 and pl.state_path:
             path = pl.state_path.replace("{q}", target).replace("{pair}", target)
             if "{operation}" in path:
-                op = (_attr(run, "parameters", None) or {}).get("operation")
+                op = node_operation(_attr(run, "parameters", None))
                 path = path.replace("{operation}", str(op)) if op else None
             anchor = None
             if path:
