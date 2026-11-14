@@ -571,6 +571,16 @@ class TestReadoutOutputTiming:
         assert sum(1 for p in ports if getattr(p, "port_id", None) == 1) == 1
         assert self.mod._output_key(z_a) == self.mod._output_key(z_b)
 
+    def test_a_readout_port_listed_twice_moves_the_time_of_flight_once(self, monkeypatch):
+        m = _chip([2, 1], ro_band=2, tof=28)
+        ro_a = LFFEMAnalogOutputPort(delay=0, controller_id="con1", fem_id=2, port_id=5)
+        ro_b = LFFEMAnalogOutputPort(delay=0, controller_id="con1", fem_id=2, port_id=5)
+        m.qubits["q1"].resonator.opx_output = ro_a
+        monkeypatch.setattr(self.mod, "_lf_output_ports", lambda machine: [ro_a, ro_b])
+        warns = self.mod._align_output_timing(m)
+        assert m.qubits["q1"].resonator.time_of_flight == 188
+        assert sum(w.count("asked 161") for w in warns) == 1, warns
+
     def test_a_rebuild_whose_merge_carries_the_source_says_nothing_of_its_own(self):
         from quam_state_manager.core import regenerate
         spec = {"populate": {"resonator": {"q1": {"time_of_flight": 300},
