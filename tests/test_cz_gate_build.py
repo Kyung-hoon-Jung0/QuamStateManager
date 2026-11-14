@@ -1245,7 +1245,31 @@ def _model_op(s):
     return s["qubits"]["q1"]["z"]["operations"]["cz_a_flux_pulse_q1_q2"]
 
 
-OUTSIDE = "points outside the gate. SM does not copy such a layout."
+OUTSIDE = ("points outside its own macro or operation. SM copies only relative "
+           "references that stay inside their own object.")
+
+
+def test_a_reference_that_returns_through_an_alias_is_refused():
+    s = _two_pulse_chip()
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz"] = "#./cz_a"
+    _macro_pulse(s)["src"] = "#../../cz/flux_pulse_target/amplitude"
+    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+    assert OUTSIDE in res["error"]
+
+
+def test_a_same_object_form_with_dotdot_is_checked_like_a_climb():
+    s = _two_pulse_chip()
+    _macro_pulse(s)["inner"] = {"k": 1}
+    _macro_pulse(s)["src"] = "#./inner/../../../cz_x"
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_x"] = {"y": 1}
+    assert OUTSIDE in cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)["error"]
+    s = _two_pulse_chip()
+    _macro_pulse(s)["inner"] = {"k": 1}
+    _macro_pulse(s)["src"] = "#./inner/../../flux_pulse_target/amplitude"
+    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+    assert dict(res["creates"])["qubit_pairs.q1-q2.macros.cz_b"]["flux_pulse_qubit"]["src"] == \
+        "#./inner/../../flux_pulse_target/amplitude"
+    assert res["unresolved_references"] == []
 
 
 @pytest.mark.parametrize("pair", ["q1-q2", "q3-q4"])

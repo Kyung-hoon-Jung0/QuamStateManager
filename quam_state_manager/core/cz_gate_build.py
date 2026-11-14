@@ -28,7 +28,8 @@ from quam_state_manager.core import pulse_catalog
 from quam_state_manager.core.add_names import (
     ADDITION_NAME_RE, OPERATION_NAME_RE, pulse_name)
 from quam_state_manager.core.pointer_path import resolve_field_target
-from quam_state_manager.core.pointer_resolver import _SENTINEL, _get, _walk_relative
+from quam_state_manager.core.pointer_resolver import (
+    _SENTINEL, _get, _walk_relative, target_path)
 
 CZ_GATE = ("quam_builder.architecture.superconducting.custom_gates."
            "flux_tunable_transmon_pair.two_qubit_gates.CZGate")
@@ -827,18 +828,49 @@ def _rename_values(value: Any, names: dict[str, str],
     return value
 
 
+def _is_climbing(v: Any) -> bool:
+    """A relative reference that climbs: ``#../...``, or ``#./...`` with a
+    ``..`` segment."""
+    if not isinstance(v, str):
+        return False
+    if v.startswith("#../"):
+        return True
+    return v.startswith("#./") and ".." in v[3:].split("/")
+
+
+def _textual_target(ref: str, holder: tuple) -> tuple | None:
+    """The path a relative reference names by plain path arithmetic on the
+    holder path (each ``..`` one level up from the holding object, names
+    appended), without following any reference string."""
+    body = ref[1:]
+    if body.startswith("./"):
+        cur = list(holder[:-1])
+        segs = body[2:].split("/")
+    else:
+        cur = list(holder[:-1])
+        segs = body.split("/")
+    for seg in segs:
+        if seg in ("", "."):
+            continue
+        if seg == "..":
+            if not cur:
+                return None
+            cur.pop()
+        else:
+            cur.append(seg)
+    return tuple(cur)
+
+
 def _check_relative(merged: dict, obj: Any, obj_path: tuple, mname: str,
                     reset: list[str], unresolved: list[str], reasons: list[str],
                     where: str) -> None:
-    """Climbing relative references (``#../``, ``#./../``) in a copied object.
+    """Climbing relative references in a copied object.
 
-    Each is resolved in the model from its holder's model path with the
-    resolver's own walk (``pointer_resolver._walk_relative``, which follows
-    references and list indices on the way). A target inside the same
-    object is kept, provided the copy still holds it; any other target is a
-    refusal, since SM does not translate references that leave their own
-    object; a reference that does not resolve in the model is kept and
-    listed in *unresolved*."""
+    A reference that does not resolve in the model (``pointer_resolver``'s
+    own reading) is kept and listed in *unresolved*. Otherwise it is kept
+    only when its textual target (plain path arithmetic, no reference
+    followed) stays inside the same copied object and every node on the way
+    is a real container of the planned copy; anything else is refused."""
     def walk(v, rel, label):
         if isinstance(v, dict):
             for k, x in v.items():
@@ -848,26 +880,45 @@ def _check_relative(merged: dict, obj: Any, obj_path: tuple, mname: str,
             for i, x in enumerate(v):
                 walk(x, rel + (str(i),), f"{label}.{i}")
             return
-        if not (isinstance(v, str) and (v.startswith("#../") or v.startswith("#./../"))):
+        if not _is_climbing(v):
             return
+        holder = obj_path + rel
         ptr = "#" + v[3:] if v.startswith("#./../") else v
-        t = _walk_relative(merged, ptr, obj_path + rel)
+        t = (_walk_relative(merged, ptr, holder) if ptr.startswith("#../")
+             else target_path(merged, ptr, holder))
         if t is None or _get(merged, list(t)) is _SENTINEL:
             unresolved.append(f"{label}: {v}")
             return
-        t = tuple(t)
-        if t[:len(obj_path)] != obj_path:
+        text = _textual_target(v, holder)
+        inner = (list(text[len(obj_path):])
+                 if text is not None and text[:len(obj_path)] == obj_path else None)
+        if inner and inner[0] in reset:
             reasons.append(f"The model gate {mname} uses the relative reference {v} "
-                           f"(in {label}), which points outside the gate. SM does not "
-                           "copy such a layout. Pick another model gate, or a gate "
-                           "class SM knows.")
+                           f"(in {label}), whose target {inner[0]} is not copied to "
+                           "the new gate. Pick another model gate, or a gate class "
+                           "SM knows.")
             return
-        inner = list(t[len(obj_path):])
-        if _get(obj, inner) is _SENTINEL or (inner and inner[0] in reset):
-            key = inner[0] if inner else ""
+        ok = inner is not None
+        if ok:
+            node: Any = obj
+            for i, seg in enumerate(inner):
+                if isinstance(node, dict) and seg in node:
+                    node = node[seg]
+                elif isinstance(node, list) and seg.isdigit() and int(seg) < len(node):
+                    node = node[int(seg)]
+                else:
+                    ok = False
+                    break
+                if i < len(inner) - 1 and isinstance(node, str):
+                    ok = False
+                    break
+        if not ok:
             reasons.append(f"The model gate {mname} uses the relative reference {v} "
-                           f"(in {label}), whose target {key} is not copied to the new "
-                           "gate. Pick another model gate, or a gate class SM knows.")
+                           f"(in {label}), which points outside its own macro or "
+                           "operation. SM copies only relative references that stay "
+                           "inside their own object. Use an absolute reference there "
+                           "in the model gate, pick another model gate, or pick a "
+                           "gate class SM knows.")
     walk(obj, (), where)
 
 
