@@ -84,7 +84,7 @@ specs.forEach((s, i) => {
     parts.add(s.part);
 });
 ["head", "actions", "notice", "verdict", "item", "dialog", "table", "callout", "segmented", "disclosure", "check",
- "select", "input", "field", "menu", "toolbar", "panel", "stats", "checks", "slot"].forEach((p) => {
+ "select", "input", "field", "menu", "toolbar", "zone", "panel", "stats", "checks", "slot"].forEach((p) => {
     ok(parts.has(p), "the page samples the '" + p + "' part");
 });
 

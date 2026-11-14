@@ -339,6 +339,24 @@
         }
         return p;
     }
+    function zone(o) {
+        var z = el("section", "ui-zone" + (o.fill ? " ui-zone--fill" : "") + (o.quiet ? " ui-zone--quiet" : ""));
+        z.setAttribute("aria-label", o.title);
+        var h = el("div", "ui-zone-head");
+        if (has(o.step)) { var st = el("span", "ui-zone-step", o.step); st.setAttribute("aria-hidden", "true"); h.appendChild(st); }
+        h.appendChild(el("h3", "ui-zone-title", o.title));
+        if (o.summary && o.summary.length) {
+            var sm = el("span", "ui-zone-sum");
+            o.summary.forEach(function (t) { add(sm, isObj(t) && t.part ? render(t) : text(t)); });
+            h.appendChild(sm);
+        }
+        z.appendChild(h);
+        var b = el("div", "ui-zone-body");
+        if (o.quiet) b.appendChild(el("p", "ui-zone-empty", o.quiet));
+        else (o.body || []).forEach(function (x) { add(b, typeof x === "string" ? el("p", "ui-text-quiet", x) : render(x)); });
+        z.appendChild(b);
+        return z;
+    }
     function stats(tiles, label) {
         var g = el("div", "ui-stats");
         g.setAttribute("role", "group");
@@ -458,6 +476,7 @@
             case "field": return field(s);
             case "menu": return menu(s);
             case "toolbar": return toolbar(s.items, s.label);
+            case "zone": return zone(s);
             case "panel": return panel(s);
             case "stats": return stats(s.tiles, s.label);
             case "checks": return checks(s.checks, s.label);
@@ -476,7 +495,7 @@
         head: head, notice: notice, callout: callout, verdict: verdict, table: table, segmented: segmented,
         disclosure: disclosure, item: item, dialog: dialog, render: render,
         select: select, input: input, field: field, menu: menu, toolbar: toolbar,
-        panel: panel, stats: stats, checks: checks, slot: slot, lineDot: lineDot, text: text, grid2: grid2,
+        zone: zone, panel: panel, stats: stats, checks: checks, slot: slot, lineDot: lineDot, text: text, grid2: grid2,
         /* Menu behaviour for script callers: open / close / pick by element. */
         menuOpen: function (root) { if (root && window.UIMenu) window.UIMenu.open(root); },
         menuClose: function (root) { if (root && window.UIMenu) window.UIMenu.close(root); },

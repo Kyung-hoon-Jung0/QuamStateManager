@@ -132,6 +132,15 @@
     --ui-caps-track: .06em;
     --ui-fw-bold: 700;
     --ui-step: 18px;
+    /* zones (docs/308 section 4d): the strong container for a main region; panels group inside it.
+       The boundary is the accent mixed into a text-derived grey: a cool line, never a selected state. */
+    --ui-zone-border: color-mix(in srgb, var(--ui-accent) 30%, color-mix(in srgb, var(--ui-text) 40%, var(--ui-surface-0)));
+    --ui-zone-head-bg: color-mix(in srgb, var(--ui-accent) 10%, var(--ui-surface-1));
+    --ui-zone-bg: var(--ui-surface-1);
+    --ui-zone-title: var(--ui-text);
+    --ui-fs-zone: calc(var(--font-size-base) * 14 / 17);
+    --ui-zone-empty-h: 160px;
+    --ui-kit-col-zone: 360px;       /* the sample page's narrow zone column */
     --ui-banner-icon: 26px;
     --ui-fs-banner: calc(var(--font-size-base) * 15 / 17);
     --ui-fs-stat: calc(var(--font-size-base) * 19 / 17);
@@ -1076,6 +1085,16 @@
 .ui-panel-body--flush .ui-table-head:first-child, .ui-panel-body--flush .ui-table-cell:first-child { padding-left: var(--ui-gap-3); }
 .ui-panel-body--flush .ui-table-head:last-child, .ui-panel-body--flush .ui-table-cell:last-child { padding-right: var(--ui-gap-3); }
 .ui-panel-body--flush .ui-table tr:last-child > .ui-table-cell { border-bottom: 0; }
+/* zone: page or dialog > zone > panel > field (docs/308 section 4d) */
+.ui-zone { display: flex; flex-direction: column; margin: 0; border: var(--ui-bw) solid var(--ui-zone-border); border-radius: var(--ui-r-panel); background: var(--ui-zone-bg); min-width: 0; overflow: hidden; }
+.ui-zone--fill { flex: 1 1 auto; }
+.ui-zone-head { display: flex; align-items: center; gap: var(--ui-gap-2); min-height: var(--ui-ctl-h); padding: var(--ui-gap-1) var(--ui-gap-3); border-bottom: var(--ui-bw) solid var(--ui-zone-border); background: var(--ui-zone-head-bg); }
+.ui-zone-step { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: var(--ui-step); height: var(--ui-step); border-radius: var(--ui-r-round); background: var(--ui-accent-fill); color: var(--ui-on-accent); font-size: var(--ui-fs-xs); font-weight: var(--ui-fw-bold); line-height: var(--ui-lh-tight); }
+.ui-zone-title { margin: 0; font-size: var(--ui-fs-zone); font-weight: var(--ui-fw-bold); line-height: var(--ui-lh-tight); color: var(--ui-zone-title); }
+.ui-zone-sum { display: flex; align-items: center; gap: var(--ui-gap-2); margin-left: auto; flex: 0 0 auto; color: var(--ui-text-2); font-size: var(--ui-fs-sm); white-space: nowrap; }
+.ui-zone-body { display: flex; flex: 1 1 auto; flex-direction: column; gap: var(--ui-gap-3); padding: var(--ui-gap-2); min-width: 0; }
+.ui-zone--quiet > .ui-zone-body { align-items: center; justify-content: center; min-height: var(--ui-zone-empty-h); }
+.ui-zone-empty { margin: 0; max-width: 40ch; color: var(--ui-text-2); font-size: var(--ui-fs-sm); text-align: center; }
 
 /* banner: the conclusion is ui-verdict--strong (one per region) */
 .ui-verdict.ui-verdict--strong { display: grid; grid-template-columns: var(--ui-banner-icon) minmax(0, 1fr); column-gap: var(--ui-gap-3); row-gap: 0; align-items: center; margin: 0; padding: var(--ui-gap-2) var(--ui-gap-3); border: var(--ui-bw) solid var(--ui-border-strong); border-radius: var(--ui-r-panel); background: var(--ui-surface-2); }
@@ -1172,8 +1191,10 @@
 .ui-field-head > .ui-badge.ui-badge--accent { border-color: var(--ui-accent-border); background: var(--ui-accent-bg); color: var(--ui-accent); }
 .ui-toolbar.ui-toolbar > .btn-sm { min-height: var(--ui-ctl-h); }
 .ui-kit-reading { display: grid; grid-template-columns: var(--ui-kit-col-form) minmax(0, 1fr); border: var(--ui-bw) solid var(--ui-border); border-radius: var(--ui-r-lg); overflow: hidden; margin: 0 0 var(--ui-gap-3); }
-.ui-kit-reading-form { display: flex; flex-direction: column; gap: var(--ui-gap-3); padding: var(--ui-gap-3); border-right: var(--ui-bw) solid var(--ui-border); background: var(--ui-surface-0); min-width: 0; }
-.ui-kit-reading-ev { display: flex; flex-direction: column; gap: var(--ui-gap-3); padding: var(--ui-gap-3); background: var(--ui-surface-2); min-width: 0; }
+.ui-kit-reading-form { display: flex; flex-direction: column; gap: var(--ui-gap-3); padding: var(--ui-gap-2); border-right: var(--ui-bw) solid var(--ui-border); background: var(--ui-surface-0); min-width: 0; }
+.ui-kit-zones { display: grid; grid-template-columns: var(--ui-kit-col-zone) minmax(0, 1fr); gap: var(--ui-gap-3); align-items: start; padding: var(--ui-gap-3); background: var(--ui-surface-0); }
+.ui-kit-zones-col { display: flex; flex-direction: column; gap: var(--ui-gap-3); min-width: 0; }
+.ui-kit-reading-ev { display: flex; flex-direction: column; gap: var(--ui-gap-3); padding: var(--ui-gap-2); background: var(--ui-surface-2); min-width: 0; }
 .ui-grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--ui-gap-2); }
 
 /* ===== stage 1: existing button classes and focus (docs/308, D-27..D-30, D-52) =====

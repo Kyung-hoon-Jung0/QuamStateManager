@@ -781,7 +781,8 @@ def test_6_macro_and_ui_js_build_the_same_tree(ui_kit_html, tmp_path):
 # Small text a person must read in the kit's choosing / reading-order parts.
 _READ_TEXT_SELECTORS = (".ui-text-quiet", ".ui-panel-hint", ".ui-stat-label", ".ui-stat-unit", ".ui-input-unit-text",
                         ".ui-input.ui-input::placeholder", ".ui-field-hint", ".ui-option-desc", ".ui-cell-note",
-                        ".ui-placeholder", ".ui-field-label", ".ui-panel-title", ".ui-panel-sum")
+                        ".ui-placeholder", ".ui-field-label", ".ui-panel-title", ".ui-panel-sum",
+                        ".ui-zone-sum", ".ui-zone-empty")
 _READ_SURFACES = ("--ui-surface-0", "--ui-surface-1", "--ui-surface-2")
 
 
@@ -809,6 +810,43 @@ def read_text_contrast():
 def test_7g_reading_text_of_the_new_parts_is_aa_in_every_theme():
     bad = [r for r in read_text_contrast() if r[4] < 4.5]
     assert not bad, bad
+
+
+def _cr(a, b):
+    la, lb = sorted((_lum(a), _lum(b)), reverse=True)
+    return round((la + 0.05) / (lb + 0.05), 2)
+
+
+def zone_measures():
+    """docs/308 section 4d: per theme, the zone title on its head band, the zone boundary against the
+    grounds it sits on (page / dialog surface-0 and the result column's surface-2), the old panel
+    boundary for comparison, and the luminance step between the head band and the body."""
+    out = {}
+    for t in THEMES:
+        env = theme_env(t)
+        page = _over(_resolve("var(--ui-surface-0)", env), (0, 0, 0, 1))
+        col = lambda tok, base=page: _over(_resolve(f"var({tok})", env), base)
+        head, body = col("--ui-zone-head-bg"), col("--ui-zone-bg")
+        out[t] = {
+            "title": _cr(col("--ui-zone-title", head), head),
+            "sum": _cr(col("--ui-text-2", head), head),
+            "step": _cr(col("--ui-on-accent", col("--ui-accent-fill")), col("--ui-accent-fill")),
+            "border_s0": _cr(col("--ui-zone-border"), page),
+            "border_s2": _cr(col("--ui-zone-border"), col("--ui-surface-2")),
+            "panel_border_s0": _cr(col("--ui-border-strong"), page),
+            "head_dl": round(abs(_lum(head) - _lum(body)), 4),
+        }
+    return out
+
+
+def test_7h_zone_title_boundary_and_head_band_are_measured():
+    m = zone_measures()
+    for t, r in m.items():
+        assert r["title"] >= 4.5 and r["sum"] >= 4.5 and r["step"] >= 4.5, (t, r)
+        assert r["border_s0"] > r["panel_border_s0"], (t, r)     # a zone is louder than a panel
+        assert r["head_dl"] >= 0.004, (t, r)                      # the head band is not the body
+    assert m["dark"]["title"] >= 7, m["dark"]
+    assert m["dark"]["border_s0"] >= 3 and m["dark"]["border_s2"] >= 3, m["dark"]
 
 
 # ui.js is the kit's own builder: it creates the kit-classed controls every other script should use.
