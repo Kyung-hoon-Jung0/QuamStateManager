@@ -45,11 +45,14 @@ window.eval(`
         return Promise.resolve({ ok: true, note: window.__noteMode === 'armed' ? 'Auto-Sync (push) is ARMED, so this writes the chip.' : '' }); } });
     }
     if (url.indexOf('/diagnostics/core-findings') === 0) {
+      window.__reads = (window.__reads || 0) + 1;
+      if (window.__defer) return new Promise(function (res) { window.__pending.push(function (f) {
+        res({ ok: true, status: 200, json: function () { return Promise.resolve({ ok: true, findings: f }); } }); }); });
       return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ ok: true, findings: window.__findingsAfter }); } });
     }
     return Promise.reject(new Error('unexpected ' + url));
   };
-  window.applyDiagFixAll = function (btn) { window.__applied.push(JSON.parse(btn.getAttribute('data-items'))); return Promise.resolve({ ok: true }); };
+  window.applyDiagFixAll = function (btn) { if (window.__fireOnApply) document.dispatchEvent(new CustomEvent('diagnostics-changed')); window.__applied.push(JSON.parse(btn.getAttribute('data-items'))); return Promise.resolve({ ok: true }); };
 `);
 window.eval(fs.readFileSync(path.join(STATIC, 'load_check.js'), 'utf8'));
 const CR = window.CoreRecommend;
@@ -96,11 +99,59 @@ const CR = window.CoreRecommend;
   ok(!apply.disabled && note.hidden, 'no note when Auto-Sync is idle');
   let seen = null;
   CR.onApplied((list) => { seen = list; });
+  window.__fireOnApply = true;
   apply.click();
   await until(() => seen !== null);
   ok(window.__applied.length === 1 && JSON.stringify(window.__applied[0]) === JSON.stringify(FIXES), 'Stage hands the exact items to applyDiagFixAll');
   ok(Array.isArray(seen) && seen.length === 0, 'findings re-read after the apply');
   ok(window.document.querySelector('[data-core-rec-slot]').innerHTML === '', 'slot re-rendered from the new findings');
+  window.__fireOnApply = false;
+  await wait(20);
+  ok(window.document.querySelector('[data-core-rec-reread]') === null, 'own Stage press: its event shows no re-read line');
+
+  // Events: two in quick succession, answers held back. One request at a time;
+  // the second read follows the first, so the newest answer lands last.
+  CR.mountAfter(tiles, [FINDING]);
+  window.__pending = []; window.__defer = true; window.__reads = 0;
+  const fire = () => window.document.dispatchEvent(new window.CustomEvent('diagnostics-changed'));
+  const slotNow = () => window.document.querySelector('[data-core-rec-slot]');
+  fire(); fire();
+  await until(() => window.__pending.length === 1);
+  ok(window.__reads === 1, 'two quick events: one request in flight, not two');
+  window.__pending.shift()([]);            // the older answer: no finding
+  await until(() => window.__pending.length === 1);
+  ok(window.__reads === 2, 'the second event reads again after the first answer');
+  window.__pending.shift()([FINDING]);     // the newer answer: the finding is back
+  await until(() => slotNow().querySelector('[data-core-rec-open]') !== null);
+  ok(slotNow().querySelector('[data-core-rec-open]') !== null, 'the newest answer is the one shown');
+  await wait(20);
+  ok(window.__reads === 2 && slotNow().querySelector('[data-core-rec-open]') !== null, 'no extra read, the older answer does not win');
+
+  // Preview open when the event fires: closed by the re-read, with one honest line.
+  window.__defer = false; window.__noteMode = 'idle';
+  const box2 = slotNow().querySelector('[data-core-rec]');
+  box2.querySelector('[data-core-rec-open]').click();
+  await until(() => !box2.querySelector('[data-core-rec-apply]').disabled);
+  const CHANGED = JSON.parse(JSON.stringify(FINDING));
+  CHANGED.preview.cores.after = 6;
+  window.__findingsAfter = [CHANGED];
+  fire();
+  await until(() => slotNow().querySelector('[data-core-rec-reread]') !== null);
+  const rr = slotNow().querySelector('[data-core-rec-reread]');
+  ok(rr && rr.textContent === CR.REREAD_LINE, 'open preview: the honest re-read line is shown');
+  const pv2 = slotNow().querySelector('[data-core-rec-preview]');
+  ok(pv2.hidden && slotNow().querySelector('[data-core-rec-apply]').disabled, 'open preview: closed, Stage disabled, never swapped silently');
+  ok(pv2.querySelector('[data-core-rec-counts]').textContent.indexOf('6 / 8 after') >= 0, 'the re-read numbers are the new ones');
+  fire();
+  await until(() => slotNow().querySelector('[data-core-rec-reread]') === null);
+  ok(slotNow().querySelector('[data-core-rec-reread]') === null, 'no open preview: no re-read line');
+
+  // Slot gone: the event sends nothing.
+  slotNow().remove();
+  const r0 = window.__reads;
+  fire();
+  await wait(50);
+  ok(window.__reads === r0, 'no slot: the event sends no request');
 
   console.log(`(${asserts} assertions)`);
   process.exit(fails ? 1 : 0);

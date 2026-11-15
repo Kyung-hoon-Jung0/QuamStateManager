@@ -259,21 +259,67 @@ window.CoreRecommend = (function () {
     }
     var refreshers = [];
     function onApplied(fn) { if (typeof fn === 'function') refreshers.push(fn); }
-    /* Re-read the core findings from the working copy and hand them to every surface. */
+    /* Re-read the core findings from the working copy and hand them to every surface.
+       One request at a time: a call while one is in flight asks for one more
+       read after it, so answers cannot cross and the newest state always lands
+       last. */
+    var inFlight = null, readAgain = false;
     function refresh() {
-        return fetch('/diagnostics/core-findings', { headers: { 'Accept': 'application/json' } })
+        if (inFlight) { readAgain = true; return inFlight; }
+        inFlight = fetch('/diagnostics/core-findings', { headers: { 'Accept': 'application/json' } })
             .then(function (r) { return r.json(); })
             .then(function (d) {
                 var list = (d && Array.isArray(d.findings)) ? d.findings : [];
                 refreshers.forEach(function (fn) { try { fn(list); } catch (e) { /* one surface only */ } });
                 return list;
             })
-            .catch(function () { return null; });
+            .catch(function () { return null; })
+            .then(function (res) {
+                inFlight = null;
+                if (readAgain) { readAgain = false; return refresh(); }
+                return res;
+            });
+        return inFlight;
+    }
+    function mounted() {
+        return !!document.querySelector('[data-core-rec-slot], [data-loadcheck-core]');
+    }
+    /* An undo, a redo or an edit elsewhere (every one announces
+       diagnostics-changed) re-reads the findings wherever they are shown. A
+       preview open at that moment is closed by the re-render and the slot says
+       so in one line; the press path is exempt (its own refresh follows). */
+    var REREAD_LINE = 'The chip changed while the preview was open; the recommendation was read again.';
+    function onChanged() {
+        if (!mounted()) return;
+        var open = Array.prototype.some.call(document.querySelectorAll('[data-core-rec-preview]'), function (pv) {
+            return !pv.hidden && !pv.closest('[data-core-rec-pressing]');
+        });
+        var p = refresh();
+        if (!open || !p || !p.then) return;
+        p.then(function (list) {
+            if (list === null) return;
+            document.querySelectorAll('[data-core-rec-slot], [data-loadcheck-core]').forEach(function (slot) {
+                var line = document.createElement('p');
+                line.className = 'ui-callout-text';
+                line.setAttribute('data-core-rec-reread', '');
+                line.textContent = REREAD_LINE;
+                slot.insertBefore(line, slot.firstChild);
+            });
+        });
+    }
+    /* Capture phase on the document: reaches the event whether it was sent by
+       htmx (bubbling) or as a plain non-bubbling event on the body. Bound once. */
+    if (!window.__coreRecChangedBound) {
+        window.__coreRecChangedBound = true;
+        document.addEventListener('diagnostics-changed', onChanged, true);
     }
     function press(apply) {
         if (!window.applyDiagFixAll) return null;
+        var box = apply.closest('[data-core-rec]');
+        if (box) box.setAttribute('data-core-rec-pressing', '');
         var p = window.applyDiagFixAll(apply);
-        return p && p.then ? p.then(function () { return refresh(); }) : null;
+        var done = function () { if (box) box.removeAttribute('data-core-rec-pressing'); };
+        return p && p.then ? p.then(function () { return refresh(); }).then(function (r) { done(); return r; }, function (e) { done(); throw e; }) : (done(), null);
     }
     document.addEventListener('click', function (evt) {
         var t = evt.target && evt.target.closest ? evt.target : null;
@@ -317,6 +363,6 @@ window.CoreRecommend = (function () {
         document.querySelectorAll('[data-core-rec-slot]').forEach(function (slot) { slot.innerHTML = blocks(list); });
     });
     return { html: html, previewHtml: previewHtml, refresh: refresh, onApplied: onApplied,
-             mountAfter: mountAfter, blocks: blocks,
+             mountAfter: mountAfter, blocks: blocks, REREAD_LINE: REREAD_LINE,
              NOTE_FAILED: NOTE_FAILED };
 })();

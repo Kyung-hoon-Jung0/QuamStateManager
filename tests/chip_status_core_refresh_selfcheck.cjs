@@ -7,6 +7,11 @@
  *   R1  core warning + one other warning; re-read returns none -> 1 warn, banner warn
  *   R2  core warning only; re-read returns none -> none found, banner not warn
  *   R3  the finding comes back (Ctrl+Z, re-read) -> the count goes back up
+ *   R4  no press, only diagnostics-changed (stage, Ctrl+Z, redo): slot, tile
+ *       and banner follow each event although /api/topology never answers
+ *       (the topology signature short-cut is not on this path); a plain
+ *       non-bubbling event on the body counts too
+ *   R5  the dashboard swapped away, then the event fires: no request, no error
  *
  * Run: node tests/chip_status_core_refresh_selfcheck.cjs (driven by tests/test_core_layout_recommend.py)
  */
@@ -65,8 +70,10 @@ function mount(findings) {
   win.UI_CONFIG = {};
   win.htmx = { process: function () {}, ajax: function () {} };
   win.__after = [];
+  win.__reads = 0;
   win.fetch = function (url) {
     if (String(url).indexOf('/diagnostics/core-findings') === 0) {
+      win.__reads++;
       return win.Promise.resolve({ ok: true, status: 200,
         json: function () { return win.Promise.resolve({ ok: true, findings: win.__after }); } });
     }
@@ -115,6 +122,33 @@ function slotHtml(win) { const s = win.document.querySelector('[data-core-rec-sl
   await until(() => structural(win) === 'none found');
   ok(structural(win) === 'none found', 'R2 after: none found, ' + structural(win));
   ok(!/warn/.test(banner(win)), 'R2 after: the banner is no longer warn, ' + banner(win));
+
+  // R4: only the event, the way /undo and /redo answer (HX-Trigger, bubbling)
+  win = mount([CORE]);
+  const fire = (bubbles) => win.document.body.dispatchEvent(new win.CustomEvent('diagnostics-changed', { bubbles: bubbles }));
+  win.__after = [];
+  fire(true);
+  await until(() => structural(win) === 'none found' && slotHtml(win) === '');
+  ok(structural(win) === 'none found' && slotHtml(win) === '' && !/warn/.test(banner(win)), 'R4 stage: slot, tile and banner clear on the event');
+  win.__after = [CORE_LINE];
+  fire(true);
+  await until(() => structural(win) === '0 err 00b7 1 warn');
+  ok(structural(win) === '0 err 00b7 1 warn' && /warn/.test(banner(win)) && slotHtml(win).indexOf('data-core-rec-open') >= 0,
+    'R4 Ctrl+Z: finding, button, tile and banner come back');
+  win.__after = [];
+  fire(false);
+  await until(() => structural(win) === 'none found');
+  ok(structural(win) === 'none found' && slotHtml(win) === '', 'R4 redo (non-bubbling event on the body): gone again');
+
+  // R5: the dashboard is swapped away
+  const before = win.__reads;
+  win.document.getElementById('table-pane').innerHTML = '<p>other page</p>';
+  let threw = null;
+  win.addEventListener('error', (e) => { threw = e; });
+  fire(true);
+  // Negative check: nothing may be requested, so a bounded wait is the only option.
+  await wait(50);
+  ok(win.__reads === before && threw === null, 'R5 slot gone: the event sends no request and throws nothing');
 
   console.log(`(${asserts} assertions)`);
   process.exit(fails ? 1 : 0);

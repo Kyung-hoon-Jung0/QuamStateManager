@@ -704,6 +704,12 @@ be read. Unreadable ports are named, not placed.
   recommendation items answers 409 (`core_layout_partial`) and changes nothing, so no half layout is staged.
 - `GET /diagnostics/core-findings` re-reads the findings afterwards. Chip Status re-counts its "structural
   issues" tile and verdict banner from that re-read, through its one counting function.
+- The same re-read runs on every `diagnostics-changed` event (sent by undo, redo and every local edit), wherever
+  the slot is shown, so a Ctrl+Z brings the finding, the button, the tile count and the banner back without a
+  reload. One document listener (capture phase), inert when no slot is mounted; one read at a time, a call during
+  a read asks for one more read after it, so answers never cross. A preview open at that moment is closed by the
+  re-render with one line saying the recommendation was read again; the event of the user's own Stage press is
+  exempt.
 - The Diagnostics page only points to the button: its fix line names Load check and Chip Status
   (`FIX_DIAGNOSTICS`), the finding carries no fix items there (`core_layout.page_findings`), no per-item button and
   no "Set all".
