@@ -5,9 +5,10 @@
 2. Lines with a non-ASCII character: each listed file keeps at most its measured count; write a character
    as an escape or name it instead.
 Lower a count when lines are re-wrapped (a count that went down is reported, for both tables); never raise it.
-3. New text: for every file the branch adds or modifies (git diff against main) that is not in the tables,
-   every line of an added file and every added line of a modified file must be ASCII and at most 120 characters.
-   Skipped when git or the main ref is absent.
+3. New text: for every committed file the branch adds or modifies (git diff main...HEAD, i.e. from the
+   merge-base, renames counted as added files) that is not in the tables, every line of an added file and
+   every added line of a modified file must be ASCII and at most 120 characters. Skipped when git or the main
+   ref is absent, and when no file differs from main (on main or right after a merge).
 """
 import subprocess
 import warnings
