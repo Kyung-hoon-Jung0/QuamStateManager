@@ -1585,6 +1585,14 @@ def _build_quam_context(folder: Path):
                         (store.mutation_seq, len(store.change_log)), h)
         except Exception:
             working_dirty = False
+    if getattr(wc, "unverified_write", None):
+        # docs/254: a live write an earlier session could not verify left its values saved here.
+        # While they are, the context is marked diverged as that session's was; once the working
+        # content is back at the sync point there is nothing left to guard.
+        if working_dirty:
+            live_diverged = True
+        else:
+            working_copy.clear_unverified_write(wc)
     return wc, store, index, live_diverged, working_dirty, drift_count, parked
 
 
@@ -32570,7 +32578,7 @@ def _auto_apply_landed(ctx) -> None:
 
 def _conflict_tray(ctx, store, *, staged_conflict: bool,
                    auto_disarmed: bool = False,
-                   auto_merging: bool = False, cause: str = "") -> str:
+                   auto_merging: bool = False, cause: str = "", unverified: bool = False) -> str:
     """Render the staleness-conflict tray (docs/187 3).
 
     ONE place that knows what this tray needs. It replaces ``#pending-tray``,
@@ -32583,7 +32591,9 @@ def _conflict_tray(ctx, store, *, staged_conflict: bool,
     state ("Apply wrote nothing — live changed") -- and the choices live in the
     sync panel, which the client opens in answer to the user's own press. What
     the panel must say (when, staged or not, what Auto-Sync decided) rides on
-    ``ctx["apply_refused"]``, valid until the sync point moves.
+    ``ctx["apply_refused"]``, valid until the sync point moves. *unverified*: the write may
+    have reached the chip (its outcome "unknown" or "landed"), so the control never says it
+    wrote nothing (docs/254).
     """
     if ctx is not None:
         wc = ctx.get("working_copy")
@@ -32595,6 +32605,7 @@ def _conflict_tray(ctx, store, *, staged_conflict: bool,
             "auto_disarmed": bool(auto_disarmed),
             "auto_merging": bool(auto_merging),
             "cause": cause,
+            "unverified": bool(unverified),
         }
     return render_template(
         "_state_apply_conflict.html",
@@ -36019,6 +36030,17 @@ def _write_denial(exc, live_folder=None) -> str:
     return ""
 
 
+#: an agent's or an approval's press while :func:`_unverified_write_held` (docs/254)
+UNVERIFIED_HELD_MSG = ("SM cannot tell whether the live chip matches its last sync (an earlier live write "
+                       "could not be verified); take live first")
+
+
+def _apply_pend_outcome() -> str:
+    """The write outcome (:func:`_write_outcome`) of the Apply press this request ran: "none"
+    when the press raised before its journal line existed, so before any live write."""
+    return _write_outcome(g.get("_apply_pend"))
+
+
 def _write_outcome(pending) -> str:
     """What a live write's journal line says happened (docs/271): ``landed``
     (the chip holds the written content), ``failed`` (it still holds the old
@@ -36033,10 +36055,25 @@ def _write_outcome(pending) -> str:
 
 def _note_unverified_write(ctx, outcome: str) -> None:
     """A live write whose outcome (:func:`_write_outcome`) is "unknown" leaves nobody knowing
-    what the chip holds: the context is marked diverged, so the person sees it and every later
-    push goes through the diverged handling first (the dataset door and an approval share this)."""
+    what the chip holds while the working copy keeps the written values (the dataset door and an
+    approval share this). The context is marked diverged, and the working copy's meta records it
+    (``working_copy.mark_unverified_write``), so a restart marks the rebuilt context the same way
+    (:func:`_build_quam_context`). An approval (``agent_api._stage_writes``) and an agent's own
+    press (:func:`_unverified_write_held`) then refuse until a person takes live or applies; a
+    person's own Apply press is not refused (docs/254)."""
     if outcome == "unknown" and ctx is not None:
         ctx["live_diverged"] = True
+        wc = ctx.get("working_copy")
+        if wc is not None:
+            working_copy.mark_unverified_write(wc)
+
+
+def _unverified_write_held(ctx) -> bool:
+    """True while the working copy carries :func:`_note_unverified_write`'s mark: it may hold saved
+    values of a live write nobody could verify, which no later press owns. The mark itself is the
+    fact (it survives a restart and a poll that lowers ``live_diverged``)."""
+    wc = (ctx or {}).get("working_copy")
+    return bool(getattr(wc, "unverified_write", None))
 
 
 def _live_write_failure_text(ctx, exc, what: str = "Apply to live", outcome: str = "",
@@ -36143,7 +36180,8 @@ def _live_write_failure_response(ctx, message: str, code: str, *, auto=None,
     if ctx:
         _conflict_tray(ctx, ctx["store"], staged_conflict=bool(ctx.get("working_dirty")),
                        cause=("read-only" if cause == "denied" else "file locked" if cause == "held"
-                              else _merge_refusal_cause(getattr(g, "_merge_failure", message), code)))
+                              else _merge_refusal_cause(getattr(g, "_merge_failure", message), code)),
+                       unverified=outcome in ("unknown", "landed"))
     # v1.5.1 (r6 P2-6): the notice carries when a live write last landed, as
     # of this failure -- a later landing takes it down
     _landed = _live_landed_stamp(ctx)
@@ -36391,6 +36429,7 @@ def state_apply_to_live():
     warning and an explicit force-overwrite option.
     """
     ctx = _pin_request_ctx(_active_ctx())   # R3 C1: this press's chip
+    g.pop("_apply_pend", None)      # this press's own journal line, once it has one (_apply_pend)
     if not ctx or ctx.get("type") != "quam":
         return render_template("_status.html", message="No state loaded", level="warning")
     blocked = _archive_write_blocked(ctx)   # guard the CAPTURED ctx (TOCTOU)
@@ -36431,6 +36470,10 @@ def state_apply_to_live():
         _hold = _agent_apply_hold(ctx)
         if _hold is not None:
             return _hold
+        if _unverified_write_held(ctx):
+            # docs/254: the working copy may hold an earlier write's values nobody verified;
+            # an agent's press would carry them to the chip under its own name
+            return jsonify(ok=False, conflict="unverified_write", message=UNVERIFIED_HELD_MSG), 409
         _lk = _agent_edit_lock_refusal(ctx)
     else:
         # D-45: an Auto-Sync flush is not a person's press. The working copy
@@ -36665,6 +36708,7 @@ def state_apply_to_live():
                       if (_staged or force) else None),
         units=lambda: ([u.get("id") for u in _jrn_units] + _saved_ids
                        + ([_bref["wh_unit"]["id"]] if _bref.get("wh_unit") else [])))
+    g._apply_pend = _pend       # an exception escaping this door still names its write outcome
     try:
         with _active_wc_lock(ctx):
             # docs/160 B (see the sync twin). QA correctness-r2-10: a FORCED

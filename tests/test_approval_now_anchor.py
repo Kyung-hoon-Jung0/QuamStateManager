@@ -1,5 +1,6 @@
 """Approval presses consent to the values rendered on the card."""
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -942,8 +943,8 @@ def _live_write_with_outcome(case, monkeypatch, outcome):
     return press(case, [{"path": "value", "new": 30, "seen_now": 10}])
 
 
-_KEPT = ("; the live write could not be verified, so the approval's values stay in SM's working copy until a "
-         "person takes live or applies; check the chip")
+_KEPT = ("; the live write could not be verified, so the approval's values stay saved in SM's working copy "
+         "until a person takes live or applies; check the chip")
 
 
 @pytest.mark.parametrize("outcome, text, sm_value, chip_value", [
@@ -997,10 +998,39 @@ def test_the_human_apply_press_text_carries_no_approval_clause(tmp_path, monkeyp
     assert response.get_json()["write_outcome"] == "unknown"
 
 
-def _first_refused_then_second(tmp_path, monkeypatch, outcome, reject_first):
+def _second_approval(case, client):
+    second = approvals.add(str(case[3]), case[4], kind="writes", node="synthetic", targets=[],
+                           writes=[{"path": "third", "old": 5, "new": 7}], reason="test",
+                           why_held="mode ask-writes", actor="by_agent")
+    return client.post(f"/api/agent/approvals/{second['id']}/approve",
+                       json={"writes": [{"path": "third", "new": 7, "seen_now": 5}]},
+                       headers={"X-SM-Actor": "human"})
+
+
+def _restarted(case):
+    """A fresh app on the same instance folder, as after an SM restart: nothing in memory survives."""
+    from quam_state_manager.web import routes
+    routes._quam_cache.clear()
+    app = create_app(testing=True, instance_path=str(case[3]))
+    client = app.test_client()
+    assert client.post("/load", data={"folder": str(case[2])}).status_code in (200, 302)
+    return app, client
+
+
+def _agent_applies_third(client, monkeypatch):
+    """An agent's own edit and apply_to_live, in auto mode."""
+    from quam_state_manager.web import routes
+    monkeypatch.setattr(routes, "_agent_apply_mode", lambda ctx: "auto")
+    agent = {"X-SM-Agent": "agent"}
+    assert client.post("/field/edit", data={"dot_path": "third", "value": "7"}, headers=agent).status_code == 200
+    return client.post("/state/apply-to-live", data={"seen_changes": "1"},
+                       headers={"Accept": "application/json", **agent})
+
+
+def _refused_first(tmp_path, monkeypatch, outcome, reject_first):
     """Approval A (``value`` 10 -> 30) is refused at its live write with the door's write outcome
-    ``outcome``; then, with the live write working again, approval B (``third`` 5 -> 7) is pressed.
-    Returns B's response and the case."""
+    ``outcome``; then the live write works again, and the window polls /state/drift as it does
+    every few seconds. Returns the case, A's response and that poll's answer."""
     from quam_state_manager.core import working_copy
     from quam_state_manager.web import routes
     case = _case(tmp_path, {"value": 10, "third": 5}, [{"path": "value", "old": 10, "new": 30}])
@@ -1023,47 +1053,172 @@ def _first_refused_then_second(tmp_path, monkeypatch, outcome, reject_first):
     if reject_first:
         assert client.post(f"/api/agent/approvals/{case[5]['id']}/reject", json={},
                            headers={"X-SM-Actor": "human"}).status_code == 200
-    second = approvals.add(str(case[3]), case[4], kind="writes", node="synthetic", targets=[],
-                           writes=[{"path": "third", "old": 5, "new": 7}], reason="test",
-                           why_held="mode ask-writes", actor="by_agent")
-    response = client.post(f"/api/agent/approvals/{second['id']}/approve",
-                           json={"writes": [{"path": "third", "new": 7, "seen_now": 5}]},
-                           headers={"X-SM-Actor": "human"})
-    return response, case
+    drift = client.get("/state/drift").get_json()
+    return case, first, drift
 
 
+def _first_refused_then_second(tmp_path, monkeypatch, outcome, reject_first, then="approval"):
+    """:func:`_refused_first`, then ``then``: approval B (``third`` 5 -> 7) in the same app
+    ("approval"), approval B after an SM restart ("restart"), or an agent's own edit of ``third``
+    and apply_to_live in auto mode ("agent"). Returns that press's response, the case and the
+    live state.json bytes just before it."""
+    case, _, _ = _refused_first(tmp_path, monkeypatch, outcome, reject_first)
+    before = (case[2] / "state.json").read_bytes()
+    if then == "restart":
+        _, client = _restarted(case)
+        return _second_approval(case, client), case, before
+    if then == "agent":
+        return _agent_applies_third(case[1], monkeypatch), case, before
+    return _second_approval(case, case[1]), case, before
+
+
+UNVERIFIED_HELD = ("SM cannot tell whether the live chip matches its last sync (an earlier live write could "
+                   "not be verified); take live first")
+
+
+@pytest.mark.parametrize("then", ["approval", "restart", "agent"])
 @pytest.mark.parametrize("reject_first", [False, True])
 @pytest.mark.parametrize("outcome", ["failed", "none", "unknown", "landed"])
 def test_a_later_approval_never_writes_an_earlier_refused_approvals_values(tmp_path, monkeypatch, outcome,
-                                                                          reject_first):
-    response, case = _first_refused_then_second(tmp_path, monkeypatch, outcome, reject_first)
-    chip = json.loads((case[2] / "state.json").read_text(encoding="utf-8"))
+                                                                          reject_first, then):
+    live = tmp_path / "state" / "state.json"
+    response, case, before = _first_refused_then_second(tmp_path, monkeypatch, outcome, reject_first, then)
+    chip = json.loads(live.read_text(encoding="utf-8"))
     if outcome in ("failed", "none"):
         # A's values were taken back out of SM: B writes only its own row
         assert response.status_code == 200, response.get_json()
         assert chip == {"value": 10, "third": 7}
         return
+    if outcome == "landed" and then == "restart":
+        # the rebuilt context finds the working copy equal to the chip (A's value is on it):
+        # B writes only its own row, and the chip's value stays the one A left
+        assert response.status_code == 200, response.get_json()
+        assert chip == {"value": 30, "third": 7}
+        return
     # maybe written: A's values stay in SM, so B must not carry them to the chip under its own name
     assert response.status_code == 409, response.get_json()
+    assert live.read_bytes() == before                      # the refusal wrote nothing
+    assert chip == ({"value": 30, "third": 5} if outcome == "landed" else {"value": 10, "third": 5})
+    if then == "agent":
+        body = response.get_json()
+        if outcome == "unknown":
+            assert body["conflict"] == "unverified_write", body
+            assert body["message"] == UNVERIFIED_HELD, body
+        return
     error = response.get_json()["error"]
     assert error.startswith("stale_live: "), error
     _assert_plain(error)
     assert response.get_json()["how"] == "the approval stays pending; take live, then approve again"
-    assert chip == ({"value": 30, "third": 5} if outcome == "landed" else {"value": 10, "third": 5})
+    if then == "restart":
+        return
     with case[0].app_context():
         ctx = _ctx(case)
         assert ctx["store"].merged["third"] == 5            # B's own row was taken back
         assert ctx["store"].merged["value"] == 30           # A's value stays, as SM shows it
         if outcome == "unknown":
-            assert ctx["live_diverged"] is True             # the person sees it and decides
+            assert ctx["live_diverged"] is True             # the window's poll did not lower it
     assert case[1].get("/api/agent/tray").get_json()["entries"] == []
 
 
+@pytest.mark.parametrize("then", ["approval", "restart"])
+def test_a_refusal_after_an_unverified_write_leaves_the_live_file_byte_identical(tmp_path, monkeypatch, then):
+    case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", True)
+    live = case[2] / "state.json"
+    before = live.read_bytes()
+    client = _restarted(case)[1] if then == "restart" else case[1]
+    response = _second_approval(case, client)
+    assert response.status_code == 409, response.get_json()
+    assert response.get_json()["error"] == "stale_live: " + UNVERIFIED_HELD, response.get_json()["error"]
+    assert live.read_bytes() == before
+
+
+def test_the_unverified_write_mark_is_saved_beside_the_working_copy(tmp_path, monkeypatch):
+    from quam_state_manager.core import working_copy
+    case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False)
+    with case[0].app_context():
+        wc = _ctx(case)["working_copy"]
+    meta = json.loads(Path(wc.meta_path()).read_text(encoding="utf-8"))
+    assert isinstance(meta["unverified_write"], str) and meta["unverified_write"]
+    assert working_copy.load(case[3], case[2]).unverified_write == meta["unverified_write"]
+
+
+def _sync_control_text(client):
+    html = client.get("/").get_data(as_text=True)
+    start = html.index('data-sync-state="')
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html[start:start + 1200]))
+
+
+@pytest.mark.parametrize("outcome, title", [
+    ("unknown", "Apply not verified: check the chip"),
+    ("landed", "Apply not verified: check the chip"),
+    ("failed", None),
+])
+def test_the_window_never_says_an_unverified_write_wrote_nothing(tmp_path, monkeypatch, outcome, title):
+    """What docs/254 quotes: after A's live write the window's poll shows the "refused" state with
+    the approval's value unapplied (the flag rides the poll for a CLEAN context only), and the
+    control's title says what is known about the chip."""
+    case, _, drift = _refused_first(tmp_path, monkeypatch, outcome, False)
+    if outcome == "failed":
+        # nothing was written and the values were taken back: nothing to verify
+        assert "not verified" not in _sync_control_text(case[1])
+        return
+    assert drift["sync"]["state"] == "refused", drift["sync"]
+    assert drift["sync"]["unapplied"] == 1, drift["sync"]
+    assert drift["live_diverged"] is False, drift
+    text = _sync_control_text(case[1])
+    assert title in text and "wrote nothing" not in text, text
+    panel = case[1].get("/state/review").get_data(as_text=True)
+    assert "Your apply was not verified" in panel and "could not be verified" in panel, panel[:600]
+    assert "wrote nothing" not in panel and "Nothing has been written" not in panel, panel[:600]
+
+
+def test_a_take_live_clears_the_unverified_write_mark(tmp_path, monkeypatch):
+    case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False)
+    client = case[1]
+    assert client.post("/state/sync", data={"mode": "discard"}).status_code in (200, 302)
+    with case[0].app_context():
+        ctx = _ctx(case)
+        assert ctx["working_copy"].unverified_write is None
+        assert ctx["store"].merged["value"] == 10
+    response = _second_approval(case, client)
+    assert response.status_code == 200, response.get_json()
+    assert json.loads((case[2] / "state.json").read_text(encoding="utf-8")) == {"value": 10, "third": 7}
+
+
+def test_ctrl_z_of_the_kept_value_then_apply_clears_the_unverified_write_mark(tmp_path, monkeypatch):
+    """Ctrl+Z alone stages the inverse row in the tray (the chip is not known to match): the mark
+    holds, so the text does not offer Ctrl+Z as a way out. Applying that row is the "applies" way."""
+    case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False)
+    client = case[1]
+    live = case[2] / "state.json"
+    before = live.read_bytes()
+    assert client.post("/undo").status_code == 200
+    with case[0].app_context():
+        assert _ctx(case)["store"].merged["value"] == 10
+        assert _ctx(case)["working_copy"].unverified_write
+    held = _second_approval(case, client)
+    assert held.status_code == 409, held.get_json()
+    assert live.read_bytes() == before
+    applied = client.post("/state/apply-to-live", data={"seen_changes": "1"}, headers={"Accept": "application/json"})
+    assert applied.status_code == 200, applied.get_data(as_text=True)[:400]
+    with case[0].app_context():
+        ctx = _ctx(case)
+        assert ctx["working_copy"].unverified_write is None
+        assert ctx["live_diverged"] is False
+    response = _second_approval(case, client)
+    assert response.status_code == 200, response.get_json()
+    assert json.loads(live.read_text(encoding="utf-8")) == {"value": 10, "third": 7}
+
+
+def test_the_kept_values_text_offers_only_the_real_ways_out():
+    from quam_state_manager.web import agent_api
+    assert "Ctrl+Z" not in agent_api.KEPT_UNVERIFIED and "undo" not in agent_api.KEPT_UNVERIFIED.lower()
+    assert "takes live or applies" in agent_api.KEPT_UNVERIFIED
+
+
 def test_an_unverified_write_names_why_a_later_approval_is_refused(tmp_path, monkeypatch):
-    response, _ = _first_refused_then_second(tmp_path, monkeypatch, "unknown", True)
-    assert response.get_json()["error"] == (
-        "stale_live: SM cannot tell whether the live chip matches its last sync (an earlier live write could "
-        "not be verified); take live first"), response.get_json()["error"]
+    response, _, _ = _first_refused_then_second(tmp_path, monkeypatch, "unknown", True)
+    assert response.get_json()["error"] == "stale_live: " + UNVERIFIED_HELD, response.get_json()["error"]
 
 
 @pytest.mark.parametrize("outcome", ["landed", "unknown"])
@@ -1111,3 +1266,30 @@ def test_the_doors_unexpected_error_hands_a_json_caller_the_write_outcome(tmp_pa
     body = response.get_json()
     assert (body["ok"], body["write_outcome"]) == (False, "landed"), body
     assert body["message"] == "Apply to live failed unexpectedly: RuntimeError: bookkeeping broke"
+
+
+def test_an_unexpected_error_before_the_live_write_takes_the_values_back(tmp_path, monkeypatch):
+    """The door's unexpected-error exit raised before its journal line, so before any live write:
+    the approval reads it as "none", never "unknown"."""
+    from quam_state_manager.web import routes
+    case = _case(tmp_path, {"value": 10, "third": 5}, [{"path": "value", "old": 10, "new": 30}])
+    live = case[2] / "state.json"
+    before = live.read_bytes()
+
+    def breaks(*a, **k):
+        raise RuntimeError("pending broke")
+    monkeypatch.setattr(routes, "_hub_pending", breaks)
+    response = press(case, [{"path": "value", "new": 30, "seen_now": 10}])
+    assert response.status_code == 409, response.get_json()
+    body = response.get_json()
+    assert body["error"] == ("Apply to live failed unexpectedly: RuntimeError: pending broke; nothing was written, "
+                             "and the approval's values were taken back out of SM"), body["error"]
+    _assert_plain(body["error"])
+    assert "saved_in_working_copy" not in body["stage"]
+    assert approvals.get(str(case[3]), case[4], case[5]["id"])["status"] == "pending"
+    with case[0].app_context():
+        ctx = _ctx(case)
+        assert ctx["store"].merged["value"] == 10
+        assert ctx["live_diverged"] is False
+        assert ctx["working_copy"].unverified_write is None
+    assert live.read_bytes() == before

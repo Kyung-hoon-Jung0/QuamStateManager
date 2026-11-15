@@ -296,6 +296,11 @@ class WorkingCopy:
     #: event happened since -- the chip returning to the refused sync point
     #: (A -> B -> A) does not bring it back.
     sync_events: int = field(default=0, compare=False)
+    #: when a live write SM made could not be verified (its outcome "unknown") while the
+    #: working copy kept the written values: UTC ISO time, else None. Persisted, so a restart
+    #: still knows that the saved working content may hold values no press owns. Cleared by a
+    #: pull (:func:`sync_from_live`), a landed :func:`apply_to_live` and :func:`clear_unverified_write`.
+    unverified_write: str | None = None
 
     def meta_path(self) -> Path:
         """Sidecar meta file -- kept *outside* the working folder so the folder
@@ -318,13 +323,14 @@ class WorkingCopy:
             "synced_wiring_mtime": self.synced_wiring_mtime,
             "synced_live_hash": self.synced_live_hash,
             "synced_working_fp": _fp_json(self.synced_working_fp),
+            "unverified_write": self.unverified_write,
             "updated_utc": datetime.now(timezone.utc).isoformat(),
         }
         safe_io.atomic_write_json(self.meta_path(), meta)
 
     def _write_meta_pair(
         self, state_mtime: float, wiring_mtime: float,
-        live_hash: str | None = None, working_fp: Any = "keep",
+        live_hash: str | None = None, working_fp: Any = "keep", unverified: Any = "keep",
     ) -> None:
         """Atomically persist a new (state, wiring) mtime pair WITHOUT mutating
         ``self`` until the write succeeds.
@@ -345,6 +351,7 @@ class WorkingCopy:
                                  else self.synced_live_hash),
             "synced_working_fp": _fp_json(self.synced_working_fp if working_fp == "keep"
                                           else working_fp),
+            "unverified_write": self.unverified_write if unverified == "keep" else unverified,
             "updated_utc": datetime.now(timezone.utc).isoformat(),
         }
         safe_io.atomic_write_json(self.meta_path(), meta)
@@ -503,6 +510,8 @@ def load(instance_path: str | Path, live_folder: str | Path) -> WorkingCopy | No
         synced_wiring_mtime=float(meta.get("synced_wiring_mtime", 0.0)),
         synced_live_hash=raw_hash if isinstance(raw_hash, str) else None,
         synced_working_fp=_fp_load(meta.get("synced_working_fp")),
+        unverified_write=(meta.get("unverified_write")
+                          if isinstance(meta.get("unverified_write"), str) else None),
     )
 
 
@@ -988,6 +997,7 @@ def sync_from_live(wc: WorkingCopy) -> tuple[dict, dict]:
     wc.synced_wiring_mtime = wiring_mt
     wc.synced_live_hash = live_hash
     wc.sync_events += 1
+    wc.unverified_write = None      # the working copy now holds what the chip holds
     try:
         wc.synced_working_fp = working_fingerprint(wc)
     except OSError:
@@ -1207,12 +1217,13 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
                     # Advance the sync point to what live ALREADY holds. Meta
                     # first, exactly like the write path below: a failed meta
                     # write must never leave memory ahead of disk.
-                    wc._write_meta_pair(st_mt, wi_mt, live_hash, working_fp=fp)
+                    wc._write_meta_pair(st_mt, wi_mt, live_hash, working_fp=fp, unverified=None)
                     wc.synced_state_mtime = st_mt
                     wc.synced_wiring_mtime = wi_mt
                     wc.synced_live_hash = live_hash
                     wc.sync_events += 1
                     wc.synced_working_fp = fp
+                    wc.unverified_write = None
                     adopted = True
             except OSError:
                 adopted = False     # unreadable → fall through and refuse
@@ -1460,7 +1471,7 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
     # live as in-sync, but the next session would re-read the stale meta
     # and prompt a needless re-sync (red-team Phase 1 follow-up §4.4).
     try:
-        wc._write_meta_pair(state_mt, wiring_mt, applied_hash, working_fp=written_fp)
+        wc._write_meta_pair(state_mt, wiring_mt, applied_hash, working_fp=written_fp, unverified=None)
     except OSError as exc:
         raise safe_io.LiveFileError(
             f"Applied to live but could not persist working-copy meta "
@@ -1471,7 +1482,32 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
     wc.synced_live_hash = applied_hash
     wc.sync_events += 1
     wc.synced_working_fp = written_fp
+    wc.unverified_write = None      # the chip now holds the working content
     logger.info("Working copy applied to live: %s", wc.live_folder)
+
+
+def mark_unverified_write(wc: WorkingCopy) -> None:
+    """Record that a live write could not be verified while the working copy kept its values
+    (:attr:`WorkingCopy.unverified_write`). Never raises: a failed meta write keeps the mark for
+    this session only, and says so in the log."""
+    wc.unverified_write = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    try:
+        wc._write_meta()
+    except OSError:
+        logger.exception("Recording an unverified live write in the meta failed for %s; "
+                         "this session keeps it, the next may not", wc.key)
+
+
+def clear_unverified_write(wc: WorkingCopy) -> None:
+    """Drop the :func:`mark_unverified_write` mark (the working content is back at the sync
+    point, so it holds nothing a press does not own). Never raises."""
+    if wc.unverified_write is None:
+        return
+    wc.unverified_write = None
+    try:
+        wc._write_meta()
+    except OSError:
+        logger.exception("Clearing the unverified-write mark in the meta failed for %s", wc.key)
 
 
 # ----------------------------------------------------------------------

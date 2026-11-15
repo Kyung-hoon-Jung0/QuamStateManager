@@ -202,6 +202,8 @@ def view(*, facts: Mapping[str, Any] | None, flag_moved: bool,
         "readonly": bool(readonly),
         "refused_cause": (refused or {}).get("cause", ""),
         "refused_at": (refused or {}).get("at") if refused else None,
+        # the refused write may have reached the chip (docs/254): never "wrote nothing"
+        "refused_unverified": bool((refused or {}).get("unverified")),
     }
     out["sig"] = signature(out)
     return out
@@ -217,5 +219,7 @@ def signature(v: Mapping[str, Any]) -> str:
              v.get("unreadable"), v.get("refused_at"), v.get("refused_cause") or ""]
     if v.get("readonly"):
         parts.append("ro")          # v1.5.1 (U P1-6); absent: the old signature
+    if v.get("refused_unverified"):
+        parts.append("unverified")  # docs/254; absent: the old signature
     key = json.dumps(parts, sort_keys=True, default=str)
     return hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]

@@ -273,8 +273,8 @@ TAKEN_BACK = "; nothing was written, and the approval's values were taken back o
 
 #: what an approval says when its live write may have reached the chip (the door's write outcome
 #: is "unknown" or "landed"): the values stay, so SM shows what the chip may hold
-KEPT_UNVERIFIED = ("; the live write could not be verified, so the approval's values stay in SM's working copy "
-                   "until a person takes live or applies; check the chip")
+KEPT_UNVERIFIED = ("; the live write could not be verified, so the approval's values stay saved in SM's working "
+                   "copy until a person takes live or applies; check the chip")
 
 
 def _door_lead_then(lead: str, clause: str) -> str:
@@ -2330,13 +2330,13 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
     try:
         from quam_state_manager.core import working_copy as wc_mod
         moved = wc_mod.live_diverged_now(ctx["working_copy"])
-        if moved or ctx.get("live_diverged"):
-            # the flag alone: an earlier live write nobody could verify (routes._note_unverified_write)
-            # may have left saved values no approval owns; this press must not carry them to the chip
+        if moved or ctx.get("live_diverged") or r._unverified_write_held(ctx):
+            # the flag or the mark alone: an earlier live write nobody could verify
+            # (routes._note_unverified_write) may have left saved values no approval owns; this press
+            # must not carry them to the chip
             kept = _take_back()
-            out["error"] = (("stale_live: the live files moved outside SM since the last sync (take live first)"
-                             if moved else "stale_live: SM cannot tell whether the live chip matches its last "
-                             "sync (an earlier live write could not be verified); take live first") + kept)
+            out["error"] = ("stale_live: " + ("the live files moved outside SM since the last sync (take live first)"
+                                              if moved else r.UNVERIFIED_HELD_MSG) + kept)
             return out
     except Exception:  # noqa: BLE001
         logger.debug("live_diverged_now failed", exc_info=True)
@@ -2377,10 +2377,16 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
     try:
         with app.test_request_context("/state/apply-to-live", method="POST",
                                       data=door, headers=headers):
-            resp = r.state_apply_to_live()
-    except Exception as exc:  # noqa: BLE001
+            try:
+                resp = r.state_apply_to_live()
+            except Exception as exc:  # noqa: BLE001
+                # the door raised: its outcome is what it reached ("none" before its journal line)
+                logger.exception("agent apply failed")
+                resp = (jsonify(ok=False, message=f"Apply to live failed unexpectedly: {type(exc).__name__}: {exc}",
+                                write_outcome=r._apply_pend_outcome()), 500)
+    except Exception as exc:  # noqa: BLE001 (the request could not be set up: the door never ran)
         logger.exception("agent apply failed")
-        resp = (jsonify(ok=False, error=f"{type(exc).__name__}: {exc}"), 500)
+        resp = (jsonify(ok=False, error=f"{type(exc).__name__}: {exc}", write_outcome="none"), 500)
     status = resp[1] if isinstance(resp, tuple) else getattr(resp, "status_code", 200)
     body = resp[0] if isinstance(resp, tuple) else resp
     if status != 200:
@@ -2408,7 +2414,8 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
             # its values back would make SM show an old value the chip no longer holds.
             outcome = (js or {}).get("write_outcome")
             if status >= 500 and outcome not in ("failed", "none"):
-                # an unexpected error after the save may follow the write itself
+                # an unexpected error after the live write (or one that names no outcome):
+                # nobody confirmed what the chip holds
                 outcome = "unknown"
             if outcome in ("unknown", "landed"):
                 r._note_unverified_write(ctx, outcome)
