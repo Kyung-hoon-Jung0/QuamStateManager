@@ -136,23 +136,65 @@ def desc_problem(gate_class: Any, gate_desc: Any) -> str | None:
     None when no descriptor was given or the table holds the class (the
     descriptor is then never read). A usable descriptor is a dict with a
     callable ``skeleton`` and ``slots`` that is a list or tuple of ``Slot``
-    rows: distinct field names, roles and lines SM knows, at least one of
-    them required, so a planned gate always holds a pulse. Reads the
-    descriptor only; calls nothing."""
-    if gate_desc is None or gate_class in GATE_CLASSES:
+    rows: field names, roles and lines SM knows, none of them used by two
+    rows (a role names the row's operation and a line is its channel, so a
+    repeat could never be planned), no field named ``__class__``, and at
+    least one row required, so a planned gate always holds a pulse. Reads
+    the descriptor only; calls nothing (what the skeleton returns is checked
+    by :func:`_skeleton_problem` when a gate is planned)."""
+    if gate_desc is None:
         return None
-    if not isinstance(gate_desc, dict) or not callable(gate_desc.get("skeleton")):
+    if gate_class in GATE_CLASSES:
+        return None
+    if not isinstance(gate_desc, dict):
+        return BAD_DESCRIPTION
+    if not callable(gate_desc.get("skeleton")):
         return BAD_DESCRIPTION
     slots = gate_desc.get("slots")
     if not isinstance(slots, (list, tuple)):
         return BAD_DESCRIPTION
     for s in slots:
-        if not (isinstance(s, Slot) and isinstance(s.field, str) and s.field
-                and s.role in ROLES and s.line in SLOT_LINES
-                and isinstance(s.required, bool)):
+        if not isinstance(s, Slot):
             return BAD_DESCRIPTION
-    if len({s.field for s in slots}) != len(slots) or not any(s.required for s in slots):
+        if not isinstance(s.field, str):
+            return BAD_DESCRIPTION
+        if not s.field:
+            return BAD_DESCRIPTION
+        if s.field == "__class__":
+            return BAD_DESCRIPTION
+        if s.role not in ROLES:
+            return BAD_DESCRIPTION
+        if s.line not in SLOT_LINES:
+            return BAD_DESCRIPTION
+        if not isinstance(s.required, bool):
+            return BAD_DESCRIPTION
+    if len({s.field for s in slots}) != len(slots):
         return BAD_DESCRIPTION
+    if len({s.role for s in slots}) != len(slots):
+        return BAD_DESCRIPTION
+    if len({s.line for s in slots}) != len(slots):
+        return BAD_DESCRIPTION
+    if not any(s.required for s in slots):
+        return BAD_DESCRIPTION
+    return None
+
+
+def _skeleton_problem(macro: Any, slots: Any) -> str | None:
+    """Why the macro a handed-in skeleton returned cannot hold a gate, or
+    None. A usable one is a dict whose ``__class__`` is a non-empty string
+    and that holds every slot field of *slots*, each still empty (None)."""
+    if not isinstance(macro, dict):
+        return BAD_DESCRIPTION
+    cls = macro.get("__class__")
+    if not isinstance(cls, str):
+        return BAD_DESCRIPTION
+    if not cls:
+        return BAD_DESCRIPTION
+    for s in slots:
+        if s.field not in macro:
+            return BAD_DESCRIPTION
+        if macro[s.field] is not None:
+            return BAD_DESCRIPTION
     return None
 
 
@@ -795,7 +837,8 @@ def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
     (Slot, ...)}``) of a class that has no row in ``GATE_CLASSES``; with it
     the class is built like a table class instead of copied from a model
     gate. It is ignored for a class the table already holds. A descriptor
-    that fails :func:`desc_problem` is refused with its sentence; spectators
+    that fails :func:`desc_problem`, or whose skeleton returns a macro SM
+    cannot fill, is refused with the same sentence; spectators
     for a described class are refused too (they are planned separately).
     """
     try:
@@ -979,6 +1022,11 @@ def _plan_known(merged, pair_id, p, gate_name, gate_class, pulses, lines,
                 copy_source, reasons, spectators=(), *,
                 gate_desc=None) -> dict[str, Any]:
     desc = _desc(gate_class, gate_desc)
+    macro = desc["skeleton"]()
+    if gate_class not in GATE_CLASSES:
+        bad = _skeleton_problem(macro, desc["slots"])
+        if bad:
+            return _refuse([bad])
     slots = {s.field: s for s in desc["slots"]}
     have = ", ".join(slots)
     copy_refused: set = set()
@@ -1020,7 +1068,6 @@ def _plan_known(merged, pair_id, p, gate_name, gate_class, pulses, lines,
     named = (name_form_fields(merged, pair_id, {f: x.line for f, x in slots.items()})
              if direction == OPERATION_OWNS else set())
     control, target = lines["_ids"]
-    macro = desc["skeleton"]()
     macro_segs = ("qubit_pairs", pair_id, "macros", gate_name)
     op_creates: list[tuple[str, Any]] = []
     provenance: dict[str, dict] = {}
@@ -1115,15 +1162,16 @@ NO_SPECTATORS_COPIED = (
 
 
 NO_SPECTATORS_DESCRIBED = (
-    "This step plans the gate's own pulses only; the spectator pulses of this "
-    "gate class are planned separately. Leave the spectators out of this request.")
+    "This step plans the gate's own pulses only. Leave the spectators out of "
+    "this request.")
 
 
 def spectator_refusal(gate_class: Any, *, gate_desc: Any = None) -> str | None:
     """None when the window offers spectators for *gate_class* (the official
     class), else the sentence saying why it does not. ``gate_desc`` is the
     descriptor handed to ``plan`` for a class the table does not hold: such a
-    class copies no gate, so it gets its own sentence."""
+    class copies no gate, and ``plan`` adds no spectator pulses to it, so it
+    gets a sentence that says only that."""
     if gate_class == CZ_GATE:
         return None
     if gate_class == COUPLER_CZ_GATE:
