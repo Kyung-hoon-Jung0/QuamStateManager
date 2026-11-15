@@ -864,6 +864,9 @@
 .ui-dpanes .dp-pane-head .dp-slot { position: sticky; left: calc(var(--dp-keys-w, 0px) + 0.3rem); align-self: flex-start; }
 .ui-xscroll-both { max-height: max(18rem, calc(100vh - var(--topbar-height, 56px) - 5rem)); overflow: auto; }
 .ui-xscroll { overflow-x: auto; max-width: 100%; }
+/* a table in a scrolling wrapper keeps a number with its unit on one line and scrolls instead of cutting */
+.ui-xscroll-table { min-width: 0; }
+.ui-xscroll-table > .ui-table .ui-table-num { white-space: nowrap; }
 .ui-xhint { display: flex; align-items: center; gap: var(--ui-ds-gap-hint); margin: 0.2rem 0 0.3rem;
     padding: 0.25rem 0.5rem; font-size: var(--ui-ds-fs-unit); border-radius: var(--ui-r-sm);
     border: var(--ui-bw) solid var(--ui-ds-hint-border); background: var(--ui-ds-hint-bg); }
