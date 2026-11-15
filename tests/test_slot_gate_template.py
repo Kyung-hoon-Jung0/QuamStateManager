@@ -510,6 +510,31 @@ NO_STEP_SHA256 = {
     ('control+target+coupler', False): '72fa3c11549129c385793cfe09f6db63af09705d8ca54cb95815c2e68965730f',
     ('control+target+coupler', True): 'ec8161612bde80f574debd2a05232e7ef2c4ebff0ac2cbd66861f537500aed70',
 }
+
+
+class IntSub(int):
+    pass
+
+
+class EvilInt(int):
+    def __repr__(self):
+        return "16) or __import__('os').getcwd() or (16"
+
+
+class FloatSub(float):
+    def __repr__(self):
+        return "FloatSub(16.0)\n        BOOM = 1"
+
+
+class StrSub(str):
+    def __repr__(self):
+        return "StrSub('x')\n        BOOM = 1"
+
+
+class DictSub(dict):
+    pass
+
+
 WAIT = {"kind": "wait", "length": 16}
 XY = {"kind": "xy", "qubit": "control", "operation": "x180"}
 ALIGN = {"kind": "align"}
@@ -535,7 +560,7 @@ def test_no_step_render_is_unchanged(slots, spectators, empty):
 
 
 STEP_CASES = [([WAIT], []), ([XY], []), ([], [ALIGN]), ([WAIT, XY, ALIGN], [XY, WAIT]),
-              ([{"kind": "xy", "qubit": "target", "operation": "x90.drag-1"}, {"kind": "wait", "length": 52.0}],
+              ([{"kind": "xy", "qubit": "target", "operation": "x90.drag-1"}, {"kind": "wait", "length": 52}],
                [ALIGN])]
 
 
@@ -585,8 +610,11 @@ def test_steps_round_trip_and_order(slots, spectators, before, after):
 def test_class_docstring_names_the_steps():
     source = T.render(T.SlotSpec("ExampleGate", {"coupler"}, False, [WAIT, XY], [ALIGN]))
     doc = ast.get_docstring(ast.parse(source).body[-1]).splitlines()
-    assert "Before the gate pulses: wait 16 ns, then play x180 on the control xy channel." in doc
+    assert "Before the gate pulses: wait 16 ns, play x180 on the control xy channel." in doc
     assert "After the gate pulses: align." in doc
+    assert " then " not in " ".join(doc)
+    assert [line.strip() for line in T.STEP_TIMING_NOTE] == doc[doc.index("After the gate pulses: align.") + 1:]
+    assert "overlap unless an align step is between them" in doc[-1]
     source = T.render(T.SlotSpec("ExampleGate", {"coupler"}, False, [], [ALIGN]))
     assert "Before the gate pulses: nothing." in ast.get_docstring(ast.parse(source).body[-1]).splitlines()
 
@@ -614,7 +642,7 @@ def test_empty_step_lists_written_by_hand_are_refused():
     assert not T.parse(edited).ok
 
 
-@pytest.mark.parametrize("steps", [[], (), [ALIGN], [WAIT], [{"kind": "wait", "length": 52.0}], [XY],
+@pytest.mark.parametrize("steps", [[], (), [ALIGN], [WAIT], [{"kind": "wait", "length": 52}], [XY],
                                    [{"kind": "xy", "qubit": "target", "operation": "a_b.c-9"}]])
 def test_valid_steps(steps):
     assert T.sequence_steps_problem(steps) is None
@@ -642,6 +670,28 @@ def test_valid_steps(steps):
     ([{"kind": "xy", "qubit": "control", "operation": "x180\n"}], 1, "operation"),
     ([{"kind": "xy", "qubit": "control", "operation": "x" + chr(233)}], 1, "operation"),
     ([{"kind": "xy", "qubit": "control", "operation": 5}], 1, "operation"),
+    ([{"kind": "wait", "length": 16.0}], 1, "waits 16.0 ns"),
+    ([{"kind": "wait", "length": 52.0}], 1, "waits"),
+    ([WAIT, {"kind": "wait", "length": IntSub(16)}], 2, "waits"),
+    ([{"kind": "wait", "length": EvilInt(16)}], 1, "waits"),
+    ([{"kind": "wait", "length": FloatSub(16.0)}], 1, "waits"),
+    ([{"kind": "wait", "length": T.MAX_WAIT_NS + T.LENGTH_STEP_NS}], 1, "at most"),
+    ([{"kind": "wait", "length": 10 ** 400}], 1, "waits a whole number too large to show ns"),
+    ([{"kind": "wait", "length": 10 ** 5000}], 1, "waits a whole number too large to show ns"),
+    ([{"kind": "wait", "length": 10 ** 5000 + 1}], 1, "waits"),
+    ([{"kind": "wait", "length": -16}], 1, "waits"),
+    ([{"kind": "xy", "qubit": "Control", "operation": "x180"}], 1, "control or target"),
+    ([{"kind": "xy", "qubit": " control", "operation": "x180"}], 1, "control or target"),
+    ([{"kind": "xy", "qubit": StrSub("control"), "operation": "x180"}], 1, "control or target"),
+    ([{"kind": "xy", "qubit": "control", "operation": "x'y"}], 1, "operation"),
+    ([XY, {"kind": "xy", "qubit": "control", "operation": StrSub("x180")}], 2, "operation"),
+    ([{"kind": StrSub("align")}], 1, "unknown kind"),
+    ([DictSub(kind="align")], 1, "mapping"),
+    ([{"kind": "align", "length": "junk", "qubit": 3}], 1, "the key 'length', which a step of kind align"),
+    ([ALIGN, {"kind": "wait", "length": 16, "operation": "zzz"}], 2, "the key 'operation', which a step of kind wait"),
+    ([{"kind": "xy", "qubit": "control", "operation": "x180", "length": 16}], 1, "the key 'length'"),
+    ([{"kind": "align", 7: 1}], 1, "the key 7"),
+    ([{"kind": "align", ("a", 1): 1}], 1, "the key ('a', 1)"),
 ])
 @pytest.mark.parametrize("where", ["before", "after"])
 def test_step_problems_name_the_step(steps, number, words, where):
@@ -669,6 +719,11 @@ def test_wait_rule_follows_the_shared_constants():
     assert f"multiple of {step} ns, at least {low} ns" in T.WAIT_PROBLEM
     source = T.render(T.SlotSpec("ExampleGate", {"coupler"}, False, [WAIT]))
     assert f"16 % {step} or 16 < {low}):" in source and f"wait(int(16) // {step}, *channels)" in source
+    assert T.MAX_WAIT_NS == 2 ** 24 * step and T.MAX_WAIT_NS % step == 0
+    assert f"at most {T.MAX_WAIT_NS} ns" in T.WAIT_PROBLEM
+    assert f"if (type(16) is not int or 16 > {T.MAX_WAIT_NS} or 16 % {step} or 16 < {low}):" in source
+    assert T.sequence_steps_problem([{"kind": "wait", "length": T.MAX_WAIT_NS}]) is None
+    assert T.sequence_steps_problem([{"kind": "wait", "length": T.MAX_WAIT_NS + step}])
     assert repr(T.WAIT_PROBLEM) in source
 
 
@@ -693,6 +748,14 @@ def test_unsafe_names_stay_inert_literals(monkeypatch):
     assert T.parse(source).spec.before[0]["operation"] == NASTY
 
 
+#: Two xy steps on different qubits have no align between them: the plays start together (the class
+#: docstring says so), and an align step chosen between them is what orders them in time.
+TOGETHER = ([XY, {"kind": "xy", "qubit": "target", "operation": "y90"}],
+            [XY, ALIGN, {"kind": "xy", "qubit": "target", "operation": "y90"}],
+            ["play control_xy x180", "play target_xy y90", "align", "play coupler coupler_op", "align", "align",
+             "play control_xy x180", "align", "play target_xy y90"])
+
+
 @lab
 @pytest.mark.parametrize("before,after,expected", [
     ([WAIT], [], ["wait 4", "align", "play coupler coupler_op", "align", "align"]),
@@ -701,6 +764,7 @@ def test_unsafe_names_stay_inert_literals(monkeypatch):
     ([XY, {"kind": "wait", "length": 20}], [{"kind": "xy", "qubit": "target", "operation": "y90"}, WAIT],
      ["play control_xy x180", "wait 5", "align", "play coupler coupler_op", "align", "align",
       "play target_xy y90", "wait 4"]),
+    TOGETHER,
 ])
 def test_lab_statement_order(tmp_path, before, after, expected):
     source = T.render(T.SlotSpec("ExampleGate", {"coupler"}, False, before, after))
@@ -727,3 +791,233 @@ def test_lab_wait_guard_without_the_pure_check(tmp_path, monkeypatch, length):
     assert not result["ok"]
     assert result["error"] == "ValueError: " + T.WAIT_PROBLEM.format(number=1, where="after", value=length), result
     assert result["statements"] == []
+
+
+# Exact types, inert forced input, the wait upper limit and a run of the generated apply() without the lab env.
+
+ACCEPTED = [[WAIT], [{"kind": "wait", "length": 20}], [{"kind": "wait", "length": T.MAX_WAIT_NS}], [XY],
+            [{"kind": "xy", "qubit": "target", "operation": "x180"}],
+            [{"kind": "xy", "qubit": "control", "operation": "x90.DRAG"}],
+            [{"kind": "xy", "qubit": "target", "operation": "a-b_c"}], [ALIGN]]
+
+
+@pytest.mark.parametrize("steps", ACCEPTED)
+@pytest.mark.parametrize("where", ["before", "after"])
+def test_accepted_steps_render_byte_stable(steps, where):
+    assert T.sequence_steps_problem(steps, where) is None
+    spec = T.SlotSpec("ExampleGate", {"coupler"}, False, **{where: steps})
+    source = T.render(spec)
+    parsed = T.parse(source)
+    assert parsed.ok, parsed.why
+    assert parsed.spec == spec and T.render(parsed.spec) == source
+    assert source.isascii()
+
+
+@pytest.mark.parametrize("length", [IntSub(16), EvilInt(16), FloatSub(16.0), 16.0, True])
+def test_only_plain_values_reach_the_source(monkeypatch, length):
+    """The check refuses a subclass; forced past it, the source still holds no text of a foreign type."""
+    step = {"kind": "wait", "length": length}
+    assert T.sequence_steps_problem([step])
+    with pytest.raises(ValueError, match="Sequence step 1 before the gate waits"):
+        T.render(T.SlotSpec("ExampleGate", {"coupler"}, False, [step]))
+    source = _forced(monkeypatch, [step], [{"kind": "xy", "qubit": "control", "operation": StrSub("x180")}])
+    tree = ast.parse(source)
+    names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    assert not names & {"__import__", "BOOM", "IntSub", "EvilInt", "FloatSub", "StrSub", "np"}
+    assert len(source.splitlines()) == len(_forced(monkeypatch, [WAIT], [XY]).splitlines())
+
+
+#: Text that would close a docstring, start a comment or add a line if it were pasted into the source.
+BREAKERS = ['""" ; BOOM = 1 ; """', "a\n        BOOM = 1\n", "x\\", "# BOOM", "'" * 3, "x\r    BOOM = 1", "\u2028BOOM = 1"]
+FORCED_LENGTHS = BREAKERS + [float("nan"), float("inf"), 10 ** 400, 10 ** 5000, T.MAX_WAIT_NS + T.LENGTH_STEP_NS,
+                             18, 52.5, 16.0, True, None, EvilInt(16), FloatSub(16.0), StrSub("16")]
+
+
+def _shape(source):
+    """Return what a forced value must not change: line count, class body and apply() statement kinds."""
+    tree = ast.parse(source)
+    body = tree.body[-1].body
+    apply = next(n for n in body if isinstance(n, ast.FunctionDef) and n.name == "apply")
+    return (len(source.splitlines()), [type(n).__name__ for n in tree.body], [type(n).__name__ for n in body],
+            [type(n).__name__ for n in apply.body], len(ast.get_docstring(tree.body[-1]).splitlines()))
+
+
+@pytest.mark.parametrize("length", FORCED_LENGTHS, ids=lambda v: T._shown(v)[:24])
+def test_forced_wait_length_stays_inert(monkeypatch, length):
+    assert T.sequence_steps_problem([{"kind": "wait", "length": length}])
+    source = _forced(monkeypatch, [{"kind": "wait", "length": length}], [XY])
+    assert source.isascii()
+    assert _shape(source) == _shape(_forced(monkeypatch, [WAIT], [XY]))
+    tree = ast.parse(source)
+    assert "BOOM" not in {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    doc = ast.get_docstring(tree.body[-1]).splitlines()
+    shown = f"wait {length} ns" if type(length) is int and length < 2 ** 63 else "wait an unchecked length"
+    assert f"Before the gate pulses: {shown}." in doc
+    assert sum(line.startswith("    #") for line in source.splitlines()) == 6
+
+
+@pytest.mark.parametrize("operation", BREAKERS + [NASTY, StrSub('"""'), 5, None, float("nan")],
+                         ids=lambda v: T._shown(v)[:24])
+def test_forced_operation_stays_inert(monkeypatch, operation):
+    assert T.sequence_steps_problem([{"kind": "xy", "qubit": "target", "operation": operation}])
+    source = _forced(monkeypatch, [WAIT], [{"kind": "xy", "qubit": "target", "operation": operation}])
+    assert source.isascii()
+    assert _shape(source) == _shape(_forced(monkeypatch, [WAIT], [XY]))
+    tree = ast.parse(source)
+    assert "BOOM" not in {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    shown = T._shown(operation) if type(operation) is not str and T.OPERATION_TOKEN.fullmatch(
+        T._shown(operation)) else "an unchecked operation"
+    assert f"After the gate pulses: play {shown} on the target xy channel." in ast.get_docstring(
+        tree.body[-1]).splitlines()
+    plays = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "attr", None) == "play"
+             and isinstance(n.func.value, ast.Attribute) and n.func.value.attr == "xy"]
+    assert len(plays) == 1 and isinstance(plays[0].args[0], ast.Constant) and type(plays[0].args[0].value) is str
+
+
+@pytest.mark.parametrize("steps,sentence", [
+    ([{"kind": "xy", "qubit": "control.xy.play('a')\n        BOOM = 1\n        pair.qubit_control", "operation": "x"}],
+     "Sequence step 1 before the gate names the qubit"),
+    ([ALIGN, {"kind": "xy", "qubit": StrSub("control"), "operation": "x"}],
+     "Sequence step 2 before the gate names the qubit"),
+    ([{"kind": "xy", "operation": "x"}], "Sequence step 1 before the gate names the qubit None"),
+    ([None], "Sequence step 1 before the gate must be a mapping"),
+    ([ALIGN, {"kind": "reset"}], "Sequence step 2 before the gate has the unknown kind 'reset'"),
+    ([{}], "Sequence step 1 before the gate has the unknown kind None"),
+    ("align", "The sequence steps before the gate must be a list"),
+])
+def test_forced_steps_that_cannot_render_are_refused_with_a_sentence(monkeypatch, steps, sentence):
+    with pytest.raises(ValueError) as caught:
+        _forced(monkeypatch, steps)
+    assert str(caught.value).startswith(sentence), str(caught.value)
+    assert "\n" not in str(caught.value)
+
+
+def test_roles_come_from_the_fixed_table():
+    assert set(T.XY_CHANNEL) == set(T.XY_ROLES) == {"control", "target"}
+    assert T.XY_CHANNEL == {"control": "pair.qubit_control.xy", "target": "pair.qubit_target.xy"}
+    for role in T.XY_ROLES:
+        source = T.render(T.SlotSpec("ExampleGate", {"coupler"}, False,
+                                     [{"kind": "xy", "qubit": role, "operation": "x180"}]))
+        assert f"        if 'x180' not in pair.qubit_{role}.xy.operations:\n" in source
+        assert f"        pair.qubit_{role}.xy.play('x180')\n" in source
+
+
+def _standin_apply(monkeypatch, source, xy_operations=None):
+    """Run the generated apply() on small stand-in objects, without a QM library; return (statements, error)."""
+    import dataclasses
+    import sys
+    import types
+    statements = []
+    qua = types.ModuleType("qm.qua")
+    qua.align = lambda *channels: statements.append("align")
+    qua.wait = lambda duration, *channels: statements.append(f"wait {duration}")
+    qua.amp = lambda scale: scale
+    qua.play = lambda pulse, element, **kwargs: statements.append(f"play {element} spectator")
+    core, macro, pulses = (types.ModuleType(n) for n in ("quam.core", "quam.components.macro",
+                                                         "quam.components.pulses"))
+    core.quam_dataclass = dataclasses.dataclass
+    macro.QubitPairMacro = type("QubitPairMacro", (), {})
+    pulses.Pulse = type("Pulse", (), {})
+    for module in (types.ModuleType("qm"), qua, types.ModuleType("quam"), core,
+                   types.ModuleType("quam.components"), macro, pulses):
+        monkeypatch.setitem(sys.modules, module.__name__, module)
+
+    class Channel:
+        def __init__(self, name, operations):
+            self.name, self.operations = name, {op: types.SimpleNamespace(id=op) for op in operations}
+
+        def play(self, label, **kwargs):
+            statements.append(f"play {self.name} {label}")
+
+        def frame_rotation_2pi(self, phase):
+            statements.append(f"frame_rotation {self.name}")
+
+    def qubit(name):
+        z = Channel(name + "_z", [name + "_op"])
+        xy = Channel(name + "_xy", (xy_operations or {}).get(name, []))
+        return types.SimpleNamespace(z=z, xy=xy, channels={"z": z, "xy": xy})
+
+    pair = types.SimpleNamespace(qubit_control=qubit("control"), qubit_target=qubit("target"),
+                                 coupler=Channel("coupler", ["coupler_op"]))
+    namespace = {"__name__": "standin_slot_gate"}
+    exec(compile(source, "standin_slot_gate.py", "exec"), namespace)
+
+    class Recorder(namespace["ExampleGate"]):
+        @property
+        def qubit_pair(self):
+            return pair
+
+    try:
+        Recorder(coupler_flux_pulse="coupler_op").apply()
+    except ValueError as exc:
+        return statements, str(exc)
+    return statements, None
+
+
+@pytest.mark.parametrize("before,after,expected", [
+    ([WAIT], [], ["wait 4", "align", "play coupler coupler_op", "align", "align"]),
+    ([XY], [], ["play control_xy x180", "align", "play coupler coupler_op", "align", "align"]),
+    ([], [ALIGN], ["align", "play coupler coupler_op", "align", "align", "align"]),
+    ([{"kind": "wait", "length": T.MAX_WAIT_NS}], [],
+     [f"wait {T.MAX_WAIT_NS // T.LENGTH_STEP_NS}", "align", "play coupler coupler_op", "align", "align"]),
+    TOGETHER,
+])
+def test_standin_statement_order(monkeypatch, before, after, expected):
+    source = T.render(T.SlotSpec("ExampleGate", {"coupler"}, False, before, after))
+    statements, error = _standin_apply(monkeypatch, source, {"control": ["x180"], "target": ["y90"]})
+    assert error is None and statements == expected
+
+
+@pytest.mark.parametrize("before,after,have,number,where,role,operation", [
+    ([WAIT], [ALIGN, XY], {"target": ["x180"]}, 2, "after", "control", "x180"),
+    ([XY], [], {}, 1, "before", "control", "x180"),
+    ([XY, {"kind": "xy", "qubit": "target", "operation": "y90"}], [], {"control": ["x180", "y90"]},
+     2, "before", "target", "y90"),
+    ([XY], [WAIT, XY, {"kind": "xy", "qubit": "target", "operation": "y90"}], {"control": ["x180"]},
+     3, "after", "target", "y90"),
+])
+def test_standin_missing_xy_operation(monkeypatch, before, after, have, number, where, role, operation):
+    """The generated apply() refuses a missing xy operation before it emits any statement."""
+    source = T.render(T.SlotSpec("ExampleGate", {"coupler"}, False, before, after))
+    statements, error = _standin_apply(monkeypatch, source, have)
+    assert error == T.XY_MISSING_PROBLEM.format(number=number, where=where, role=role, operation=operation)
+    assert statements == []
+    statements, error = _standin_apply(monkeypatch, source, {"control": ["x180", "y90"], "target": ["x180", "y90"]})
+    assert error is None and len(statements) == 4 + len(before + after)
+
+
+def _forced_text(length):
+    """Return the text the rule sentence shows for a forced wait length."""
+    if type(length) is int and length.bit_length() > 64:
+        return "a whole number too large to show"
+    return str(length)
+
+
+@pytest.mark.parametrize("length", [float("nan"), float("inf"), 10 ** 400, 10 ** 5000,
+                                    T.MAX_WAIT_NS + T.LENGTH_STEP_NS, 2 ** 63, 18, 12, 52.5, 16.0, True, None, "16"],
+                         ids=lambda v: T._shown(v)[:24])
+def test_standin_wait_guard_without_the_pure_check(monkeypatch, length):
+    source = _forced(monkeypatch, [WAIT], [{"kind": "wait", "length": length}])
+    statements, error = _standin_apply(monkeypatch, source)
+    assert error == T.WAIT_PROBLEM.format(number=1, where="after", value=_forced_text(length))
+    assert statements == []
+
+
+@lab
+@pytest.mark.parametrize("length", [float("nan"), float("inf"), 10 ** 400, 10 ** 5000,
+                                    T.MAX_WAIT_NS + T.LENGTH_STEP_NS], ids=lambda v: T._shown(v)[:24])
+def test_lab_wait_guard_for_values_no_literal_can_hold(tmp_path, monkeypatch, length):
+    source = _forced(monkeypatch, [WAIT], [{"kind": "wait", "length": length}])
+    result = run_check(tmp_path, source)
+    assert not result["ok"]
+    assert result["error"] == "ValueError: " + T.WAIT_PROBLEM.format(
+        number=1, where="after", value=_forced_text(length)), result
+    assert result["statements"] == []
+
+
+@lab
+def test_lab_wait_at_the_upper_limit_builds(tmp_path):
+    source = T.render(T.SlotSpec("ExampleGate", {"coupler"}, False, [{"kind": "wait", "length": T.MAX_WAIT_NS}]))
+    result = run_check(tmp_path, source)
+    assert result["status"] == "ok" and result["ok"], json.dumps(result)
+    assert result["statements"][0] == f"wait {T.MAX_WAIT_NS // T.LENGTH_STEP_NS}"

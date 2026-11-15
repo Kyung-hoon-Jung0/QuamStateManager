@@ -35,6 +35,8 @@ AMP_SCALE_LIMIT = 2.0
 MIN_LENGTH_NS = 16
 #: Pulse length step in ns; equal to the step the shared ``length_rule`` enforces (pinned by a test).
 LENGTH_STEP_NS = 4
+#: Longest wait in ns: 2**24 clock cycles of LENGTH_STEP_NS ns each.
+MAX_WAIT_NS = 2 ** 24 * LENGTH_STEP_NS
 #: Qubit z operation that spectator levels scale; one name for the pure check and the class.
 SPECTATOR_UNIT_OP = "spectator_unit"
 
@@ -53,20 +55,30 @@ SLOT_PROBLEM = "The {slot} slot accepts {kinds}; received {value!r}."
 
 #: Sequence step kinds placed before or after the gate pulses.
 STEP_KINDS = ("align", "wait", "xy")
+#: Keys a step of each kind uses; any other key is refused.
+STEP_KEYS = {"align": ("kind",), "wait": ("kind", "length"), "xy": ("kind", "qubit", "operation")}
 #: Qubit roles an xy step may name.
 XY_ROLES = ("control", "target")
+#: Fixed source text of the xy channel of each role; a role never enters the source any other way.
+XY_CHANNEL = {"control": "pair.qubit_control.xy", "target": "pair.qubit_target.xy"}
 #: Operation names an xy step may carry: ASCII letters, digits, underscore, dot and dash.
 OPERATION_TOKEN = re.compile(r"[A-Za-z0-9_.\-]+")
-STEPS_PROBLEM = "The sequence steps {where} the gate must be a list; received {value!r}."
-STEP_TYPE_PROBLEM = "Sequence step {number} {where} the gate must be a mapping with a kind; received {value!r}."
-STEP_KIND_PROBLEM = "Sequence step {number} {where} the gate has the unknown kind {value!r}; use align, wait or xy."
-WAIT_PROBLEM = ("Sequence step {number} {where} the gate waits {value!r} ns, which must be a finite whole multiple of "
-                + str(LENGTH_STEP_NS) + " ns, at least " + str(MIN_LENGTH_NS) + " ns.")
-XY_QUBIT_PROBLEM = "Sequence step {number} {where} the gate names the qubit {value!r}; use control or target."
-XY_OP_PROBLEM = ("Sequence step {number} {where} the gate names the operation {value!r}, which must be a non-empty"
+STEPS_PROBLEM = "The sequence steps {where} the gate must be a list; received {value}."
+STEP_TYPE_PROBLEM = "Sequence step {number} {where} the gate must be a mapping with a kind; received {value}."
+STEP_KIND_PROBLEM = "Sequence step {number} {where} the gate has the unknown kind {value}; use align, wait or xy."
+STEP_KEY_PROBLEM = ("Sequence step {number} {where} the gate has the key {value}, which a step of kind {kind}"
+                    " does not use.")
+WAIT_PROBLEM = ("Sequence step {number} {where} the gate waits {value} ns, which must be an integer, a multiple of "
+                + str(LENGTH_STEP_NS) + " ns, at least " + str(MIN_LENGTH_NS) + " ns and at most " + str(MAX_WAIT_NS)
+                + " ns.")
+XY_QUBIT_PROBLEM = "Sequence step {number} {where} the gate names the qubit {value}; use control or target."
+XY_OP_PROBLEM = ("Sequence step {number} {where} the gate names the operation {value}, which must be a non-empty"
                  " name of letters, digits, underscore, dot or dash.")
 XY_MISSING_PROBLEM = ("Sequence step {number} {where} the gate plays {operation!r}, which the {role} qubit xy"
                       " channel lacks.")
+#: Docstring lines of a class with steps, after the two lines that list the steps.
+STEP_TIMING_NOTE = ("    Steps are statements in this order. A step starts when its own channels are free,",
+                    "    so steps on different channels overlap unless an align step is between them.")
 
 
 @dataclass
@@ -122,63 +134,100 @@ def validate(spec: SlotSpec) -> list[str]:
     return problems
 
 
-def _wait_length_bad(value) -> bool:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return True
+def _shown(value) -> str:
+    """Return short ASCII text of a value for a message; never raises."""
     try:
-        return bool(length_rule({"length": value}) or value % LENGTH_STEP_NS or value < MIN_LENGTH_NS)
-    except (TypeError, ValueError, OverflowError):
+        if type(value) is int and value.bit_length() > 64:
+            return "a whole number too large to show"
+        text = ascii(value)
+        if not text.isprintable():
+            text = ascii(text)
+    except Exception:
+        return "a value that cannot be shown"
+    return text if len(text) <= 60 else text[:57] + "..."
+
+
+def _wait_length_bad(value) -> bool:
+    if type(value) is not int or value > MAX_WAIT_NS or value % LENGTH_STEP_NS or value < MIN_LENGTH_NS:
         return True
+    return bool(length_rule({"length": value}))
 
 
 def sequence_steps_problem(steps, where="before") -> str | None:
     """Check plain sequence steps; return None or one sentence naming the step, never raise.
 
-    Each step is a mapping: {"kind": "align"}, {"kind": "wait", "length": ns} or
+    Each step is a dict: {"kind": "align"}, {"kind": "wait", "length": ns} or
     {"kind": "xy", "qubit": "control" | "target", "operation": name}. Steps are numbered from 1.
+    Only exact types pass: a dict step, a str kind, role and operation, an int length. A subclass,
+    a float, a bool and a key the kind does not use are refused.
     """
     try:
-        if not isinstance(steps, (list, tuple)):
-            return STEPS_PROBLEM.format(where=where, value=steps)
+        if type(steps) not in (list, tuple):
+            return STEPS_PROBLEM.format(where=where, value=_shown(steps))
         for number, step in enumerate(steps, 1):
-            if not isinstance(step, dict) or "kind" not in step:
-                return STEP_TYPE_PROBLEM.format(number=number, where=where, value=step)
+            if type(step) is not dict or "kind" not in step:
+                return STEP_TYPE_PROBLEM.format(number=number, where=where, value=_shown(step))
             kind = step["kind"]
-            if not isinstance(kind, str) or kind not in STEP_KINDS:
-                return STEP_KIND_PROBLEM.format(number=number, where=where, value=kind)
+            if type(kind) is not str or kind not in STEP_KINDS:
+                return STEP_KIND_PROBLEM.format(number=number, where=where, value=_shown(kind))
+            unused = sorted(_shown(key) for key in step if type(key) is not str or key not in STEP_KEYS[kind])
+            if unused:
+                return STEP_KEY_PROBLEM.format(number=number, where=where, value=unused[0], kind=kind)
             if kind == "wait" and _wait_length_bad(step.get("length")):
-                return WAIT_PROBLEM.format(number=number, where=where, value=step.get("length"))
+                return WAIT_PROBLEM.format(number=number, where=where, value=_shown(step.get("length")))
             if kind == "xy":
                 role, operation = step.get("qubit"), step.get("operation")
-                if not isinstance(role, str) or role not in XY_ROLES:
-                    return XY_QUBIT_PROBLEM.format(number=number, where=where, value=role)
-                if not isinstance(operation, str) or not OPERATION_TOKEN.fullmatch(operation):
-                    return XY_OP_PROBLEM.format(number=number, where=where, value=operation)
+                if type(role) is not str or role not in XY_ROLES:
+                    return XY_QUBIT_PROBLEM.format(number=number, where=where, value=_shown(role))
+                if type(operation) is not str or not OPERATION_TOKEN.fullmatch(operation):
+                    return XY_OP_PROBLEM.format(number=number, where=where, value=_shown(operation))
         return None
     except Exception as exc:  # never raise on any input shape
         return f"Sequence steps {where} the gate could not be read: {type(exc).__name__}."
 
 
-def _canonical(step):
-    if step["kind"] == "wait":
-        return {"kind": "wait", "length": step["length"]}
-    if step["kind"] == "xy":
-        return {"kind": "xy", "qubit": step["qubit"], "operation": step["operation"]}
-    return {"kind": "align"}
+def _plain_steps(steps, where):
+    """Rebuild steps from plain values for rendering; raise ValueError with a sentence otherwise.
+
+    Rendering reads only what this returns. A length is an int of at most 64 bits or a str, an
+    operation is a str, a role is one of XY_ROLES; any other value is replaced by its short text.
+    """
+    if type(steps) not in (list, tuple):
+        raise ValueError(STEPS_PROBLEM.format(where=where, value=_shown(steps)))
+    plain = []
+    for number, step in enumerate(steps, 1):
+        if type(step) is not dict:
+            raise ValueError(STEP_TYPE_PROBLEM.format(number=number, where=where, value=_shown(step)))
+        kind = step.get("kind")
+        if type(kind) is not str or kind not in STEP_KINDS:
+            raise ValueError(STEP_KIND_PROBLEM.format(number=number, where=where, value=_shown(kind)))
+        if kind == "wait":
+            length = step.get("length")
+            keep = type(length) is str or (type(length) is int and length.bit_length() <= 64)
+            plain.append({"kind": "wait", "length": length if keep else _shown(length)})
+        elif kind == "xy":
+            role, operation = step.get("qubit"), step.get("operation")
+            if type(role) is not str or role not in XY_ROLES:
+                raise ValueError(XY_QUBIT_PROBLEM.format(number=number, where=where, value=_shown(role)))
+            plain.append({"kind": "xy", "qubit": XY_ROLES[XY_ROLES.index(role)],
+                          "operation": operation if type(operation) is str else _shown(operation)})
+        else:
+            plain.append({"kind": "align"})
+    return plain
 
 
 def _describe(steps):
+    """Return the docstring words of plain steps; an unchecked value is named, never shown."""
     words = []
     for step in steps:
         if step["kind"] == "wait":
-            words.append(f"wait {step['length']!r} ns")
+            words.append(f"wait {step['length']} ns" if type(step["length"]) is int else "wait an unchecked length")
         elif step["kind"] == "xy":
-            name = step["operation"]
-            shown = name if isinstance(name, str) and OPERATION_TOKEN.fullmatch(name) else "an unchecked operation"
-            words.append(f"play {shown} on the {step['qubit']} xy channel")
+            shown = step["operation"] if OPERATION_TOKEN.fullmatch(step["operation"]) else "an unchecked operation"
+            words.append(f"play {shown} on the {XY_ROLES[XY_ROLES.index(step['qubit'])]} xy channel")
         else:
             words.append("align")
-    return ", then ".join(words) if words else "nothing"
+    return ", ".join(words) if words else "nothing"
 
 
 def _step_lines(steps):
@@ -187,27 +236,27 @@ def _step_lines(steps):
         if step["kind"] == "align":
             lines.append("        align(*channels)")
         elif step["kind"] == "wait":
-            lines.append(f"        wait(int({step['length']!r}) // {LENGTH_STEP_NS}, *channels)")
+            lines.append(f"        wait(int({ascii(step['length'])}) // {LENGTH_STEP_NS}, *channels)")
         else:
-            lines.append(f"        pair.qubit_{step['qubit']}.xy.play({step['operation']!r})")
+            lines.append(f"        {XY_CHANNEL[step['qubit']]}.play({ascii(step['operation'])})")
     return lines
 
 
-def _step_guards(spec):
+def _step_guards(before, after):
     lines = []
-    for where in ("before", "after"):
-        for number, step in enumerate(getattr(spec, where), 1):
+    for where, steps in (("before", before), ("after", after)):
+        for number, step in enumerate(steps, 1):
             if step["kind"] == "wait":
-                value = repr(step["length"])
-                lines += [f"        if (isinstance({value}, bool) or not isinstance({value}, (int, float))"
+                value = ascii(step["length"])
+                lines += [f"        if (type({value}) is not int or {value} > {MAX_WAIT_NS}"
                           f" or {value} % {LENGTH_STEP_NS} or {value} < {MIN_LENGTH_NS}):",
                           f"            raise ValueError({WAIT_PROBLEM!r}.format(number={number}, where={where!r},"
-                          f" value={value}))"]
+                          f" value={ascii(str(step['length']))}))"]
             elif step["kind"] == "xy":
-                role, operation = step["qubit"], repr(step["operation"])
-                lines += [f"        if {operation} not in pair.qubit_{role}.xy.operations:",
+                operation = ascii(step["operation"])
+                lines += [f"        if {operation} not in {XY_CHANNEL[step['qubit']]}.operations:",
                           f"            raise ValueError({XY_MISSING_PROBLEM!r}.format(number={number}, where={where!r},"
-                          f" role={role!r}, operation={operation}))"]
+                          f" role={step['qubit']!r}, operation={operation}))"]
     return lines
 
 
@@ -314,18 +363,17 @@ def _channel(slot):
     return "pair.coupler" if slot == "coupler" else f"pair.qubit_{slot}.z"
 
 
-def _region(spec):
+def _region(spec, before, after):
     slots = tuple(s for s in SLOTS if s in spec.slots)
-    steps = bool(spec.before or spec.after)
+    steps = bool(before or after)
     lines = [f"    # slots = {slots!r}", f"    # spectators = {spec.spectators!r}"]
     if steps:
-        lines += [f"    # before = {[_canonical(s) for s in spec.before]!r}",
-                  f"    # after = {[_canonical(s) for s in spec.after]!r}"]
+        lines += [f"    # before = {ascii(before)}", f"    # after = {ascii(after)}"]
     lines += ['    """Control and target slots accept operation-name strings.',
               '    The coupler slot accepts operation-name strings or inline Pulse objects.']
     if steps:
-        lines += [f"    Before the gate pulses: {_describe(spec.before)}.",
-                  f"    After the gate pulses: {_describe(spec.after)}."]
+        lines += [f"    Before the gate pulses: {_describe(before)}.",
+                  f"    After the gate pulses: {_describe(after)}.", *STEP_TIMING_NOTE]
     lines += ['    """']
     lines += [f"    {s}_flux_pulse: Union[Pulse, str]" for s in slots]
     lines += ["    phase_shift_control: float = 0.0", "    phase_shift_target: float = 0.0",
@@ -392,8 +440,8 @@ def _region(spec):
                   "                in_range = False",
                   "            if not in_range:",
                   f"                raise ValueError({LEVEL_PROBLEM!r}.format(name=name, value=level))"]
-    lines += _step_guards(spec)
-    lines += _step_lines(spec.before)
+    lines += _step_guards(before, after)
+    lines += _step_lines(before)
     lines += ["        align(*channels)"]
     for s in slots:
         flag = ", validate=False" if s == "coupler" else ""
@@ -414,7 +462,7 @@ def _region(spec):
                   f"        elif abs(self.phase_shift_{s}) > 1e-6:",
                   f"            pair.qubit_{s}.xy.frame_rotation_2pi(self.phase_shift_{s})"]
     lines += ["        align(*channels)"]
-    lines += _step_lines(spec.after)
+    lines += _step_lines(after)
     return "\n".join(lines) + "\n"
 
 
@@ -422,16 +470,17 @@ def render(spec: SlotSpec) -> str:
     problems = validate(spec)
     if problems:
         raise ValueError(" ".join(problems))
+    before, after = _plain_steps(spec.before, "before"), _plain_steps(spec.after, "after")
     return (f"{HEADER_MARK}, version {TEMPLATE_VERSION}.\n"
             "from dataclasses import field\nfrom typing import Union\n"
             + ("from qm.qua import align, amp, play, wait\n"
-               if any(s["kind"] == "wait" for s in spec.before + spec.after) else "from qm.qua import align, amp, play\n")
+               if any(s["kind"] == "wait" for s in before + after) else "from qm.qua import align, amp, play\n")
             + "from quam.core import quam_dataclass\n"
             "from quam.components.macro import QubitPairMacro\n"
             "from quam.components.pulses import Pulse\n\n"
             + (f'SPECTATOR_UNIT_OP = "{SPECTATOR_UNIT_OP}"\n\n' if spec.spectators else "")
             + f"@quam_dataclass\nclass {spec.class_name}(QubitPairMacro):\n"
-            + REGION_BEGIN + "\n" + _region(spec) + REGION_END + "\n")
+            + REGION_BEGIN + "\n" + _region(spec, before, after) + REGION_END + "\n")
 
 
 def parse(text: str) -> Parsed:
