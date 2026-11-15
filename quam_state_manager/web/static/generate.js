@@ -11,6 +11,29 @@
 
   var STEP_COUNT = 8;
 
+  // Use the diff name part for narrow values, with explicit path joints.
+  function readableValue(node, value) {
+    node.classList.add("ui-dot-name");
+    node.setAttribute("data-gen-readable", "");
+    node.textContent = value;
+    wrapReadableValue(node);
+  }
+  function wrapReadableValue(node) {
+    var value = node.textContent;
+    node.textContent = "";
+    value.split(/([/\\])/).forEach(function (part) {
+      node.appendChild(document.createTextNode(part));
+      if (window.innerWidth <= 700 && /^[/\\]$/.test(part)) node.appendChild(document.createElement("wbr"));
+    });
+  }
+  function fitReadableValues() {
+    var r = root();
+    if (!r) return;
+    r.classList.toggle("ui-run-diff-compact", window.innerWidth <= 700);
+    r.querySelectorAll("[data-gen-readable]").forEach(wrapReadableValue);
+  }
+  window.addEventListener("resize", fitReadableValues);
+
   // The spec assembled by the wizard — the contract in
   // docs/27_config_generator.md. Steps mutate this; step 8 submits it.
   // docs/242: a NEW chip's readout inputs default to crossing (Out1->In2,
@@ -661,7 +684,7 @@
         kindEl.textContent = env.kind === "uv-venv" ? "uv venv" : env.kind;
         kindEl.hidden = false;
       }
-      row.querySelector(".gen-env-path").textContent = env.python;
+      readableValue(row.querySelector(".gen-env-path"), env.python);
       row.addEventListener("click", function () { selectEnv(env.python); });
       list.appendChild(row);
       probeEnv(env.python, row.querySelector(".gen-env-status"), function () {
@@ -11116,7 +11139,9 @@
     // Fill values via textContent so user-entered strings can't inject HTML.
     var cells = el.querySelectorAll("td");
     rows.forEach(function (r, i) {
-      cells[i].textContent = r[1];
+      var value = document.createElement("span");
+      cells[i].appendChild(value);
+      readableValue(value, r[1]);
       if (r[2]) {
         var note = document.createElement("p");
         note.className = "ui-note";
@@ -13840,6 +13865,7 @@
     // Idempotent: skip if absent or already wired (HTMX re-swaps a fresh node).
     if (!r || r._quamGenInit) return;
     r._quamGenInit = true;
+    fitReadableValues();
     installRegenLeaveGuard();   // QA F6 (latched: installs once per page load)
     // QA review (r2-37 gap): a build sent from a Re-generate session is not
     // this mount's. Sidebar → Generate Config while it ran was a bare htmx

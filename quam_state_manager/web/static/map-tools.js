@@ -117,6 +117,8 @@
         var titleHint = verifyHint(payload);
         var note = String((payload.clickable || {}).verification_note || '').trim();
         contractChip.title = note && titleHint && !note.endsWith(titleHint) ? note + ' ' + titleHint : note || titleHint;
+        // The same words for a reader with no pointer: the chip text and the reason, read together.
+        if (contractChip.title) contractChip.setAttribute('aria-label', contractChip.textContent + ': ' + contractChip.title);
         var hint = null, hintText = verifyHint(payload);
         if (hintText) {
             // say why it is not verified, from the same reason verification() uses
