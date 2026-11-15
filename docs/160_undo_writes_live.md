@@ -499,8 +499,9 @@ stages without asking). The two rules combine: either one asks, and one
 question names every reason, in its text and in the machine field `reasons`
 (`["other_window"]`, `["age"]` or `["other_window", "age"]`). A same-window
 step asks only the age question (at the live flush); another window's step
-asks before any mutation, and when the age rule also applies (and the tab has
-not already said yes to old edits) that question adds the age sentence.
+asks before any mutation, and when the age rule also applies (and the presser
+has not already said yes to that age: the tab's standing yes to old edits or
+this step's age yes) that question adds the age sentence and the `age` reason.
 Each reason has its own consent, never borrowed across reasons. The page's
 Yes sends the ack of each reason the question named: `ack_prev_window=<unit
 id>` for the window reason, `ack_prev_session=<unit id>` for the age reason.

@@ -366,3 +366,30 @@ def test_the_age_sentence_needs_an_undo_that_writes_the_chip(env, monkeypatch, d
         with_age = direction == "/undo" and on
         assert q["reasons"] == (["other_window", "age"] if with_age else ["other_window"]), q
         assert ("It undoes an edit" in q["message"]) is with_age, q["message"]
+
+
+@pytest.mark.parametrize("consent", ["standing", "this_step"])
+def test_an_age_yes_drops_the_age_from_the_window_question(env, monkeypatch, consent):
+    """Another window's earlier-session step, Ctrl+Z writing live ON: before
+    any yes to its age the window question names the age; once the tab said
+    yes to old edits (or to this step's age), the same question names only the
+    window, and its window Yes writes the chip."""
+    import time
+    from quam_state_manager.web import routes
+    c = env["client"]
+    _set_setting(env, True)
+    start = _live_off(env)
+    _apply_from(env, B, 0.1)
+    monkeypatch.setattr(routes, "_PROCESS_STARTED_AT", time.time() + 60)
+    before = snapshot(env)
+    q = _trig(c.post("/undo", headers=A))["undoAskPrevSession"]
+    assert q["reasons"] == ["other_window", "age"] and "It undoes an edit" in q["message"]
+    assert snapshot(env) == before
+    age_yes = ({"ack_old_edits": "1"} if consent == "standing"
+               else {"ack_prev_session": q["unit_id"]})
+    q = _trig(c.post("/undo", headers=A, data=age_yes))["undoAskPrevSession"]
+    assert q["reasons"] == ["other_window"], q
+    assert "It undoes an edit" not in q["message"] and "another window" in q["message"]
+    assert snapshot(env) == before and _live_off(env) == 0.1
+    t = _trig(c.post("/undo", headers=A, data={**age_yes, "ack_prev_window": q["unit_id"]}))
+    assert t["cellsReverted"]["live"] is True and _live_off(env) == start
