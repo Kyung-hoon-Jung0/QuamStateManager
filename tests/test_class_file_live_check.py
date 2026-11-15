@@ -714,3 +714,23 @@ class TestEnvSource:
         assert isinstance(got.get("exc"), class_file_check.ClassFileRefusedError), got
         assert "could not look up" in str(got["exc"])
 
+
+
+class TestFileNameStaysInFolder:
+    """A recorded file name is looked up by its base name inside the folder."""
+
+    def _rec(self, name):
+        return {"file": name, "sha256": hashlib.sha256(_SOURCE).hexdigest()}
+
+    def test_parent_path_never_leaves_the_folder(self, tmp_path):
+        folder = tmp_path / "env_a" / "quam_config"
+        folder.mkdir(parents=True)
+        (tmp_path / "env_a" / "SmFlux.py").write_bytes(_SOURCE)   # right bytes, wrong place
+        why = class_file_check._file_problem(folder, self._rec("../SmFlux.py"))
+        assert why and "missing" in why and str(folder) in why
+
+    def test_subfolder_path_is_read_from_the_folder_itself(self, tmp_path):
+        folder = tmp_path / "env_a" / "quam_config"
+        folder.mkdir(parents=True)
+        (folder / "SmFlux.py").write_bytes(_SOURCE)
+        assert class_file_check._file_problem(folder, self._rec("x/SmFlux.py")) is None
