@@ -734,3 +734,42 @@ class TestFileNameStaysInFolder:
         folder.mkdir(parents=True)
         (folder / "SmFlux.py").write_bytes(_SOURCE)
         assert class_file_check._file_problem(folder, self._rec("x/SmFlux.py")) is None
+
+
+class TestActivationWithoutAliasInLive:
+    """A gate already in live, same files, becomes the active one on a chip that had no active gate."""
+
+    def test_gate_in_live_without_alias_is_checked_when_made_active(self):
+        live = _state()
+        del live["qubit_pairs"][_PAIR]["macros"]["cz"]
+        payload = _state(active="cz_sm")
+        found = class_file_check.gates_to_check(payload, live)
+        assert [(o, g) for o, g, _f in found] == [(_PAIR, "cz_sm")]
+
+    def test_same_gate_in_live_without_alias_and_without_new_alias_is_not_checked(self):
+        live = _state()
+        del live["qubit_pairs"][_PAIR]["macros"]["cz"]
+        payload = copy.deepcopy(live)
+        assert class_file_check.gates_to_check(payload, live) == []
+
+
+class TestRecordedHashCompare:
+    def _rec(self, sha):
+        return {"file": "SmFlux.py", "sha256": sha}
+
+    @pytest.fixture
+    def folder(self, tmp_path):
+        f = tmp_path / "env_a" / "quam_config"
+        f.mkdir(parents=True)
+        (f / "SmFlux.py").write_bytes(_SOURCE)
+        return f
+
+    def test_upper_case_recorded_hash_of_the_real_bytes_passes(self, folder):
+        sha = hashlib.sha256(_SOURCE).hexdigest().upper()
+        assert class_file_check._file_problem(folder, self._rec(sha)) is None
+
+    def test_hash_matching_only_in_its_first_characters_is_refused(self, folder):
+        real = hashlib.sha256(_SOURCE).hexdigest()
+        other = real[:8] + ("0" if real[8] != "0" else "1") * (len(real) - 8)
+        why = class_file_check._file_problem(folder, self._rec(other))
+        assert why and "changed" in why
