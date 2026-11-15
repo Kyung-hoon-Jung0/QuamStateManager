@@ -567,6 +567,156 @@ def replot_outcome(result: dict) -> dict:
                       if fatal is not None else None)}
 
 
+_REASON_MAX_CHARS = 200
+# A token that may hold a file path: a quoted span starting like a path (spaces allowed
+# inside the quotes), or an unquoted run of non-space characters.
+_PATH_TOKEN_RE = re.compile(
+    r"""(?P<q>["'])(?P<qi>(?:[A-Za-z]:[\\/]|\\|/)[^"'\r\n]*?)(?P=q)|(?P<t>[^\s"']+)""")
+_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
+_UNC_RE = re.compile(r"^\\\\[^\\/\s]+\\")
+_SUFFIX_RE = re.compile(r"\.[A-Za-z][A-Za-z0-9]*(?:\.[0-9]+)*$")
+# The top-level collections of a state file: a slash-led path starting with one of them is
+# a pointer into the state (``/qubits/q1/xy.operations``), never a file on disk.
+_STATE_ROOTS = frozenset(("qubits", "qubit_pairs", "ports", "wiring", "network", "octaves",
+                          "mixers", "twpas", "active_qubit_names",
+                          "active_qubit_pair_names"))
+_LEAD = "([{<="
+_TRAIL = ",;:)]}>."
+
+
+def _base_name(path: str) -> str:
+    parts = [p for p in re.split(r"[\\/]", path) if p]
+    return parts[-1] if parts else path
+
+
+def _has_file_suffix(name: str) -> bool:
+    """``name`` ends in a file suffix: a dot, a letter, then letters or digits only (any
+    length, no underscore), optionally followed by digit-only parts (``libx.so.6``).
+
+    The name's own shape decides, no list of known extensions: a state key part carries an
+    underscore (``q1.z.joint_offset``) and a number starts with a digit (``0.5``), so
+    neither ends in a file suffix.
+    """
+    return _SUFFIX_RE.search(name) is not None
+
+
+def _is_state_pointer(tok: str) -> bool:
+    """A slash-led path whose first part is a state collection (``_STATE_ROOTS``)."""
+    return tok.startswith("/") and tok[1:].split("/", 1)[0] in _STATE_ROOTS
+
+
+def _is_file_path(tok: str) -> bool:
+    """A real file path: a drive path, a UNC path (also with one leading backslash),
+    or a POSIX absolute path of at least two parts ending in a file name with a suffix.
+
+    The suffix rule (``_has_file_suffix``) keeps a key path whose last part holds dots
+    (``/qubits/q1.z.joint_offset``) and a slash-led number (``/0.5``) unchanged.
+    """
+    if _DRIVE_RE.match(tok) or _UNC_RE.match(tok):
+        return True
+    if _is_state_pointer(tok):
+        return False
+    has_ext = _has_file_suffix(_base_name(tok))
+    if tok.startswith("\\") and tok.count("\\") >= 2:
+        return has_ext
+    return tok.startswith("/") and len(_base_name(tok)) < len(tok) and has_ext
+
+
+def _peel(tok: str) -> tuple[str, str, str]:
+    i = 0
+    while i < len(tok) and tok[i] in _LEAD:
+        i += 1
+    j = len(tok)
+    while j > i and tok[j - 1] in _TRAIL:
+        j -= 1
+    return tok[:i], tok[i:j], tok[j:]
+
+
+def _shorten_paths(line: str) -> str:
+    """Reduce every file path in ``line`` to its base name (see ``_is_file_path``).
+
+    An unquoted path ends at the first whitespace, with one exception: a rooted path (drive,
+    UNC, POSIX or backslash-led, at least two parts) whose following words each carry its
+    own separator and do not start a new root (a folder name with spaces, as tracebacks
+    print it) extends over them, up to the last word ending in a file name with a suffix.
+    A rooted token that reaches no such file name is left as it is.
+    """
+    ms = list(_PATH_TOKEN_RE.finditer(line))
+    out, pos, k = [], 0, 0
+    while k < len(ms):
+        m = ms[k]
+        out.append(line[pos:m.start()])
+        pos, k = m.end(), k + 1
+        if m.group("q"):
+            inner = m.group("qi")
+            out.append(m.group("q") + _base_name(inner) + m.group("q")
+                       if _is_file_path(inner) else m.group(0))
+            continue
+        lead, core, trail = _peel(m.group("t"))
+        is_file = bool(core) and _is_file_path(core)
+        rooted = (bool(core) and (core[0] in "\\/" or _DRIVE_RE.match(core) is not None)
+                  and len(_base_name(core)) < len(core))
+        if not (is_file or rooted) or _is_state_pointer(core):
+            out.append(m.group(0))
+            continue
+        if rooted:
+            sep = "\\" if "\\" in core else "/"
+            best, n = None, k
+            while n < len(ms) and ms[n].group("t") and line[ms[n - 1].end():ms[n].start()].isspace():
+                word = ms[n].group("t")
+                if (sep not in word or word[0] in "\\/" or _DRIVE_RE.match(word)
+                        or "://" in word):
+                    break
+                _, wcore, wtrail = _peel(word)
+                if _has_file_suffix(_base_name(wcore)):
+                    best = n
+                n += 1
+            if best is not None:
+                _, core, trail = _peel(line[m.start() + len(lead):ms[best].end()])
+                pos, k = ms[best].end(), best + 1
+            elif not is_file:
+                out.append(m.group(0))
+                continue
+        out.append(lead + _base_name(core) + trail)
+    out.append(line[pos:])
+    return "".join(out)
+
+
+def _bounded_reason(line) -> str:
+    """One trace line made fit for the page: file paths reduced to the base name, capped."""
+    if line is None:
+        return ""
+    out = _shorten_paths(line if isinstance(line, str) else str(line))
+    if len(out) > _REASON_MAX_CHARS:
+        out = out[:_REASON_MAX_CHARS] + "..."
+    return out
+
+
+def not_drawn_line(reason: str) -> str:
+    """The one place a reason becomes the user's line: "Not drawn: <reason>." with exactly
+    one final period (none added when the reason already ends in . ! or ?). An empty or
+    blank reason gives "Figure not available." so every caller shows the same fallback."""
+    if reason is None or not str(reason).strip():
+        return "Figure not available."
+    return "Not drawn: " + end_sentence(reason)
+
+
+def end_sentence(text) -> str:
+    """``text`` with a final period added unless it already ends in . ! or ?."""
+    t = "" if text is None else str(text).rstrip()
+    return t if not t or t[-1] in ".!?" else t + "."
+
+
+def replot_unavailable_reason(result: dict, key: str) -> str:
+    """Why a reproduced figure is absent: the last line of its own plot error ("" when none)."""
+    for e in result.get("errors") or []:
+        if isinstance(e, dict) and e.get("stage") == f"plot:{key}":
+            lines = [ln.strip() for ln in str(e.get("trace") or "").strip().splitlines() if ln.strip()]
+            if lines:
+                return _bounded_reason(lines[-1])
+    return ""
+
+
 def replot_figure(result: dict, key: str) -> dict | None:
     """Convert one cached figure to Plotly ``{data, layout, title}``; ``None`` if absent."""
     for f in result.get("figures", []):

@@ -19112,7 +19112,8 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
             if (timer) clearTimeout(timer);
             if (stale()) return;
             if (d.error) {
-                div.innerHTML = '<p style="color:var(--pico-del-color)">' + d.error + '</p>';
+                div.innerHTML = '<p style="color:var(--pico-del-color)"></p>';
+                div.firstChild.textContent = String(d.error);
                 div.setAttribute('data-rendered', '0');
                 return;
             }

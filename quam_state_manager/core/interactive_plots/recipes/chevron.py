@@ -117,8 +117,12 @@ def _chevron(bundle, key, pname, src, var, pidx, role_named=False):
     z, dims = pslice(src, var, pidx)
     z = np.asarray(z, dtype=float)
     coords = src.get("coords", {})
-    xname, yname, xlabel, ylabel = next(
-        (a for a in _AXES if a[0] in dims and a[1] in dims), _AXES[0])
+    axes = next((a for a in _AXES if a[0] in dims and a[1] in dims), None)
+    if axes is None:
+        return FigureSpec(key=key, title=_TITLES.get(var, "CZ Chevron"), available=False,
+                          reason=f"{var} has dims ({', '.join(map(str, dims))}), "
+                                 "not amplitude x time")
+    xname, yname, xlabel, ylabel = axes
     notes = []
     # Any further axis (the role-named generation's ``prep``): one slice, said.
     for i in range(len(dims) - 1, -1, -1):
@@ -130,6 +134,11 @@ def _chevron(bundle, key, pname, src, var, pidx, role_named=False):
             notes.append(f"Showing {d} = {lab} (first of {z.shape[i]}).")
         z = np.take(z, 0, axis=i)
         dims = dims[:i] + dims[i + 1:]
+    if z.ndim != 2 or not np.isfinite(z).any():
+        why = (f"{var} holds no finite values" if z.ndim == 2
+               else f"{var} is not a 2-D map after slicing")
+        return FigureSpec(key=key, title=_TITLES.get(var, "CZ Chevron"),
+                          available=False, reason=why)
     time = np.asarray(coords.get(xname, []), dtype=float)
     # y = the actual flux-pulse amplitude in V (amp_full); fall back to the swept
     # prefactor coord if that per-point mapping isn't stored.
