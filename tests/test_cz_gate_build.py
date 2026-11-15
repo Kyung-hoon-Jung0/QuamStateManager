@@ -2279,6 +2279,17 @@ def test_what_the_skeleton_returns_is_checked_before_a_gate_is_planned():
         assert "creates" in res, label
 
 
+@pytest.mark.parametrize("blank", [" ", "	", "   "])
+def test_a_blank_class_is_never_planned_even_when_the_skeleton_names_the_same_blank(blank):
+    desc = _described()
+    made = {**desc["skeleton"](), "__class__": blank}
+    assert cgb._skeleton_problem(dict(made), desc["slots"], blank) == cgb.BAD_DESCRIPTION
+    desc["skeleton"] = lambda made=made: dict(made)
+    res = cgb.plan(_chip(), "q1-2", gate_name="cz_new", gate_class=blank,
+                   pulses=_square(), gate_desc=desc)
+    assert "creates" not in res and res.get("error"), res
+
+
 def test_the_planned_gate_has_the_asked_class():
     for cls in (DESCRIBED_GATE,):
         desc = _described()

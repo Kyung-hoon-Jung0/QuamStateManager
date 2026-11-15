@@ -182,7 +182,8 @@ def desc_problem(gate_class: Any, gate_desc: Any) -> str | None:
 def _skeleton_problem(macro: Any, slots: Any, gate_class: Any) -> str | None:
     """Why the macro a handed-in skeleton returned cannot hold a gate, or
     None. A usable one is a dict whose ``__class__`` is the asked
-    *gate_class* (so the gate written is the gate asked for) and that holds
+    *gate_class* and not blank (so the gate written is the gate asked for,
+    never a gate of a class with no name) and that holds
     every slot field of *slots*, each still empty (None)."""
     if not isinstance(macro, dict):
         return BAD_DESCRIPTION
