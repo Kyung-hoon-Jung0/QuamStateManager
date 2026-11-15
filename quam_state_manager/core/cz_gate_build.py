@@ -111,6 +111,97 @@ GATE_CLASSES: dict[str, dict[str, Any]] = {
 }
 
 
+def _desc(gate_class: Any, gate_desc: dict | None = None) -> dict[str, Any] | None:
+    """The descriptor a gate of *gate_class* is built from: its row in
+    ``GATE_CLASSES``, else the descriptor the caller handed in (same keys as
+    a row), else None. The table always wins, so a caller cannot redefine a
+    class SM already knows."""
+    row = GATE_CLASSES.get(gate_class)
+    return row if row is not None else gate_desc
+
+
+#: the lines a slot can play on (the line roles ``_lines`` answers)
+SLOT_LINES = ("moving", "control", "target", "coupler")
+
+#: the one answer to a handed-in descriptor SM cannot build a gate from
+BAD_DESCRIPTION = (
+    "SM's own description of this gate class is not one it can build a gate "
+    "from, so it plans no gate of this class. Nothing was changed. Report this "
+    "with the gate class.")
+
+
+def desc_problem(gate_class: Any, gate_desc: Any) -> str | None:
+    """Why the descriptor handed in for *gate_class* cannot be used, or None.
+
+    None when no descriptor was given or the table holds the class (the
+    descriptor is then never read). A usable descriptor is a dict with a
+    callable ``skeleton`` and ``slots`` that is a list or tuple of ``Slot``
+    rows: field names, roles and lines SM knows, none of them used by two
+    rows (a role names the row's operation and a line is its channel, so a
+    repeat could never be planned), no field named ``__class__``, and at
+    least one row required, so a planned gate always holds a pulse. Reads
+    the descriptor only; calls nothing (what the skeleton returns is checked
+    by :func:`_skeleton_problem` when a gate is planned)."""
+    if gate_desc is None:
+        return None
+    if gate_class in GATE_CLASSES:
+        return None
+    if not isinstance(gate_desc, dict):
+        return BAD_DESCRIPTION
+    if not callable(gate_desc.get("skeleton")):
+        return BAD_DESCRIPTION
+    slots = gate_desc.get("slots")
+    if not isinstance(slots, (list, tuple)):
+        return BAD_DESCRIPTION
+    for s in slots:
+        if not isinstance(s, Slot):
+            return BAD_DESCRIPTION
+        if not isinstance(s.field, str):
+            return BAD_DESCRIPTION
+        if not s.field:
+            return BAD_DESCRIPTION
+        if s.field == "__class__":
+            return BAD_DESCRIPTION
+        if s.role not in ROLES:
+            return BAD_DESCRIPTION
+        if s.line not in SLOT_LINES:
+            return BAD_DESCRIPTION
+        if not isinstance(s.required, bool):
+            return BAD_DESCRIPTION
+    if len({s.field for s in slots}) != len(slots):
+        return BAD_DESCRIPTION
+    if len({s.role for s in slots}) != len(slots):
+        return BAD_DESCRIPTION
+    if len({s.line for s in slots}) != len(slots):
+        return BAD_DESCRIPTION
+    if not any(s.required for s in slots):
+        return BAD_DESCRIPTION
+    return None
+
+
+def _skeleton_problem(macro: Any, slots: Any, gate_class: Any) -> str | None:
+    """Why the macro a handed-in skeleton returned cannot hold a gate, or
+    None. A usable one is a dict whose ``__class__`` is the asked
+    *gate_class* and not blank (so the gate written is the gate asked for,
+    never a gate of a class with no name) and that holds
+    every slot field of *slots*, each still empty (None)."""
+    if not isinstance(macro, dict):
+        return BAD_DESCRIPTION
+    cls = macro.get("__class__")
+    if not isinstance(cls, str):
+        return BAD_DESCRIPTION
+    if not cls.strip():
+        return BAD_DESCRIPTION
+    if cls != gate_class:
+        return BAD_DESCRIPTION
+    for s in slots:
+        if s.field not in macro:
+            return BAD_DESCRIPTION
+        if macro[s.field] is not None:
+            return BAD_DESCRIPTION
+    return None
+
+
 def _ref(*segments: str) -> str:
     """An absolute reference built from path segments."""
     return "#/" + "/".join(segments)
@@ -460,13 +551,19 @@ def _lines(merged: dict, pair_id: str) -> dict[str, Any]:
 NO_CLASS = "The gate class must be given by its class name. Pick a gate class from the list."
 
 
-def class_problem(merged: dict, pair_id: str, gate_class: str) -> str | None:
+def class_problem(merged: dict, pair_id: str, gate_class: str, *,
+                  gate_desc: dict | None = None) -> str | None:
     """Why a gate of *gate_class* cannot run on *pair_id*, or None.
 
     Only the line facts the plan itself refuses on: a required pulse slot
     whose line has no operations gives the very reason ``plan`` gives for
-    it. A class SM does not know (a copied layout) is judged by its plan."""
-    desc = GATE_CLASSES.get(gate_class)
+    it. A class SM does not know (a copied layout) is judged by its plan.
+    ``gate_desc`` describes a class that has no row in ``GATE_CLASSES``; one
+    SM cannot build a gate from gives the sentence ``plan`` refuses with."""
+    bad = desc_problem(gate_class, gate_desc)
+    if bad:
+        return bad
+    desc = _desc(gate_class, gate_desc)
     if desc is None:
         return None
     try:
@@ -706,7 +803,8 @@ def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
          copy_from: str | None = None,
          model_gate: tuple[str, str] | None = None,
          macro_fields: dict[str, Any] | None = None,
-         spectators: list | None = None) -> dict[str, Any]:
+         spectators: list | None = None,
+         gate_desc: dict | None = None) -> dict[str, Any]:
     """Plan one new CZ gate. Never raises on chip shape; never changes *merged*.
 
     ``pulses`` maps a gate pulse field (``flux_pulse_qubit``,
@@ -738,10 +836,19 @@ def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
     spectator fields. With spectators the answer also carries
     ``"spectators": [...]`` and ``"spectator_ops": {qubit: count}``; without
     them the answer is exactly what it is for a gate with no spectators.
+
+    ``gate_desc`` is the descriptor (``{"skeleton": callable, "slots":
+    (Slot, ...)}``) of a class that has no row in ``GATE_CLASSES``; with it
+    the class is built like a table class instead of copied from a model
+    gate. It is ignored for a class the table already holds. A descriptor
+    that fails :func:`desc_problem`, or whose skeleton returns a macro SM
+    cannot fill, is refused with the same sentence; spectators
+    for a described class are refused too (they are planned separately).
     """
     try:
         out = _plan_body(merged, pair_id, gate_name, gate_class, pulses,
-                         copy_from, model_gate, macro_fields, spectators)
+                         copy_from, model_gate, macro_fields, spectators,
+                         gate_desc=gate_desc)
         if "refusals" in out:
             names = _echoed_names(pair_id, gate_name, gate_class, pulses, copy_from,
                                   model_gate, macro_fields) + _spectator_names(spectators)
@@ -791,16 +898,20 @@ def _echoed_names(pair_id, gate_name, gate_class, pulses, copy_from, model_gate,
 
 
 def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
-               model_gate, macro_fields=None, spectators=None) -> dict[str, Any]:
+               model_gate, macro_fields=None, spectators=None, *,
+               gate_desc=None) -> dict[str, Any]:
     bad = _argument_problem(pair_id, gate_name, gate_class, pulses, model_gate,
                             copy_from)
+    if bad:
+        return _refuse([bad])
+    bad = desc_problem(gate_class, gate_desc)
     if bad:
         return _refuse([bad])
     if spectators is not None and not isinstance(spectators, list):
         return _refuse([f"The spectators of pair {pair_id} must be a list of qubits, "
                         "each with a length and a level. Pick the spectators again."])
     if spectators:
-        why = spectator_refusal(gate_class)
+        why = spectator_refusal(gate_class, gate_desc=gate_desc)
         if why:
             return _refuse([why])
     if not isinstance(merged, dict) or not isinstance(merged.get("qubit_pairs"), dict):
@@ -822,12 +933,13 @@ def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
         reasons.append(r)
     lines = _lines(merged, pair_id)
     control, target = lines["_ids"]
-    if gate_class in GATE_CLASSES and not (control and target):
+    desc = _desc(gate_class, gate_desc)
+    if desc is not None and not (control and target):
         return _refuse(reasons + [
             f"The control or target of pair {pair_id} does not point at a qubit, "
             "so SM cannot name the gate's pulses. Set the pair's qubit_control "
             "and qubit_target first."])
-    if gate_class in GATE_CLASSES:
+    if desc is not None:
         # Both classes SM builds align the channels of BOTH qubits of the pair
         # when the gate runs, so a pair that names a qubit the chip does not
         # have cannot run such a gate, whichever line the pulse plays on.
@@ -861,13 +973,14 @@ def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
 
     if macro_fields is not None and not isinstance(macro_fields, dict):
         return _refuse(reasons + ["The gate settings must be given by key. Type them again."])
-    if gate_class in GATE_CLASSES:
+    if desc is not None:
         if macro_fields:
             return _refuse(reasons + [
                 f"This gate class has no gate settings to change ({', '.join(sorted(macro_fields))}). "
                 "Remove them."])
         out = _plan_known(merged, pair_id, p, gate_name, gate_class, pulses,
-                          lines, copy_source, reasons, spectators or [])
+                          lines, copy_source, reasons, spectators or [],
+                          gate_desc=gate_desc)
     else:
         out = _plan_copied(merged, pair_id, gate_name, gate_class, pulses,
                            lines, copy_source, reasons, model_gate, macro_fields)
@@ -910,8 +1023,14 @@ def _name_problem(key: str, ids: tuple) -> str:
 
 
 def _plan_known(merged, pair_id, p, gate_name, gate_class, pulses, lines,
-                copy_source, reasons, spectators=()) -> dict[str, Any]:
-    desc = GATE_CLASSES[gate_class]
+                copy_source, reasons, spectators=(), *,
+                gate_desc=None) -> dict[str, Any]:
+    desc = _desc(gate_class, gate_desc)
+    macro = desc["skeleton"]()
+    if gate_class not in GATE_CLASSES:
+        bad = _skeleton_problem(macro, desc["slots"], gate_class)
+        if bad:
+            return _refuse([bad])
     slots = {s.field: s for s in desc["slots"]}
     have = ", ".join(slots)
     copy_refused: set = set()
@@ -953,7 +1072,6 @@ def _plan_known(merged, pair_id, p, gate_name, gate_class, pulses, lines,
     named = (name_form_fields(merged, pair_id, {f: x.line for f, x in slots.items()})
              if direction == OPERATION_OWNS else set())
     control, target = lines["_ids"]
-    macro = desc["skeleton"]()
     macro_segs = ("qubit_pairs", pair_id, "macros", gate_name)
     op_creates: list[tuple[str, Any]] = []
     provenance: dict[str, dict] = {}
@@ -1047,13 +1165,23 @@ NO_SPECTATORS_COPIED = (
     "(quam-builder) class to add spectators.")
 
 
-def spectator_refusal(gate_class: Any) -> str | None:
+NO_SPECTATORS_DESCRIBED = (
+    "This step plans the gate's own pulses only. Leave the spectators out of "
+    "this request.")
+
+
+def spectator_refusal(gate_class: Any, *, gate_desc: Any = None) -> str | None:
     """None when the window offers spectators for *gate_class* (the official
-    class), else the sentence saying why it does not."""
+    class), else the sentence saying why it does not. ``gate_desc`` is the
+    descriptor handed to ``plan`` for a class the table does not hold: such a
+    class copies no gate, and ``plan`` adds no spectator pulses to it, so it
+    gets a sentence that says only that."""
     if gate_class == CZ_GATE:
         return None
     if gate_class == COUPLER_CZ_GATE:
         return NO_SPECTATORS_COUPLER
+    if gate_desc is not None:
+        return NO_SPECTATORS_DESCRIBED
     return NO_SPECTATORS_COPIED
 
 
