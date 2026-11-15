@@ -44,6 +44,7 @@ _SCRIPT_DIR = str(Path(__file__).resolve().parent)
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 from _script_common import tof_on_grid  # noqa: E402
+# _tof_grid_consequence is not called here: core.script_emitter copies it from this module into the 02 script
 from _script_common import _tof_grid_consequence, tof_kept_note, tof_rounded_note, tof_unrecorded_note  # noqa: E402
 from _script_common import QDAC_COMPONENTS_MODULE  # noqa: E402
 from _script_common import library_versions as _library_versions  # noqa: E402

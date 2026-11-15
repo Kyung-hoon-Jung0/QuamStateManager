@@ -668,11 +668,11 @@ Rule (Generate, `_align_output_timing`, the last band / delay step of the build 
 - every used MW-FEM analog output gets `reference - latency(its band)`: 20 ns for a band 1 / 3 output
   on a chip that also uses band 2, otherwise 0 (whichever line the port carries; every element on it
   moves with it).
-- every LF-FEM output carrying a flux line (qubit z, coupler) gets the reference.
+- every used LF-FEM output (flux, coupler, and any other element: drive, readout, TWPA pump) gets the reference.
 - a resonator whose readout output got `s` gets `tof_on_grid(time_of_flight + s)` (see the time of
   flight grid below).
 - a chip in one class builds byte for byte as before (`tests/test_mw_band_align_live.py`); an OPX+
-  output and an LF-FEM output that is not a flux line are left alone. The build writes no digital
+  output is left alone. The build writes no digital
   marker delays on MW elements, so nothing else moves.
 
 These are starting values: FIR / IIR output filters add latency, so xy-z timing is calibrated on the

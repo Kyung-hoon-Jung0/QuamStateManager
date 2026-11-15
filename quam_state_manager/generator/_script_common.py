@@ -1,10 +1,11 @@
 """Shared helpers for the standalone ``generator/`` scripts.
 
-Imported ONLY by the sibling scripts (``run_build.py``,
-``run_generate_config.py``) that run under an *external* user-selected
-interpreter: it may use only the Python standard library. The one
-exception to "never imported by ``quam_state_manager``" is the time of
-flight grid rule and sentence helpers re-exported by ``core.output_timing``.
+Imported by the sibling generator scripts (for example ``run_build.py``)
+that run under an *external* user-selected interpreter: it may use only the
+Python standard library. The SM process loads it in two ways, both for the
+time of flight grid rule and sentences: ``core.output_timing`` re-exports
+those helpers, and ``core.script_emitter`` loads ``run_build.py`` (which
+imports this module) to copy them into the emitted build script.
 The build and SM share these rules and sentences. The
 scripts add this directory to ``sys.path`` defensively before importing (CPython normally prepends the
 script's own directory, but ``PYTHONSAFEPATH`` / ``-P`` suppress that).

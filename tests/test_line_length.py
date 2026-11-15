@@ -30,6 +30,7 @@ MAX_LONG_LINES = {
     "tests/test_line_length.py": 0,
     "tests/test_pointer_path.py": 0,
     "tests/test_run_build_delay.py": 0,
+    "tests/test_script_emitter.py": 0,
     "tests/test_tof_grid.py": 0,
 }
 
@@ -90,6 +91,7 @@ MAX_NON_ASCII_LINES = {
     "tests/test_line_length.py": 0,
     "tests/test_pointer_path.py": 4,
     "tests/test_run_build_delay.py": 9,
+    "tests/test_script_emitter.py": 6,
     "tests/test_tof_grid.py": 0,
 }
 
