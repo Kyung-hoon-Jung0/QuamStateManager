@@ -284,6 +284,107 @@ ok([...Array(116).keys()].every((t) => hov.x.includes(t)), 'hover grid has every
     hh.destroy();
 }
 
+// The shared "starts at" fit rule, three edges the other pins cannot reach. The constants are read
+// from the module so the fixtures follow the code.
+{
+    const konst = (name) => +new RegExp('var ' + name + ' = ([0-9.]+);').exec(src)[1];
+    const CHAR = konst('CHAR_PX'), BAND = konst('BAND_PX'), TEXT = konst('TEXT_PX');
+    const startsAt = (f, key) => f.layout.annotations.find((a) => a.meta && a.meta.role === 'starts-at' && a.meta.lane === key);
+    const spanOf = (f) => ({ xr: f.span.slice(), w: f.widthPx });
+    const pxOf = (t, xr, w) => (t - xr[0]) * w / (xr[1] - xr[0]);
+    const clearOf = (a, t, fy) => (t.meta.row === 'top' ? 1 - fy : fy) * a.meta.lanePx > BAND + TEXT / 2 + 12;
+    const overlapsWith = (a, t, xr, w, widthOf) => {
+        const right = pxOf(a.x, xr, w) - 4, left = right - a.text.length * CHAR;
+        const x = pxOf(t.x, xr, w), width = widthOf(t) * CHAR;
+        const titleLeft = t.xanchor === 'right' ? x - width : x;
+        return right > titleLeft && left < titleLeft + width;
+    };
+    const full = (t) => Math.max(t.meta.name.length, t.meta.shown2.length);
+    const nameOnly = (t) => t.meta.name.length;
+    const relayoutTo = (hh, f, xr, w) => {
+        last().el._fullLayout = { xaxis: { range: xr.slice(), _length: w } };
+        hh.relayout({ 'xaxis.range': xr.slice() });
+    };
+    const flagged = { flags: ['over_range', 'bad_length'], truncated: true };
+    // mixed-sign data keeps 0 V at mid height: the spots are 0.35 and 0.62, the middle one is blocked
+    const build = (segs) => GT.render(host2, { lanes: [lane('late', 'gate', segs, { limit_v: null })], notes: [] }, {});
+
+    // (1) the first spot fails clearance against a title of the lane, a later spot passes
+    {
+        Object.defineProperty(host2, 'clientWidth', { configurable: true, value: 900 });
+        const hh = build([seg('a', [400, 500], [-0.1, 0.1]), seg('b', [520, 540], [0.05, 0.05], flagged)]);
+        const f = hh.figure();
+        let a = startsAt(f, 'late');
+        const { xr, w } = spanOf(f);
+        const spots = a.meta.spots;
+        const texts = segText(f, 'late');
+        const bottom = texts.find((t) => t.meta.row === 'bottom');
+        ok(spots.length === 2 && spots[0] < spots[1] && overlapsWith(a, bottom, xr, w, full) &&
+           !clearOf(a, bottom, spots[0]) && clearOf(a, bottom, spots[1]) &&
+           texts.filter((t) => t.meta.row === 'top').every((t) => !overlapsWith(a, t, xr, w, full)),
+           'later spot: fixture has a bottom title over the label, the first spot too close, the second clear');
+        ok(a && a.y === spots[1], 'later spot: first render keeps the label at the later spot');
+        // room returns: the title clears the label horizontally and the first spot is used again
+        relayoutTo(hh, f, xr, w * 4);
+        a = startsAt(f, 'late');
+        ok(a && a.y === spots[0], 'later spot: with the title clear of the label the first spot returns');
+        relayoutTo(hh, f, xr, w);
+        a = startsAt(f, 'late');
+        ok(a && a.y === spots[1], 'later spot: relayout back to the crowded width moves it to the later spot again');
+        hh.destroy();
+        // counter-examples: no title in the lane keeps the first spot; another lane's title does not move it
+        const solo = build([seg('a', [400, 500], [-0.1, 0.1])]);
+        ok(startsAt(solo.figure(), 'late').y === startsAt(solo.figure(), 'late').meta.spots[0], 'later spot: a lane whose titles are clear keeps the first spot');
+        solo.destroy();
+    }
+
+    // (2) the overlap exists only through the second title line
+    {
+        Object.defineProperty(host2, 'clientWidth', { configurable: true, value: 900 });
+        const hh = build([seg('a', [400, 410], [-0.1, 0.1], flagged), seg('b', [420, 440], [0.05, 0.05], flagged)]);
+        const f = hh.figure();
+        const { xr, w } = spanOf(f);
+        const probe = startsAt(hh.figure(), 'late');
+        const texts = segText(f, 'late');
+        ok(!probe, 'second line: label hidden when a title overlaps it only through its second line');
+        // the same fixture drawn wide enough for no overlap shows it, so the fixture is not hiding it for another reason
+        const aShown = (() => {
+            const g = build([seg('a', [400, 410], [-0.1, 0.1], flagged), seg('b', [420, 440], [0.05, 0.05], flagged)]);
+            const fg = g.figure();
+            relayoutTo(g, fg, fg.span, fg.widthPx * 30);
+            const r = startsAt(fg, 'late');
+            g.destroy();
+            return !!r;
+        })();
+        ok(aShown, 'second line: the same lane shows the label once the titles are clear of it');
+        const fa = hh.figure().fixedAnnotations.find((x) => x.meta && x.meta.role === 'starts-at');
+        ok(texts.length === 2 && texts.every((t) => t.meta.shown2.length > t.meta.name.length) &&
+           texts.some((t) => overlapsWith(fa, t, xr, w, full)) && texts.every((t) => !overlapsWith(fa, t, xr, w, nameOnly)),
+           'second line: every title name is shorter than its second line and no name alone reaches the label');
+        hh.destroy();
+    }
+
+    // (3) the exact left-edge boundary: label left edge at the limit hides, one pixel further shows
+    {
+        Object.defineProperty(host2, 'clientWidth', { configurable: true, value: 900 });
+        const hh = build([seg('p', [128, 228], [0.05, 0.05])]);
+        const f = hh.figure();
+        const words = 'starts at 128 ns'.length * CHAR;
+        // plot half width p: right = p - 4, left = p - 4 - words; walk p until left is exactly 8
+        let p = 12 + words;
+        const step = Math.pow(2, -40);
+        for (let n = 0; n < 4000 && (p - 4) - words > 8; n++) p -= step;
+        for (let n = 0; n < 4000 && (p - 4) - words < 8; n++) p += step;
+        ok((p - 4) - words === 8, 'left edge: a start pixel exists that puts the label edge exactly at the limit');
+        const has = (w) => { relayoutTo(hh, f, [0, 256], w); return !!startsAt(f, 'late'); };
+        ok(has(2 * p + 2), 'left edge: one pixel further than the limit shows the label');
+        ok(!has(2 * p), 'left edge: exactly at the limit hides the label');
+        ok(has(2 * p + 2), 'left edge: and it returns one pixel further');
+        hh.destroy();
+    }
+    delete host2.clientWidth;
+}
+
 // scales fit the data, not the limits
 const r1 = fig.layout.yaxis.range, r2 = fig.layout.yaxis2.range;
 ok(JSON.stringify(r1) !== JSON.stringify(r2), 'per lane: each lane has its own range');
