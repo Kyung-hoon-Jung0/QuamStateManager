@@ -146,3 +146,47 @@ def test_what_the_card_showed_is_not_kept_in_the_record(approval_case):
     assert response.status_code == 200, response.get_json()
     for w in approvals.get(str(inst), chip, record["id"])["writes"]:
         assert "seen_now" not in w and "seen_unknown" not in w
+
+
+@pytest.mark.parametrize("stored,new", [
+    (float("inf"), 2.5), (float("-inf"), 2.5), ([1.0, float("-inf")], [1.0, 2.5]),
+    ([float("nan"), float("inf")], [1.0, 2.5]), ({"a": float("inf"), "b": 1.0}, {"a": 1.0, "b": 1.0})])
+def test_a_value_holding_a_non_finite_number_approves_with_the_cards_own_now(tmp_path, stored, new):
+    case = _case(tmp_path, {"value": 0.0}, [{"path": "value", "old": 1, "new": new}])
+    _set_in_store(case, "value", stored)       # json.dumps cannot write inf into the fixture file
+    row = _card_rows(case)["value"]
+    assert row["now_known"] is True
+    response = press(case, [{"path": "value", "new": new, "seen_now": row["now"]}])
+    assert response.status_code == 200, response.get_json()
+    assert json.loads((case[2] / "state.json").read_text())["value"] == new
+
+
+@pytest.mark.parametrize("shown,later", [
+    ([1.0, 2.0], [1.0, 2.0, 3.0]), ([1.0, 2.0], [1.0]), ({"a": 1.0}, {"a": 1.0, "b": 2.0})])
+def test_a_list_or_dict_that_changed_size_since_the_card_refuses(tmp_path, shown, later):
+    case = _case(tmp_path, {"value": shown}, [{"path": "value", "old": shown, "new": 7}])
+    row = _card_rows(case)["value"]
+    _set_in_store(case, "value", later)
+    response = press(case, [{"path": "value", "new": 7, "seen_now": row["now"]}])
+    assert response.status_code == 409, response.get_json()
+    assert response.get_json()["stage"]["seen_now_changed"] is True
+    assert approvals.get(str(case[3]), case[4], case[5]["id"])["status"] == "pending"
+
+
+def test_the_refusal_returns_the_card_in_display_units(tmp_path):
+    state = {"qubits": {"q1": {"f_01": 5.0e9}}}
+    case = _case(tmp_path, state, [{"path": "qubits.q1.f_01", "old": 4.9e9, "new": 5.2e9}])
+    row = _card_rows(case)["qubits.q1.f_01"]
+    assert row["display"]["unit"] == "GHz"
+    with case[0].app_context():
+        from quam_state_manager.web import routes
+        routes._active_ctx()["store"].merged["qubits"]["q1"]["f_01"] = 5.1e9
+    seen = int(row["now"])                     # the browser's JSON round trip writes 5000000000
+    response = press(case, [{"path": "qubits.q1.f_01", "new": 5.2e9, "seen_now": seen}])
+    assert response.status_code == 409
+    body = response.get_json()
+    fresh = body["approval"]["writes"][0]
+    assert fresh["now"] == 5.1e9 and fresh["display"] == row["display"]
+    assert body["error"] == ("qubits.q1.f_01 changed to 5.1000 GHz since the card showed 5.0000 GHz; "
+                             "press again (stored in Hz: now 5100000000.0, the card's 5000000000)")
+    assert {k: v for k, v in fresh.items() if k != "now"} == {k: v for k, v in row.items() if k != "now"}

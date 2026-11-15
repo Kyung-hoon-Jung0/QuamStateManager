@@ -170,6 +170,23 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   await tick(30);
   const unsetPress = calls.find(function (c) { return /\/approve$/.test(c.url); });
   ok(unsetPress && unsetPress.body.writes[0].seen_unknown === true && !('seen_now' in unsetPress.body.writes[0]), 'a not set row sends the not set marker');
+
+  // the refusal's returned card carries the display unit, so the refreshed now cell keeps it
+  const unitSpec = { unit: 'GHz', scale: 1e-9, dp: 4, stored: 'Hz' };
+  feed.live.approvals = [{ id: 'ap-unit', kind: 'writes', node: 'synthetic', targets: ['q1'], created: now,
+    writes: [{ path: 'qubits.q1.f_01', old: 5.0e9, new: 5.2e9, now: 5.0e9, now_known: true, display: unitSpec }] }];
+  await P.poll(true); await tick();
+  const unitCard = cards.querySelector('[data-card="approval:ap-unit"]');
+  ok(unitCard && unitCard.textContent.includes('5.0000 GHz'), 'a card with a display unit shows its now in that unit');
+  const unitFresh = JSON.parse(JSON.stringify(feed.live.approvals[0]));
+  unitFresh.writes[0].now = 5.1e9;
+  approveReply = { status: 409, body: { ok: false, error: 'qubits.q1.f_01 changed to 5.1000 GHz since the card showed 5.0000 GHz; press again',
+    stage: { staged: 0, applied: false, seen_now_changed: true }, approval: unitFresh } };
+  let releaseUnit; cardsGate = new Promise(function (r) { releaseUnit = r; });
+  P.approve('ap-unit', unitCard.querySelector('.ag-approve'));
+  await tick(30);
+  ok(unitCard.textContent.includes('now 5.1000 GHz') && !unitCard.textContent.includes('5100000000'), 'after the refusal the now cells keep the display unit');
+  cardsGate = null; releaseUnit(); await tick(30);
   feed.live.approvals = keptApprovals;
   await P.poll(true); await tick();
 

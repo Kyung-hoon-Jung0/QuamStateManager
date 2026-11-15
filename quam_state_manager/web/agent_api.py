@@ -24,6 +24,7 @@ import copy
 import base64
 import os
 import json
+import math
 import logging
 import re
 import threading
@@ -197,6 +198,30 @@ def _jsonable(v: Any) -> Any:
     if hasattr(v, "__dataclass_fields__"):
         return {k: _jsonable(getattr(v, k)) for k in v.__dataclass_fields__}
     return v
+
+
+def _card_value(v: Any) -> Any:
+    """docs/254: a stored value exactly as the approval card receives it: ``_jsonable``
+    and then the app's JSON provider mapping (NaN and +/-inf become null)."""
+    from quam_state_manager.web.app import _finite_or_none
+    return _finite_or_none(_jsonable(v))
+
+
+def _card_text(values: list, spec: dict | None, beside: tuple = ()) -> list[str]:
+    """docs/254: values as the approval card writes them. A number in a field with a
+    display unit is scaled and written with the fewest decimals (from ``spec["dp"]``,
+    at most 6 more) that tell the values and the row's other cells (``beside``) apart,
+    like agent.js fmtRow; anything else is its JSON text."""
+    def num(v):
+        return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+    xs = [v * spec["scale"] for v in (*values, *beside) if num(v)] if spec and spec.get("unit") else []
+    dp = max(0, int(spec.get("dp") or 0)) if xs else 0
+    if xs and not dp and any(float(x) != int(x) for x in xs):
+        dp = 1
+    while xs and dp < int(spec.get("dp") or 0) + 6 and len({f"{x:.{dp}f}" for x in xs}) < len(set(xs)):
+        dp += 1
+    return [f"{v * spec['scale']:.{dp}f} {spec['unit']}" if xs and num(v)
+            else json.dumps(v, ensure_ascii=True) for v in values]
 
 
 def _seen_equal(now: Any, seen: Any, equal) -> bool:
@@ -2079,7 +2104,7 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
                 continue
             target = r._resolve_edit_path(store, w["path"]) or w["path"]
             try:
-                current = _jsonable(store.get_value(target))     # the card's own representation
+                current = _card_value(store.get_value(target))     # the card's own representation
             except Exception:  # noqa: BLE001 -- a leaf SM cannot read: the card said "not set"
                 readable, current = False, None
             else:
@@ -2089,11 +2114,19 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
             else:
                 matches = readable and _seen_equal(current, w["seen_now"], compare_equal)
             if not matches:
-                shown = "not set" if unknown else json.dumps(w["seen_now"], ensure_ascii=True)
-                now_text = json.dumps(current, ensure_ascii=True) if readable else "not set"
+                from quam_state_manager.core import units
+                spec = units.display_spec(w["path"])
+                pair = [current if readable else None, None if unknown else w["seen_now"]]
+                texts = _card_text(pair, spec, (w.get("old"), w.get("new")))
+                now_text = texts[0] if readable else "not set"
+                shown = "not set" if unknown else texts[1]
+                raw = [json.dumps(v, ensure_ascii=True) for v in pair]
+                detail = ([f"now {raw[0]}"] if readable and texts[0] != raw[0] else []) + (
+                    [f"the card's {raw[1]}"] if not unknown and texts[1] != raw[1] else [])
+                stored = f" (stored in {spec.get('stored') or 'its own unit'}: {', '.join(detail)})" if detail else ""
                 return {"group_id": gid, "staged": 0, "applied": False, "unstaged": [],
                         "seen_now_changed": True,
-                        "error": f"{w['path']} changed to {now_text} since the card showed {shown}; press again"}
+                        "error": f"{w['path']} changed to {now_text} since the card showed {shown}; press again{stored}"}
         for w in writes:
             root = None
             if w.get("created") and not w.get("deleted") and not _existing_leaf(store, w["path"]):
@@ -2968,7 +3001,7 @@ def approvals_decide(aid: str, verb: str):
             out["stage"] = res
             if not res.get("applied"):
                 return jsonify(ok=False, error=res.get("error") or "not applied", stage=res,
-                               approval=(_approval_view(cur, r._active_ctx()["store"])
+                               approval=(_approval_card(cur, r._active_ctx()["store"])
                                          if res.get("seen_now_changed") else approvals.summary(cur)),
                                how=("the approval stays pending; " + ("take live, then approve again"
                                     if "stale_live" in str(res.get("error")) else "see the error"))), 409
@@ -3599,12 +3632,13 @@ def _approval_view(ap: dict, store) -> dict:
         if not (w2.get("created") or w2.get("deleted")):
             try:
                 target = r._resolve_edit_path(store, str(w.get("path"))) or str(w.get("path"))
-                w2["now"] = _jsonable(store.get_value(target))
+                raw_now = _jsonable(store.get_value(target))
+                w2["now"] = _card_value(raw_now)     # docs/254: the form the press compares against
                 w2["now_known"] = True
             except Exception:  # noqa: BLE001 -- a leaf SM cannot read says "not set", never a guess
                 w2["now_known"] = False
             else:
-                if w2["now"] is None and isinstance(w.get("new"), str):
+                if raw_now is None and isinstance(w.get("new"), str):
                     w2.update(_text_into_null(store, target, w["new"]))
         rows.append(w2)
     out["writes"] = rows
@@ -3624,16 +3658,23 @@ def _with_display(rows: list | None) -> list:
     return out
 
 
+def _approval_card(ap: dict, store) -> dict:
+    """docs/254: an approval exactly as the panel's card gets it, from the feed and from
+    the approve door's "changed since the card showed" refusal alike: the view with the
+    display unit on each write row."""
+    out = _approval_view(ap, store)
+    if out.get("writes"):
+        out["writes"] = _with_display(out["writes"])
+    return out
+
+
 def _feed_display(live: dict) -> None:
-    """The panel's feed only: approvals' writes, run writes and a plan's
-    "may change" rows. The MCP-visible views (``_run_view``, ``_plan_view``)
-    stay as they were -- an agent reads stored values, not display text."""
+    """The panel's feed only: run writes and a plan's "may change" rows (approvals
+    get theirs in ``_approval_card``). The MCP-visible views (``_run_view``,
+    ``_plan_view``) stay as they were -- an agent reads stored values, not display text."""
     for p in live.get("plans") or []:
         if p.get("may_change"):
             p["may_change"] = _with_display(p["may_change"])
-    for a in live.get("approvals") or []:
-        if a.get("writes"):
-            a["writes"] = _with_display(a["writes"])
     for rv in live.get("runs") or []:
         res = rv.get("result") or {}
         if res.get("writes"):
@@ -3693,7 +3734,7 @@ def chat_cards():
                 and kept(m, m.get("status") not in ("starting", "running"), "since")]
         runs.sort(key=lambda x: float(x.get("since") or 0))
         live["runs"] = runs[-20:]
-        live["approvals"] = [_approval_view(a, r._store()) for a in approvals.pending(inst, key)]
+        live["approvals"] = [_approval_card(a, r._store()) for a in approvals.pending(inst, key)]
         rec = agent_session.load(inst, key)
         file = agent_session.summary(rec)
         resumable = bool(rec and rec.get("session_id"))
