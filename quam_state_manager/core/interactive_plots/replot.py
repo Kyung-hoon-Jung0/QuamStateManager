@@ -574,7 +574,7 @@ _PATH_TOKEN_RE = re.compile(
     r"""(?P<q>["'])(?P<qi>(?:[A-Za-z]:[\\/]|\\|/)[^"'\r\n]*?)(?P=q)|(?P<t>[^\s"']+)""")
 _DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 _UNC_RE = re.compile(r"^\\\\[^\\/\s]+\\")
-_SUFFIX_RE = re.compile(r"\.[A-Za-z][A-Za-z0-9]{0,4}$")
+_SUFFIX_RE = re.compile(r"\.[A-Za-z][A-Za-z0-9]*(?:\.[0-9]+)*$")
 _LEAD = "([{<="
 _TRAIL = ",;:)]}>."
 
@@ -585,7 +585,13 @@ def _base_name(path: str) -> str:
 
 
 def _has_file_suffix(name: str) -> bool:
-    """``name`` ends in a file suffix: a dot, a letter, then at most four letters or digits."""
+    """``name`` ends in a file suffix: a dot, a letter, then letters or digits only (any
+    length, no underscore), optionally followed by digit-only parts (``libx.so.6``).
+
+    The name's own shape decides, no list of known extensions: a state key part carries an
+    underscore (``q1.z.joint_offset``) and a number starts with a digit (``0.5``), so
+    neither ends in a file suffix.
+    """
     return _SUFFIX_RE.search(name) is not None
 
 
@@ -617,10 +623,11 @@ def _peel(tok: str) -> tuple[str, str, str]:
 def _shorten_paths(line: str) -> str:
     """Reduce every file path in ``line`` to its base name (see ``_is_file_path``).
 
-    An unquoted path ends at the first whitespace, with one exception: a Windows drive or
-    UNC path whose following words each carry its own separator (a folder name with spaces,
-    as tracebacks print it) extends over them, up to the last word ending in a file name
-    with an extension.
+    An unquoted path ends at the first whitespace, with one exception: a rooted path (drive,
+    UNC, POSIX or backslash-led, at least two parts) whose following words each carry its
+    own separator and do not start a new root (a folder name with spaces, as tracebacks
+    print it) extends over them, up to the last word ending in a file name with a suffix.
+    A rooted token that reaches no such file name is left as it is.
     """
     ms = list(_PATH_TOKEN_RE.finditer(line))
     out, pos, k = [], 0, 0
@@ -634,15 +641,19 @@ def _shorten_paths(line: str) -> str:
                        if _is_file_path(inner) else m.group(0))
             continue
         lead, core, trail = _peel(m.group("t"))
-        if not (core and _is_file_path(core)):
+        is_file = bool(core) and _is_file_path(core)
+        rooted = (bool(core) and (core[0] in "\\/" or _DRIVE_RE.match(core) is not None)
+                  and len(_base_name(core)) < len(core))
+        if not (is_file or rooted):
             out.append(m.group(0))
             continue
-        if _DRIVE_RE.match(core) or _UNC_RE.match(core):
+        if rooted:
             sep = "\\" if "\\" in core else "/"
             best, n = None, k
             while n < len(ms) and ms[n].group("t") and line[ms[n - 1].end():ms[n].start()].isspace():
                 word = ms[n].group("t")
-                if sep not in word or _DRIVE_RE.match(word) or "://" in word:
+                if (sep not in word or word[0] in "\\/" or _DRIVE_RE.match(word)
+                        or "://" in word):
                     break
                 _, wcore, wtrail = _peel(word)
                 if _has_file_suffix(_base_name(wcore)):
@@ -651,6 +662,9 @@ def _shorten_paths(line: str) -> str:
             if best is not None:
                 _, core, trail = _peel(line[m.start() + len(lead):ms[best].end()])
                 pos, k = ms[best].end(), best + 1
+            elif not is_file:
+                out.append(m.group(0))
+                continue
         out.append(lead + _base_name(core) + trail)
     out.append(line[pos:])
     return "".join(out)

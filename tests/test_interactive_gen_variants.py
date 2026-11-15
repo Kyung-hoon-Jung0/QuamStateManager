@@ -501,6 +501,27 @@ _BS = "\\"
     ("KeyError: '#/qubits/x/y'", "KeyError: '#/qubits/x/y'"),
     ("OSError: /srv/lab/node.py failed", "OSError: node.py failed"),
     ("OSError: /srv/lab/st.json failed", "OSError: st.json failed"),
+    # suffix rule: digit-only tail after a suffix, long suffix, underscore rejects
+    ("OSError: /usr/lib/libx.so.6", "OSError: libx.so.6"),
+    ("OSError: /tmp/data.backup gone", "OSError: data.backup gone"),
+    ("OSError: /srv/node.journal", "OSError: node.journal"),
+    ("KeyError: /qubits/q1.xy_detuning", "KeyError: /qubits/q1.xy_detuning"),
+    ("KeyError: /a/b.c_d.7", "KeyError: /a/b.c_d.7"),
+    ("x.tar.gz at /d/x.tar.gz,", "x.tar.gz at x.tar.gz,"),
+    ("(/d/ds.h5.bak)", "(ds.h5.bak)"),
+    ("/d/f.nc4 and '/d/c.json5'.", "f.nc4 and 'c.json5'."),
+    ("numpy 1.26.4 and 0.5.", "numpy 1.26.4 and 0.5."),
+    ("see the file.", "see the file."),
+    # space extension: POSIX and single-backslash roots, stop rules
+    ("OSError: /home/u/My Data/ds.h5 gone", "OSError: ds.h5 gone"),
+    (f"OSError: {_BS}srv{_BS}a b{_BS}x.nc4", "OSError: x.nc4"),
+    (f"C:{_BS}a b{_BS}f.h5 x{_BS}1.5 ok", "f.h5 x\\1.5 ok"),
+    ("/a/b c/d.h5 /e/f.h5", "d.h5 f.h5"),
+    ("/qubits/q1 and/or y", "/qubits/q1 and/or y"),
+    ("/a/b see https://x.org/c.h5", "/a/b see https://x.org/c.h5"),
+    ("/a/b https://x.org/c.h5", "/a/b https://x.org/c.h5"),
+    ("x / y/z.h5", "x / y/z.h5"),
+    ("/a/b c/d gone", "/a/b c/d gone"),
 ])
 def test_bounded_reason_shortens_only_file_paths(line, expected):
     from quam_state_manager.core.interactive_plots.replot import _bounded_reason
