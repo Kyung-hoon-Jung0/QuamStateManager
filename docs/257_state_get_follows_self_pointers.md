@@ -96,7 +96,11 @@ the same pointer metadata and retain the existing subtree size limit.
 pointer behavior. MCP needs no change because it forwards the JSON response.
 
 The global `pointer_resolver`, `QuamStore.resolve_pointer`, its cache, and
-`pointer_path` are unchanged. Their existing consumers retain their behavior.
+`pointer_path` are unchanged. (Later addition: `resolve_field_target` takes an
+opt-in `cross=True` that walks a target path through a crossed pointer, used
+only by the time-of-flight band shift, docs/27; and a leaf chain cut by its
+64-hop limit now reports `resolvable` False, so the store falls back to the
+legacy resolver as for any other unresolved follow.) Their existing consumers retain their behavior.
 The new behavior is confined to the store read accessor and agent route;
 the grids and inspector use the same follower they used before.
 

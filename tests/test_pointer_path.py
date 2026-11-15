@@ -150,3 +150,49 @@ def test_real_shared_by_excludes_self():
     shared = find_shared_by(store.merged, ft["resolved_path"], scope_qubit=q, input_op="x180")
     assert "x180" not in shared
     assert "y180" in shared
+
+
+# ---------------------------------------------------------------------------
+# cross: a pointer whose target path passes through another pointer
+# ---------------------------------------------------------------------------
+
+def _crossed() -> dict:
+    return {"a": {"ref": "#/b"}, "b": {"x": "#./y", "y": 5},
+            "q": {"leaf": "#/a/ref/x"}}
+
+
+def test_a_target_path_through_a_pointer_is_a_dead_end_by_default():
+    r = resolve_field_target(_crossed(), "q.leaf")
+    assert r["resolvable"] is False and r["resolved_value"] == "#/a/ref/x"
+
+
+def test_cross_follows_the_crossed_pointer_and_its_self_reference():
+    # the #./ at b.x is relative to b, the object really reached
+    r = resolve_field_target(_crossed(), "q.leaf", cross=True)
+    assert r["resolvable"] is True
+    assert r["resolved_path"] == "b.y" and r["resolved_value"] == 5
+    assert [c["path"] for c in r["candidates"]] == ["q.leaf", "b.x", "b.y"]
+
+
+def test_cross_keeps_a_crossed_dangling_or_looping_path_a_dead_end():
+    m = _crossed()
+    m["a"]["ref"] = "#/nowhere"
+    assert resolve_field_target(m, "q.leaf", cross=True)["resolvable"] is False
+    m["a"]["ref"] = "#/a/ref/x"      # the crossed pointer names a path through itself
+    assert resolve_field_target(m, "q.leaf", cross=True)["resolvable"] is False
+
+
+def _chain(hops: int) -> dict:
+    """q.leaf -> h0 -> ... -> h{hops-2} -> number: exactly *hops* pointers followed."""
+    m = {"h": {f"h{i}": f"#/h/h{i + 1}" for i in range(hops - 1)}, "q": {"leaf": "#/h/h0"}}
+    m["h"][f"h{hops - 1}"] = 26
+    return m
+
+
+@pytest.mark.parametrize("cross", [False, True])
+def test_the_hop_limit_boundary(cross):
+    from quam_state_manager.core.pointer_path import _MAX_HOPS
+    ok = resolve_field_target(_chain(_MAX_HOPS), "q.leaf", cross=cross)
+    assert ok["resolvable"] is True and ok["resolved_value"] == 26
+    cut = resolve_field_target(_chain(_MAX_HOPS + 1), "q.leaf", cross=cross)
+    assert cut["resolvable"] is False and cut["resolved_value"].startswith("#/h/")

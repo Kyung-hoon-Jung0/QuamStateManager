@@ -176,12 +176,26 @@ def tof_follows_note(qubit, target, value, through=None, readout_shift=None, lag
     is kept, so the value follows its target (``value`` is the target's new
     value). ``lag`` is how much more the target moves than this qubit's own
     readout output (``readout_shift`` ns): when it is not 0 the time of
-    flight no longer matches the readout, and the sentence says by how much."""
+    flight no longer matches the readout, and the sentence says by how much.
+    When the readout moved and the difference is only the grid (this
+    qubit's own value, the target's old value moved with its own readout,
+    ``value - lag``, would be written as the same ``value``), the sentence
+    says no action is needed. A readout that did not move would keep its
+    own value unwritten, so that case keeps the advice."""
     head = f"Time of flight of {qubit} is a reference to {_via(target, through)}; it follows "
     if not lag:
         return head + f"that value (now {value:g} ns)."
     moved = ("did not move" if not readout_shift else f"moved {readout_shift:g} ns")
     side = "later" if lag > 0 else "earlier"
+    try:
+        grid_only = bool(readout_shift) and tof_on_grid(value - lag)[1] == value
+    except ValueError:
+        grid_only = False
+    if grid_only:
+        return (head + f"that value to {value:g} ns. The {abs(lag):g} ns difference to its "
+                "readout is only the 4 ns grid (multiples of 4 ns, at least 28 ns): "
+                f"{qubit}'s own value would round to the same {value:g} ns, so no action is "
+                "needed.")
     return (head + f"that value to {value:g} ns, but {qubit}'s readout {moved}, so {qubit}'s "
             f"time of flight is now {abs(lag):g} ns {side} than its readout. Give {qubit} its "
             "own value if that is not meant.")

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import math
 
-from quam_state_manager.core import pointer_resolver
+from quam_state_manager.core import pointer_path, pointer_resolver
 from quam_state_manager.generator._script_common import (  # noqa: F401  (re-exported)
     tof_follows_note, tof_kept_note, tof_not_moved_note, tof_on_grid,
     tof_reference_not_number_note, tof_reference_note, tof_rounded_note)
@@ -50,16 +50,39 @@ def _finite(v) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
 
 
+def _reference(doc: dict, stored: str, path: str):
+    """``(value, target, through, alias)`` for a stored pointer at *path*,
+    walked by the one pointer follower SM has for a value in use
+    (``pointer_path.resolve_field_target``, ``#./`` included, crossing a
+    pointer on the way). ``target`` is the leaf the chain lands on (None when
+    it stops on a pointer it cannot follow), ``through`` the first hop,
+    ``alias`` True when it stops on a ``#./`` naming a leaf that is not stored
+    (a value quam computes at run time)."""
+    ft = pointer_path.resolve_field_target(doc, path.replace("/", "."), cross=True)
+    chain = ft["chain"]
+    through = chain[0]["to_path"].replace(".", "/") if chain else stored
+    value = ft["resolved_value"]
+    if value is None:
+        # the follower names containers as None: read the node itself
+        value = pointer_path._walk(doc, ft["resolved_path"].split("."))[1]
+    stuck = ft["resolved_path"].replace(".", "/")
+    if ft["resolvable"] and not pointer_resolver.is_pointer(value):
+        return value, stuck, through, False
+    if pointer_resolver.is_self_ref(value):
+        # the last leaf read holds a #./ naming a leaf that is not stored
+        return value, (stuck if stuck != path else through), through, True
+    return value, None, through, False
+
+
 def stored_tof(doc: dict, rr: dict, path: str):
-    """A resonator's stored time of flight, read with the store's resolver
-    (``pointer_resolver.resolve_pointer``), as ``(value, why_not, ref)``.
+    """A resonator's stored time of flight as ``(value, why_not, ref)``.
 
     ``value`` is the plain finite number stored (``why_not`` None), else
     the stored value (a pointer string included); ``why_not`` the clause naming why
     no number is placed at this leaf. ``ref`` is set for a QUAM pointer:
     ``{"target", "through", "resolves", "held"}`` where ``target`` is the
-    leaf the chain lands on (``pointer_resolver.landing_path``; the first
-    hop when the chain dangles or loops), ``through`` the first hop,
+    leaf the chain lands on (:func:`_reference`; the first hop when the
+    chain dangles, loops or is too long), ``through`` the first hop,
     ``resolves`` whether it gives a finite number, ``held`` what the landing
     leaf holds when that is not a finite number. SM never replaces a pointer
     with a literal (it may be shared by several elements), so a pointer is
@@ -68,27 +91,16 @@ def stored_tof(doc: dict, rr: dict, path: str):
         return None, "no time of flight is stored", None
     stored = rr["time_of_flight"]
     if pointer_resolver.is_pointer(stored):
-        holder = tuple(path.split("/"))
         try:
-            # the resolver's own hops name the leaf it read the value from
-            value, read_at = pointer_resolver.resolve_with_landing(doc, stored, holder)
-            first = pointer_resolver.target_path(doc, stored, holder)
-            if pointer_resolver.is_self_ref(stored):
-                # the resolver hands a stored #./ back as is; name the leaf it names
-                land = pointer_resolver.landing_path(doc, stored, holder)
-            elif pointer_resolver.is_pointer(value) and not pointer_resolver.is_self_ref(value):
-                land = None     # dangling, a cycle, too many hops: named by the first hop
-            else:
-                land = read_at  # a value, or the leaf holding a #./ the resolver stops at
+            value, land, through, alias = _reference(doc, stored, path)
         except (AttributeError, TypeError, ValueError, KeyError, IndexError):
-            value, first, land = stored, None, None   # named as not resolving
-        through = "/".join(first) if first else stored
-        ref = {"target": "/".join(land) if land else through, "through": through,
+            value, land, through, alias = stored, None, stored, False   # named as not resolving
+        ref = {"target": land or through, "through": through,
                "resolves": _finite(value), "held": None}
         if ref["resolves"]:
             return stored, "it is a reference", ref
-        if pointer_resolver.is_self_ref(stored) or pointer_resolver.is_self_ref(value):
-            ref["held"] = "SM does not follow a #./ reference"
+        if alias:
+            ref["held"] = f"{value} names a leaf that is not stored"
         elif not pointer_resolver.is_pointer(value):
             # the chain lands on a value: name it (text, a bool, nan, ...)
             ref["held"] = ("it holds " + (f"{value:g}" if isinstance(value, float) else

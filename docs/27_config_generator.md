@@ -700,25 +700,35 @@ same rule applies to every readout, provisionally untested on LF-FEM and OPX+.
   is written as 28: 18 ns after). Either way the time of flight is measured again.
 - The Re-generate band shift plan writes `new` = the nearest allowed value and keeps `sum` = the raw
   sum. SM never replaces a QUAM pointer with a literal at the resonator leaf: a pointer may be shared
-  by several elements, and overwriting it would cut the link silently. A stored pointer is read with
-  the store's resolver and named by the leaf the resolver read its value from
-  (`pointer_resolver.resolve_with_landing`; `landing_path` is the same hops, so the two cannot
-  disagree: a `#./` in the middle of a chain is followed when the leaf it names is stored, and a
-  chain longer than `MAX_CHAIN_HOPS` (64) resolves in neither), with "(through <first hop>)" for a
-  chain; it is listed in `tof_unplaced` (with its `target`) and Apply leaves the pointer string at
+  by several elements, and overwriting it would cut the link silently. A stored pointer is read, value and
+  leaf in one walk, by SM's one `#./` follower, `pointer_path.resolve_field_target(..., cross=True)`
+  (`output_timing.stored_tof`); the app-wide `pointer_resolver` is not changed and keeps every `#./`
+  raw. The walk follows a `#./` that names a stored leaf (at the resonator leaf or in the middle of
+  a chain), crosses a pointer inside a target path (`#/a/ref/x` with `a.ref = "#/b"` reads `b.x`,
+  and a `#./` found there is relative to `b`, as quam reads it), and follows at most 64 pointers
+  (`pointer_path._MAX_HOPS`: 64 resolve, 65 do not; nothing is cached). It is named by the leaf
+  it lands on, with "(through <first hop>)" for a chain; it is listed in `tof_unplaced` (with its `target`) and Apply leaves the pointer string at
   that leaf. When the target is a time of flight the same plan moves, the item carries `follows`.
   If the target moves by the same amount as the resonator's own readout output, it reads "Time of
   flight of q2 is a reference to <target>; it follows that value (now 48 ns).". If not (the readout
   output does not move, or the target was rounded or raised to the floor), the item carries `lag`
   (target move minus own readout move, in ns) and reads "...; it follows that value to 48 ns, but
   q2's readout did not move (or: moved 20 ns), so q2's time of flight is now 22 ns later than its
-  readout. Give q2 its own value if that is not meant."; that qubit is in the question's and the
+  readout. Give q2 its own value if that is not meant.". When the readout moved and the
+  difference is only the grid (the qubit's own value, the target's old value plus its own readout
+  move, would be written as the same value: q3 on the moved output follows q1 26 -> 48 ns, its
+  own 46 would round to 48), it reads instead "...; it follows that value to 48 ns. The 2 ns
+  difference to its readout is only the 4 ns grid (multiples of 4 ns, at least 28 ns): q3's own
+  value would round to the same 48 ns, so no action is needed."; a readout that did not move keeps
+  the advice (its own value would not be written). Either way that qubit is in the question's and the
   offer's "Re-check the time of flight of ..." clause, so it is seen before Apply. Any other pointer
   to a finite number reads "... is a reference to <target>; it is not moved. Move it at <target> if
   that is meant."; the target moves only as its own element's line. A pointer that gives no finite
-  number (dangling, a cycle, text, a bool, nan / inf, a `#./` naming a leaf that is not stored)
-  reads "... is a reference to <target> that does not resolve to a number (it holds nan); it is not
-  moved.". Any other stored value the rule cannot place is not written: it is listed in
+  number (dangling, a cycle, text, a bool, nan / inf, a `#./` naming a leaf that is not stored, a chain
+  over 64 pointers) reads "... is a reference to <target> that does not resolve to a number (it
+  holds nan); it is not moved."; for a `#./` naming a leaf that is not stored the parenthesis is
+  "(#./inferred_x names a leaf that is not stored)" and the target is the chain leaf holding it
+  (the leaf it names when the resonator leaf itself holds it). Any other stored value the rule cannot place is not written: it is listed in
   `tof_unplaced` with a sentence naming why (no time of flight stored, a value that is not a number, a
   value that is not finite, or a sum that is negative), and the rest of the shift is still offered.
   The Re-generate question names the qubits not moved in one clause (every one of them; a `follows`

@@ -4,6 +4,10 @@ QUAM state files use three pointer flavors:
   - Absolute:     "#/qubits/qA1/anharmonicity"         -> traverse from root
   - Relative-up:  "#../x180_DragCosine/length"          -> go to parent, traverse down
   - Self-ref:     "#./inferred_intermediate_frequency"   -> QUAM runtime alias, never resolved
+                  here, at the leaf or in the middle of a chain (returned raw; Compare's
+                  "derived" rule relies on it). The opt-in field follower
+                  ``pointer_path.resolve_field_target`` follows a ``#./`` that names a stored
+                  leaf (state_get, Live-Edit, the time-of-flight band shift).
 
 Most pointers resolve to a concrete value in one hop, but real data DOES
 contain chains — both a value that is itself a pointer, and a path that
@@ -34,11 +38,6 @@ _SENTINEL = object()
 # Type alias for the per-store pointer cache. Keyed on (pointer, current_path).
 PointerCache = dict[tuple[str, tuple[str, ...]], Any]
 
-#: The most pointers one resolution follows (chain hops and pointers crossed
-#: on the way). A longer chain does not resolve: the resolver hands back the
-#: pointer, and :func:`landing_path` gives None, the same answer.
-MAX_CHAIN_HOPS = 64
-
 
 def resolve_pointer(
     root: dict,
@@ -48,7 +47,6 @@ def resolve_pointer(
     cache: PointerCache | None = None,
     lock: threading.Lock | None = None,
     _visited: set[str] | None = None,
-    _landed: list | None = None,
 ) -> Any:
     """Resolve a QUAM pointer to its concrete value.
 
@@ -63,23 +61,14 @@ def resolve_pointer(
             other disables caching for this call (defensive default).
         lock: Lock guarding *cache*. Required when *cache* is provided.
         _visited: Already-visited pointers for cycle detection (internal).
-        _landed: When a list, it receives the path of the leaf the value
-            was read from (internal; see :func:`resolve_with_landing`). Such
-            a call is never cached.
 
     Returns:
         The resolved value, or the raw pointer string if:
         - it is a self-ref (``#./``),
         - a cycle is detected,
-        - the path cannot be traversed,
-        - the chain is longer than :data:`MAX_CHAIN_HOPS`.
-
-    A ``#./`` reached in the middle of a chain is followed when the leaf it
-    names is stored (quam reads it from the holding object); one naming a
-    leaf that is not stored (a runtime property such as
-    ``inferred_intermediate_frequency``) is handed back as is.
+        - the path cannot be traversed.
     """
-    use_cache = cache is not None and lock is not None and _landed is None
+    use_cache = cache is not None and lock is not None
     cache_key = (pointer, current_path)
     if use_cache:
         with lock:
@@ -96,13 +85,8 @@ def resolve_pointer(
             pointer, ".".join(current_path),
         )
         return pointer
-    if len(_visited) >= MAX_CHAIN_HOPS:
-        logger.warning("Pointer chain longer than %d hops at %r (path: %s)",
-                       MAX_CHAIN_HOPS, pointer, ".".join(current_path))
-        return pointer
 
     _visited.add(pointer)
-    found: list | None = [] if _landed is not None else None
 
     def _store(value: Any) -> Any:
         if use_cache:
@@ -116,7 +100,7 @@ def resolve_pointer(
     if pointer.startswith("#/"):
         segments = pointer[2:].split("/")
         value = _traverse(root, root, segments, pointer, (),
-                          cache=cache, lock=lock, _visited=_visited, _landed=found)
+                          cache=cache, lock=lock, _visited=_visited)
     elif pointer.startswith("#../") and _has_mid_dotdot(pointer):
         # a ".." after a named step climbs from the object actually REACHED
         # (quam's get_relative_reference_value uses obj.parent), so a step
@@ -126,7 +110,7 @@ def resolve_pointer(
             return _store(pointer)
         absolute = "#/" + "/".join(real)
         got = resolve_pointer(root, absolute, current_path,
-                              cache=cache, lock=lock, _visited=_visited, _landed=_landed)
+                              cache=cache, lock=lock, _visited=_visited)
         return _store(pointer if got == absolute else got)
     elif pointer.startswith("#../"):
         parent_path, relative_segments = _relative_parts(pointer, current_path)
@@ -137,46 +121,26 @@ def resolve_pointer(
             )
             return _store(pointer)
         parent = _traverse(root, root, list(parent_path), pointer, (),
-                           cache=cache, lock=lock, _visited=_visited, _landed=found)
+                           cache=cache, lock=lock, _visited=_visited)
         if parent is _SENTINEL:
             return _store(pointer)
         value = _traverse(root, parent, relative_segments, pointer, tuple(parent_path),
-                          cache=cache, lock=lock, _visited=_visited, _landed=found)
+                          cache=cache, lock=lock, _visited=_visited)
     else:
         logger.warning("Unknown pointer format: %r", pointer)
         return _store(pointer)
 
     if value is _SENTINEL:
         return _store(pointer)
-    if _landed is not None:
-        _landed[:] = found      # where this value was read; a further hop overwrites it
 
-    if isinstance(value, str) and value.startswith("#"):
+    if isinstance(value, str) and value.startswith("#") and not value.startswith("#./"):
         resolved_path = _compute_resolved_path(root, pointer, current_path)
-        nxt = value
-        if value.startswith("#./"):
-            t = target_path(root, value, resolved_path)
-            if t is None or _get(root, list(t)) is _SENTINEL:
-                return _store(value)    # a runtime alias SM does not follow
-            nxt = "#/" + "/".join(t)
         value = resolve_pointer(
-            root, nxt, resolved_path,
-            cache=cache, lock=lock, _visited=_visited, _landed=_landed,
+            root, value, resolved_path,
+            cache=cache, lock=lock, _visited=_visited,
         )
 
     return _store(value)
-
-
-def resolve_with_landing(root: dict, pointer: str, current_path) -> tuple[Any, list[str] | None]:
-    """:func:`resolve_pointer`'s answer and the path of the leaf it read the
-    value from, as ``(value, path)``. ``path`` is None when nothing was read
-    (the first hop dangles); for a chain that stops early (a later hop
-    dangles, a cycle, an alias SM does not follow, too many hops) it is the
-    last leaf read, the one holding the pointer handed back."""
-    found: list = []
-    value = resolve_pointer(root, pointer, tuple(current_path), _landed=found)
-    path = found[0] if found and found[0] is not None else None
-    return value, (list(path) if path is not None else None)
 
 
 def clear_cache() -> None:
@@ -271,7 +235,6 @@ def _traverse(
     cache: PointerCache | None = None,
     lock: threading.Lock | None = None,
     _visited: set[str] | None = None,
-    _landed: list | None = None,
 ) -> Any:
     """Walk *obj* along *segments*, returning _SENTINEL on failure.
 
@@ -284,19 +247,9 @@ def _traverse(
     *relative* pointer resolves against the right field path; ``root`` + cache
     + lock + _visited are threaded through for that recursive resolution and
     reuse the same cycle guard.
-
-    With *_landed* a list, it receives on success the real path of the
-    object reached (a crossed pointer continues from its target's path); a
-    list that already holds a path starts the walk from that path.
     """
     if _visited is None:
         _visited = set()
-    real = None
-    if _landed is not None:
-        if _landed:
-            real = list(_landed[0]) if _landed[0] is not None else None
-        else:
-            real = list(base_path)
     current = obj
     last = len(segments) - 1
     for i, seg in enumerate(segments):
@@ -321,8 +274,6 @@ def _traverse(
                 pointer, type(current).__name__, seg,
             )
             return _SENTINEL
-        if real is not None:
-            real.append(seg)
 
         # Through-pointer: we landed on a pointer but still have segments to
         # walk — dereference it first, then keep descending into its target.
@@ -330,20 +281,15 @@ def _traverse(
         if (i < last and isinstance(current, str)
                 and current.startswith("#") and not current.startswith("#./")):
             field_path = base_path + tuple(segments[: i + 1])
-            sub: list | None = [] if _landed is not None else None
             resolved = resolve_pointer(
                 root, current, field_path,
-                cache=cache, lock=lock, _visited=_visited, _landed=sub,
+                cache=cache, lock=lock, _visited=_visited,
             )
             if isinstance(resolved, str) and resolved.startswith("#"):
                 # intermediate pointer didn't resolve (dangling / self-ref /
                 # cycle) → the rest of the path can't be walked.
                 return _SENTINEL
             current = resolved
-            if sub is not None:
-                real = list(sub[0]) if sub and sub[0] is not None else None
-    if _landed is not None:
-        _landed[:] = [tuple(real) if real is not None else None]
     return current
 
 
@@ -412,31 +358,23 @@ def _get(root: Any, path: list[str]) -> Any:
     return node
 
 
-def landing_path(root: Any, ptr: str, field_path: tuple[str, ...]) -> list[str] | None:
-    """The real path a pointer chain lands on (following pointer to pointer):
-    the final leaf, not the first hop. ``None`` for a dangling chain, a
-    cycle, an alias that names no stored leaf, or a chain longer than
-    :data:`MAX_CHAIN_HOPS`.
-
-    The hops are :func:`resolve_pointer`'s own (:func:`resolve_with_landing`),
-    so the leaf named here is the leaf the value is read from. The one
-    addition: a stored ``#./`` at *field_path* itself, which the resolver
-    hands back as is, is followed here by the rule the resolver applies to a
-    ``#./`` in the middle of a chain (when the leaf it names is stored)."""
-    if not isinstance(ptr, str) or not ptr.startswith("#"):
-        return None
-    if ptr.startswith("#./"):
-        t = target_path(root, ptr, field_path)
-        if t is None or _get(root, list(t)) is _SENTINEL:
+def _landing(root: Any, ptr: str, field_path: tuple[str, ...], hops: int = 16) -> list[str] | None:
+    """The real path a pointer chain lands on (following pointer to pointer)."""
+    path = field_path
+    for _ in range(hops):
+        # every form, "#./" aliases included (quam follows them too)
+        t = target_path(root, ptr, path)
+        if t is None:
             return None
-        ptr = "#/" + "/".join(t)
-    value, path = resolve_with_landing(root, ptr, field_path)
-    if path is None or (isinstance(value, str) and value.startswith("#")):
-        return None
-    return path
-
-
-_landing = landing_path   # the name the package's callers import
+        path = tuple(t)
+        node = _get(root, list(path))
+        if node is _SENTINEL:
+            return None
+        if isinstance(node, str) and node.startswith("#"):
+            ptr = node
+            continue
+        return list(path)
+    return None
 
 
 def _walk_relative(root: Any, pointer: str, current_path: tuple[str, ...]) -> list[str] | None:
