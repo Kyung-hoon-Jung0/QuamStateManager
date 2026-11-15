@@ -35957,6 +35957,8 @@ _LIVE_MOVED_AFTER_BACKUP_MSG = (
 #: v1.5.1 (SA-F2): the machine-readable answer of a live write that failed
 #: (never an HTTP 500: the failure is known, named and nothing was lost)
 LIVE_WRITE_FAILED = "live_write_failed"
+#: the tail of the door's live-write failure text (the edits stay in the tray)
+EDITS_KEPT = " Your edits are kept."
 BACKUP_FAILED = "backup_failed"
 WORKING_SAVE_FAILED = "working_save_failed"
 #: v1.5.1 (MINOR 10): a pull (Take live / re-apply / Pull & apply) that failed
@@ -36720,7 +36722,7 @@ def state_apply_to_live():
         # read-only pill when this write discovered the denial.
         return _live_write_failure_response(
             ctx, _live_write_failure_text(ctx, exc, "Apply", outcome=_outcome, with_exc=False)
-            + " Your edits are kept.",
+            + EDITS_KEPT,
             LIVE_WRITE_FAILED, auto=_auto, detail=str(exc))
     except Exception as exc:  # noqa: BLE001 — r16 6: honest message, never a dropped 500
         g._merge_failure = exc

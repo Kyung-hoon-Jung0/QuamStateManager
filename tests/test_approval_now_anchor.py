@@ -883,3 +883,36 @@ def test_no_approval_refusal_text_says_s_in_brackets():
     marks = ("of this approval", "the tray holds", "cannot be staged", "made in another")
     assert all(any(m in t for _, t in texts) for m in marks), marks
     assert not [(n, t) for n, t in texts if "(s)" in t.replace(journal, "")], texts
+
+
+def _refused_live_write(case, monkeypatch, save_stands):
+    """An approval press whose live write is refused by the folder (no write permission).
+    save_stands: the door could not put its working-copy save back, so the staging takes the
+    approval's values back out of the saved working copy instead of out of the tray."""
+    from quam_state_manager.core import working_copy
+    from quam_state_manager.web import routes
+    live = case[2] / "state.json"
+
+    def refused(*a, **k):
+        raise PermissionError(13, "Permission denied", str(live))
+    monkeypatch.setattr(working_copy, "apply_to_live", refused)
+    if save_stands:
+        monkeypatch.setattr(routes, "_press_undo", lambda ctx, press: False)
+    before = live.read_bytes()
+    response = press(case, [{"path": "value", "new": 30, "seen_now": 10}])
+    assert live.read_bytes() == before
+    return response
+
+
+@pytest.mark.parametrize("save_stands", [False, True])
+def test_a_refused_live_write_says_the_approvals_values_were_taken_back(tmp_path, monkeypatch, save_stands):
+    case = _case(tmp_path, {"value": 10, "third": 5}, [{"path": "value", "old": 10, "new": 30}])
+    response = _refused_live_write(case, monkeypatch, save_stands)
+    assert response.status_code == 409, response.get_json()
+    error = response.get_json()["error"]
+    assert error == ("Apply failed: the live folder refused the write (read-only, or no write permission); "
+                     "nothing was written, and the approval's values were taken back out of SM"), error
+    _assert_plain(error)
+    assert case[1].get("/api/agent/tray").get_json()["entries"] == []
+    with case[0].app_context():
+        assert _ctx(case)["store"].merged["value"] == 10

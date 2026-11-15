@@ -267,6 +267,19 @@ def _then(lead: str, tail: str) -> str:
     return (lead[:-1] if lead.endswith(".") and not lead.endswith("..") else lead) + tail
 
 
+#: what an approval says once its values left SM again after a refused live write
+TAKEN_BACK = "; nothing was written, and the approval's values were taken back out of SM"
+
+
+def _taken_back(lead: str) -> str:
+    """The door's ``lead`` for an approval whose values were taken back out of SM: the door's
+    "Your edits are kept." goes (they are not kept), and the one taken-back clause follows."""
+    kept = _r().EDITS_KEPT
+    if lead.rstrip().endswith(kept.strip()):
+        lead = lead.rstrip()[:-len(kept.strip())]
+    return _then(lead, TAKEN_BACK)
+
+
 def _err(msg: str, code: int = 400, **extra):
     return jsonify(ok=False, error=msg, **extra), code
 
@@ -2287,10 +2300,14 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
         out["error"] = "another chip is active in the window; staged only"
         return out
 
+    took: dict = {}
+
     def _take_back() -> str:
         # the group comes back out of the tray, never over another window's later edit
         # (docs/254); the returned text names what had to stay for a human
+        own = sum(1 for e in store.change_log if e.group_id == gid)
         kept = _take_back_own(store, mod, gid)
+        took["back"] = own - len(kept)
         if not kept:
             return ""
         return (f"; {_count_of(len(kept), 'value')} of this approval could not be taken back because another "
@@ -2356,8 +2373,14 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
         out["error"] = ((js or {}).get("message") or (js or {}).get("conflict") or (js or {}).get("error")
                         or _status_text(body) or f"HTTP {status}")
         if store.change_log:
-            # refused BEFORE the save: the group comes back out
-            out["error"] = _then(out["error"], _take_back())
+            # refused BEFORE the save: the group comes back out. A failed live write
+            # whose save was put back says "Your edits are kept." -- for an approval
+            # whose values just left the tray, it says what happened instead
+            kept = _take_back()
+            if (js or {}).get("error") == r.LIVE_WRITE_FAILED and took.get("back"):
+                out["error"] = _then(_taken_back(out["error"]), kept)
+            else:
+                out["error"] = _then(out["error"], kept)
         else:
             # refused AFTER the save (the live write itself failed -- a reader
             # holding state.json open on Windows). The values used to stay in
@@ -2367,8 +2390,7 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
             # press leaves SM exactly where it found it.
             why = _take_back_saved(r, ctx, staged, before)
             if why is None:
-                out["error"] = _then(out["error"],
-                                     "; nothing was written, and the approval's values were taken back out of SM")
+                out["error"] = _taken_back(out["error"])
             else:
                 out["saved_in_working_copy"] = True
                 out["error"] = _then(out["error"], "; the values are saved in SM's working copy (unapplied) and "
