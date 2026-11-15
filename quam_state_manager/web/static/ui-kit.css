@@ -1294,7 +1294,12 @@
 .ui-generate #gen-env-list .gen-env-row { flex-wrap: wrap; min-width: 0; }
 .ui-generate #gen-env-list .gen-env-name,
 .ui-generate #gen-env-list .gen-env-status { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.ui-generate.ui-run-diff-compact .ui-dot-name,
 .ui-generate #gen-env-list .gen-env-path { flex: 1 1 20ch; overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
+/* Share the diff name wrapping part across review values and interpreter rows. */
+.ui-generate.ui-run-diff-compact .gen-review-table { table-layout: fixed; width: 100%; }
+.ui-generate.ui-run-diff-compact .gen-review-table th { white-space: normal; overflow-wrap: anywhere; }
+.ui-generate.ui-run-diff-compact .ui-dot-name { display: block; min-width: 0; max-width: 100%; }
 .ui-run-diff.ui-run-diff-compact { table-layout: fixed; width: 100%; }
 .ui-run-diff-compact .ui-dot-name { overflow-wrap: anywhere; }
 .ui-run-diff-compact th:nth-child(3), .ui-run-diff-compact .diff-list-arrow { width: 2ch; }
