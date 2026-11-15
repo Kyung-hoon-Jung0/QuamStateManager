@@ -52960,6 +52960,11 @@ _SCHEDULER_MUTATOR_ENDPOINTS = {
     "main.api_cz_gate_create", "main.api_cz_gate_check",
     # ... and the agent's doors to the same two functions
     "agent.cz_gate_create", "agent.cz_gate_check",
+    # Re-check runs the lab check in the chosen env and then writes the gate's
+    # class file record into its macro through the modifier (stages).
+    "main.api_cz_gate_recheck",
+    # Class saves check in the chosen env and write code queued nodes import.
+    "pulse_class_page.pulse_class_save_config", "agent.class_file_save",
     # Add a qubit / a pair from the chip diagram: creates subtrees through the
     # modifier under one group id (a staging door like /field/edit-batch).
     "main.diagram_add_stage",
@@ -53096,8 +53101,8 @@ def _scheduler_lock_guard():
             and scheduler.is_active(_sched_inst()):
         resp = make_response(jsonify({
             "error": "scheduler_running",
-            "message": "The Experiment Runner is running — editing is locked "
-                       "until it finishes or is cancelled.",
+            "message": "Editing and class saves are refused because the Experiment Runner is running; "
+                       "try again after it finishes or is cancelled.",
         }), 409)
         resp.headers["HX-Reswap"] = "none"       # don't swap an error into the page
         resp.headers["HX-Trigger"] = "schedulerLocked"

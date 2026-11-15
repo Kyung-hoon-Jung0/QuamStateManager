@@ -1012,7 +1012,7 @@
     }
     function problemLines(j, status) {
         var out = [];
-        if (j.error) out.push(j.error);
+        if (j.message || j.error) out.push(j.message || j.error);
         (j.problems || []).forEach(function (p) { if (p && out.indexOf(p) < 0) out.push(p); });
         return out.length ? out : ['The app answered HTTP ' + status + '.'];
     }

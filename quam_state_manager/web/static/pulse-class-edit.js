@@ -29,9 +29,17 @@
     function api(method, url, body) {
         var o = { method: method, headers: { "Accept": "application/json" } };
         if (body) { o.headers["Content-Type"] = "application/json"; o.body = JSON.stringify(body); }
+        var noAnswer = { ok: false, error: "The server sent no answer." };
         return fetch(url, o).then(function (r) {
-            return r.json().catch(function () { return { ok: false, error: "The server sent no answer." }; })
-                .then(function (j) { j._http = r.status; return j; });
+            var body;
+            try { body = r.json(); } catch (e) { body = Promise.reject(e); }
+            return body.catch(function () { return noAnswer; })
+                .then(function (j) {
+                    if (!j || typeof j !== "object") j = noAnswer;
+                    j = Object.assign({}, j);
+                    j._http = r.status;
+                    return j;
+                });
         }, function () { return { ok: false, error: "SM did not answer." }; });
     }
     function show(node, text) { if (!node) return; node.textContent = text || ""; node.hidden = !text; }
@@ -327,13 +335,24 @@
             }),
         });
     }
+    // The kit's busy part for a button: Pico draws the spinner for aria-busy.
+    function setBusy(btn, on) {
+        if (!btn) return;
+        if (on) btn.setAttribute("aria-busy", "true"); else btn.removeAttribute("aria-busy");
+        btn.disabled = !!on;
+    }
     function saveFile(target, replaceSha) {
+        var btn = q(S.root, "[data-pce-save-file]");
+        if (btn.getAttribute("aria-busy") === "true") return Promise.resolve();
+        setBusy(btn, true);
+        var failed = q(S.root, "[data-pce-error]");
         var dirty = S.dirty;
         show(q(S.root, "[data-pce-file-note]"), dirty ?
             "Save to file writes the saved draft, not the unsaved pane. Save draft first to include your typing." : "");
         var body = { cls: S.cls, target: target };
         if (replaceSha) body.replace_sha = replaceSha;
-        return api("POST", "/pulse-class/save-file", body).then(function (r) {
+        var request = api("POST", "/pulse-class/save-file", body).then(function (r) {
+            setBusy(btn, false);
             if (!S) return;
             if (r.confirm) {
                 var c = r.confirm;
@@ -356,6 +375,10 @@
                 (dirty || S.dirty ? " The saved draft was written, not the unsaved pane." : "") +
                 (r.record_error ? " " + r.record_error : ""));
             setStatus(S.statusLine);
+        });
+        return request.catch(function () {
+            setBusy(btn, false);
+            show(failed, "Save to file failed. Try again.");
         });
     }
     function saveConfig(confirmedFolder) {
@@ -387,7 +410,7 @@
                     ] });
                 return;
             }
-            if (!r.ok) { show(q(S.root, "[data-pce-error]"), r.error); return; }
+            if (!r.ok) { show(q(S.root, "[data-pce-error]"), r.message || r.error); return; }
             show(q(S.root, "[data-pce-error]"), "");
             S.statusLine = r.status;
             setStatus(r.status);
@@ -497,5 +520,5 @@
     }
     document.addEventListener("htmx:afterSettle", boot);
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
-    window.PulseClassEdit = { state: function () { return S; }, _poll: poll, _save: save, _applyForm: applyForm, _boot: boot };
+    window.PulseClassEdit = { state: function () { return S; }, _poll: poll, _save: save, _applyForm: applyForm, _saveFile: saveFile, _boot: boot };
 })();

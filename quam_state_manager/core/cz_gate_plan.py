@@ -603,7 +603,7 @@ def chip_map(rows, conversions, op_name=None):
     The layout follows [paper: arXiv:2112.03708v1, p.11, Fig. 6c] "Frequency arrangement
     chosen for the operation of the device." -- one column per qubit on a shared frequency
     axis. *op_name* picks that operation on every pair that has it; without it each pair
-    shows its macro named exactly ``cz`` (an alias is followed by operations()), else its
+    shows its active gate (the macro its ``cz`` alias names, see _default_row), else its
     first CZ operation. A refused frequency is listed, never drawn."""
     qubits = {}
     for path, conv in conversions.items():
