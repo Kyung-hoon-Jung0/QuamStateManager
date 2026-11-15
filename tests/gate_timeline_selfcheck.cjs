@@ -151,8 +151,18 @@ ok([...Array(116).keys()].every((t) => hov.x.includes(t)), 'hover grid has every
     const f1 = last();
     ok(f1.layout.xaxis.range[0] === 0 && f1.layout.xaxis.range[1] > 261 && f1.layout.xaxis.range[1] < 280, 'a single late pulse: axis still starts at 0');
     const sa = f1.layout.annotations.filter((a) => a.meta && a.meta.role === 'starts-at');
-    ok(sa.length === 1 && sa[0].text === 'starts at 161 ns' && sa[0].x === 0 && sa[0].xanchor === 'left' && sa[0].font.size === 11, 'late start: "starts at 161 ns" at the lane left');
+    ok(sa.length === 1 && sa[0].text === 'starts at 161 ns' && sa[0].xref === 'x' && sa[0].x === 161 && sa[0].xanchor === 'right' && sa[0].xshift < 0 && sa[0].font.size === 11, 'late start: "starts at 161 ns" anchored just before its own bar');
     one.destroy();
+    // a bar near the right edge and two lanes starting at the same time: each label ends at its own bar, in its own lane
+    const two = GT.render(host2, { lanes: [lane('q8.z', 'gate', [seg('a', [900, 1000], [0.1, 0.1])]),
+                                           lane('q9.z', 'gate', [seg('b', [900, 1000], [0.1, 0.1])]),
+                                           lane('q7.z', 'gate', [seg('c', [700, 800], [0.1, 0.1])])], notes: [] });
+    const f3 = last();
+    const sa3 = f3.layout.annotations.filter((a) => a.meta && a.meta.role === 'starts-at');
+    ok(sa3.length === 3 && sa3.every((a) => a.xref === 'x' && a.x === (a.meta.lane === 'q7.z' ? 700 : 900) && a.xanchor === 'right' && a.x <= f3.layout.xaxis.range[1]) &&
+       new Set(sa3.map((a) => a.yref)).size === 3 && sa3.map((a) => a.meta.lane).join() === 'q8.z,q9.z,q7.z',
+       'right-edge bars, same start: one label per lane, each anchored at its bar, in its own lane');
+    two.destroy();
     const neg = GT.render(host2, { lanes: [lane('q9.z', 'gate', [seg('early', [-20, 30], [0.1, 0.1])])], notes: [] });
     const f2 = last();
     ok(f2.layout.xaxis.range[0] === -20, 'a negative start extends the axis to it');
