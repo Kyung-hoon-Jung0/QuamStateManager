@@ -120,6 +120,42 @@ def _desc(gate_class: Any, gate_desc: dict | None = None) -> dict[str, Any] | No
     return row if row is not None else gate_desc
 
 
+#: the lines a slot can play on (the line roles ``_lines`` answers)
+SLOT_LINES = ("moving", "control", "target", "coupler")
+
+#: the one answer to a handed-in descriptor SM cannot build a gate from
+BAD_DESCRIPTION = (
+    "SM's own description of this gate class is not one it can build a gate "
+    "from, so it plans no gate of this class. Nothing was changed. Report this "
+    "with the gate class.")
+
+
+def desc_problem(gate_class: Any, gate_desc: Any) -> str | None:
+    """Why the descriptor handed in for *gate_class* cannot be used, or None.
+
+    None when no descriptor was given or the table holds the class (the
+    descriptor is then never read). A usable descriptor is a dict with a
+    callable ``skeleton`` and ``slots`` that is a list or tuple of ``Slot``
+    rows: distinct field names, roles and lines SM knows, at least one of
+    them required, so a planned gate always holds a pulse. Reads the
+    descriptor only; calls nothing."""
+    if gate_desc is None or gate_class in GATE_CLASSES:
+        return None
+    if not isinstance(gate_desc, dict) or not callable(gate_desc.get("skeleton")):
+        return BAD_DESCRIPTION
+    slots = gate_desc.get("slots")
+    if not isinstance(slots, (list, tuple)):
+        return BAD_DESCRIPTION
+    for s in slots:
+        if not (isinstance(s, Slot) and isinstance(s.field, str) and s.field
+                and s.role in ROLES and s.line in SLOT_LINES
+                and isinstance(s.required, bool)):
+            return BAD_DESCRIPTION
+    if len({s.field for s in slots}) != len(slots) or not any(s.required for s in slots):
+        return BAD_DESCRIPTION
+    return None
+
+
 def _ref(*segments: str) -> str:
     """An absolute reference built from path segments."""
     return "#/" + "/".join(segments)
@@ -476,7 +512,11 @@ def class_problem(merged: dict, pair_id: str, gate_class: str, *,
     Only the line facts the plan itself refuses on: a required pulse slot
     whose line has no operations gives the very reason ``plan`` gives for
     it. A class SM does not know (a copied layout) is judged by its plan.
-    ``gate_desc`` describes a class that has no row in ``GATE_CLASSES``."""
+    ``gate_desc`` describes a class that has no row in ``GATE_CLASSES``; one
+    SM cannot build a gate from gives the sentence ``plan`` refuses with."""
+    bad = desc_problem(gate_class, gate_desc)
+    if bad:
+        return bad
     desc = _desc(gate_class, gate_desc)
     if desc is None:
         return None
@@ -754,7 +794,9 @@ def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
     ``gate_desc`` is the descriptor (``{"skeleton": callable, "slots":
     (Slot, ...)}``) of a class that has no row in ``GATE_CLASSES``; with it
     the class is built like a table class instead of copied from a model
-    gate. It is ignored for a class the table already holds.
+    gate. It is ignored for a class the table already holds. A descriptor
+    that fails :func:`desc_problem` is refused with its sentence; spectators
+    for a described class are refused too (they are planned separately).
     """
     try:
         out = _plan_body(merged, pair_id, gate_name, gate_class, pulses,
@@ -815,11 +857,14 @@ def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
                             copy_from)
     if bad:
         return _refuse([bad])
+    bad = desc_problem(gate_class, gate_desc)
+    if bad:
+        return _refuse([bad])
     if spectators is not None and not isinstance(spectators, list):
         return _refuse([f"The spectators of pair {pair_id} must be a list of qubits, "
                         "each with a length and a level. Pick the spectators again."])
     if spectators:
-        why = spectator_refusal(gate_class)
+        why = spectator_refusal(gate_class, gate_desc=gate_desc)
         if why:
             return _refuse([why])
     if not isinstance(merged, dict) or not isinstance(merged.get("qubit_pairs"), dict):
@@ -1069,13 +1114,22 @@ NO_SPECTATORS_COPIED = (
     "(quam-builder) class to add spectators.")
 
 
-def spectator_refusal(gate_class: Any) -> str | None:
+NO_SPECTATORS_DESCRIBED = (
+    "This step plans the gate's own pulses only; the spectator pulses of this "
+    "gate class are planned separately. Leave the spectators out of this request.")
+
+
+def spectator_refusal(gate_class: Any, *, gate_desc: Any = None) -> str | None:
     """None when the window offers spectators for *gate_class* (the official
-    class), else the sentence saying why it does not."""
+    class), else the sentence saying why it does not. ``gate_desc`` is the
+    descriptor handed to ``plan`` for a class the table does not hold: such a
+    class copies no gate, so it gets its own sentence."""
     if gate_class == CZ_GATE:
         return None
     if gate_class == COUPLER_CZ_GATE:
         return NO_SPECTATORS_COUPLER
+    if gate_desc is not None:
+        return NO_SPECTATORS_DESCRIBED
     return NO_SPECTATORS_COPIED
 
 
