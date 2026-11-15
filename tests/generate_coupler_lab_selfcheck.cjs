@@ -11,15 +11,17 @@ try { ({JSDOM} = require('jsdom')); } catch (_) { process.exit(2); }
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'quam_state_manager/web/templates/_generate.html'), 'utf8');
 let js = fs.readFileSync(path.join(root, 'quam_state_manager/web/static/generate.js'), 'utf8');
-js = js.replace('_test: {', '_test: { sync: syncLineTypeToggles, derive: deriveLines, guards: stepGuards, arch: applyChipArch, cols: pairPopCols,');
+js = js.replace('_test: {', '_test: { sync: syncLineTypeToggles, derive: deriveLines, guards: stepGuards, arch: applyChipArch, cols: pairPopCols, review: renderCapabilityReport,');
 const dom = new JSDOM('<body>' + html + '</body>', {runScripts: 'outside-only', url: 'http://localhost/'});
 const w = dom.window;
 w.NumberInput = {fit() {}, attach() {}, format() {}, strip(s) { return String(s || ''); }};
 w.armPlainResize = function () {};
 w.renderInstrumentWiring = function () {};
 let lab = false;
+let reviewAnswer = null;
 const LAB_ROOT = 'quam_config.my_quam.Quam';
 w.fetch = function (url) {
+  if (url === '/generate/capabilities' && reviewAnswer) return Promise.resolve({json: () => Promise.resolve(reviewAnswer)});
   if (url === '/generate/capabilities') return Promise.resolve({json: () => Promise.resolve({
     report: {inventory: [{id: 'pair.coupler_cz', available: true}, {id: 'pair.coupler_cz_lab', available: lab}]},
     roots: [{path: 'quam_builder.architecture.superconducting.qpu.FluxTunableQuam', importable: true, fixed_root: false},
@@ -62,6 +64,34 @@ const tick = () => new Promise(resolve => w.setTimeout(resolve, 0));
   assert.strictEqual(s.spec.quam_class, LAB_ROOT, 'the lab root is pre-filled, never the stock one');
   assert(w.document.getElementById('gen-chip-arch-note').textContent.includes('cz_coupler_only'),
          'the note says what the chip holds');
+
+  // the class choice is explained: the note names the qubit class and the reason, and the Review step repeats it
+  const whySrc = js.match(/var LAB_COUPLER_CLASS_WHY = ((?:"[^"]*"\s*\+\s*)*"[^"]*");/);
+  assert(whySrc, 'the reason constant is found in the page script');
+  const WHY = new Function('return ' + whySrc[1])();
+  assert(WHY.length > 40, 'the reason constant is a real sentence: ' + WHY);
+  const noteText = w.document.getElementById('gen-chip-arch-note').textContent;
+  assert(/FluxTunableTransmon qubits/.test(noteText), 'the note names the qubit class it builds: ' + noteText);
+  assert(noteText.includes(WHY), 'the note carries the reason text: ' + noteText);
+  reviewAnswer = {ok: true, report: {manifest_ok: true, inventory: [], blockers: [], warnings: []}, roots: [{path: LAB_ROOT, importable: true, fixed_root: false}], flavor: []};
+  const reviewBox = w.document.createElement('div');
+  w.document.body.appendChild(reviewBox);
+  t.review(reviewBox);
+  await tick(); await tick();
+  const whyEl = reviewBox.querySelector('[data-gen-cap-class-why]');
+  assert(whyEl, 'the Review step shows the class-choice paragraph for this architecture');
+  assert(/Qubits: FluxTunableTransmon [(]/.test(whyEl.textContent) && whyEl.textContent.includes(WHY),
+         'and it names the class and the reason: ' + whyEl.textContent);
+  t.arch('fixed_tunable_coupler');
+  const otherNote = w.document.getElementById('gen-chip-arch-note').textContent;
+  assert(!otherNote.includes(WHY), 'the other architecture does not carry the reason: ' + otherNote);
+  const otherBox = w.document.createElement('div');
+  w.document.body.appendChild(otherBox);
+  t.review(otherBox);
+  await tick(); await tick();
+  assert(!otherBox.querySelector('[data-gen-cap-class-why]'), 'the paragraph is absent where it does not apply');
+  reviewAnswer = null;
+  t.arch('fixed_tunable_coupler_lab');
 
   // the pair table for the lab gate: shape + SNZ parameters, no moving qubit, no interaction offset
   const cols = t.cols('cz_coupler_only').map(c => c.field);
