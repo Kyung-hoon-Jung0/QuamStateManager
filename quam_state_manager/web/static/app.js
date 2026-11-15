@@ -10182,8 +10182,10 @@ document.addEventListener("undoAskPrevSession", function (evt) {
 });
 
 document.addEventListener("keydown", function(evt) {
-    var redoKey = evt.shiftKey || evt.key === "y" || evt.key === "Y";
-    if (!((evt.ctrlKey || evt.metaKey) && (evt.key === "z" || evt.key === "Z" || evt.key === "y" || evt.key === "Y")
+    // Y redoes only with Ctrl (every OS); Cmd+Y stays the browser's (History on macOS).
+    var yKey = (evt.key === "y" || evt.key === "Y") && evt.ctrlKey && !evt.metaKey;
+    var redoKey = evt.shiftKey || yKey;
+    if (!(((evt.ctrlKey || evt.metaKey) && (evt.key === "z" || evt.key === "Z") || yKey)
           && !evt.altKey)) return;
     var a = document.activeElement;
     var inGridCell = !!(a && a.classList && a.classList.contains("bulk-cell"));
