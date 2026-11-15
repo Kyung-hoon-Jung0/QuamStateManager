@@ -179,3 +179,21 @@ def test_the_panel_shows_the_played_rf_with_f01_as_a_secondary_line():
     if r.returncode == 2 and "jsdom not installed" in (r.stderr or ""):
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, (r.stdout + r.stderr)
+
+
+@pytest.mark.parametrize("v", [509.3, -42.0, 99999.0])
+def test_a_detuning_between_volts_and_hz_has_no_unit(v):
+    """Neither a plausible voltage nor a plausible Hz detuning: shown raw, unit not stated."""
+    assert not units.pair_detuning_inferred(v)
+    assert units.stored_value_unit("pair_detuning", v) == ""
+    text = units.pair_detuning_display(v)
+    assert text.startswith(repr(v)) and "unit not stated" in text
+    assert f"{v!r} Hz" not in text and f"{v:.3f} Hz" not in text and " V " not in text
+    cell, doubt = units.pair_detuning_cell(v)
+    assert cell == f"{v!r} (unit not stated)" and doubt
+    assert units.qty_filter(v, "pair_detuning", "full") == text
+    assert units.qty_filter(v, "pair_detuning", "unit") == ""
+
+
+def test_the_hz_floor_keeps_real_hz_values():
+    assert units.pair_detuning_inferred(1e5) and units.pair_detuning_inferred(213400000)

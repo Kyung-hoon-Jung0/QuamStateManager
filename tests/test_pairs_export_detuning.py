@@ -63,3 +63,11 @@ def test_a_bare_pairs_export_has_pair_columns(tmp_path):
     c = _client(tmp_path, [-0.1659])
     head = c.get("/export?entity=pairs").get_data(as_text=True).lstrip("\ufeff").splitlines()[0]
     assert "qubit_control" in head and "detuning" in head and "T1" not in head
+
+
+def test_an_all_unstated_column_names_its_empty_unit_per_row(tmp_path):
+    """Values between the volt bound and the Hz floor carry no unit: the header
+    names none and each row's unit cell is empty, never a guessed V."""
+    head, body = _rows(_client(tmp_path, [509.3, 77.7]))
+    assert head == ["id", "detuning", "detuning_unit"]
+    assert [(r[1], r[2]) for r in body] == [("509.3", ""), ("77.7", "")]
