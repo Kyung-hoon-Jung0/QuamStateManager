@@ -269,6 +269,20 @@ def test_missing_and_changed_files_show_on_the_line(made):
     assert f"class file missing: quam_config/{CLASS}.py" in html and "gate-status-recheck" not in html
 
 
+def test_recheck_is_offered_only_on_a_changed_file(made):
+    target = made.folder / f"{CLASS}.py"
+    keep = target.read_bytes()
+    assert "gate-status-recheck" not in _status_html(made)          # present
+    target.write_bytes(keep + b"\n# edited\n")
+    assert "gate-status-recheck" in _status_html(made)              # changed
+    target.unlink()
+    assert "gate-status-recheck" not in _status_html(made)          # missing
+    target.write_bytes(keep)
+    _macro_of(made).get("extras", {}).pop("sm_class_files")
+    html = _status_html(made)                                       # not an SM-made class
+    assert "not a class SM made" in html and "gate-status-recheck" not in html
+
+
 def _gate_check(store):
     checks = {c: {"status": "pass", "message": "ok"} for c in gate_check.CHECKS}
     return {"status": "ok", "checked": True, "ok": True, "failed": False, "all_checked": True,
