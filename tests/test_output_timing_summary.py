@@ -111,3 +111,36 @@ def test_a_readout_delay_moved_back_to_zero_is_listed_and_unchanged_zero_is_not(
     assert [(t["qubit"], t["shift"]) for t in s["tof"]] == [("q1", 0)]
     assert s["tof_check"] == ["q2"]
     assert output_timing.summary(state, wiring)["tof"] == []      # fresh build, delay 0
+
+
+def test_a_qubit_new_on_the_rebuilt_chip_with_no_delay_is_not_listed():
+    import copy
+    state, wiring = _chip(xy_bands=(2, 2), ro_band=3)
+    src = copy.deepcopy((state, wiring))
+    del src[0]["qubits"]["q2"]
+    s = output_timing.summary(state, wiring, tof_moved=[], source=src)
+    assert s["tof"] == [] and "tof_check" not in s, s
+
+
+def test_a_moved_readout_whose_delay_stays_zero_is_listed():
+    import copy
+    state, wiring = _chip(xy_bands=(2, 2), ro_band=3)
+    src = copy.deepcopy((state, wiring))
+    s = output_timing.summary(state, wiring, tof_moved=["q1"], source=src)
+    assert [(t["qubit"], t["moved"]) for t in s["tof"]] == [("q1", True)], s
+
+
+def test_a_moved_time_of_flight_carries_its_old_value_from_a_mapping():
+    import copy
+    state, wiring = _chip(xy_bands=(2, 2), ro_band=3)
+    src = copy.deepcopy((state, wiring))
+    src[0]["ports"]["mw_outputs"]["con1"]["1"]["8"]["delay"] = 20
+    state["ports"]["mw_outputs"]["con1"]["1"]["8"]["delay"] = 40
+    s = output_timing.summary(state, wiring, tof_moved={"q1": 12, "q2": True}, source=src)
+    by = {t["qubit"]: t for t in s["tof"]}
+    assert by["q1"]["from"] == 12 and by["q1"]["shift"] == 40
+    assert "from" not in by["q2"]                       # bool is not a number
+    s = output_timing.summary(state, wiring, tof_moved={"q1": "12", "q2": None}, source=src)
+    assert all("from" not in t for t in s["tof"]) and len(s["tof"]) == 2
+    s = output_timing.summary(state, wiring, tof_moved=["q1", "q2"], source=src)
+    assert all("from" not in t for t in s["tof"]) and len(s["tof"]) == 2

@@ -5063,7 +5063,8 @@
     // defaults by (shift, new value), the values the user set by shift.
     var groups = [], byKey = {};
     (t.tof || []).forEach(function (x) {
-      var k = (x.moved ? "m|" + x.value : "k") + "|" + x.shift;
+      var k = (x.moved ? "m|" + x.value + "|" + (typeof x.from === "number" ? x.from : "") : "k") +
+        "|" + x.shift;
       if (!byKey[k]) { byKey[k] = { x: x, q: [] }; groups.push(byKey[k]); }
       byKey[k].q.push(x.qubit);
     });
@@ -5072,7 +5073,8 @@
       p.className = "ui-note";
       var x = g.x, one = g.q.length === 1;
       p.textContent = x.moved
-        ? "time of flight moved from " + (x.value - x.shift) + " to " + x.value + " ns with " +
+        ? "time of flight moved from " + (typeof x.from === "number" ? x.from : x.value - x.shift) +
+          " to " + x.value + " ns with " +
           (one ? "its" : "their") + " readout output: " + g.q.join(", ") + "."
         : "time of flight left as you set it on " + g.q.join(", ") + "; " +
           (one ? "its" : "their") + " readout output is delayed by " + x.shift +

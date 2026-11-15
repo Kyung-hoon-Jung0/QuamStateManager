@@ -616,6 +616,19 @@ class TestReadoutUndoAndGrid:
         assert f(163, 3) == (163, False)        # change already on the step
         assert f(-6, 0) == (0, True)            # never a negative delay
         assert f(20, 0) == (20, False)
+        assert f(166, 0) == (164, False)        # 41.5 steps: toward the smaller change
+        assert f(-6, 3) == (3, True)            # raised to the step of the old delay
+
+    def test_only_a_clamped_readout_delay_says_it_cannot_be_negative(self, monkeypatch):
+        m, _ = self._lf_readout()
+        monkeypatch.setattr(self.mod, "_readout_delay", lambda value, old: (0, True))
+        warns = self.mod._align_output_timing(m)
+        assert any("(asked 161, a delay cannot be negative)" in w for w in warns), warns
+        m, _ = self._lf_readout()
+        monkeypatch.setattr(self.mod, "_readout_delay", lambda value, old: (160, False))
+        warns = self.mod._align_output_timing(m)
+        assert any("160 ns (asked 161)," in w for w in warns), warns
+        assert not any("cannot be negative" in w for w in warns), warns
 
     def _lf_readout(self, asked_tof=28):
         m = _chip([2, 2], ro_band=2, tof=asked_tof)
@@ -649,6 +662,7 @@ class TestReadoutUndoAndGrid:
         bad = [w for w in warns if "half moved" in w]
         assert bad and "the time of flight of q1 on" in bad[0] and "holds 52 (was 32)" in bad[0]
         assert not any("stays 0 ns" in w for w in warns), warns
+        assert not any("could not set" in w and "UNDO" in w for w in warns), warns
 
     def test_a_delay_that_cannot_go_back_is_named(self):
         m = _chip([2, 2], ro_band=3)

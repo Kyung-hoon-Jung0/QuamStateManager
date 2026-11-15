@@ -106,6 +106,14 @@ function spec(qubits, fluxFem) {
      notes[0] === 'time of flight moved from 28 to 48 ns with their readout output: q1, q4, q5.' &&
      notes[1] === 'time of flight left as you set it on q2, q3; their readout output is delayed by 20 ns: ' +
        'measure time of flight again.', '[result] grouped lines: ' + JSON.stringify(notes));
+  // a Re-generate names the stored time of flight; two different old values never share a line
+  const fr = T.outputTimingResultTable({ mw: [{ port: 'b', label: 'p8', band: 3, delay: 0 }], flux: [],
+    tof: [{ qubit: 'q1', shift: 0, value: 32, moved: true, from: 52 },
+          { qubit: 'q2', shift: 0, value: 32, moved: true, from: 12 }] });
+  const frn = Array.from(fr.querySelectorAll('p.ui-note')).map(function (p) { return p.textContent; });
+  ok(frn.length === 2 && frn[0] === 'time of flight moved from 52 to 32 ns with its readout output: q1.' &&
+     frn[1] === 'time of flight moved from 12 to 32 ns with its readout output: q2.',
+     '[result] moved from the stored value: ' + JSON.stringify(frn));
   ok(T.outputTimingResultTable(null) === null, '[result] nothing to list');
   T.showBuildResult({ ok: true, result: { qubits: ['q1'], qubit_pairs: [],
     warnings: ['time of flight left as you set it on q1; its readout output is delayed by 20 ns: measure time of flight again.'],

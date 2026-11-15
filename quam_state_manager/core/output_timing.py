@@ -135,7 +135,9 @@ def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=(),
     ``tof_typed`` (kept as the user set it, ``moved`` False) and
     ``tof_unrecorded`` (no record of its source: counted in
     ``tof_unrecorded``, one grouped line, not listed per qubit). A
-    Re-generate passes ``tof_moved``, the qubits it moved, and ``source``, the
+    Re-generate passes ``tof_moved``, the qubits it moved (a list, or a
+    mapping ``{qubit: time of flight before the run}``; a moved entry then
+    carries ``from``, that old value, when it is a number), and ``source``, the
     source chip's ``(state, wiring)``: the moved ones are listed; a resonator
     whose readout output delay is the source chip's is counted in
     ``tof_unchanged``; one whose delay differs from the source chip (or that
@@ -172,6 +174,8 @@ def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=(),
         tof, unrecorded, unchanged, check = [], [], [], []
         typed, unrec = set(tof_typed or ()), set(tof_unrecorded or ())
         before = _readout_delays(*source) if source else {}
+        old_tof = tof_moved if isinstance(tof_moved, dict) else {}
+        moved_set = set(tof_moved) if tof_moved is not None else set()
         for qid, q in ((state or {}).get("qubits") or {}).items():
             rr = q.get("resonator") if isinstance(q, dict) else None
             if not isinstance(rr, dict):
@@ -182,12 +186,15 @@ def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=(),
                 continue
             same = qid in before and same_number(before[qid][0], s)
             if s == 0 and not (tof_moved is not None and (
-                    qid in set(tof_moved) or (qid in before and not same))):
+                    qid in moved_set or (qid in before and not same))):
                 continue   # no delay, and none moved away: nothing to measure again
             entry = {"qubit": qid, "shift": s, "value": rr["time_of_flight"]}
             if tof_moved is not None:
-                if qid in set(tof_moved):
-                    tof.append({**entry, "moved": True})
+                if qid in moved_set:
+                    entry["moved"] = True
+                    if _num(old_tof.get(qid)):
+                        entry["from"] = old_tof[qid]
+                    tof.append(entry)
                 elif same:
                     unchanged.append(qid)
                 else:
