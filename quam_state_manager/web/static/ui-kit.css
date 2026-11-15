@@ -1225,6 +1225,10 @@
 .ui-table-cell.ui-cell--danger { background: var(--ui-danger-bg); color: var(--ui-danger-text); font-weight: var(--ui-fw-bold); }
 .ui-cell-note { margin-left: var(--ui-gap-1); color: var(--ui-text-2); font-size: var(--ui-fs-xs); font-weight: var(--ui-fw-normal); }
 .ui-cell--warn > .ui-cell-note, .ui-cell--danger > .ui-cell-note { color: inherit; }
+/* A table cell whose content never wraps (a delta "-18,000 (-90%)"); a note
+   inside it may still wrap, at a readable width. */
+.ui-cell-nowrap { white-space: nowrap; }
+.ui-cell-nowrap > .ui-cell-note { display: inline-block; min-width: 9rem; margin-left: 0; white-space: normal; }
 
 /* placeholder: marks where a component renders (dashed, quiet, fixed height) */
 .ui-placeholder { display: flex; align-items: center; justify-content: center; box-sizing: border-box; min-height: var(--ui-placeholder-h); margin: 0; padding: var(--ui-gap-3); border: var(--ui-bw) dashed var(--ui-border-strong); border-radius: var(--ui-r-md); color: var(--ui-text-2); font-size: var(--ui-fs-sm); text-align: center; }

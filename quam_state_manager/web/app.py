@@ -914,6 +914,27 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
         return Markup("_<wbr>".join(escape(p) for p in parts))
     app.jinja_env.filters["soft_breaks"] = _soft_breaks_filter
 
+    def _path_breaks_filter(value) -> Markup:
+        """A dotted name or a path with a soft break (``<wbr>``) after every
+        ``.`` and ``/``, so a narrow table cell wraps ``quam.components.`` /
+        ``pulses.SquarePulse`` at its own joints instead of mid-word. A value
+        that reads as a number is returned unbroken (``1.5e-3`` must never
+        split at its decimal point; it gets the usual digit grouping). Each piece is HTML-escaped; ``<wbr>``
+        carries no text, so copy and search still see the plain string."""
+        text = str(value if value is not None else "")
+        try:
+            float(text.replace(",", ""))
+            return Markup('<span class="ui-cell-nowrap">%s</span>') % _units.group_digits(value)
+        except ValueError:
+            pass
+        out = []
+        for ch in text:
+            out.append(escape(ch))
+            if ch in "./":
+                out.append(Markup("<wbr>"))
+        return Markup("".join(out))
+    app.jinja_env.filters["path_breaks"] = _path_breaks_filter
+
     def _run_name_filter(name) -> Markup:
         """A sidebar run name as LEAD / HEAD / TAIL spans (audit 2026-11-13):
         the lead is the first two ``_`` parts (the node number and its first

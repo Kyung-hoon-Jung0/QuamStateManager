@@ -233,6 +233,7 @@
          grammar, flat rows (there is no tree to keep open here). #}
       <div id="diff-list" class="diff-list-wrap" data-more="{{ more }}">
       <div class="diff-panes-tools">{% include '_diff_search.html' %}</div>
+      <div class="ui-xscroll">
       <table class="diff-wb-list">
         <thead><tr><th>Parameter</th><th>A</th><th></th><th>B</th><th>Δ</th>{% if _take_from %}<th></th>{% endif %}</tr></thead>
         <tbody>
@@ -252,12 +253,13 @@
               {% if _take_from and not _absent %}data-dot-path="{{ r.path }}"
               data-value='{{ _tv | tojson }}' data-create="1"
               {% if not _pv_absent and json_attr_safe(_pv) %}data-prev='{{ _pv | tojson }}'{% endif %}{% endif %}>
-            <td class="diff-list-path"><code>{{ r.path }}</code></td>
-            <td class="diff-list-a">{% if r.kind == 'added' %}<span class="muted">(absent)</span>{% else %}<code{% if _take_from == 'a' and not _absent %} class="sv-take-src"{% endif %}>{{ "null" if r.a is none else (r.a | groupdigits) }}</code>{% endif %}</td>
+            <td class="diff-list-path"><code>{{ r.path | path_breaks }}</code></td>
+            <td class="diff-list-a">{% if r.kind == 'added' %}<span class="muted">(absent)</span>{% else %}<code{% if _take_from == 'a' and not _absent %} class="sv-take-src{% if r.a is number %} ui-cell-nowrap{% endif %}"{% elif r.a is number %} class="ui-cell-nowrap"{% endif %}>{{ "null" if r.a is none else (r.a | path_breaks if r.a is string else r.a | groupdigits) }}</code>{% endif %}</td>
             <td class="diff-list-arrow">&rarr;</td>
-            <td class="diff-list-b">{% if r.kind == 'removed' %}<span class="muted">(absent)</span>{% else %}<code{% if _take_from == 'b' and not _absent %} class="sv-take-src"{% endif %}>{{ "null" if r.b is none else (r.b | groupdigits) }}</code>{% endif %}</td>
-            <td class="diff-list-delta">
-              {%- if r.kind == 'changed' %}{{ delta_chip(r.a, r.b) }}
+            <td class="diff-list-b">{% if r.kind == 'removed' %}<span class="muted">(absent)</span>{% else %}<code{% if _take_from == 'b' and not _absent %} class="sv-take-src{% if r.b is number %} ui-cell-nowrap{% endif %}"{% elif r.b is number %} class="ui-cell-nowrap"{% endif %}>{{ "null" if r.b is none else (r.b | path_breaks if r.b is string else r.b | groupdigits) }}</code>{% endif %}</td>
+            <td class="diff-list-delta ui-cell-nowrap">
+              {%- if r.kind == 'changed' and r.path.split('.')[-1] == '__class__' %}<span class="ui-cell-note">class changed, no numeric delta</span>
+              {%- elif r.kind == 'changed' %}{{ delta_chip(r.a, r.b) }}
               {%- else %}<span class="tree-sidetag tree-tag-{{ r.kind }}">{{ r.kind }}</span>{% endif -%}
             </td>
             {% if _take_from %}
@@ -274,6 +276,7 @@
         {% endfor %}
         </tbody>
       </table>
+      </div>
       </div>
       {% if more %}
       <div class="ph-changes-more">
