@@ -1280,13 +1280,12 @@ def test_null_leaf_undo_and_redo_write_live(c, inst, synth_folder):
         {"path": "qubits.qA1.rb_details.alpha_stderr", "old": None, "new": 0.0123, "created": True}])
     assert c.post(f"/api/agent/approvals/{ap['id']}/approve", json={}, headers=HUMAN).get_json()["stage"]["applied"]
     assert _live_rb(synth_folder)["rb_details"]["alpha_stderr"] == 0.0123
-    # An approval stages through the agent door, which stamps no window: the person says Yes.
-    u = c.post("/undo", data={"ack_prev_window": "1"},
+    u = c.post("/undo",
                headers={**HUMAN, "Accept": "application/json"})
     assert u.status_code == 200, u.get_data(as_text=True)[:300]
     d = _live_rb(synth_folder)["rb_details"]
     assert "alpha_stderr" in d and d["alpha_stderr"] is None
-    y = c.post("/redo", data={"ack_prev_window": "1"},
+    y = c.post("/redo",
                headers={**HUMAN, "Accept": "application/json"})
     assert y.status_code == 200, y.get_data(as_text=True)[:300]
     assert _live_rb(synth_folder)["rb_details"]["alpha_stderr"] == 0.0123
@@ -1370,8 +1369,7 @@ def test_new_scalar_keys_in_existing_dict_are_created_and_undo_is_exact(c, inst,
     d = json.loads((synth_folder / "state.json").read_text(encoding="utf-8"))["qubits"]["qA1"]["rb_details"]
     assert d["alpha_stderr"] == 0.018 and d["epc_stderr"] == 0.0021 and d["k3"] == 3.5
     assert approvals.get(str(inst), _chip(c), ap["id"])["status"] != "pending"
-    # An approval stages through the agent door, which stamps no window: the person says Yes.
-    u = c.post("/undo", data={"ack_prev_window": "1"},
+    u = c.post("/undo",
                headers={**HUMAN, "Accept": "application/json"})
     assert u.status_code == 200, u.get_data(as_text=True)[:300]
     assert (synth_folder / "state.json").read_text(encoding="utf-8") == original, "one undo restores the exact bytes"

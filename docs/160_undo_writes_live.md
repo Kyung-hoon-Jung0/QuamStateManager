@@ -475,6 +475,8 @@ defect was in the very commit that closed the original of the same bug.
 Edits retain their creating window through a different window's Apply.
 Browser journal captures stamp `meta.window_id` from the existing document
 header `X-SM-Window-ID` (also used for multi-window replacement notices).
+The stamp is set app-wide (`routes.bind_edit_window`), so rows an agent card brings in through 
+Approve are the pressing window's change; an agent's own staging carries no stamp.
 A missing stamp is another window. Before undo or redo mutates that step,
 the existing kit confirmation names the change and whether Ctrl+Z writes
 the chip (ON) or stages only (OFF). No changes nothing; Yes repeats the

@@ -12688,21 +12688,31 @@ def _remember_notice_window(ctx):
         return win_id
 
 
+_EDIT_WINDOW_TOKEN = "sm.edit_window_token"
+
+
+def bind_edit_window():
+    """App-wide before_request: rows staged during this request carry the
+    pressing window's id, whichever blueprint serves the door (an Approve
+    press included). The token lives in this request's environ, so a nested
+    request context (an internal door call) cannot release it."""
+    from quam_state_manager.core.loader import edit_window_id
+    request.environ[_EDIT_WINDOW_TOKEN] = edit_window_id.set(_journal_window_id())
+
+
+def release_edit_window(_exc=None):
+    """App-wide teardown_request: undo what bind_edit_window set."""
+    from quam_state_manager.core.loader import edit_window_id
+    token = request.environ.pop(_EDIT_WINDOW_TOKEN, None)
+    if token is not None:
+        edit_window_id.reset(token)
+
+
 @bp.before_request
 def _track_notice_window():
-    from quam_state_manager.core.loader import edit_window_id
-    g._edit_window_token = edit_window_id.set(_journal_window_id())
     ctx = _active_ctx()
     if ctx is not None:
         _remember_notice_window(ctx)
-
-
-@bp.teardown_request
-def _clear_edit_window(_exc):
-    from quam_state_manager.core.loader import edit_window_id
-    token = g.pop("_edit_window_token", None)
-    if token is not None:
-        edit_window_id.reset(token)
 
 
 def _snapshot_notice_recipients(ctx):

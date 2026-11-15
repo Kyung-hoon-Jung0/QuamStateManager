@@ -56,8 +56,7 @@ class TestAskWritesHolds:
         a = c.post(f"/api/agent/approvals/{aid}/approve", json={}, headers=HUMAN)
         assert a.status_code == 200 and a.get_json()["stage"]["applied"], a.get_json()
         assert _live(synth_folder)["T1"] == 4242
-        # An approval stages through the agent door, which stamps no window: the person says Yes.
-        u = c.post("/undo", data={"ack_prev_window": "1"}, headers={**HUMAN, **J})
+        u = c.post("/undo", headers={**HUMAN, **J})
         assert u.status_code == 200
         assert _live(synth_folder)["T1"] == before, "one Ctrl+Z did not take the whole approval back"
 
@@ -107,6 +106,52 @@ def test_auto_mode_lets_the_agents_apply_through(c, inst, synth_folder):
     assert r.status_code == 200, r.get_data(as_text=True)[:300]
     assert _live(synth_folder)["T1"] == 4242
     assert not approvals.pending(str(inst), _chip(c))
+
+
+WIN_A = {"X-SM-Window-ID": "window-a"}
+WIN_B = {"X-SM-Window-ID": "window-b"}
+
+
+def _undo_trigger(c, window):
+    r = c.post("/undo", headers={**HUMAN, **window})
+    assert r.status_code == 200, r.get_data(as_text=True)[:300]
+    raw = r.headers.get("HX-Trigger")
+    return json.loads(raw) if raw else {}
+
+
+def _approve_in(c, window):
+    aid = _agent_edit_and_apply(c).get_json()["approval"]["id"]
+    a = c.post(f"/api/agent/approvals/{aid}/approve", json={}, headers={**HUMAN, **window})
+    assert a.status_code == 200 and a.get_json()["stage"]["applied"], a.get_json()
+    return aid
+
+
+class TestApproveIsThePressingWindowsChange:
+    def test_undo_in_the_approving_window_does_not_ask(self, c, inst, synth_folder):
+        before = _live(synth_folder)["T1"]
+        _approve_in(c, WIN_A)
+        assert _live(synth_folder)["T1"] == 4242
+        t = _undo_trigger(c, WIN_A)
+        assert "undoAskPrevSession" not in t
+        assert _live(synth_folder)["T1"] == before
+
+    def test_undo_in_another_window_asks_and_writes_nothing(self, c, inst, synth_folder):
+        _approve_in(c, WIN_A)
+        t = _undo_trigger(c, WIN_B)
+        assert "another window" in t["undoAskPrevSession"]["message"]
+        assert _live(synth_folder)["T1"] == 4242
+
+    def test_an_agent_only_stage_still_asks(self, c, inst, synth_folder):
+        limits.save(str(inst), _chip(c), {"mode": "auto"})
+        own = c.environ_base.pop("HTTP_X_SM_WINDOW_ID")
+        try:
+            assert _agent_edit_and_apply(c).status_code == 200
+        finally:
+            c.environ_base["HTTP_X_SM_WINDOW_ID"] = own
+        assert _live(synth_folder)["T1"] == 4242
+        t = _undo_trigger(c, WIN_A)
+        assert "undoAskPrevSession" in t
+        assert _live(synth_folder)["T1"] == 4242
 
 
 def test_the_mcp_bridge_relays_a_held_apply(monkeypatch):
