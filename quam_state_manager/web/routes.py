@@ -31034,6 +31034,7 @@ def undo():
             message += f" ({_d['text']}"
             message += f", {_d['pct_text']})" if _d["pct_text"] else ")"
 
+    message += _class_file_left_note(store, entries)
     resp = make_response(_tray_html())
     resp.headers["HX-Trigger"] = json.dumps({
         # Revert each affected inspector cell + Explorer tree node in place, and
@@ -31064,6 +31065,20 @@ def undo():
         "diagnostics-changed": True,
     })
     return resp
+
+
+def _class_file_left_note(store, entries) -> str:
+    """Names the SM class files an undo left on disk with no gate using them."""
+    if store is None:
+        return ""
+    try:
+        from quam_state_manager.core import quam_config_save as _qcs
+        text = _qcs.left_behind_notice(
+            current_app.instance_path, _ctx_chip_key(_active_ctx()) or "no-chip",
+            store.merged, [e.new_value for e in entries])
+    except Exception:  # noqa: BLE001 -- a notice never breaks an undo
+        return ""
+    return f". {text}" if text else ""
 
 
 def _undo_journal_step(ctx, n_req: int = 1):

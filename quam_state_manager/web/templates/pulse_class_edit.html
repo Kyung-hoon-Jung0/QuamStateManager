@@ -10,7 +10,7 @@
   <p class="ui-note">A draft is a pulse class file kept in SM's instance folder until you save it to a file. Open one or start a new class.</p>
   {% if pce_drafts %}
   <ul class="pce-list">
-    {% for d in pce_drafts %}<li><a href="/pulse-class?cls={{ d.class_name }}" hx-get="/pulse-class?cls={{ d.class_name }}" hx-target="#table-pane" hx-push-url="true">{{ d.class_name }}</a></li>{% endfor %}
+    {% for d in pce_drafts %}<li><a href="/pulse-class?cls={{ d.class_name }}" hx-get="/pulse-class?cls={{ d.class_name }}" hx-target="#table-pane" hx-push-url="true">{{ d.class_name }}</a>{% if d.class_name in pce_unused %} <span class="ui-note">not used</span>{% endif %}</li>{% endfor %}
   </ul>
   {% else %}<p class="ui-note">No drafts yet.</p>{% endif %}
   <div class="ui-field-grid">
