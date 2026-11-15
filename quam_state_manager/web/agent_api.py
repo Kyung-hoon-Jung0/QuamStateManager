@@ -199,6 +199,16 @@ def _jsonable(v: Any) -> Any:
     return v
 
 
+def _seen_equal(now: Any, seen: Any, equal) -> bool:
+    """docs/254: a value as the card rendered it (`_jsonable`) against what the press
+    says the card showed, element by element, each leaf by `equal` (differ.compare_equal)."""
+    if isinstance(now, list) and isinstance(seen, list):
+        return len(now) == len(seen) and all(_seen_equal(a, b, equal) for a, b in zip(now, seen))
+    if isinstance(now, dict) and isinstance(seen, dict):
+        return now.keys() == seen.keys() and all(_seen_equal(now[k], seen[k], equal) for k in now)
+    return equal(now, seen)
+
+
 def _err(msg: str, code: int = 400, **extra):
     return jsonify(ok=False, error=msg, **extra), code
 
@@ -2064,21 +2074,26 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
         # docs/254: compare every displayed value before staging any row.
         from quam_state_manager.core.differ import compare_equal
         for w in writes:
-            if "seen_now" not in w:
+            unknown = w.get("seen_unknown") is True
+            if "seen_now" not in w and not unknown:
                 continue
             target = r._resolve_edit_path(store, w["path"]) or w["path"]
             try:
-                current = store.get_value(target)
-            except Exception:  # noqa: BLE001 -- a disappeared leaf requires another press
-                current = None
-                matches = False
+                current = _jsonable(store.get_value(target))     # the card's own representation
+            except Exception:  # noqa: BLE001 -- a leaf SM cannot read: the card said "not set"
+                readable, current = False, None
             else:
-                matches = compare_equal(current, w["seen_now"])
+                readable = True
+            if unknown:
+                matches = not readable
+            else:
+                matches = readable and _seen_equal(current, w["seen_now"], compare_equal)
             if not matches:
+                shown = "not set" if unknown else json.dumps(w["seen_now"], ensure_ascii=True)
+                now_text = json.dumps(current, ensure_ascii=True) if readable else "not set"
                 return {"group_id": gid, "staged": 0, "applied": False, "unstaged": [],
                         "seen_now_changed": True,
-                        "error": f"{w['path']} changed to {json.dumps(_jsonable(current), ensure_ascii=True)} "
-                                 f"since the card showed {json.dumps(w['seen_now'], ensure_ascii=True)}; press again"}
+                        "error": f"{w['path']} changed to {now_text} since the card showed {shown}; press again"}
         for w in writes:
             root = None
             if w.get("created") and not w.get("deleted") and not _existing_leaf(store, w["path"]):
@@ -2924,7 +2939,8 @@ def approvals_decide(aid: str, verb: str):
                     + (" and %d more" % (len(masked) - 6) if len(masked) > 6 else "")
                     + "; type a value for it, or untick it", 409)
             writes = [dict(proposed[str(w.get("path"))], new=w.get("new"),
-                           **({"seen_now": w["seen_now"]} if "seen_now" in w else {}))
+                           **({"seen_now": w["seen_now"]} if "seen_now" in w else {}),
+                           **({"seen_unknown": True} if w.get("seen_unknown") is True else {}))
                       for w in writes]
         if verb == "approve" and cur.get("kind") == "writes" and writes is None:
             # a press that names no values writes what the card ticks by default: never a value
@@ -2956,6 +2972,8 @@ def approvals_decide(aid: str, verb: str):
                                          if res.get("seen_now_changed") else approvals.summary(cur)),
                                how=("the approval stays pending; " + ("take live, then approve again"
                                     if "stale_live" in str(res.get("error")) else "see the error"))), 409
+        if writes is not None:     # what the card showed belongs to this press, never to the record
+            writes = [{k: v for k, v in w.items() if k not in ("seen_now", "seen_unknown")} for w in writes]
         rec = approvals.decide(inst, chip, aid, status="approved" if verb == "approve" else "rejected", who=actor,
                                note=data.get("note"), writes=writes)
     out["approval"] = approvals.summary(rec)

@@ -56,8 +56,18 @@ let setupBody = {
   todo: ['calibrations_folder', 'journal'],
 };
 const calls = [];
+let approveReply = null;      // one scripted answer for the next approve press
+let cardsGate = null;         // while set, a poll's answer waits on it
 global.fetch = window.fetch = function (url, opts) {
   calls.push({ url: String(url), method: (opts && opts.method) || 'GET', body: opts && opts.body ? JSON.parse(opts.body) : null, headers: opts && opts.headers });
+  if (approveReply && /\/approve$/.test(url)) {
+    const rep = approveReply; approveReply = null;
+    return Promise.resolve({ status: rep.status, json: function () { return Promise.resolve(rep.body); } });
+  }
+  if (cardsGate && /\/chat\/cards/.test(url)) {
+    const gate = cardsGate;
+    return gate.then(function () { return { status: 200, json: function () { return Promise.resolve(feed); } }; });
+  }
   let body = {};
   if (/\/chat\/cards/.test(url)) body = feed;
   else if (/\/chat\/backends/.test(url)) body = { ok: true, chip: 'PJ', default: 'claude', backends: { claude: { found: true, version: '2.1.263' }, codex: { found: false } } };
@@ -121,6 +131,47 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   ok(calls[0].url === '/api/agent/approvals/ap-1/approve' && calls[0].body.writes[0].new === 4325000000 && calls[0].body.writes[0].path === 'qubits.q1.f_01', 'approve carries the edited value');
   ok(calls[0].body.writes[0].seen_now === 4.315e9, 'approve carries the rendered now even when a poll has newer data');
   ap.querySelector('input.ag-ap-new').blur();
+
+  // a typed value survives a poll redraw and the "changed since the card showed" refusal
+  await P.poll(true); await tick();
+  let apInp = ap.querySelector('input.ag-ap-new');
+  apInp.value = '4330000000'; P.apPreview(apInp);
+  feed.live.approvals[0].writes[0].now = 4.317e9;
+  await P.poll(true); await tick();
+  apInp = ap.querySelector('input.ag-ap-new');
+  ok(apInp.value === '4330000000' && apInp.getAttribute('data-seen-now') === '4317000000', 'a poll redraw keeps the typed value and shows the new now');
+  const fresh = JSON.parse(JSON.stringify(feed.live.approvals[0]));
+  fresh.writes[0].now = 4.318e9;
+  approveReply = { status: 409, body: { ok: false, error: 'qubits.q1.f_01 changed to 4318000000 since the card showed 4317000000; press again',
+    stage: { staged: 0, applied: false, seen_now_changed: true }, approval: fresh } };
+  let release; cardsGate = new Promise(function (r) { release = r; });
+  P.approve('ap-1', ap.querySelector('.ag-approve'));
+  await tick(30);
+  apInp = ap.querySelector('input.ag-ap-new');
+  ok(apInp.value === '4330000000', 'after the refusal the typed value is still in the input');
+  ok(apInp.getAttribute('data-seen-now') === '4318000000' && ap.textContent.includes('now 4318000000'), 'the refusal updates the now cells in place from the returned card');
+  calls.length = 0;
+  P.approve('ap-1', ap.querySelector('.ag-approve'));
+  await tick(30);
+  const pressAgain = calls.find(function (c) { return /\/approve$/.test(c.url); });
+  ok(pressAgain && pressAgain.body.writes[0].new === 4330000000 && pressAgain.body.writes[0].seen_now === 4.318e9, 'the second press sends the typed value against the new now');
+  cardsGate = null; release(); await tick(30);
+  feed.live.approvals[0].writes[0].now = 4.315e9;
+
+  // a row the card showed as "not set" says so on the press
+  const keptApprovals = feed.live.approvals;
+  feed.live.approvals = [{ id: 'ap-unset', kind: 'writes', node: 'synthetic', targets: ['q1'], created: now,
+    writes: [{ path: 'qubits.q1.extras.later', old: 1, new: 2, now_known: false }] }];
+  await P.poll(true); await tick();
+  const unset = cards.querySelector('[data-card="approval:ap-unset"]');
+  ok(unset && /not set/.test(unset.textContent), 'a row SM cannot read shows not set');
+  calls.length = 0;
+  P.approve('ap-unset', unset.querySelector('.ag-approve'));
+  await tick(30);
+  const unsetPress = calls.find(function (c) { return /\/approve$/.test(c.url); });
+  ok(unsetPress && unsetPress.body.writes[0].seen_unknown === true && !('seen_now' in unsetPress.body.writes[0]), 'a not set row sends the not set marker');
+  feed.live.approvals = keptApprovals;
+  await P.poll(true); await tick();
 
   // W7-1: a 25c-shaped JSON-text value edits as a STRING literal, never an array.
   const lossText = '  [{"detuning_hz": 123000000.0, "reason": "synthetic\\nmap"}]  ';

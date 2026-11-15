@@ -32,6 +32,7 @@ window.AgentPanel = (function () {
     startErr: {},                                  // plan id -> why its Start was refused, said ON the card
     rejecting: {},                                 // approval id -> the note being typed in its in-page Reject sheet
     deciding: {},                                  // approval id -> "approve" | "reject" while its press is in flight
+    typed: {},                                     // approval id -> {row index: the text the person typed}; no redraw resets it
     envelope: {}                                   // docs/261: plan id -> the envelope its Start would approve (shown first)
   };
   var PRESETS = [
@@ -817,6 +818,8 @@ window.AgentPanel = (function () {
     var w = a && (a.writes || [])[Number(inp.getAttribute("data-i"))];
     var tr = inp.closest ? inp.closest("tr") : null;
     if (!w || !tr) return;
+    var typed = S.typed[a.id] || (S.typed[a.id] = {});
+    typed[inp.getAttribute("data-i")] = inp.value;          // kept across every redraw of this card
     if (inp.hasAttribute("data-seen-now")) w = Object.assign({}, w, { now: JSON.parse(inp.getAttribute("data-seen-now")), now_known: true });
     var t = apTexts(w, parseEdit(inp.value));
     [[".ag-ap-nowv, [data-ap-now]", t.cell], [".ag-ap-oldv", t.old], [".ag-ap-value", t.shown]].forEach(function (x) {
@@ -833,6 +836,39 @@ window.AgentPanel = (function () {
     return '<p class="ui-agent-failed-head">✗ ' + f.length + " of " + (a.writes || []).length + " value(s) come from " + esc(who.join(" ")) +
       ", which the node itself marked failed. They are not ticked and are not written unless you tick them.</p>";
   }
+  function apNowTd(w, t) {
+    if (w.new_key) return '<td class="muted" title="this key is not in the chip yet; writing creates it">new key</td>';
+    if (w.now_known === undefined) return '<td><span class="ag-ap-nowv">' + esc(t.cell) + "</span></td>";
+    if (!w.now_known) return '<td class="muted">not set</td>';
+    if (JSON.stringify(w.now) === JSON.stringify(w.old)) return '<td><span class="ag-ap-nowv">' + esc(t.cell) + "</span></td>";
+    return '<td class="ag-ap-moved" title="' + esc(movedTitle(t)) + '"><span class="ag-ap-nowv">' +
+      esc(t.cell) + '</span> <span class="muted">the node saw <span class="ag-ap-oldv">' + esc(t.old) +
+      '</span>, now <span data-ap-now>' + esc(t.now) + "</span></span></td>";
+  }
+  /* The door refused because a value moved after the card showed it: only the
+     "now" cells change, in place, from the approval the refusal returned; every
+     input keeps what the person typed, so the next press sends it against the new now. */
+  function apNowRefresh(id, fresh) {
+    if (!fresh || !fresh.writes) return;
+    S.approvals[id] = fresh;
+    S.mounts.forEach(function (m) {
+      var card = m.root.querySelector('[data-card="approval:' + id + '"]');
+      if (!card) return;
+      fresh.writes.forEach(function (w, i) {
+        var inp = card.querySelector('.ag-ap-new[data-i="' + i + '"]');
+        var tr = inp && inp.closest ? inp.closest("tr") : null;
+        if (!tr || !tr.children[1]) return;
+        inp.removeAttribute("data-seen-now");
+        inp.removeAttribute("data-seen-unknown");
+        if (w.now_known === true) inp.setAttribute("data-seen-now", JSON.stringify(w.now));
+        else if (w.now_known === false) inp.setAttribute("data-seen-unknown", "1");
+        var tb = document.createElement("tbody");
+        tb.innerHTML = "<tr>" + apNowTd(w, apTexts(w, parseEdit(inp.value))) + "</tr>";
+        tr.replaceChild(tb.firstChild.firstChild, tr.children[1]);
+        apPreview(inp);
+      });
+    });
+  }
   function renderApproval(m, a, force) {
     var el = cardFor(m, "approval", a.id, a.created);
     if (!el) return;
@@ -841,14 +877,8 @@ window.AgentPanel = (function () {
       /* verifier P3: "now" is the value SM holds now (the server reads it per
          poll), like the plan card's; the value the proposal was made from is
          shown beside it only when the two differ, and flagged. */
-      var nowTd, t = apTexts(w, w.new);
-      if (w.new_key) nowTd = '<td class="muted" title="this key is not in the chip yet; writing creates it">new key</td>';
-      else if (w.now_known === undefined) nowTd = '<td><span class="ag-ap-nowv">' + esc(t.cell) + "</span></td>";
-      else if (!w.now_known) nowTd = '<td class="muted">not set</td>';
-      else if (JSON.stringify(w.now) === JSON.stringify(w.old)) nowTd = '<td><span class="ag-ap-nowv">' + esc(t.cell) + "</span></td>";
-      else nowTd = '<td class="ag-ap-moved" title="' + esc(movedTitle(t)) + '"><span class="ag-ap-nowv">' +
-        esc(t.cell) + '</span> <span class="muted">the node saw <span class="ag-ap-oldv">' + esc(t.old) +
-        '</span>, now <span data-ap-now>' + esc(t.now) + "</span></span></td>";
+      var typed = (S.typed[a.id] || {})[i];
+      var t = apTexts(w, typed !== undefined ? parseEdit(typed) : w.new), nowTd = apNowTd(w, t);
       var stored = (w.display && w.display.stored) || "";
       var writeNote = w.origin ? ' <span class="muted">' + esc(w.origin) + '</span>' : '';
       var cannotStage = w.capture_error || (((w.created && !w.new_key) || w.deleted) ? 'new or removed key; SM stages existing leaves only' : '');
@@ -864,8 +894,10 @@ window.AgentPanel = (function () {
       var failNote = failed ? ' <span class="ui-agent-failed-why">✗ the node marked ' + esc(w.failed_target) + " " + esc(w.failed_outcome || "failed") + ": not written unless ticked</span>" : "";
       return "<tr" + (failed ? ' class="ui-agent-failed-row"' : "") + "><td title=\"" + esc(w.path) + "\">" + tick + esc(w.path) + failNote + writeNote + "</td>" + nowTd + "<td>" +
         (S.observer ? esc(t.nw) : '<span class="ag-ap-value">' + esc(t.shown) + '</span><span class="ag-ap-edit"><input class="ag-ap-new" data-i="' + i + '"' +
-          (w.now_known === true ? ' data-seen-now="' + esc(JSON.stringify(w.now)) + '"' : '') + ' oninput="AgentPanel.apPreview(this)"' +
-          ' title="' + esc("the value written, as stored" + (stored ? " (" + stored + ")" : "") + " — edit to change it") + '" value="' + esc(JSON.stringify(w.new)) + '">' +
+          (w.now_known === true ? ' data-seen-now="' + esc(JSON.stringify(w.now)) + '"' : (w.now_known === false ? ' data-seen-unknown="1"' : '')) +
+          ' oninput="AgentPanel.apPreview(this)"' +
+          ' title="' + esc("the value written, as stored" + (stored ? " (" + stored + ")" : "") + " — edit to change it") + '" value="' +
+          esc(typed !== undefined ? typed : JSON.stringify(w.new)) + '">' +
           (stored ? '<span class="ag-ap-unit">' + esc(stored) + "</span>" : "") + "</span>") + "</td></tr>";
     }).join("");
     // review R2-11: a RUN request is allowed, not written
@@ -1084,7 +1116,7 @@ window.AgentPanel = (function () {
     var key = d.chip_key || null;
     if (S.chipKey !== undefined && key !== S.chipKey) {
       S.chipKey = key;
-      S.plans = {}; S.runs = {}; S.approvals = {}; S.deciding = {};
+      S.plans = {}; S.runs = {}; S.approvals = {}; S.deciding = {}; S.typed = {};
       S.seenCards = {}; S.after = 0;
       S.sinceN = undefined; S.conv = null;
       S.mounts.forEach(function (m) {
@@ -1146,6 +1178,7 @@ window.AgentPanel = (function () {
     Object.keys(S.approvals).forEach(function (k) { if (!(live.approvals || []).some(function (a) { return a.id === k; })) stale[k] = 1; });
     Object.keys(stale).forEach(function (k) {
       delete S.approvals[k];
+      delete S.typed[k];
       S.mounts.forEach(function (m) { var el = m.root.querySelector('[data-card="approval:' + k + '"]'); if (el) el.remove(); });
     });
     (live.plans || []).forEach(function (p) { S.plans[p.id] = p; });
@@ -1688,6 +1721,7 @@ window.AgentPanel = (function () {
         if (inp) v = parseEdit(inp.value);                // the one parse the preview beside it shows (docs/272)
         var sent = { path: w.path, old: w.old, new: v };
         if (inp && inp.hasAttribute("data-seen-now")) sent.seen_now = JSON.parse(inp.getAttribute("data-seen-now"));
+        else if (inp && inp.hasAttribute("data-seen-unknown")) sent.seen_unknown = true;   // the card said "not set"
         writes.push(sent);
       });
       if (!writes.length) { toast("no value is ticked: tick the values to write, or Reject the card", "warning"); return; }
@@ -1699,6 +1733,8 @@ window.AgentPanel = (function () {
       repaintApproval(id);
       // review R2-2: "written" only when the door said applied; a refusal keeps the card and says why
       var applied = r.status === 200 && r.body && r.body.ok !== false;
+      if (applied) delete S.typed[id];
+      else if (r.body && r.body.stage && r.body.stage.seen_now_changed) apNowRefresh(id, r.body.approval);
       if (!applied) toast(errText(r, "not applied"), "error");
       else if (a.kind !== "run") toast("written to the chip");
       // C-04 (docs/254): the agent that asked has to hear it, or the plan waits -- say which
