@@ -643,3 +643,74 @@ class TestEnvSource:
             _apply(wc, tmp_path)
         assert "cannot tell which environment" in str(exc.value)
         assert "no environment is selected" not in str(exc.value)
+        assert "cz_sm" in str(exc.value) and _PAIR in str(exc.value) and "class file SM made" in str(exc.value)
+
+    def test_the_chips_own_project_picks_the_env(self, tmp_path, monkeypatch):
+        """The env comes from the project the chip is open under: a stub that
+        answers per project returns another env for any other project."""
+        from quam_state_manager.core import project_env
+        app, live = self._app(tmp_path, monkeypatch)
+        seen = []
+
+        def run_env(inst, project):
+            seen.append(project)
+            return {"projA": "env_a/python.exe", "projB": "env_b/python.exe"}.get(project)
+        monkeypatch.setattr(project_env, "run_env", run_env)
+        with app.app_context():
+            routes_mod._active_ctx()["qualibrate_project"] = "projA"
+            assert routes_mod._class_file_env(live) == "env_a/python.exe"
+        import threading
+        got = {}
+        t = threading.Thread(target=lambda: got.setdefault("env", routes_mod._class_file_env(live)))
+        t.start()
+        t.join(30)
+        assert got.get("env") == "env_a/python.exe"
+        assert seen == ["projA", "projA"]
+
+    def test_a_failed_lookup_names_that_cause(self, tmp_path, monkeypatch):
+        from quam_state_manager.core import project_env
+        app, live2 = self._app(tmp_path, monkeypatch)
+
+        def boom(inst, project):
+            raise RuntimeError("lookup exploded")
+        monkeypatch.setattr(project_env, "run_env", boom)
+        with app.app_context():
+            with pytest.raises(class_file_check.ClassFileRefusedError) as direct:
+                routes_mod._class_file_env(live2)
+        assert "could not look up" in str(direct.value) and "lookup exploded" in str(direct.value)
+        assert "no environment is selected" not in str(direct.value)
+
+    def test_a_failed_lookup_through_the_gate_names_gate_and_owner(self, tmp_path, monkeypatch):
+        from quam_state_manager.core import project_env
+        app, live = self._app(tmp_path, monkeypatch)
+        monkeypatch.setattr(project_env, "run_env",
+                            lambda inst, project: (_ for _ in ()).throw(RuntimeError("lookup exploded")))
+        monkeypatch.setattr(class_file_check, "_env_source", routes_mod._class_file_env)
+        with app.app_context():
+            wc = routes_mod._active_ctx()["working_copy"]
+        _stage(wc, lambda s: s["qubit_pairs"][_PAIR]["macros"].__setitem__("cz", "#./cz_sm"))
+        with pytest.raises(class_file_check.ClassFileRefusedError) as exc:
+            _apply(wc, tmp_path)
+        msg = str(exc.value)
+        assert "could not look up" in msg and "no environment is selected" not in msg
+        assert "cz_sm" in msg and _PAIR in msg and "class file SM made" in msg, msg
+
+    def test_a_changing_app_registry_refuses_never_crashes(self, tmp_path, monkeypatch):
+        class Flaky:
+            def __iter__(self):
+                raise RuntimeError("Set changed size during iteration")
+        monkeypatch.setattr(routes_mod, "_CLASS_FILE_APPS", Flaky())
+        import threading
+        got = {}
+
+        def run():
+            try:
+                routes_mod._class_file_env(tmp_path)
+            except Exception as exc:  # noqa: BLE001
+                got["exc"] = exc
+        t = threading.Thread(target=run)
+        t.start()
+        t.join(30)
+        assert isinstance(got.get("exc"), class_file_check.ClassFileRefusedError), got
+        assert "could not look up" in str(got["exc"])
+

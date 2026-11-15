@@ -36139,8 +36139,8 @@ def _class_file_env(live_folder) -> str | None:
     from flask import has_app_context
     from quam_state_manager.core import project_env
     target = os.path.normcase(os.path.abspath(str(live_folder)))
-    apps = [current_app._get_current_object()] if has_app_context() else list(_CLASS_FILE_APPS)
     try:
+        apps = [current_app._get_current_object()] if has_app_context() else list(_CLASS_FILE_APPS)
         for app in apps:
             with app.app_context():
                 for ctx in list((app.config.get("contexts") or {}).values()):
