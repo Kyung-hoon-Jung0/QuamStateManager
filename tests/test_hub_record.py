@@ -1137,6 +1137,7 @@ DOOR_SITES = {
     ("core/entity_notes.py", "save", "named"): (1, "an instance sidecar that NAMES the live folder"),
     ("core/regenerate.py", "run_regenerate", "named"): (4, "a NEW folder (Re-generate's output)"),
     ("core/regenerate.py", "set_coupler_delays", "named"): (1, "the NEW folder Re-generate built, while its output is still claimed"),
+    ("core/regenerate.py", "apply_mw_band_shift", "named"): (1, "the NEW folder Re-generate built, while its output is still claimed"),
     ("core/type_policy.py", "delete_assignment", "named"): (1, "an instance sidecar that NAMES the live folder"),
     ("core/type_policy.py", "save_assignment", "named"): (1, "an instance sidecar that NAMES the live folder"),
     ("generator/run_build.py", "_inject_qdac_state", "named"): (1, "the NEW folder Generate builds"),
