@@ -546,6 +546,7 @@ class TestKeptAnswers:
         write_chip(live, st(0.1), data)
         app = make_app(tmp_path)
         env = {"app": app, "client": app.test_client(), "data": data, "live": live, "tmp": tmp_path}
+        env["client"].environ_base["HTTP_X_SM_WINDOW_ID"] = "window-a"
         assert env["client"].post("/load", data={"folder": str(live)}).status_code in (200, 302)
         paths = {"p": "qubits.qA1.wave_pick"}
         a = history(env, paths)
@@ -729,6 +730,7 @@ def test_a_load_id_edited_moves_the_meta(tmp_path, monkeypatch):
     write_chip(live, st, data)
     app = make_app(tmp_path)
     env = {"app": app, "client": app.test_client(), "data": data, "live": live, "tmp": tmp_path}
+    env["client"].environ_base["HTTP_X_SM_WINDOW_ID"] = "window-a"
     assert env["client"].post("/load", data={"folder": str(live)}).status_code in (200, 302)
     first = json.loads(get(env, META))
     assert first["p"]["2q:StandardRB:cz"]["qA1-qA2"]["load_id"] == 11
@@ -839,6 +841,7 @@ def test_a_matrix_alias_that_starts_naming_a_recorded_matrix_brings_its_row(tmp_
     write_chip(live, st2, data)
     app = make_app(tmp_path)
     env = {"app": app, "client": app.test_client(), "data": data, "live": live, "tmp": tmp_path}
+    env["client"].environ_base["HTTP_X_SM_WINDOW_ID"] = "window-a"
     assert env["client"].post("/load", data={"folder": str(live)}).status_code in (200, 302)
     url = "/param-history?since=all&props=assignment_fidelity"
     row = b'data-qubit="qA1" data-prop="assignment_fidelity"'

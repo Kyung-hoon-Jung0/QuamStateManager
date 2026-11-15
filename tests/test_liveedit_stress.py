@@ -19,6 +19,7 @@ def rig(tmp_path):
     (chip / "wiring.json").write_text('{}', encoding="utf-8")
     app = create_app(testing=True, instance_path=str(tmp_path / "instance"))
     c = app.test_client()
+    c.environ_base["HTTP_X_SM_WINDOW_ID"] = "window-a"
     c.post('/load', data={"folder": str(chip)})
     return c, app, chip
 

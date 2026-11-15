@@ -483,7 +483,10 @@ covers later undo and redo steps, and resets on reload. A reload creates
 a new window id and asks again, including for that document's earlier edits.
 Same-window steps need no new question. A person without a window header
 gets 409 with the question before any write; consent requires a window id.
-Agent callers retain the earlier age-based live-write confirmation. Agent
-undo-mine and robot policy are unchanged.
+An agent never sees this question: an agent /undo with an empty tray (or a
+staged journal step on top) and every agent /redo are refused with 409 by
+the agent ownership guard before any journal step, so the age rule never
+runs for them. The helper keeps that age rule only as a backstop for a
+direct call. Agent undo-mine and robot policy are unchanged.
 The unseen-edit gate precedes the question; the live door and grouped
 rollback still run after consent, including the class-file-left notice.

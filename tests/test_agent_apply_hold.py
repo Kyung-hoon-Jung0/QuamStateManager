@@ -56,7 +56,8 @@ class TestAskWritesHolds:
         a = c.post(f"/api/agent/approvals/{aid}/approve", json={}, headers=HUMAN)
         assert a.status_code == 200 and a.get_json()["stage"]["applied"], a.get_json()
         assert _live(synth_folder)["T1"] == 4242
-        u = c.post("/undo", headers={**HUMAN, **J})
+        # An approval stages through the agent door, which stamps no window: the person says Yes.
+        u = c.post("/undo", data={"ack_prev_window": "1"}, headers={**HUMAN, **J})
         assert u.status_code == 200
         assert _live(synth_folder)["T1"] == before, "one Ctrl+Z did not take the whole approval back"
 

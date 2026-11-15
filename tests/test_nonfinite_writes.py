@@ -128,6 +128,7 @@ def client(tmp_path: Path):
     (tmp_path / "wiring.json").write_text(json.dumps({"wiring": {}}), encoding="utf-8")
     app = create_app(testing=True, instance_path=str(tmp_path / "_app_instance"))
     c = app.test_client()
+    c.environ_base["HTTP_X_SM_WINDOW_ID"] = "window-a"
     c.post("/load", data={"folder": str(tmp_path)})
     return c
 
@@ -470,6 +471,7 @@ def _load_nan_chip(tmp_path, state):
         {"wiring": {"qubits": {"qA1": {"xy": {"opx_output": "MW-FEM/1/2"}}}}}), encoding="utf-8")
     app = create_app(testing=True, instance_path=str(tmp_path / "_app_instance"))
     c = app.test_client()
+    c.environ_base["HTTP_X_SM_WINDOW_ID"] = "window-a"
     assert c.post("/load", data={"folder": str(tmp_path)}).status_code in (200, 302)
     return c, tmp_path
 
