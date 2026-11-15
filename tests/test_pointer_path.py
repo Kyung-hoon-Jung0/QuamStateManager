@@ -726,10 +726,30 @@ def test_cross_still_reads_plain_digit_list_indices():
         assert _agrees(merged, path)["ok"]
 
 
+# Digit text quam indexes a list with beyond plain ASCII digits: leading zeros and non-ASCII decimal digits
+# (str.isdigit() then int()); "\u00b2" passes isdigit() but int() refuses it, so quam raises and nothing resolves.
+_DIGIT_FORMS = (("007", 7), ("01", 1), ("\u0661", 1), ("\u0967", 1), ("\u0660\u0667", 7))
+
+
+@pytest.mark.parametrize("index, item", _DIGIT_FORMS)
+def test_cross_reads_every_digit_form_quam_indexes(index, item):
+    merged = {"a": list(range(13)), "r": "#/a", "q": {"leaf": f"#/a/{index}"}, "p": {"leaf": f"#/r/{index}"}}
+    for path in (["q", "leaf"], ["p", "leaf"], ["a", index]):
+        assert resolve_field_target(merged, path, cross=True)["resolved_value"] == item, path
+        assert _agrees(merged, path)["ok"]
+
+
+def test_cross_does_not_index_with_a_superscript_digit():
+    merged = {"a": list(range(13)), "q": {"leaf": "#/a/\u00b2"}}
+    got = resolve_field_target(merged, ["q", "leaf"], cross=True)
+    assert got["resolvable"] is False and got["resolved_value"] == "#/a/\u00b2", got
+    assert _agrees(merged, ["q", "leaf"])["why"] == "missing"
+
+
 def test_cross_agrees_with_the_reference_on_list_indices():
     import random
     rng = random.Random(20261123)
-    keys = ("0", "1", "x") + _INT_ONLY_INDICES
+    keys = ("0", "1", "x", "01", "\u0661", "\u00b2") + _INT_ONLY_INDICES
     why: dict = {}
     for _ in range(1000):
         merged = _random_graph(rng, "abc", keys, lists=True, list_share=0.5)
