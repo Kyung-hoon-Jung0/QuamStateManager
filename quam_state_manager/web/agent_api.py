@@ -3108,6 +3108,7 @@ def undo_mine():
         return _err("no chip loaded", 409)
     store = mod.store
     reverted: list[str] = []
+    removed: list = []
     stopped_at = None
     me = r._request_actor()
     with store._lock:
@@ -3118,13 +3119,16 @@ def undo_mine():
                 break
             for e in mod.undo_group():
                 reverted.append(e.dot_path)
+                removed.append(e.new_value)
+    notice = r._class_file_left_note(store, removed).removeprefix(". ") if removed else ""
     if reverted:
         journal_mod.append(current_app.instance_path, _chip_name(),
                            f"undid {len(reverted)} of its own staged edit(s)", kind="agent" if r._request_actor().startswith("by_") else "sm",
                            reason="undo_mine", paths=reverted[:20])
     _bump()
     _wake()
-    return jsonify(ok=True, reverted=reverted, stopped_at=stopped_at, pending=r._change_count())
+    return jsonify(ok=True, reverted=reverted, stopped_at=stopped_at, pending=r._change_count(),
+                   notice=notice)
 
 
 @agent_bp.route("/live-diff")

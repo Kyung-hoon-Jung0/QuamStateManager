@@ -31035,6 +31035,7 @@ def undo():
             message += f" ({_d['text']}"
             message += f", {_d['pct_text']})" if _d["pct_text"] else ")"
 
+    message += _class_file_left_note(store, [e.new_value for e in entries])
     resp = make_response(_tray_html())
     resp.headers["HX-Trigger"] = json.dumps({
         # Revert each affected inspector cell + Explorer tree node in place, and
@@ -31065,6 +31066,23 @@ def undo():
         "diagnostics-changed": True,
     })
     return resp
+
+
+def _class_file_left_note(store, removed, ctx=None) -> str:
+    """Names the SM class files an undo left on disk with no gate using them.
+
+    *removed* is the list of values the undo took out of the state (each
+    undone entry's new value). Every undo door calls this one helper."""
+    if store is None:
+        return ""
+    try:
+        from quam_state_manager.core import quam_config_save as _qcs
+        text = _qcs.left_behind_notice(
+            current_app.instance_path, _ctx_chip_key(ctx or _active_ctx()) or "no-chip",
+            store.merged, list(removed))
+    except Exception:  # noqa: BLE001 -- a notice never breaks an undo
+        return ""
+    return f". {text}" if text else ""
 
 
 def _undo_journal_step(ctx, n_req: int = 1):
@@ -31331,6 +31349,7 @@ def _undo_journal_step(ctx, n_req: int = 1):
         message += f" — {drift} value(s) had moved since; the tray now holds the journal value"
 
     message += _skip_note + _age_note
+    message += _class_file_left_note(store, [u.get("new") for u in uents], ctx)
     live_undo_seq = None
     if live:
         # QA F1 (windows): another window showing this value is told, once,

@@ -307,3 +307,54 @@ def _lab_made(path):
             return not fh.read(len(T.HEADER_MARK)).startswith(T.HEADER_MARK.encode())
     except OSError:
         return False
+
+
+def _class_names(node, found=None):
+    """Every ``__class__`` string inside *node*."""
+    found = set() if found is None else found
+    if isinstance(node, dict):
+        if isinstance(node.get("__class__"), str):
+            found.add(node["__class__"])
+        for value in node.values():
+            _class_names(value, found)
+    elif isinstance(node, list):
+        for value in node:
+            _class_names(value, found)
+    return found
+
+
+def published_files(instance, scope):
+    """``{class_name: path}`` for each SM class file Save to quam_config put on disk."""
+    root = Path(instance) / D.DRAFTS_DIR / D._scope_key(scope)
+    out = {}
+    if not root.is_dir():
+        return out
+    for folder in sorted(root.iterdir()):
+        if not folder.is_dir():
+            continue
+        target = W.published_record(instance, scope, folder.name).get("path")
+        if target and Path(target).is_file():
+            out[folder.name] = str(target)
+    return out
+
+
+def unused_files(instance, scope, merged):
+    """Names of published SM class files that no macro or pulse of *merged* names."""
+    used = _class_names(merged or {})
+    return [name for name in published_files(instance, scope)
+            if f"quam_config.{name}.{name}" not in used]
+
+
+def left_behind_notice(instance, scope, merged, removed):
+    """The undo notice for class files an undo left on disk with no gate using
+    them; "" when none. *removed* is the state text the undo took out: a
+    subtree, or a ``__class__`` string itself when the undo reverted that leaf."""
+    mentioned = _class_names(removed)
+    for value in (removed if isinstance(removed, list) else [removed]):
+        if isinstance(value, str):
+            mentioned.add(value)
+    files = published_files(instance, scope)
+    unused = set(unused_files(instance, scope, merged))
+    lines = [f"quam_config/{Path(files[n]).name} stays on disk; no gate uses it"
+             for n in files if n in unused and f"quam_config.{n}.{n}" in mentioned]
+    return ". ".join(lines)

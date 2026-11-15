@@ -62,6 +62,12 @@ through `cz_gate_routes._plan_all`) that names, or creates a value of, a class t
 but no saved quam_config file (or one saved to a folder the environment does not import). A draft never published
 whose name matches a lab-made file in SM's lab folder (`lab_package`) does not block gates that use the lab class.
 
+An undo never deletes a class file: its notice names the file left on disk when no gate uses it any more, and the
+class list marks an SM file that no gate of the chip uses as "not used". Every undo door gives the notice: plain undo,
+the journal step (the one that writes live), and the agent's undo of its own edits; a redo that restores a use gives
+none. A use is any `__class__` naming the class in this chip's merged state (a gate macro or a pulse); files published
+for another chip are not judged here.
+
 ## Save to file
 
 The older "Save to file" door (a copy anywhere) cannot write into any folder named `quam_config` (with or without
@@ -76,4 +82,3 @@ quam_config refuse its own file, nor make gates using the class wait again.
 - `extras` on gate macros (file name, hash, proportional result) are written when a gate is created or re-checked,
   not here; the publication record (`published.json` next to the draft) carries `path`, `sha`, `qclass`,
   `importable` and `proportional` for that.
-- Undo notice and "not used" in the class list.

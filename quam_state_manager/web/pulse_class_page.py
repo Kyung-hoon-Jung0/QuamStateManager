@@ -65,7 +65,10 @@ def pulse_class_page():
     from quam_state_manager.web.port_play_page import _chosen_env, _envs  # noqa: PLC0415
     cls = (request.args.get("cls") or "").strip()
     python, _source = _chosen_env(r._active_ctx())
+    store = r._store()
+    unused = set(Q.unused_files(_inst(), _scope(), store.merged)) if store else set()
     tpl = dict(page="pulse_class", pce_cls=cls, pce_drafts=D.list_drafts(_inst(), _scope()),
+               pce_unused=unused,
                pce_python=python or "", pce_envs=_envs(), pce_partial=r._is_htmx(),
                pce_previous_line=D.PREVIOUS_LINE)
     return render_template("pulse_class_edit.html", **r._ctx(**tpl))
