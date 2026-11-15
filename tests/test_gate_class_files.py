@@ -83,6 +83,29 @@ def test_class_file_missing_names_the_file(tmp_path):
     assert items["class"]["text"] == f"class file missing: quam_config/{CLASS}.py"
 
 
+def test_the_missing_status_is_a_warning_with_its_exact_why(tmp_path):
+    a, b = tmp_path / f"{CLASS}.py", tmp_path / "Other.py"
+    ea, eb = _entry(a), _entry(b)
+    eb["qclass"] = "quam_config.Other.Other"
+    a.unlink()
+    b.unlink()
+    one, _ = _items(_macro([ea]), lambda q: str(a))
+    assert one["class"]["tone"] == "warn"
+    assert one["class"]["why"] == (f"The gate uses {QCLASS}, and its file is not in the folder "
+                                   "it was saved to.")
+    two, _ = _items(_macro([ea, eb]), lambda q: str(a) if q == QCLASS else str(b))
+    assert two["class"]["text"] == f"class file missing: quam_config/{CLASS}.py, quam_config/Other.py"
+    assert two["class"]["tone"] == "warn"
+    assert two["class"]["why"] == (f"The gate uses {QCLASS}, quam_config.Other.Other, and their "
+                                   "files are not in the folder they were saved to.")
+
+
+def test_a_record_whose_file_is_not_a_string_is_dropped():
+    good = {"qclass": QCLASS, "file": "A.py", "sha256": "ab", "proportional": None}
+    for bad in ({"qclass": QCLASS, "file": 7}, {"qclass": QCLASS, "file": None}, {"qclass": QCLASS}):
+        assert GS.sm_class_files(_macro([bad, good])) == [good]
+
+
 def test_a_gate_without_sm_classes_says_not_a_class_sm_made():
     items, needs = _items(_macro(), lambda q: None)
     assert items["class"]["text"] == "not a class SM made" and items["class"]["pill"] is False
