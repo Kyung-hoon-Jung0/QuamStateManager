@@ -125,3 +125,23 @@ def test_the_floor_badge_grows_into_its_row():
     decls = {d.split(":", 1)[0].strip(): d.split(":", 1)[1].strip()
              for d in body.split(";") if ":" in d}
     assert decls.get("flex") == "1 1 auto", "the state words grow into the row"
+
+
+def test_no_wider_fit_level_sets_the_badge_flex():
+    """Only the floor rule may give the state words a flex of their own.
+
+    The floor pin above reads one source line, so a second rule at a wider
+    fit level would pass it; this reads every fit-scoped rule in the kit.
+    """
+    import re
+    css = _KIT.read_text(encoding="utf-8")
+    offenders = []
+    for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
+        if "sync-control-main" not in selector or "tb-fit-" not in selector:
+            continue
+        levels = set(re.findall(r"tb-fit-(\d+)", selector))
+        if levels == {"11"}:
+            continue
+        if re.search(r"(^|;)\s*flex(-grow|-shrink|-basis)?\s*:", body):
+            offenders.append(" ".join(selector.split()))
+    assert offenders == [], "badge flex is set only at the floor: %r" % offenders
