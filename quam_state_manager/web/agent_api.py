@@ -2061,6 +2061,24 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
     resized = resized_lists(writes)
     creations: dict[str, dict] = {}     # first missing path -> nested dict of the new leaves (or a scalar)
     with store._lock:
+        # docs/254: compare every displayed value before staging any row.
+        from quam_state_manager.core.differ import compare_equal
+        for w in writes:
+            if "seen_now" not in w:
+                continue
+            target = r._resolve_edit_path(store, w["path"]) or w["path"]
+            try:
+                current = store.get_value(target)
+            except Exception:  # noqa: BLE001 -- a disappeared leaf requires another press
+                current = None
+                matches = False
+            else:
+                matches = compare_equal(current, w["seen_now"])
+            if not matches:
+                return {"group_id": gid, "staged": 0, "applied": False, "unstaged": [],
+                        "seen_now_changed": True,
+                        "error": f"{w['path']} changed to {json.dumps(_jsonable(current), ensure_ascii=True)} "
+                                 f"since the card showed {json.dumps(w['seen_now'], ensure_ascii=True)}; press again"}
         for w in writes:
             root = None
             if w.get("created") and not w.get("deleted") and not _existing_leaf(store, w["path"]):
@@ -2892,8 +2910,7 @@ def approvals_decide(aid: str, verb: str):
                     + ", ".join(strangers[:6])
                     + (" and %d more" % (len(strangers) - 6) if len(strangers) > 6 else "")
                     + " was not among them", 400)
-            # keep each proposal's own `old`: the value is the person's to
-            # change, the anchor it is compared against is not
+            # Keep proposal provenance; seen_now belongs to this press alone.
             # a node that proposed NaN or Infinity is shown null (JSON has no
             # such number), so the card sends that null back unchanged. That
             # null is the display, never a value the person chose: writing it
@@ -2906,7 +2923,8 @@ def approvals_decide(aid: str, verb: str):
                     + ", ".join(masked[:6])
                     + (" and %d more" % (len(masked) - 6) if len(masked) > 6 else "")
                     + "; type a value for it, or untick it", 409)
-            writes = [dict(proposed[str(w.get("path"))], new=w.get("new"))
+            writes = [dict(proposed[str(w.get("path"))], new=w.get("new"),
+                           **({"seen_now": w["seen_now"]} if "seen_now" in w else {}))
                       for w in writes]
         if verb == "approve" and cur.get("kind") == "writes" and writes is None:
             # a press that names no values writes what the card ticks by default: never a value
@@ -2934,7 +2952,8 @@ def approvals_decide(aid: str, verb: str):
             out["stage"] = res
             if not res.get("applied"):
                 return jsonify(ok=False, error=res.get("error") or "not applied", stage=res,
-                               approval=approvals.summary(cur),
+                               approval=(_approval_view(cur, r._active_ctx()["store"])
+                                         if res.get("seen_now_changed") else approvals.summary(cur)),
                                how=("the approval stays pending; " + ("take live, then approve again"
                                     if "stale_live" in str(res.get("error")) else "see the error"))), 409
         rec = approvals.decide(inst, chip, aid, status="approved" if verb == "approve" else "rejected", who=actor,

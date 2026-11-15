@@ -70,7 +70,7 @@ function moveTray(seq) {
   window.AgentPanel.init();
   await tick(60);
   const c0 = nowCell();
-  ok(c0 && c0.indexOf('2.5') >= 0 && c0.indexOf('proposed from') < 0, 'the card shows now = the proposal\'s old value (' + c0 + ')');
+  ok(c0 && c0.indexOf('2.5') >= 0 && c0.indexOf('the node saw') < 0, 'the card shows now = the proposal\'s old value (' + c0 + ')');
   const rowText = (i) => {
     const tr = document.querySelectorAll('#agent-home [data-card="approval:ap-1"] .ag-ap-rows tbody tr')[i];
     return tr ? tr.children[0].textContent : '';
@@ -92,7 +92,7 @@ function moveTray(seq) {
   let t = Date.now(), c1 = null;
   while (Date.now() - t < 2000) { await tick(20); c1 = nowCell(); if (c1 && c1.indexOf('2.718') >= 0) break; }
   ok(polls() > p0, 'the moved seq re-polled the feed');
-  ok(c1 && c1.indexOf('2.718') >= 0 && c1.indexOf('proposed from') >= 0,
+  ok(c1 && c1.indexOf('2.718') >= 0 && c1.indexOf('the node saw') >= 0,
      'the "now" column shows the pulled value at once, flagged against the proposal (' + c1 + ')');
   ok(Date.now() - t < 1000, 'followed within a second, not the 30 s idle poll');
   console.log(fails ? fails + ' FAIL' : 'all ok');

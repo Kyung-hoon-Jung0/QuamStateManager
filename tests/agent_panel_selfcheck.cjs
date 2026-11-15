@@ -40,7 +40,7 @@ let feed = {
               counts: { total: 1, pending: 1 }, may_change: [{ target: 'q1', path: 'qubits.q1.xy.operations.x180.amplitude', now: 0.12 }] }],
     runs: [{ key: 'r1', node: '02_res', targets: ['q1'], status: 'ended', since: now - 200, result: { status: 'done', classification: 'ok', run_id: 77, applied: true, writes: [{ path: 'qubits.q1.f_01', old: 1, new: 2 }] } }],
     approvals: [{ id: 'ap-1', kind: 'writes', node: '05_power_rabi', targets: ['q1'], run_id: 78, why_held: 'mode ask-writes', reason: 'fit ok', created: now - 10,
-                  writes: [{ path: 'qubits.q1.f_01', old: 4.31e9, new: 4.32e9, origin: 'written by the node directly', capture_error: 'synthetic capture failure' }] }]
+                  writes: [{ path: 'qubits.q1.f_01', old: 4.31e9, now: 4.315e9, now_known: true, new: 4.32e9, origin: 'written by the node directly', capture_error: 'synthetic capture failure' }] }]
   },
   session: { alive: true, busy: false, backend: 'claude', ended: null },
   file: { owner: 'human:user-a', backend: 'claude', armed: false, stopped: false },
@@ -91,6 +91,7 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   ok(run && run.querySelector('a.ag-run').getAttribute('href') === '/dataset/by-run/77' && /1 write\(s\) applied to the chip/.test(run.textContent), 'a run card with the run link and its writes');
   const ap = cards.querySelector('[data-card="approval:ap-1"]');
   ok(ap && ap.querySelector('.ag-approve') && ap.querySelector('input.ag-ap-new').value === '4320000000', 'an approval card with an editable proposed value');
+  ok(ap.textContent.includes('the node saw 4310000000, now 4315000000'), 'a changed row names the node value and the displayed value');
   ok(ap.textContent.includes('written by the node directly'), 'direct node writes are labelled on the approval card');
   ok(ap.textContent.includes('cannot be staged: synthetic capture failure'), 'unstageable node writes show their reason on the card');
   const nowCol = home.querySelector('.ag-now');
@@ -109,10 +110,17 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
 
   // approve sends the EDITED rows
   ap.querySelector('input.ag-ap-new').value = '4325000000';
+  ap.querySelector('input.ag-ap-new').focus();
+  feed.live.approvals[0].writes[0].now = 4.316e9;
+  await P.poll(true); await tick();
+  P.apPreview(ap.querySelector('input.ag-ap-new'));
+  ok(ap.textContent.includes('the node saw 4310000000, now 4315000000'), 'editing after a poll keeps the displayed comparison value');
   calls.length = 0;
   P.approve('ap-1', ap.querySelector('.ag-approve'));
   await tick(30);
   ok(calls[0].url === '/api/agent/approvals/ap-1/approve' && calls[0].body.writes[0].new === 4325000000 && calls[0].body.writes[0].path === 'qubits.q1.f_01', 'approve carries the edited value');
+  ok(calls[0].body.writes[0].seen_now === 4.315e9, 'approve carries the rendered now even when a poll has newer data');
+  ap.querySelector('input.ag-ap-new').blur();
 
   // W7-1: a 25c-shaped JSON-text value edits as a STRING literal, never an array.
   const lossText = '  [{"detuning_hz": 123000000.0, "reason": "synthetic\\nmap"}]  ';

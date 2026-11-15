@@ -169,7 +169,7 @@ const txt = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
   // ------------------------------------------------------------ C-24
   const rows = Array.from(A.card('approval:ap1').querySelectorAll('tbody tr'));
   const t1 = rows[0].cells;
-  pin('c24-a-moved-row-is-one-unit-one-precision', txt(t1[1]) === '55.50 µs ⚠ proposed from 42.00 µs' && t1[1].classList.contains('ag-ap-moved'), txt(t1[1]));
+  pin('c24-a-moved-row-is-one-unit-one-precision', txt(t1[1]) === '55.50 \u00b5s the node saw 42.00 \u00b5s, now 55.50 \u00b5s' && t1[1].classList.contains('ag-ap-moved'), txt(t1[1]));
   pin('c24-the-moved-title-says-the-same', t1[1].title === 'the proposal was made from 42.00 µs; SM holds 55.50 µs now', t1[1].title);
   const inT1 = t1[2].querySelector('.ag-ap-new');
   pin('c24-proposed-in-the-unit-beside-the-raw-input', txt(t1[2].querySelector('.ag-ap-value')) === '33.00 µs' && inT1.value === '0.000033'
@@ -199,7 +199,7 @@ const txt = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
   inT1.focus();
   inT1.value = '0.00005';
   inT1.dispatchEvent(new A.w.Event('input', { bubbles: true }));
-  pin('c24-the-preview-follows-the-typed-value', txt(t1[2].querySelector('.ag-ap-value')) === '50.00 µs' && txt(t1[1]) === '55.50 µs ⚠ proposed from 42.00 µs', txt(t1[2]));
+  pin('c24-the-preview-follows-the-typed-value', txt(t1[2].querySelector('.ag-ap-value')) === '50.00 \u00b5s' && txt(t1[1]) === '55.50 \u00b5s the node saw 42.00 \u00b5s, now 55.50 \u00b5s', txt(t1[2]));
   A.card('approval:ap1').querySelector('.ag-approve').click();
   await tick();
   const sent = A.calls.find(c => /ap1\/approve$/.test(c.url));

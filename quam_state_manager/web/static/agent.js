@@ -817,10 +817,10 @@ window.AgentPanel = (function () {
     var w = a && (a.writes || [])[Number(inp.getAttribute("data-i"))];
     var tr = inp.closest ? inp.closest("tr") : null;
     if (!w || !tr) return;
+    if (inp.hasAttribute("data-seen-now")) w = Object.assign({}, w, { now: JSON.parse(inp.getAttribute("data-seen-now")), now_known: true });
     var t = apTexts(w, parseEdit(inp.value));
-    [[".ag-ap-nowv", t.cell], [".ag-ap-oldv", t.old], [".ag-ap-value", t.shown]].forEach(function (x) {
-      var e = tr.querySelector(x[0]);
-      if (e) e.textContent = x[1];
+    [[".ag-ap-nowv, [data-ap-now]", t.cell], [".ag-ap-oldv", t.old], [".ag-ap-value", t.shown]].forEach(function (x) {
+      tr.querySelectorAll(x[0]).forEach(function (e) { e.textContent = x[1]; });
     });
     var moved = tr.querySelector(".ag-ap-moved");
     if (moved) moved.title = movedTitle(t);
@@ -847,7 +847,8 @@ window.AgentPanel = (function () {
       else if (!w.now_known) nowTd = '<td class="muted">not set</td>';
       else if (JSON.stringify(w.now) === JSON.stringify(w.old)) nowTd = '<td><span class="ag-ap-nowv">' + esc(t.cell) + "</span></td>";
       else nowTd = '<td class="ag-ap-moved" title="' + esc(movedTitle(t)) + '"><span class="ag-ap-nowv">' +
-        esc(t.cell) + '</span> <span class="ag-ap-from">⚠ proposed from <span class="ag-ap-oldv">' + esc(t.old) + "</span></span></td>";
+        esc(t.cell) + '</span> <span class="muted">the node saw <span class="ag-ap-oldv">' + esc(t.old) +
+        '</span>, now <span data-ap-now>' + esc(t.now) + "</span></span></td>";
       var stored = (w.display && w.display.stored) || "";
       var writeNote = w.origin ? ' <span class="muted">' + esc(w.origin) + '</span>' : '';
       var cannotStage = w.capture_error || (((w.created && !w.new_key) || w.deleted) ? 'new or removed key; SM stages existing leaves only' : '');
@@ -862,7 +863,8 @@ window.AgentPanel = (function () {
         ' title="ticked values are written" aria-label="' + esc("write " + w.path) + '"> ';
       var failNote = failed ? ' <span class="ui-agent-failed-why">✗ the node marked ' + esc(w.failed_target) + " " + esc(w.failed_outcome || "failed") + ": not written unless ticked</span>" : "";
       return "<tr" + (failed ? ' class="ui-agent-failed-row"' : "") + "><td title=\"" + esc(w.path) + "\">" + tick + esc(w.path) + failNote + writeNote + "</td>" + nowTd + "<td>" +
-        (S.observer ? esc(t.nw) : '<span class="ag-ap-value">' + esc(t.shown) + '</span><span class="ag-ap-edit"><input class="ag-ap-new" data-i="' + i + '" oninput="AgentPanel.apPreview(this)"' +
+        (S.observer ? esc(t.nw) : '<span class="ag-ap-value">' + esc(t.shown) + '</span><span class="ag-ap-edit"><input class="ag-ap-new" data-i="' + i + '"' +
+          (w.now_known === true ? ' data-seen-now="' + esc(JSON.stringify(w.now)) + '"' : '') + ' oninput="AgentPanel.apPreview(this)"' +
           ' title="' + esc("the value written, as stored" + (stored ? " (" + stored + ")" : "") + " — edit to change it") + '" value="' + esc(JSON.stringify(w.new)) + '">' +
           (stored ? '<span class="ag-ap-unit">' + esc(stored) + "</span>" : "") + "</span>") + "</td></tr>";
     }).join("");
@@ -1684,7 +1686,9 @@ window.AgentPanel = (function () {
         var inp = card.querySelector('.ag-ap-new[data-i="' + i + '"]');
         var v = w.new;
         if (inp) v = parseEdit(inp.value);                // the one parse the preview beside it shows (docs/272)
-        writes.push({ path: w.path, old: w.old, new: v });
+        var sent = { path: w.path, old: w.old, new: v };
+        if (inp && inp.hasAttribute("data-seen-now")) sent.seen_now = JSON.parse(inp.getAttribute("data-seen-now"));
+        writes.push(sent);
       });
       if (!writes.length) { toast("no value is ticked: tick the values to write, or Reject the card", "warning"); return; }
     }

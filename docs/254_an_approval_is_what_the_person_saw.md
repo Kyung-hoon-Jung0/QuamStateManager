@@ -629,3 +629,5 @@ failed**. All 11 `tests/agent_*selfcheck.cjs` files are green.
   only.
 - **"The session stays armed after the plan ended."** docs/253; seen ending
   here (step 5).
+
+An approval card labels a changed row "the node saw Y, now X". Each ticked existing leaf sends the raw `now` value rendered on that card as `seen_now`. Before staging any row, `approvals_decide` through `_stage_writes` compares the current value with that value using `differ.compare_equal` and its existing tolerance. A mismatch returns 409 with "<path> changed to <X> since the card showed <Y>; press again" and a refreshed approval view, leaving the approval pending and staging nothing. Requests without `seen_now` retain their existing behavior; the live-write and unseen-edit gates are unchanged.
