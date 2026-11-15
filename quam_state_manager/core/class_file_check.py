@@ -22,7 +22,9 @@ from quam_state_manager.core import safe_io
 _SECTIONS = ("qubit_pairs", "qubits")
 
 #: ``fn(live_folder) -> python path | None``: the environment of the chip
-#: whose live folder is being written (registered by the web layer).
+#: whose live folder is being written (registered by the web layer). None
+#: means the chip has no environment chosen; a lookup that cannot find the
+#: chip raises :class:`ClassFileRefusedError` naming why.
 _env_source: Callable[[Path], str | None] | None = None
 
 
@@ -125,7 +127,12 @@ def check_payload(live_folder: Path, payload: dict, live: dict | None) -> None:
     if not gates:
         return
     owner, name, _files = gates[0]
-    python = _env_source(Path(live_folder)) if _env_source is not None else None
+    try:
+        python = _env_source(Path(live_folder)) if _env_source is not None else None
+    except ClassFileRefusedError as exc:
+        raise ClassFileRefusedError(
+            f"Not written to the live chip: gate {name} of {owner} uses a class file SM made, "
+            f"and {exc}.") from exc
     if not python:
         raise ClassFileRefusedError(
             f"Not written to the live chip: gate {name} of {owner} uses a class file SM made, "

@@ -83,7 +83,9 @@ def folder_a(tmp_path, monkeypatch):
     return a
 
 
-def _break(folder_a: Path, how: str, monkeypatch):
+def _break(folder_a: Path, how: str, monkeypatch, *, no_env=None):
+    """Break the class file (``missing`` / ``changed``) or the environment
+    (``no_env``: *no_env* as the env source, the web layer's by default)."""
     if how == "missing":
         (folder_a / "SmFlux.py").unlink()
     elif how == "changed":
@@ -91,7 +93,7 @@ def _break(folder_a: Path, how: str, monkeypatch):
         data[-2] = ord("x")                     # one changed byte
         (folder_a / "SmFlux.py").write_bytes(bytes(data))
     elif how == "no_env":
-        monkeypatch.setattr(class_file_check, "_env_source", routes_mod._class_file_env)
+        monkeypatch.setattr(class_file_check, "_env_source", no_env or routes_mod._class_file_env)
     else:
         raise AssertionError(how)
 
@@ -140,12 +142,16 @@ class TestCore:
         s["qubit_pairs"][_PAIR]["macros"]["cz_new"] = copy.deepcopy(
             s["qubit_pairs"][_PAIR]["macros"]["cz_sm"])
 
+    @staticmethod
+    def _no_env(folder):
+        return None
+
     @pytest.mark.parametrize("how", BREAKS)
     @pytest.mark.parametrize("change", ["activate", "add"])
     def test_refused_with_the_gate_and_file_named(self, tmp_path, folder_a, monkeypatch, how, change):
         live, wc = _wc_chip(tmp_path, _state())
         _stage(wc, self._activate if change == "activate" else self._add)
-        _break(folder_a, how, monkeypatch)
+        _break(folder_a, how, monkeypatch, no_env=self._no_env)
         before = _live_bytes(live)
         with pytest.raises(working_copy.ClassFileRefusedError) as exc:
             _apply(wc, tmp_path)
@@ -177,7 +183,7 @@ class TestCore:
     def test_a_gate_without_the_record_and_an_unrelated_edit_pass(self, tmp_path, folder_a,
                                                                    monkeypatch, how):
         live, wc = _wc_chip(tmp_path, _state())
-        _break(folder_a, how, monkeypatch)
+        _break(folder_a, how, monkeypatch, no_env=self._no_env)
         _stage(wc, lambda s: (s["qubit_pairs"][_PAIR]["macros"].__setitem__("cz", "#./cz_other"),
                               s["qubits"]["qA1"].__setitem__("T1", 9e-5)))
         _apply(wc, tmp_path)
@@ -217,26 +223,165 @@ class TestCore:
         assert _live_bytes(live) == before
 
 
+    # every gate, every file, every section, a re-made gate
+
+    def _refused(self, tmp_path, live, wc, words):
+        before = _live_bytes(live)
+        with pytest.raises(working_copy.ClassFileRefusedError) as exc:
+            _apply(wc, tmp_path)
+        for word in words:
+            assert word in str(exc.value), (word, str(exc.value))
+        assert _live_bytes(live) == before
+
+    def test_the_second_file_of_a_gate_is_checked(self, tmp_path, folder_a):
+        live, wc = _wc_chip(tmp_path, _state())
+
+        def add(s):
+            gate = copy.deepcopy(s["qubit_pairs"][_PAIR]["macros"]["cz_sm"])
+            gate["extras"]["sm_class_files"].append(dict(_entry(), file="SmSecond.py"))
+            s["qubit_pairs"][_PAIR]["macros"]["cz_two"] = gate
+        _stage(wc, add)
+        self._refused(tmp_path, live, wc, ["cz_two", "SmSecond.py", "missing"])
+
+    def test_the_second_of_two_added_gates_is_checked(self, tmp_path, folder_a):
+        live, wc = _wc_chip(tmp_path, _state())
+
+        def add(s):
+            macros = s["qubit_pairs"][_PAIR]["macros"]
+            macros["cz_good"] = copy.deepcopy(macros["cz_sm"])
+            macros["cz_bad"] = copy.deepcopy(macros["cz_sm"])
+            macros["cz_bad"]["extras"]["sm_class_files"] = [dict(_entry(), file="SmGone.py")]
+        _stage(wc, add)
+        self._refused(tmp_path, live, wc, ["cz_bad", "SmGone.py", "missing"])
+
+    def test_a_qubit_macro_with_the_record_is_checked(self, tmp_path, folder_a):
+        live, wc = _wc_chip(tmp_path, _state())
+        _stage(wc, lambda s: s["qubits"]["qA1"].__setitem__("macros", {"x_sm": {
+            "__class__": "lab.gates.X", "extras": {"sm_class_files": [dict(_entry(), file="SmX.py")]}}}))
+        self._refused(tmp_path, live, wc, ["x_sm", "qA1", "SmX.py", "missing"])
+
+    def test_a_remade_gate_with_the_same_name_is_checked(self, tmp_path, folder_a):
+        """Live holds cz_sm with one file list; the write re-makes cz_sm with
+        another one: the new list is checked although the name is on the chip."""
+        live, wc = _wc_chip(tmp_path, _state())
+        _stage(wc, lambda s: s["qubit_pairs"][_PAIR]["macros"]["cz_sm"]["extras"].__setitem__(
+            "sm_class_files", [dict(_entry(), file="SmRemade.py")]))
+        self._refused(tmp_path, live, wc, ["cz_sm", "SmRemade.py", "missing"])
+
+    # a forced push over a live chip SM cannot read
+
+    @pytest.mark.parametrize("live_is", ["missing", "unreadable"])
+    def test_a_forced_push_over_an_unreadable_live_chip_checks_every_gate(
+            self, tmp_path, folder_a, live_is):
+        """With no readable live state.json every gate with the record counts
+        as added: a forced push ("Keep mine") is refused, live unchanged."""
+        live, wc = _wc_chip(tmp_path, _state(active="cz_sm"))
+        _stage(wc, lambda s: s["qubits"]["qA1"].__setitem__("T1", 9e-5))
+        (folder_a / "SmFlux.py").unlink()
+        if live_is == "missing":
+            (live / "state.json").unlink()
+        else:
+            (live / "state.json").write_bytes(b"{not json")
+        before = sorted((f.name, f.read_bytes()) for f in live.iterdir())
+        with pytest.raises(working_copy.ClassFileRefusedError) as exc:
+            _apply(wc, tmp_path, force=True)
+        assert "cz_sm" in str(exc.value) and "SmFlux.py" in str(exc.value)
+        assert sorted((f.name, f.read_bytes()) for f in live.iterdir()) == before
+
+
+class TestEnvFolder:
+    """``env_folder`` asks the environment exactly as the Save to quam_config
+    door does (``quam_config_save.destination``): the discover request, without
+    SM's lab folder in front, the answer resolved."""
+
+    def _stub(self, monkeypatch, answer):
+        from quam_state_manager.core import quam_config_save as Q
+        calls = []
+
+        def run(python, request, timeout=120, *, natural=False):
+            calls.append((python, request, natural))
+            if isinstance(answer, BaseException):
+                raise answer
+            return answer
+        monkeypatch.setattr(Q, "_run", run)
+        return calls
+
+    def test_the_natural_folder_as_the_save_door_resolves_it(self, tmp_path, monkeypatch):
+        from quam_state_manager.core import config_generator
+        from quam_state_manager.core import quam_config_save as Q
+        a = tmp_path / "env" / "quam_config"
+        a.mkdir(parents=True)
+        calls = self._stub(monkeypatch, {"ok": True,
+                                         "folder": str(tmp_path / "env" / "x" / ".." / "quam_config")})
+        monkeypatch.setattr(config_generator, "get_lab_code_dir", lambda python: None)
+        got = class_file_check.env_folder(_FAKE_PY)
+        assert calls == [(_FAKE_PY, {"action": "discover"}, True)]
+        assert got == a.resolve()
+        assert got == Path(Q.destination(_FAKE_PY)["env_folder"])
+
+    @pytest.mark.parametrize("answer", [
+        {"ok": False, "error": "No module named quam_config"},
+        {"ok": True},
+        {"ok": True, "folder": ""},
+        "raise_draft",
+        "raise_os",
+    ])
+    def test_an_environment_that_cannot_answer_refuses(self, monkeypatch, answer):
+        from quam_state_manager.core.pulse_class_drafts import DraftError
+        if answer == "raise_draft":
+            answer = DraftError("The lab check could not run: boom")
+        elif answer == "raise_os":
+            answer = OSError("no such interpreter")
+        self._stub(monkeypatch, answer)
+        with pytest.raises(class_file_check.ClassFileRefusedError):
+            class_file_check.env_folder(_FAKE_PY)
+
+
 class TestOnePlace:
-    def test_only_apply_to_live_calls_the_check(self):
-        """Every door reaches the check through apply_to_live; no door keeps
-        its own copy of it."""
-        callers = []
+    #: Only callable through apply_to_live (pinned by name everywhere).
+    ENTRY = ("check_payload", "gates_to_check", "_check_class_files")
+    #: The parts the check is built from: a door that uses them rebuilds it.
+    HELPERS = ("sm_class_files", "has_class_files", "_file_problem", "env_folder")
+
+    def _uses(self):
+        out = []
         for path in PKG.rglob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"))
+            own = path.name == "class_file_check.py"
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and (node.module or "").endswith("class_file_check"):
+                    for alias in node.names:
+                        if alias.name in self.ENTRY + self.HELPERS:
+                            out.append((path.name, "<import>", alias.name))
             for fn in ast.walk(tree):
                 if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     continue
                 for node in ast.walk(fn):
+                    if isinstance(node, ast.Attribute) and node.attr in self.HELPERS:
+                        base = node.value
+                        base = base.attr if isinstance(base, ast.Attribute) else getattr(base, "id", "")
+                        if base == "class_file_check":
+                            out.append((path.name, fn.name, node.attr))
                     if isinstance(node, ast.Call):
                         f = node.func
                         name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)
-                        if name in ("check_payload", "gates_to_check", "_check_class_files"):
-                            callers.append((path.name, fn.name, name))
-        callers = sorted(set(callers))
-        assert callers == [("class_file_check.py", "check_payload", "gates_to_check"),
-                           ("working_copy.py", "_check_class_files", "check_payload"),
-                           ("working_copy.py", "apply_to_live", "_check_class_files")], callers
+                        if name in self.ENTRY or (own and name in self.HELPERS):
+                            out.append((path.name, fn.name, name))
+        return sorted(set(out))
+
+    def test_only_apply_to_live_runs_the_check(self):
+        """Every door reaches the check through apply_to_live; no door keeps
+        its own copy of it, or rebuilds it from its parts."""
+        assert self._uses() == [
+            ("class_file_check.py", "check_payload", "_file_problem"),
+            ("class_file_check.py", "check_payload", "env_folder"),
+            ("class_file_check.py", "check_payload", "gates_to_check"),
+            ("class_file_check.py", "gates_to_check", "sm_class_files"),
+            ("class_file_check.py", "has_class_files", "sm_class_files"),
+            ("working_copy.py", "_check_class_files", "check_payload"),
+            ("working_copy.py", "_check_class_files", "has_class_files"),
+            ("working_copy.py", "apply_to_live", "_check_class_files"),
+        ], self._uses()
 
 
 # ======================================================================
@@ -438,15 +583,63 @@ class TestDoors:
 
 
 class TestEnvSource:
-    def test_the_open_chip_maps_to_its_projects_env(self, tmp_path, monkeypatch):
+    def _app(self, tmp_path, monkeypatch, env=_FAKE_PY):
         from quam_state_manager.core import project_env
         live = tmp_path / "chips" / "live"
         _write_chip(live, _state())
         app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
         c = app.test_client()
         assert c.post("/load", data={"folder": str(live)}).status_code in (200, 302)
-        monkeypatch.setattr(project_env, "run_env", lambda inst, project: _FAKE_PY)
-        assert routes_mod._class_file_env(live) is None, "outside a request nothing is known"
+        monkeypatch.setattr(project_env, "run_env", lambda inst, project: env)
+        return app, live
+
+    def test_the_open_chip_maps_to_its_projects_env(self, tmp_path, monkeypatch):
+        app, live = self._app(tmp_path, monkeypatch)
         with app.app_context():
             assert routes_mod._class_file_env(live) == _FAKE_PY
-            assert routes_mod._class_file_env(tmp_path / "other") is None
+            with pytest.raises(class_file_check.ClassFileRefusedError, match="cannot tell which environment"):
+                routes_mod._class_file_env(tmp_path / "other")
+
+    def test_without_an_app_context_the_chips_env_is_still_found(self, tmp_path, monkeypatch):
+        """The Auto Calibrate writer pushes from an engine thread with no app
+        context: the selected env is still found, never "no environment"."""
+        import threading
+        app, live = self._app(tmp_path, monkeypatch)
+        got = {}
+        t = threading.Thread(target=lambda: got.setdefault("env", routes_mod._class_file_env(live)))
+        t.start()
+        t.join(30)
+        assert got.get("env") == _FAKE_PY
+
+    def test_a_thread_push_with_the_env_selected_checks_the_file(self, tmp_path, folder_a, monkeypatch):
+        import threading
+        app, live = self._app(tmp_path, monkeypatch)
+        monkeypatch.setattr(class_file_check, "_env_source", routes_mod._class_file_env)
+        with app.app_context():
+            wc = routes_mod._active_ctx()["working_copy"]
+        _stage(wc, lambda s: s["qubit_pairs"][_PAIR]["macros"].__setitem__("cz", "#./cz_sm"))
+        (folder_a / "SmFlux.py").unlink()
+        before = _live_bytes(live)
+        caught = {}
+
+        def push():
+            try:
+                _apply(wc, tmp_path)
+            except Exception as exc:  # noqa: BLE001
+                caught["exc"] = exc
+        t = threading.Thread(target=push)
+        t.start()
+        t.join(60)
+        msg = str(caught.get("exc"))
+        assert isinstance(caught.get("exc"), class_file_check.ClassFileRefusedError), msg
+        assert "SmFlux.py" in msg and "missing" in msg and "no environment" not in msg, msg
+        assert _live_bytes(live) == before
+
+    def test_a_chip_no_open_window_writes_names_that_cause(self, tmp_path, monkeypatch):
+        live, wc = _wc_chip(tmp_path, _state())
+        _stage(wc, lambda s: s["qubit_pairs"][_PAIR]["macros"].__setitem__("cz", "#./cz_sm"))
+        monkeypatch.setattr(class_file_check, "_env_source", routes_mod._class_file_env)
+        with pytest.raises(class_file_check.ClassFileRefusedError) as exc:
+            _apply(wc, tmp_path)
+        assert "cannot tell which environment" in str(exc.value)
+        assert "no environment is selected" not in str(exc.value)

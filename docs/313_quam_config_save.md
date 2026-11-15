@@ -81,8 +81,13 @@ front, the folder Save to quam_config resolves) and its bytes must hash to the r
 unknown environment (none selected, or the folder cannot be asked) refuses the write before it is recorded: the live
 files stay as they were and the door's message names the gate and the file. Auto-Sync classifies the refusal as
 permanent and turns off with that reason. Gates without the key, a gate already active on the chip, and edits that
-touch neither are written as before; a chip with no such gate never reads live or asks the environment for this. The
-web layer tells the check which environment a live folder belongs to (`class_file_check.set_env_source`).
+touch neither are written as before; a chip with no such gate never reads live or asks the environment for this. A
+gate re-made under a name already on the chip (another file list) counts as added, every listed file of every such gate
+is checked (qubit macros included), and when live state.json is missing or unreadable every such gate counts as added,
+so a forced push (Keep mine) is checked too. The web layer tells the check which environment a live folder belongs to
+(`class_file_check.set_env_source`): the QUAlibrate project env of the open chip writing that folder, found also from
+a thread with no app context (the Auto Calibrate writer); when no open chip writes the folder the refusal says SM cannot
+tell which environment the chip uses, never that none is selected.
 Tests: `tests/test_class_file_live_check.py`.
 
 ## Seams left for the next piece

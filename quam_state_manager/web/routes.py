@@ -28,6 +28,7 @@ import json
 import logging
 import math
 import os
+import weakref
 import re
 import shutil
 import subprocess
@@ -36119,23 +36120,39 @@ def _live_write_failure_response(ctx, message: str, code: str, *, auto=None,
     return resp
 
 
+#: Every app this blueprint was registered on, so a live write from a thread
+#: with no app context (the Auto Calibrate writer) still finds its chip.
+_CLASS_FILE_APPS: "weakref.WeakSet" = weakref.WeakSet()
+
+
+@bp.record_once
+def _remember_app_for_class_file_env(state) -> None:
+    _CLASS_FILE_APPS.add(state.app)
+
+
 def _class_file_env(live_folder) -> str | None:
     """The environment of the open chip whose live folder is *live_folder*
     (the env its QUAlibrate project runs with), for the class-file check of
-    a live write. None outside a request or when no env is chosen."""
+    a live write. None when that chip has no env chosen. Works with or
+    without an app context; when no open chip writes *live_folder*, or the
+    lookup fails, it raises ``ClassFileRefusedError`` naming that cause."""
     from flask import has_app_context
     from quam_state_manager.core import project_env
-    if not has_app_context():
-        return None
+    target = os.path.normcase(os.path.abspath(str(live_folder)))
+    apps = [current_app._get_current_object()] if has_app_context() else list(_CLASS_FILE_APPS)
     try:
-        target = os.path.normcase(os.path.abspath(str(live_folder)))
-        for ctx in (current_app.config.get("contexts") or {}).values():
-            wc = (ctx or {}).get("working_copy")
-            if wc is not None and os.path.normcase(os.path.abspath(str(wc.live_folder))) == target:
-                return project_env.run_env(current_app.instance_path, ctx.get("qualibrate_project"))
-    except Exception:  # noqa: BLE001 (an unknown env refuses the write, never a crash)
+        for app in apps:
+            with app.app_context():
+                for ctx in list((app.config.get("contexts") or {}).values()):
+                    wc = (ctx or {}).get("working_copy")
+                    if wc is not None and os.path.normcase(os.path.abspath(str(wc.live_folder))) == target:
+                        return project_env.run_env(app.instance_path, ctx.get("qualibrate_project"))
+    except Exception as exc:  # noqa: BLE001 (an unknown env refuses the write, never a crash)
         logger.warning("finding the chip's environment failed", exc_info=True)
-    return None
+        raise working_copy.ClassFileRefusedError(
+            f"SM could not look up which environment this chip uses ({exc})") from exc
+    raise working_copy.ClassFileRefusedError(
+        f"SM cannot tell which environment the chip at {live_folder} uses from here")
 
 
 working_copy.class_file_check.set_env_source(_class_file_env)
