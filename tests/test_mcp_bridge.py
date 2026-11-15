@@ -228,7 +228,9 @@ class TestReadOnlyMode:
         replies = {r["id"]: r for r in (json.loads(l) for l in out.splitlines() if l.strip())}
         names = {t["name"] for t in replies[2]["result"]["tools"]}
         assert "state_get" in names and "runs" in names and "check_fit" in names
-        assert not ({"state_edit", "apply_to_live", "undo", "take_live", "journal_append", "note_set"} & names)
+        assert not ({"state_edit", "apply_to_live", "undo", "take_live", "journal_append", "note_set",
+                     "cz_gate_check", "cz_gate_create", "class_file_save"} & names)
+        assert "cz_gate_plan" in names
         for i in (3, 4):
             assert replies[i]["result"]["isError"] is True and "read-only" in replies[i]["result"]["content"][0]["text"]
 

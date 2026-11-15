@@ -3131,6 +3131,156 @@ def undo_mine():
                    notice=notice)
 
 
+# ------------------------------------------------ CZ gates and class files
+# The agent's doors call the SAME functions as the person's routes
+# (cz_gate_routes.plan_answer / check_answer / create_answer,
+# pulse_class_page.save_config), so every refusal reads the same. A create
+# only stages into the tray; the live chip is written only by apply_to_live.
+
+def _agent_kind() -> str:
+    actor = _r()._request_actor()
+    return actor if actor in journal_mod.KINDS else "agent"
+
+
+def _answer_of(resp):
+    """``(payload, status)`` of a door's answer (a response or a tuple)."""
+    from flask import make_response
+    out = make_response(resp)
+    return out.get_json(silent=True) or {}, out.status_code
+
+
+@agent_bp.route("/cz-gate/plan", methods=["POST"])
+def cz_gate_plan():
+    """The gate dialog's plan, for an agent. Writes nothing."""
+    from quam_state_manager.web import cz_gate_routes as czr
+    return czr.plan_answer()
+
+
+@agent_bp.route("/cz-gate/check", methods=["POST"])
+def cz_gate_check():
+    """The gate dialog's check, for an agent: the same token as a person's."""
+    from quam_state_manager.web import cz_gate_routes as czr
+    return czr.check_answer()
+
+
+#: what the create card says about the way to the chip, by apply mode
+GATE_WAITS_AUTO = ("Staged in the tray; nothing reached the chip. This chip's agent mode is auto: "
+                   "apply_to_live writes it, with the class file check of every live write.")
+GATE_WAITS_PERSON = ("Staged in the tray; nothing reached the chip. Outside auto mode the gate waits "
+                     "in the tray for the person's Apply (it is not an approval card).")
+
+
+def _class_restarts() -> dict:
+    """``{class file path: restart notice}`` of the class files an agent
+    saved in this SM process (the same text the save answer carries)."""
+    return current_app.config.setdefault("sm_agent_class_restarts", {})
+
+
+def _gate_card(store, ctx, row: dict, timeline) -> dict:
+    """The create result card of one created gate: the pulses it made, the
+    check's timeline (the same data the dialog draws), its status line and
+    the restart notice of a class file an agent saved for it."""
+    from quam_state_manager.core import gate_status
+    from quam_state_manager.core import quam_config_save as Q
+    from quam_state_manager.web import gate_status_routes as gsr
+    pair, gate = row["pair"], row["gate"]
+    mpath = f"qubit_pairs.{pair}.macros.{gate}"
+    try:
+        line = gsr.gate_line(store, ctx, pair, gate)
+        items = [{"key": i["key"], "text": i["text"]} for i in line["items"]]
+        status = "; ".join(i["text"] for i in items)
+    except Exception as exc:  # noqa: BLE001 - an honest line, never a 500
+        items, status = [], f"The status line could not be read ({type(exc).__name__})."
+    with store._lock:
+        macro = ((((store.merged.get("qubit_pairs") or {}).get(pair) or {}).get("macros") or {})
+                 .get(gate))
+    files = gate_status.sm_class_files(macro)
+    from quam_state_manager.web import pulse_class_page
+    restarts = _class_restarts()
+    scope = pulse_class_page._scope()
+    restart = []
+    for f in files:
+        path = Q.published_path(current_app.instance_path, scope, f.get("qclass"))
+        if path and str(path) in restarts:
+            restart.append({"file": f.get("file"), "notice": restarts[str(path)]})
+    return {"pair": pair, "gate": gate, "state": row.get("state"),
+            "pulses": [p for p in row.get("paths") or [] if p != mpath],
+            "macro": mpath,
+            "timeline": {"figure": f"the gate timeline of the check of {pair} / {gate}",
+                         "data": timeline},
+            "status_line": status, "status_items": items,
+            "class_files": [f.get("file") for f in files], "restart": restart}
+
+
+@agent_bp.route("/cz-gate/create", methods=["POST"])
+def cz_gate_create():
+    """The gate dialog's create, for an agent: stages the checked gates in
+    one change group under the agent's name; never writes the live chip.
+    The answer is the person's, plus ``cards`` (one per created gate) and
+    ``waits`` (how the gate reaches the chip in this chip's mode)."""
+    from quam_state_manager.web import cz_gate_routes as czr
+    r = _r()
+    data = json_object({})
+    data = data if isinstance(data, dict) else {}
+    tok = czr._token(data.get("check_token")) or {}
+    payload, code = _answer_of(czr.create_answer())
+    if code != 200 or not payload.get("ok"):
+        return jsonify(payload), code
+    ctx, store = r._active_ctx(), r._store()
+    timelines = tok.get("timelines") or {}
+    payload["cards"] = [_gate_card(store, ctx, row, timelines.get(row["pair"]))
+                        for row in payload.get("created") or []]
+    mode = r._agent_apply_mode(ctx)
+    payload["mode"] = mode
+    payload["waits"] = GATE_WAITS_AUTO if mode == "auto" else GATE_WAITS_PERSON
+    payload.pop("tray_html", None)
+    names = ", ".join(f"{c['pair']} / {c['gate']}" for c in payload["cards"])
+    journal_mod.append(current_app.instance_path, _chip_name(),
+                       f"staged the CZ gate {names} in the tray (not on the chip until it is applied)",
+                       kind=_agent_kind(), reason=str(data.get("reason") or "") or None,
+                       paths=[c["macro"] for c in payload["cards"]][:20])
+    _bump()
+    _wake()
+    return jsonify(payload), 200
+
+
+#: why the agent's class-file save takes no folder
+CLASS_FOLDER_REFUSAL = ("Not written: the agent saves a class file only to the folder the chip's "
+                        "environment imports. Send no folder; another folder is the person's own "
+                        "choice, in the pulse class page.")
+
+
+@agent_bp.route("/class-file/save", methods=["POST"])
+def class_file_save():
+    """Save to quam_config for an agent: the person's door (the same
+    function), recorded under the agent's name. The first call (no
+    ``confirmed_folder``) answers the folder to confirm. A saved file puts
+    the restart notice into the journal, where the person reads it. The
+    folder is always the one the chip's env imports (the person's door with
+    no folder chosen): a payload ``folder`` is refused, since another folder
+    is the person's own choice in the pulse class page."""
+    from quam_state_manager.web import pulse_class_page
+    r = _r()
+    data = json_object({})
+    data = dict(data) if isinstance(data, dict) else {}
+    data.pop("python", None)                 # the chip's chosen env only
+    if data.get("folder"):
+        return jsonify(ok=False, refused="folder_is_the_persons",
+                       error=CLASS_FOLDER_REFUSAL), 409
+    payload, code = pulse_class_page.save_config(data, r._request_actor())
+    if code == 200 and payload.get("ok"):
+        restart = payload.get("restart") or ""
+        _class_restarts()[str(payload.get("target"))] = restart
+        name = Path(str(payload.get("target") or "")).name
+        journal_mod.append(current_app.instance_path, _chip_name(),
+                           f"saved the class file quam_config/{name} to the lab folder. {restart}",
+                           kind=_agent_kind(), reason=str(data.get("reason") or "") or None,
+                           paths=[str(payload.get("target"))])
+        _bump()
+        _wake()
+    return jsonify(payload), code
+
+
 @agent_bp.route("/live-diff")
 def live_diff():
     """What take_live would change: live leaves that differ from the working

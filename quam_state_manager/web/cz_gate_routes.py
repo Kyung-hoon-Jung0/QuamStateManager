@@ -37,7 +37,9 @@
     paths}], skipped: [{pair, reason}], count, group, tray_html}``. A store
     that moved is 409 ``stale: true`` with nothing written. This door writes
     the working copy only, never the live files; the new gate is not made
-    active (the pair's ``cz`` alias is never touched).
+    active (the pair's ``cz`` alias is never touched). The token keeps who
+    ran the check (a person or an agent, by the callers gate): a create by
+    the other kind is refused (409, ``check_again``).
 """
 from __future__ import annotations
 
@@ -649,6 +651,22 @@ def _remember(entry: dict) -> str:
     return tok
 
 
+#: who ran the check and who presses create must be the same kind of caller
+_CHECKED_BY_OTHER = {
+    "person": "This check was run by a person. An agent's create needs the agent's own check: "
+              "run the check again.",
+    "agent": "This check was run by an agent. A person's create needs a check pressed in the SM "
+             "window: press Check again.",
+}
+
+
+def _caller_kind() -> str:
+    """``person`` or ``agent``, by the callers gate (a person's window
+    proof), never by the absence of a header."""
+    from quam_state_manager.web import callers
+    return "person" if callers.from_person() else "agent"
+
+
 def _token(tok: Any) -> dict | None:
     if not isinstance(tok, str):
         return None
@@ -692,6 +710,29 @@ def cz_gate_dialog():
 @bp.route("/api/pulse/cz-gate/plan", methods=["POST"])
 def api_cz_gate_plan():
     """Plan the gate on every asked pair; writes nothing."""
+    return plan_answer()
+
+
+@bp.route("/api/pulse/cz-gate/check", methods=["POST"])
+def api_cz_gate_check():
+    """Check the planned gates with the lab's code on chip copies; the
+    verdicts stay on the server under the returned token."""
+    return check_answer()
+
+
+@bp.route("/api/pulse/cz-gate/create", methods=["POST"])
+def api_cz_gate_create():
+    """Write the checked gates in one change group (see the module docstring).
+    Person-only (``callers.PERSON_ONLY``)."""
+    return create_answer()
+
+
+# The bodies of the three doors. The person's routes above and the agent's
+# routes (``agent_api``: ``/api/agent/cz-gate/*``) call these same functions,
+# so every refusal reads the same for both (one implementation per concept).
+
+def plan_answer():
+    """The plan door's answer for the current request."""
     store, err = _store_or_error()
     if err:
         return err
@@ -704,10 +745,8 @@ def api_cz_gate_plan():
     return jsonify(ok=True, plan_sig=plan_signature(body, plans), pairs=rows)
 
 
-@bp.route("/api/pulse/cz-gate/check", methods=["POST"])
-def api_cz_gate_check():
-    """Check the planned gates with the lab's code on chip copies; the
-    verdicts stay on the server under the returned token."""
+def check_answer():
+    """The check door's answer for the current request."""
     store, err = _store_or_error()
     if err:
         return err
@@ -728,7 +767,7 @@ def api_cz_gate_check():
         skipped_by[pid] = sk
     res = run_check(store, _env_python(), gates, creates, previews) if gates else None
     scope = R._ctx_chip_key(R._active_ctx()) or "no-chip"
-    out_pairs, verdicts, sigs, checks_by = [], {}, {}, {}
+    out_pairs, verdicts, sigs, checks_by, timelines = [], {}, {}, {}, {}
     for pid, p in plans:
         if "error" in p:
             out_pairs.append({"pair": pid, "gate": body["gate_name"], "ok": False,
@@ -776,12 +815,13 @@ def api_cz_gate_check():
         verdicts[pid] = {"allowed": allowed, "state": state, "reason": reason}
         # the check record reads the same outcome the dialog showed
         checks_by[pid] = oc
+        timelines[pid] = tl
         sigs[pid] = _creates_sig(p)
     seq = (res or {}).get("seq")
-    tok = _remember({"store_id": chip_copy.store_id(store),
+    tok = _remember({"by": _caller_kind(), "store_id": chip_copy.store_id(store),
                      "seq": seq if seq is not None else pre_seq,
                      "plan_sig": sig, "body": body, "verdicts": verdicts, "sigs": sigs,
-                     "checks": checks_by})
+                     "checks": checks_by, "timelines": timelines})
     return jsonify(ok=True, status=(res or {}).get("status") or "not-run", sync=sync_now(),
                    why_not_checked=(res or {}).get("why_not_checked"),
                    leftover=(res or {}).get("leftover"),
@@ -792,10 +832,10 @@ def _refuse(msg: str, code: int = 409, **extra):
     return jsonify(ok=False, error=msg, **extra), code
 
 
-@bp.route("/api/pulse/cz-gate/create", methods=["POST"])
-def api_cz_gate_create():
-    """Write the checked gates in one change group (see the module docstring).
-    Person-only (``callers.PERSON_ONLY``)."""
+def create_answer():
+    """The create door's answer for the current request. Every row of the
+    group carries the presser (``routes._request_actor``): a person, or the
+    agent whose bridge pressed."""
     ctx = R._active_ctx()
     store = R._store()
     modifier = R._modifier()
@@ -812,6 +852,9 @@ def api_cz_gate_create():
     tok = _token(data.get("check_token"))
     if tok is None:
         return _refuse("This check is not known any more (it expired or the app restarted). "
+                       "Press Check again.", 409, check_again=True)
+    if tok.get("by") != _caller_kind():
+        return _refuse(_CHECKED_BY_OTHER.get(tok.get("by")) or "This check is not known any more. "
                        "Press Check again.", 409, check_again=True)
     if tok["used"]:
         return _refuse("These gates were already created from this check. Press Check "
@@ -849,6 +892,10 @@ def api_cz_gate_create():
             for pid in todo:
                 for path, value in plans[pid]["creates"]:
                     modifier.create_subtree(path, copy.deepcopy(value), group_id=gid)
+            actor = R._request_actor()
+            for e in store.change_log:
+                if e.group_id == gid:
+                    e.actor = actor
         except Exception as exc:  # noqa: BLE001 -- all or nothing
             # A write may log its entry and then raise: undo the whole group by
             # its id (as the diagram add door does), not by a count of returns.

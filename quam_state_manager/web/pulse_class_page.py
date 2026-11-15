@@ -218,11 +218,19 @@ def _record_class_write(target, sha) -> str | None:
 
 @pulse_class_page_bp.route("/pulse-class/save-config", methods=["POST"])
 def pulse_class_save_config():
-    data = json_object()
+    payload, code = save_config(json_object(), _actor())
+    return jsonify(payload), code
+
+
+def save_config(data: dict, actor: str) -> tuple[dict, int]:
+    """Save to quam_config for the current request: ``(answer, status)``.
+    The person's route above and the agent's ``/api/agent/class-file/save``
+    call this one function; *actor* is who the history line names
+    (``person``, ``agent`` or an agent's ``by_<name>``)."""
     r = _r()
     ctx = r._active_ctx()
     if not ctx or not r._store():
-        return _err("Open a chip so the class write can be recorded in its history.")
+        return {"ok": False, "error": "Open a chip so the class write can be recorded in its history."}, 400
     from quam_state_manager.core import working_copy
     from quam_state_manager.core.loader import merge_state_wiring
     from quam_state_manager.web.port_play_page import _chosen_env
@@ -236,9 +244,9 @@ def pulse_class_save_config():
             python, _inst(), _scope(), str(data.get("cls") or ""),
             confirmed_folder=data.get("confirmed_folder"), folder=data.get("folder") or None,
             store=r._store(), live=live,
-            history_folder=_history_folder(), actor=_actor())
+            history_folder=_history_folder(), actor=actor)
         if result.get("registered"):
             r._reprobe_if_new_classes(r._store())
-        return jsonify(result), 200 if result.get("ok") else 409
+        return result, 200 if result.get("ok") else 409
     except (D.DraftError, OSError, ValueError) as exc:
-        return _err(str(exc))
+        return {"ok": False, "error": str(exc)}, 400

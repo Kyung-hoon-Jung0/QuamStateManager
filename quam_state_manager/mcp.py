@@ -26,7 +26,7 @@ the paths -- when a human edited something in the window the agent never
 saw (docs/120's gate), instead of forcing.
 
 Protocol surface: initialize, notifications/initialized, ping, tools/list,
-tools/call. 30 tools. Newline-delimited JSON on stdio.
+tools/call. 34 tools. Newline-delimited JSON on stdio.
 """
 
 from __future__ import annotations
@@ -452,6 +452,11 @@ def t_apply_to_live(_a: dict) -> Any:
             return {"applied": False, "refused": body,
                     "how": "nothing was written: the tray holds rows another agent staged (actors above). An agent "
                            "applies only its own rows. undo_mine yours, or wait for that agent or a person."}
+        if isinstance(body, dict) and body.get("conflict") == "agent_structural_rows":
+            # outside auto mode a tray that adds keys (a new gate) waits for the person's Apply
+            return {"applied": False, "refused": body,
+                    "how": "nothing was written: outside auto mode rows that add or remove keys (a new gate, "
+                           "a pulse) wait in the tray for the person's Apply. Tell the human they are waiting."}
         if isinstance(body, dict) and (body.get("conflict") == "chip_mismatch" or body.get("chip_mismatch")):
             # A-07: SM has another chip open than the one this tray was read on
             return {"applied": False, "refused": body,
@@ -604,6 +609,55 @@ def t_note_set(a: dict) -> Any:
     return _ok(*_sm().post_json("/api/agent/note", {"subject": a["subject"], "text": a["text"]}))
 
 
+_GATE_KEYS = ("pairs", "gate_name", "gate_class", "pulses", "copy_from", "model_gate",
+              "macro_fields", "spectators")
+
+
+def _gate_body(a: dict) -> dict:
+    return {k: a[k] for k in _GATE_KEYS if k in a}
+
+
+def _answer(code: int, body: Any) -> Any:
+    """A door's refusal (400 / 409 with ``error``) is DATA for the agent: the
+    same words a person reads in the dialog. Anything else unexpected raises."""
+    if code in (400, 409) and isinstance(body, dict) and "ok" in body:
+        return body
+    return _ok(code, body)
+
+
+def t_cz_gate_plan(a: dict) -> Any:
+    """The CZ gate dialog's plan (/api/agent/cz-gate/plan): writes nothing."""
+    return _answer(*_sm().post_json("/api/agent/cz-gate/plan", _gate_body(a)))
+
+
+def t_cz_gate_check(a: dict) -> Any:
+    """The dialog's check: runs the lab's code in the chip's chosen env and
+    answers the check_token + plan_sig that cz_gate_create needs."""
+    return _answer(*_sm().post_json("/api/agent/cz-gate/check", _gate_body(a), timeout=600))
+
+
+def t_cz_gate_create(a: dict) -> Any:
+    """Stage the checked gates in the tray (never the chip), then read the
+    tray so apply_to_live declares what this agent has seen."""
+    body = {"check_token": a["check_token"], "plan_sig": a["plan_sig"], "reason": a.get("reason")}
+    res = _answer(*_sm().post_json("/api/agent/cz-gate/create", body))
+    if isinstance(res, dict) and res.get("ok"):
+        try:
+            _tray_seen()
+        except ToolError:
+            pass
+    return res
+
+
+def t_class_file_save(a: dict) -> Any:
+    """Save to quam_config: the SM-made class file into the lab folder. The
+    first call answers ``confirm`` (the folder); call again with
+    ``confirmed_folder`` to write. The answer carries the restart notice.
+    A ``folder`` is passed on so SM refuses it with its reason."""
+    body = {k: a[k] for k in ("cls", "confirmed_folder", "folder", "reason") if k in a}
+    return _answer(*_sm().post_json("/api/agent/class-file/save", body, timeout=300))
+
+
 def t_generate_roles(a):
     return _ok(*_sm().get("/api/agent/generate/roles"))
 
@@ -626,7 +680,8 @@ def _s(desc: str, **props) -> dict:
 # lists and allows only the read tools -- mechanical, the same for every CLI.
 READ_ONLY = os.environ.get("SM_MCP_MODE", "").strip().lower() == "readonly"
 WRITE_TOOLS = frozenset({"state_edit", "apply_to_live", "undo", "take_live", "note_set", "journal_append", "run_node",
-                         "run_wait", "undo_mine", "plan_propose", "plan_end"})
+                         "run_wait", "undo_mine", "plan_propose", "plan_end", "cz_gate_check",
+                         "cz_gate_create", "class_file_save"})
 # propose_additions / propose_card are NOT write tools: they write nothing a
 # chip reads, only a holding area a person accepts from in the wizard.
 
@@ -753,6 +808,36 @@ TOOLS: dict[str, tuple[dict, Any]] = {
                        t_journal_append),
     "journal_read": (_s("Read today's (or a given day's) journal for the open chip.",
                         date={"type": "string", "description": "YYYY-MM-DD"}), t_journal_read),
+    "cz_gate_plan": (_s("Plan a CZ gate on one or more pairs, as the pair page's gate dialog does: the pulses "
+                        "it would make and why a pair is refused. Writes nothing. Answers plan_sig.",
+                        pairs={"type": "array", "items": {"type": "string"}, "required": True},
+                        gate_name={"type": "string", "required": True},
+                        gate_class={"type": "string", "required": True},
+                        pulses={"type": "object"}, copy_from={}, model_gate={"type": "array"},
+                        macro_fields={"type": "object"}, spectators={}), t_cz_gate_plan),
+    "cz_gate_check": (_s("Check the planned gate (the dialog's Check: the lab's code in the chip's chosen env). "
+                         "Answers per pair a verdict, the timeline and a check_token; same inputs as "
+                         "cz_gate_plan. Refusals come back as data with the dialog's words.",
+                         pairs={"type": "array", "items": {"type": "string"}, "required": True},
+                         gate_name={"type": "string", "required": True},
+                         gate_class={"type": "string", "required": True},
+                         pulses={"type": "object"}, copy_from={}, model_gate={"type": "array"},
+                         macro_fields={"type": "object"}, spectators={}), t_cz_gate_check),
+    "cz_gate_create": (_s("STAGE the gates of a check into SM's Review tray (never the chip). The cards name the "
+                          "pulses made, the check's timeline, each gate's status line and the QUAlibrate "
+                          "restart notice of a class file you saved; `waits` says how it reaches the chip "
+                          "(auto mode: apply_to_live; otherwise the person's Apply).",
+                          check_token={"type": "string", "required": True},
+                          plan_sig={"type": "string", "required": True},
+                          reason={"type": "string", "description": "why: it goes into the human's journal"}),
+                       t_cz_gate_create),
+    "class_file_save": (_s("Save to quam_config: write an SM-made pulse class file into the lab folder (the "
+                           "pulse class page's door). First call answers `confirm` with the folder; call "
+                           "again with confirmed_folder. The folder is always the one the chip's env "
+                           "imports (no other folder can be chosen here). The answer carries `restart` "
+                           "(tell the human).",
+                           cls={"type": "string", "required": True}, confirmed_folder={"type": "string"},
+                           reason={"type": "string"}), t_class_file_save),
     "note_set": (_s("Pin a note on a qubit, pair or dotted path (shown on its row in SM, and to every agent in "
                     "sm_status / state_get), e.g. why a value was left alone. Signed with your client's name.",
                     subject={"type": "string", "required": True}, text={"type": "string", "required": True}),
