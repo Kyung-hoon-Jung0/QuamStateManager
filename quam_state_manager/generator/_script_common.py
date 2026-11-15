@@ -2,10 +2,11 @@
 
 Imported ONLY by the sibling scripts (``run_build.py``,
 ``run_generate_config.py``) that run under an *external* user-selected
-interpreter — it may use only the Python standard library. The one
-exception to "never imported by ``quam_state_manager``" is ``tof_on_grid``,
-which ``core.output_timing`` re-exports so the build and SM share one rule. The scripts add this directory to
-``sys.path`` defensively before importing (CPython normally prepends the
+interpreter: it may use only the Python standard library. The one
+exception to "never imported by ``quam_state_manager``" is the time of
+flight grid rule (``tof_on_grid`` and its two note sentences), which
+``core.output_timing`` re-exports so the build and SM share one rule. The
+scripts add this directory to ``sys.path`` defensively before importing (CPython normally prepends the
 script's own directory, but ``PYTHONSAFEPATH`` / ``-P`` suppress that).
 
 PyInstaller ships the whole ``generator/`` directory as data files
@@ -126,3 +127,25 @@ def tof_on_grid(value):
     nearest = max(28, 4 * math.floor(v / 4 + 0.5))
     ok = v == nearest
     return ok, nearest, "" if ok else "the controller takes multiples of 4 ns, at least 28 ns"
+
+
+def tof_rounded_note(raw, nearest, reason):
+    """The sentence for a time of flight SM moved and rounded onto the grid.
+
+    ``raw`` is the moved value before rounding (old time of flight plus the
+    readout output delay change), ``nearest`` what was written, ``reason``
+    the rule's reason. The acquisition window then starts ``nearest - raw``
+    ns after (or before) the signal's return, so the note asks for a new
+    measurement.
+    """
+    off = nearest - raw
+    side = "after" if off > 0 else "before"
+    return (f"Time of flight {raw:g} ns rounded {'up' if off > 0 else 'down'} to "
+            f"{nearest:g} ns ({reason}): acquisition starts {abs(off):g} ns {side} "
+            "the return; measure time of flight again.")
+
+
+def tof_kept_note(value, nearest, reason):
+    """The sentence for an off-grid time of flight the user set, which SM keeps."""
+    return (f"Time of flight {value:g} ns is kept as you set it, but {reason} "
+            f"(nearest allowed {nearest:g} ns).")

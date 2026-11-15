@@ -78,6 +78,26 @@ def tof_on_grid(value):
     ok = v == nearest
     return ok, nearest, "" if ok else "the controller takes multiples of 4 ns, at least 28 ns"
 
+def tof_rounded_note(raw, nearest, reason):
+    """The sentence for a time of flight SM moved and rounded onto the grid.
+
+    ``raw`` is the moved value before rounding (old time of flight plus the
+    readout output delay change), ``nearest`` what was written, ``reason``
+    the rule's reason. The acquisition window then starts ``nearest - raw``
+    ns after (or before) the signal's return, so the note asks for a new
+    measurement.
+    """
+    off = nearest - raw
+    side = "after" if off > 0 else "before"
+    return (f"Time of flight {raw:g} ns rounded {'up' if off > 0 else 'down'} to "
+            f"{nearest:g} ns ({reason}): acquisition starts {abs(off):g} ns {side} "
+            "the return; measure time of flight again.")
+
+def tof_kept_note(value, nearest, reason):
+    """The sentence for an off-grid time of flight the user set, which SM keeps."""
+    return (f"Time of flight {value:g} ns is kept as you set it, but {reason} "
+            f"(nearest allowed {nearest:g} ns).")
+
 def _norm_index(qubit_id):
     """Normalise a spec qubit id to the index QubitReference expects.
 
@@ -769,10 +789,9 @@ def _align_output_timing(machine, spec=None, tof_moves=None):
                 rr.time_of_flight = value_tof
                 pending_moves[qid] = {"from": tof, "sum": tof + ds}
                 if not ok:
-                    pending_moves[qid]["grid_note"] = (f"time of flight {tof + ds:g} ns -> "
-                                                       f"{value_tof:g} ns: {reason}")
-                    pending_notes.append(f"{qid}: time of flight {tof + ds:g} ns -> "
-                                     f"{value_tof:g} ns: {reason}.")
+                    note = tof_rounded_note(tof + ds, value_tof, reason)
+                    pending_moves[qid]["grid_note"] = note
+                    pending_notes.append(f"{qid}: {note}")
                 undo.append((qid, rr, tof))
             except (ValueError, TypeError):
                 failed.append(_undo_readout(port, old, value, qid, undo))
@@ -803,16 +822,18 @@ def _align_output_timing(machine, spec=None, tof_moves=None):
                 if not kept_as_set and raw_default is not None:
                     default_ok, default_nearest, default_reason = tof_on_grid(raw_default)
                     if not default_ok:
-                        warnings.append(f"{qid}: time of flight {float(raw_default):g} ns -> "
-                                        f"{default_nearest:g} ns: {default_reason}.")
+                        warnings.append(f"{qid}: The default time of flight {float(raw_default):g} ns "
+                                        f"was written as {default_nearest:g} ns ({default_reason}).")
                 ok, nearest, reason = tof_on_grid(tof)
             except ValueError:
                 continue   # not a number SM can place: left as it is
             if not ok:
-                if not kept_as_set:
+                if kept_as_set:
+                    warnings.append(f"{qid}: {tof_kept_note(tof, nearest, reason)}")
+                else:
                     rr.time_of_flight = nearest
-                warnings.append(f"{qid}: time of flight {tof:g} ns -> {nearest:g} ns: {reason}."
-                                + (" Kept as you set it." if kept_as_set else ""))
+                    warnings.append(f"{qid}: Time of flight {tof:g} ns was written as "
+                                    f"{nearest:g} ns ({reason}).")
     for qid, q in qubits.items():
         rr = getattr(q, "resonator", None)
         ds = moved.get(_output_key(getattr(rr, "opx_output", None)), 0) if rr is not None else 0

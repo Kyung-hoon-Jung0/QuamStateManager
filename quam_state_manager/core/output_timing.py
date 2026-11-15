@@ -15,7 +15,8 @@ cannot count differently: a port no element plays does not count.
 
 from __future__ import annotations
 
-from quam_state_manager.generator._script_common import tof_on_grid
+from quam_state_manager.generator._script_common import (  # noqa: F401  (re-exported)
+    tof_kept_note, tof_on_grid, tof_rounded_note)
 
 
 def _grid(value):
@@ -202,14 +203,16 @@ def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=(),
             entry = {"qubit": qid, "shift": s, "value": rr["time_of_flight"]}
             if typed_off_grid:
                 _, nearest, reason = _grid(entry["value"])
-                entry["grid_note"] = (f"time of flight {entry['value']:g} ns -> {nearest:g} ns: "
-                                      f"{reason}. Kept as you set it.")
+                entry["grid_note"] = tof_kept_note(entry["value"], nearest, reason)
+                if s == 0:
+                    # nothing delayed: the only thing to say is the grid
+                    entry["grid_only"] = True
             if qid in moved_set and _num(old_tof.get(qid)) and qid in before:
                 raw = old_tof[qid] + s - before[qid][0]
                 ok, nearest, reason = _grid(raw)
                 entry["sum"] = raw
                 if not ok and nearest == entry["value"]:
-                    entry["grid_note"] = f"time of flight {raw:g} ns -> {nearest:g} ns: {reason}"
+                    entry["grid_note"] = tof_rounded_note(raw, nearest, reason)
             if tof_moved is not None:
                 if qid in moved_set:
                     entry["moved"] = True

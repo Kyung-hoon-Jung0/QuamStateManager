@@ -513,7 +513,10 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
     moving qubit (control when unset; a shared port is decided by the first
     pair in chip order); a resonator gets ``time_of_flight += s`` of its
     readout output port. Items: ``ports``, ``flux``, ``tof`` and ``spacing``
-    (qubits whose xy and readout shifts differ)."""
+    (qubits whose xy and readout shifts differ). A stored time of flight the
+    grid rule cannot place (not a number, or negative after the shift) is
+    not written; it goes to ``tof_unplaced`` with the reason, and the rest
+    of the shift is still offered."""
     try:
         mw = output_timing.mw_outputs_in_use(state, wiring)
         bands = {p.get("band") for _, p in mw}
@@ -526,7 +529,7 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
         shift = {path: target - lat[p.get("band")] for path, p in mw
                  if p.get("band") in lat and target - lat[p.get("band")] > 0}
         doc = {"wiring": (wiring or {}).get("wiring") or {}, **(state or {})}
-        plan = {"ports": [], "flux": [], "tof": [], "spacing": []}
+        plan = {"ports": [], "flux": [], "tof": [], "tof_unplaced": [], "spacing": []}
         for path, p in mw:
             if path in shift:
                 plan["ports"].append({"port": path, "port_label": _port_label(p, path),
@@ -553,12 +556,23 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
             r = shift.get(ro_path, 0)
             if r and _num(rr.get("time_of_flight")):
                 raw = rr["time_of_flight"] + r
-                ok, nearest, reason = output_timing.tof_on_grid(raw)
-                item = {"qubit": qid, "path": f"qubits/{qid}/resonator/time_of_flight",
-                        "old": rr["time_of_flight"], "new": nearest, "sum": raw}
-                if not ok:
-                    item["grid_note"] = (f"time of flight {raw:g} ns -> {nearest:g} ns: {reason}")
-                plan["tof"].append(item)
+                path = f"qubits/{qid}/resonator/time_of_flight"
+                try:
+                    ok, nearest, reason = output_timing.tof_on_grid(raw)
+                except ValueError as exc:
+                    # one stored value the rule cannot place: the other lines
+                    # are still offered, this one is named and not written
+                    plan["tof_unplaced"].append({
+                        "qubit": qid, "path": path, "old": rr["time_of_flight"], "sum": raw,
+                        "note": (f"Time of flight of {qid} is not moved: {rr['time_of_flight']:g}"
+                                 f" + {r:g} ns gives {raw:g} ns, and {exc}; measure time of "
+                                 "flight again.")})
+                else:
+                    item = {"qubit": qid, "path": path,
+                            "old": rr["time_of_flight"], "new": nearest, "sum": raw}
+                    if not ok:
+                        item["grid_note"] = output_timing.tof_rounded_note(raw, nearest, reason)
+                    plan["tof"].append(item)
             if rr and s != r:
                 plan["spacing"].append({"qubit": qid, "xy_shift": s, "readout_shift": r})
         for pid, pair in ((state or {}).get("qubit_pairs") or {}).items():
@@ -586,6 +600,8 @@ def mw_band_shift_question(plan: dict) -> dict:
     if plan.get("tof"):
         why += (" Re-check the time of flight of " +
                 ", ".join(t["qubit"] for t in plan["tof"]) + ".")
+    for t in plan.get("tof_unplaced") or ():
+        why += " " + t["note"]
     return {"kind": "mw_shift", "question": "Shift the band 1/3 MW outputs by 20 ns?",
             "why": why}
 
@@ -596,6 +612,8 @@ def mw_band_shift_offer_text(plan: dict) -> str:
     if plan.get("tof"):
         text += (" Re-check the time of flight of " +
                  ", ".join(t["qubit"] for t in plan["tof"]) + ".")
+    for t in plan.get("tof_unplaced") or ():
+        text += " " + t["note"]
     if plan.get("spacing"):
         text += (" The xy-readout spacing of " +
                  ", ".join(s["qubit"] for s in plan["spacing"]) +

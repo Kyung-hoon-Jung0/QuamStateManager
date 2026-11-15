@@ -5072,6 +5072,13 @@
       var p = document.createElement("p");
       p.className = "ui-note";
       var x = g.x, one = g.q.length === 1;
+      // a value the user set off the grid on an undelayed readout output:
+      // nothing moved and nothing to measure again, only the grid to name
+      if (x.grid_only && x.grid_note) {
+        p.textContent = g.q.join(", ") + ": " + x.grid_note;
+        wrap.appendChild(p);
+        return;
+      }
       p.textContent = x.moved
         ? "Time of flight moved from " + (typeof x.from === "number" ? x.from : x.value - x.shift) +
           " to " + x.value + " ns with " +
@@ -12601,8 +12608,9 @@
         });
         (res.mw_shift.tof || []).forEach(function (d) {
           shiftLines.push("Time of flight of " + d.qubit + ": " + d.old + " to " + d.new +
-            " ns; re-check it on the chip." + (d.grid_note ? " " + d.grid_note : ""));
+            " ns. " + (d.grid_note || "Re-check it on the chip."));
         });
+        (res.mw_shift.tof_unplaced || []).forEach(function (d) { shiftLines.push(d.note); });
         (res.mw_shift.spacing || []).forEach(function (d) {
           shiftLines.push("xy-readout spacing of " + d.qubit + " changes by " +
             Math.abs(d.xy_shift - d.readout_shift) + " ns.");

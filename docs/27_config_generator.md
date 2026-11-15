@@ -669,7 +669,8 @@ Rule (Generate, `_align_output_timing`, the last band / delay step of the build 
   on a chip that also uses band 2, otherwise 0 (whichever line the port carries; every element on it
   moves with it).
 - every LF-FEM output carrying a flux line (qubit z, coupler) gets the reference.
-- a resonator whose readout output got `s` gets `time_of_flight += s`.
+- a resonator whose readout output got `s` gets `tof_on_grid(time_of_flight + s)` (see the time of
+  flight grid below).
 - a chip in one class builds byte for byte as before (`tests/test_mw_band_align_live.py`); an OPX+
   output and an LF-FEM output that is not a flux line are left alone. The build writes no digital
   marker delays on MW elements, so nothing else moves.
@@ -685,6 +686,22 @@ a coupler's moving qubit's shift to the coupler, and the readout shift to the ti
 offer names the resonators whose time of flight to re-check and the qubits whose xy-readout spacing
 changes. Ports a rebuild adds follow the source chip's base (`follow_source_time_base`): an
 unshifted source gives them today's per-band values, so the offer covers them too.
+
+Time of flight grid (`generator/_script_common.py` `tof_on_grid`, the one rule for the build, the
+standalone script and SM): when SM computes or moves a time of flight, it writes the nearest multiple
+of 4 ns, with ties upward and a minimum of 28 ns. The source is the QOP job submit error: "Time of
+flight must be a multiple of 4 and greater or equal than 28". This was checked for MW-FEM readout; the
+same rule applies to every readout, provisionally untested on LF-FEM and OPX+.
+- MW readout port delays keep their requested delta and the time of flight rounds; LF readout ports
+  keep the `_readout_delay` alignment (the time of flight stays exact and the output offset is named).
+- A rounded move names the sum, the written value and its consequence (`tof_rounded_note`): the
+  acquisition starts up to 2 ns after (or before) the return, so the time of flight is measured again.
+- The Re-generate band shift plan writes `new` = the nearest allowed value and keeps `sum` = the raw
+  sum. A stored value the rule cannot place (not a number, or negative after the shift) is not written:
+  it is listed in `tof_unplaced` with the reason, and the rest of the shift is still offered.
+- A value the user set stays as entered, with the reason and nearest allowed value (`tof_kept_note`);
+  on an undelayed readout output the review names only the grid. A default SM pre-filled, or a
+  builder value nobody set, is written on the grid. Stored values SM does not move stay unchanged.
 
 ## Recommend core layout on a loaded chip
 
@@ -718,13 +735,3 @@ be read. Unreadable ports are named, not placed.
 - On a run archive (read-only), no fixes are offered and apply-fix answers 409.
 - Tests: `tests/test_core_layout_recommend.py`, `tests/core_recommend_selfcheck.cjs` and
   `tests/chip_status_core_refresh_selfcheck.cjs`.
-
-
-When SM computes or moves a time of flight, it writes the nearest multiple of 4 ns,
-with ties upward and a minimum of 28 ns, and names the original sum and the allowed
-value in the review when rounding is needed. The source is the QOP job submit error:
-"Time of flight must be a multiple of 4 and greater or equal than 28". This was checked
-for MW-FEM readout; the same rule applies to every readout, provisionally untested on
-LF-FEM and OPX+. Typed values stay as entered, with the reason and nearest allowed
-value shown; stored values that SM does not move stay unchanged. MW readout port
-delays keep their requested delta; the existing LF readout delay alignment still applies.

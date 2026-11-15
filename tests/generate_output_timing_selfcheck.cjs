@@ -179,7 +179,8 @@ function spec(qubits, fluxFem) {
   const cap = T.outputTimingResultTable({ mw: [{ port: 'b', label: 'p8', band: 3, delay: 0 }], flux: [],
     tof: [{ qubit: 'q1', shift: 0, value: 52, moved: true, from: 32 }] });
   ok(/^Time of flight/.test(cap.querySelector('p.ui-note').textContent), '[F8] note starts with a capital');
-  const gridNote = 'time of flight 34 ns -> 36 ns: the controller takes multiples of 4 ns, at least 28 ns';
+  const gridNote = 'Time of flight 34 ns rounded up to 36 ns (the controller takes multiples of 4 ns, ' +
+    'at least 28 ns): acquisition starts 2 ns after the return; measure time of flight again.';
   const roundedTable = T.outputTimingResultTable({ mw: [{ label: 'p8', band: 3, delay: 20 }],
     tof: [{ qubit: 'q1', shift: 6, value: 36, from: 28, moved: true, grid_note: gridNote }] });
   ok(roundedTable.textContent.includes(gridNote), '[grid] result states original sum and reason');
@@ -187,6 +188,24 @@ function spec(qubits, fluxFem) {
     mw_shift: { ports: [], flux: [], spacing: [],
       tof: [{ qubit: 'q1', old: 26, new: 48, grid_note: gridNote }] } }, '/o');
   ok(box.textContent.includes(gridNote), '[grid] offer states original sum and reason');
+  // a value the user set off the grid on an undelayed readout output: only the grid is named
+  const keptNote = 'Time of flight 46 ns is kept as you set it, but the controller takes multiples ' +
+    'of 4 ns, at least 28 ns (nearest allowed 48 ns).';
+  const gridOnly = T.outputTimingResultTable({ mw: [{ label: 'p8', band: 2, delay: 0 }],
+    tof: [{ qubit: 'q1', shift: 0, value: 46, moved: false, grid_only: true, grid_note: keptNote },
+          { qubit: 'q2', shift: 0, value: 46, moved: false, grid_only: true, grid_note: keptNote }] });
+  const gon = Array.from(gridOnly.querySelectorAll('p.ui-note')).map(function (p) { return p.textContent; });
+  ok(gon.length === 1 && gon[0] === 'q1, q2: ' + keptNote && !/delayed by 0 ns/.test(gridOnly.textContent),
+     '[grid] an undelayed typed value names only the grid: ' + JSON.stringify(gon));
+  // one stored value the rule cannot place: the offer still lists the rest and names that one
+  const unplaced = 'Time of flight of q2 is not moved: -50 + 20 ns gives -30 ns, and time of flight ' +
+    'must be a finite non-negative number; measure time of flight again.';
+  T.showBuildConfirm({ error: 'q', confirm_kind: 'mw_shift',
+    mw_shift: { ports: [{ port: 'x', port_label: 'c8', band: 3, old: 0, new: 20 }], flux: [], spacing: [],
+      tof: [{ qubit: 'q1', old: 28, new: 48 }], tof_unplaced: [{ qubit: 'q2', note: unplaced }] } }, '/o');
+  ok(box.textContent.includes(unplaced) && /MW output c8/.test(box.textContent) &&
+     /Time of flight of q1: 28 to 48 ns\. Re-check it on the chip\./.test(box.textContent),
+     '[grid] offer keeps the other lines and names the unplaced one');
   console.log(fails ? fails + ' failure(s)' : 'OK (' + asserts + ' assertions)');
   process.exit(fails ? 1 : 0);
 })();

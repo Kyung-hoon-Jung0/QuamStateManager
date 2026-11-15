@@ -44,6 +44,7 @@ _SCRIPT_DIR = str(Path(__file__).resolve().parent)
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 from _script_common import tof_on_grid  # noqa: E402
+from _script_common import tof_kept_note, tof_rounded_note  # noqa: E402
 from _script_common import QDAC_COMPONENTS_MODULE  # noqa: E402
 from _script_common import library_versions as _library_versions  # noqa: E402
 # The capability catalog is the single source of truth for what the QM stack
@@ -1180,10 +1181,9 @@ def _align_output_timing(machine, spec=None, tof_moves=None):
                 rr.time_of_flight = value_tof
                 pending_moves[qid] = {"from": tof, "sum": tof + ds}
                 if not ok:
-                    pending_moves[qid]["grid_note"] = (f"time of flight {tof + ds:g} ns -> "
-                                                       f"{value_tof:g} ns: {reason}")
-                    pending_notes.append(f"{qid}: time of flight {tof + ds:g} ns -> "
-                                     f"{value_tof:g} ns: {reason}.")
+                    note = tof_rounded_note(tof + ds, value_tof, reason)
+                    pending_moves[qid]["grid_note"] = note
+                    pending_notes.append(f"{qid}: {note}")
                 undo.append((qid, rr, tof))
             except (ValueError, TypeError):
                 failed.append(_undo_readout(port, old, value, qid, undo))
@@ -1214,16 +1214,18 @@ def _align_output_timing(machine, spec=None, tof_moves=None):
                 if not kept_as_set and raw_default is not None:
                     default_ok, default_nearest, default_reason = tof_on_grid(raw_default)
                     if not default_ok:
-                        warnings.append(f"{qid}: time of flight {float(raw_default):g} ns -> "
-                                        f"{default_nearest:g} ns: {default_reason}.")
+                        warnings.append(f"{qid}: The default time of flight {float(raw_default):g} ns "
+                                        f"was written as {default_nearest:g} ns ({default_reason}).")
                 ok, nearest, reason = tof_on_grid(tof)
             except ValueError:
                 continue   # not a number SM can place: left as it is
             if not ok:
-                if not kept_as_set:
+                if kept_as_set:
+                    warnings.append(f"{qid}: {tof_kept_note(tof, nearest, reason)}")
+                else:
                     rr.time_of_flight = nearest
-                warnings.append(f"{qid}: time of flight {tof:g} ns -> {nearest:g} ns: {reason}."
-                                + (" Kept as you set it." if kept_as_set else ""))
+                    warnings.append(f"{qid}: Time of flight {tof:g} ns was written as "
+                                    f"{nearest:g} ns ({reason}).")
     for qid, q in qubits.items():
         rr = getattr(q, "resonator", None)
         ds = moved.get(_output_key(getattr(rr, "opx_output", None)), 0) if rr is not None else 0
