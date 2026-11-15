@@ -214,6 +214,16 @@ def test_an_agent_cannot_create_from_a_persons_check(chip, fake):
     assert r.status_code == 200 and r.get_json()["count"] == 1, "the person's own create still works"
 
 
+def test_a_check_without_a_recorded_caller_is_refused_at_both_doors(chip, fake):
+    j = chip.c.post(CHECK, json=_body()).get_json()
+    czr._TOKENS[j["check_token"]].pop("by")
+    payload = {"check_token": j["check_token"], "plan_sig": j["plan_sig"]}
+    before = chip.snap()
+    (cp, jp), (ca, ja) = _both(chip, CREATE, A_CREATE, payload)
+    assert cp == ca == 409 and jp["check_again"] is True and ja["check_again"] is True
+    assert chip.snap() == before
+
+
 def test_a_person_cannot_create_from_an_agents_check(chip, fake):
     j = chip.c.post(A_CHECK, json=_body(), headers=AGENT).get_json()
     assert czr._TOKENS[j["check_token"]]["by"] == "agent"
