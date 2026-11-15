@@ -504,6 +504,13 @@ _BS = "\\"
     # suffix rule: digit-only tail after a suffix, long suffix, underscore rejects
     ("OSError: /usr/lib/libx.so.6", "OSError: libx.so.6"),
     ("OSError: /tmp/data.backup gone", "OSError: data.backup gone"),
+    # a slash-led pointer into the state is not a file, whatever its last key looks like
+    ("KeyError: /qubits/q1/xy.operations missing", "KeyError: /qubits/q1/xy.operations missing"),
+    ("pointer /qubits/q1.resonator missing", "pointer /qubits/q1.resonator missing"),
+    ("'/qubit_pairs/a-b/coupler.id' not found", "'/qubit_pairs/a-b/coupler.id' not found"),
+    ("/wiring/q1 map/x.json bad", "/wiring/q1 map/x.json bad"),
+    ("see /qubits/q1/z.flux in /data/run/ds.h5", "see /qubits/q1/z.flux in ds.h5"),
+    ("OSError: /qubitsx/run/ds.h5 gone", "OSError: ds.h5 gone"),
     ("OSError: /srv/node.journal", "OSError: node.journal"),
     ("KeyError: /qubits/q1.xy_detuning", "KeyError: /qubits/q1.xy_detuning"),
     ("KeyError: /a/b.c_d.7", "KeyError: /a/b.c_d.7"),

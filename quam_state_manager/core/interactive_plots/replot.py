@@ -575,6 +575,11 @@ _PATH_TOKEN_RE = re.compile(
 _DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 _UNC_RE = re.compile(r"^\\\\[^\\/\s]+\\")
 _SUFFIX_RE = re.compile(r"\.[A-Za-z][A-Za-z0-9]*(?:\.[0-9]+)*$")
+# The top-level collections of a state file: a slash-led path starting with one of them is
+# a pointer into the state (``/qubits/q1/xy.operations``), never a file on disk.
+_STATE_ROOTS = frozenset(("qubits", "qubit_pairs", "ports", "wiring", "network", "octaves",
+                          "mixers", "twpas", "active_qubit_names",
+                          "active_qubit_pair_names"))
 _LEAD = "([{<="
 _TRAIL = ",;:)]}>."
 
@@ -595,6 +600,11 @@ def _has_file_suffix(name: str) -> bool:
     return _SUFFIX_RE.search(name) is not None
 
 
+def _is_state_pointer(tok: str) -> bool:
+    """A slash-led path whose first part is a state collection (``_STATE_ROOTS``)."""
+    return tok.startswith("/") and tok[1:].split("/", 1)[0] in _STATE_ROOTS
+
+
 def _is_file_path(tok: str) -> bool:
     """A real file path: a drive path, a UNC path (also with one leading backslash),
     or a POSIX absolute path of at least two parts ending in a file name with a suffix.
@@ -604,6 +614,8 @@ def _is_file_path(tok: str) -> bool:
     """
     if _DRIVE_RE.match(tok) or _UNC_RE.match(tok):
         return True
+    if _is_state_pointer(tok):
+        return False
     has_ext = _has_file_suffix(_base_name(tok))
     if tok.startswith("\\") and tok.count("\\") >= 2:
         return has_ext
@@ -644,7 +656,7 @@ def _shorten_paths(line: str) -> str:
         is_file = bool(core) and _is_file_path(core)
         rooted = (bool(core) and (core[0] in "\\/" or _DRIVE_RE.match(core) is not None)
                   and len(_base_name(core)) < len(core))
-        if not (is_file or rooted):
+        if not (is_file or rooted) or _is_state_pointer(core):
             out.append(m.group(0))
             continue
         if rooted:
