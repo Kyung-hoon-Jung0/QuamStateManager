@@ -676,6 +676,11 @@ def test_the_routes_answer_in_the_frozen_contract_shape(tmp_path):
         for holder in [body.get("row") or {}] + list(body.get("segments") or []):
             if isinstance(holder, dict) and isinstance(holder.get("nearest"), dict):
                 holder["nearest"].pop("words", None)
+        # a line whose stored amplitude is text carries the additive flag `amplitude_text`
+        for holder in [body.get("row") or {}] + list(body.get("segments") or []):
+            for line in (holder.get("lines") or []) if isinstance(holder, dict) else []:
+                if isinstance(line, dict):
+                    line.pop("amplitude_text", None)
         _subset(_shape(body), _shape(frozen[name]), name)
     scan_keys = set(live["loss_rig5q"]["curves"]["q1"]["scan"])
     frozen_scan = next(e["scan"] for e in frozen["loss_rig5q"]["curves"].values() if e["scan"])
