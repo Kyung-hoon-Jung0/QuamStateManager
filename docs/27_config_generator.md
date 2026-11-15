@@ -712,8 +712,9 @@ same rule applies to every readout, provisionally untested on LF-FEM and OPX+.
   crossing `a.ref` once toward `x` and once toward `y` is not one (`b.x = "#/a/ref/y"` reads `b.y`).
   A leaf is named by its real keys joined with "/", the form a QUAM pointer to it takes, so a key
   holding a "." keeps it (`#/shared/tof.base` is named `shared/tof.base`). It is named by the leaf
-  it lands on, with "(through <first hop>)" for a chain; it is listed in `tof_unplaced` (with its `target`) and Apply leaves the pointer string at
-  that leaf. When the target is a time of flight the same plan moves, the item carries `follows`.
+  it lands on, with "(through <first hop>)" for a chain; it is listed in `tof_unplaced` (with its
+  `target`) and Apply leaves the pointer string at that leaf. When the target is a time of flight
+  the same plan moves, the item carries `follows`.
   If the target moves by the same amount as the resonator's own readout output, it reads "Time of
   flight of q2 is a reference to <target>; it follows that value (now 48 ns).". If not (the readout
   output does not move, or the target was rounded or raised to the floor), the item carries `lag`
@@ -737,9 +738,10 @@ same rule applies to every readout, provisionally untested on LF-FEM and OPX+.
   over 64 pointers) reads "... is a reference to <target> that does not resolve to a number (it
   holds nan); it is not moved."; for a `#./` naming a leaf that is not stored the parenthesis is
   "(#./inferred_x names a leaf that is not stored)" and the target is the chain leaf holding it
-  (the leaf it names when the resonator leaf itself holds it). Any other stored value the rule cannot place is not written: it is listed in
-  `tof_unplaced` with a sentence naming why (no time of flight stored, a value that is not a number, a
-  value that is not finite, or a sum that is negative), and the rest of the shift is still offered.
+  (the leaf it names when the resonator leaf itself holds it). Any other stored value the rule
+  cannot place is not written: it is listed in `tof_unplaced` with a sentence naming why (no time
+  of flight stored, a value that is not a number, a value that is not finite, or a sum that is
+  negative), and the rest of the shift is still offered.
   The Re-generate question names the qubits not moved in one clause (every one of them; a `follows`
   item is not in it); the full sentence is its own line under it, in the offer text and in the
   applied note. After Apply the output timing review (`output_timing.summary` `tof_unplaced`) lists

@@ -201,6 +201,17 @@ def test_cross_forgets_a_finished_crossing():
     assert r["resolvable"] is True and r["resolved_path"] == "b.y"
     assert [h["from_path"] for h in r["chain"]] == ["q.leaf", "a.ref", "b.y.x", "a.ref"]
 
+
+def test_cross_tells_nested_crossings_apart_by_the_whole_path_still_to_walk():
+    # c.p is met twice with w still to walk inside it, but with z and then k still
+    # to walk in the outer crossing: not a cycle, the walk lands on d.w.k = 26
+    m = {"a": {"ref": "#/c/p/w"}, "c": {"p": "#/d"}, "d": {"w": {"z": "#/e/r/k", "k": 26}},
+         "e": {"r": "#/c/p/w"}, "q": {"leaf": "#/a/ref/z"}}
+    r = resolve_field_target(m, "q.leaf", cross=True)
+    assert r["resolvable"] is True
+    assert r["resolved_path"] == "d.w.k" and r["resolved_value"] == 26
+    assert [h["from_path"] for h in r["chain"]] == ["q.leaf", "a.ref", "c.p", "d.w.z", "e.r", "c.p"]
+
 def _chain(hops: int) -> dict:
     """q.leaf -> h0 -> ... -> h{hops-2} -> number: exactly *hops* pointers followed."""
     m = {"h": {f"h{i}": f"#/h/h{i + 1}" for i in range(hops - 1)}, "q": {"leaf": "#/h/h0"}}

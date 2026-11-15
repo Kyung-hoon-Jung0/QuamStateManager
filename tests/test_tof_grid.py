@@ -722,6 +722,23 @@ def test_a_finished_crossing_does_not_refuse_a_later_crossing_of_the_same_pointe
     assert ref["note"] == NOT_A_NUMBER.format("shared/b/y", " (it holds an object)")
 
 
+def test_nested_crossings_of_one_pointer_with_different_outer_paths_are_not_a_cycle():
+    # shared/c/p is crossed twice toward w, once with z and once with k still to
+    # walk outside it: a legal walk that ends on shared/d/w/k = 26
+    state, wiring = _chip(ro_band=3, tof=28)
+    state["shared"] = {"a": {"ref": "#/shared/c/p/w"}, "c": {"p": "#/shared/d"},
+                       "d": {"w": {"z": "#/shared/e/r/k", "k": 26}}, "e": {"r": "#/shared/c/p/w"}}
+    state["qubits"]["q2"]["resonator"]["time_of_flight"] = "#/shared/a/ref/z"
+    assert _cross_chain(state) == [
+        "qubits/q2/resonator/time_of_flight", "shared/a/ref", "shared/c/p", "shared/d/w/z",
+        "shared/e/r", "shared/c/p"]
+    (ref,) = regenerate.mw_band_shift_plan(state, wiring)["tof_unplaced"]
+    assert ref["target"] == "shared/d/w/k"
+    assert ref["note"] == ("Time of flight of q2 is a reference to shared/d/w/k (through "
+                           "shared/a/ref/z); it is not moved. Move it at shared/d/w/k if that is "
+                           "meant.")
+
+
 def _cross_chain(state: dict) -> list[str]:
     """Where each pointer of the q2 time of flight walk (cross mode) was met."""
     from quam_state_manager.core import pointer_path
