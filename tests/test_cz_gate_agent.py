@@ -15,6 +15,7 @@ as in the person's tests; the chip copies, tokens and doors are real."""
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -183,6 +184,27 @@ def test_a_broken_create_is_refused_with_the_persons_words(chip, fake, breakage,
     assert rp.status_code == ra.status_code == 409
     assert rp.get_json()["error"] == ra.get_json()["error"] == words
     assert chip.snap() == before
+
+
+def _no_tag(text: str) -> bool:
+    """No refusal sentence carries the planner's name routing tag."""
+    return re.search(r"(^|[\s\"])name: [A-Z]", text) is None
+
+
+def test_the_agents_answers_carry_no_name_tag(chip, fake):
+    pre = chip.c.post(CHECK, json=_body(pairs=["q2-3"])).get_json()
+    chip.c.post(CREATE, json={"check_token": pre["check_token"], "plan_sig": pre["plan_sig"]})
+    tagged = chip.c.post(PLAN, json=_body(pairs=["q2-3"])).get_data(as_text=True)
+    assert not _no_tag(tagged)  # the person's route keeps the tag for the dialog's routing
+    body = _body(pairs=["q1-2", "q2-3"])
+    p = chip.c.post(A_PLAN, json=body, headers=AGENT)
+    assert p.get_json()["pairs"][1]["refusals"] and _no_tag(p.get_data(as_text=True))
+    c = chip.c.post(A_CHECK, json=body, headers=AGENT)
+    assert _no_tag(c.get_data(as_text=True))
+    j = c.get_json()
+    r = chip.c.post(A_CREATE, json={"check_token": j["check_token"], "plan_sig": j["plan_sig"],
+                                    "reason": "a square CZ to compare"}, headers=AGENT)
+    assert r.get_json()["skipped"][0]["pair"] == "q2-3" and _no_tag(r.get_data(as_text=True))
 
 
 def test_the_persons_create_route_still_refuses_an_agent(chip, fake):

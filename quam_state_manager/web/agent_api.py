@@ -3149,18 +3149,42 @@ def _answer_of(resp):
     return out.get_json(silent=True) or {}, out.status_code
 
 
+#: the planner's routing tag on a reason a new gate name fixes; the dialog
+#: places such a reason under Name and shows it without the tag
+_NAME_TAG = re.compile(r"(?:(?<=\s)|^)name: (?=[A-Z])")
+#: the answer keys whose text carries refusal sentences
+_REASON_KEYS = frozenset({"refusals", "class_refusals", "reason", "error", "headline"})
+
+
+def _plain_reasons(obj, under: bool = False):
+    """*obj* with the name tag dropped from every refusal sentence (the same
+    rule as the dialog's ``plainReason``), so an agent reads the person's words."""
+    if isinstance(obj, dict):
+        return {k: _plain_reasons(v, under or k in _REASON_KEYS) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_plain_reasons(v, under) for v in obj]
+    if under and isinstance(obj, str):
+        return _NAME_TAG.sub("", obj)
+    return obj
+
+
+def _plain_answer(resp):
+    payload, code = _answer_of(resp)
+    return jsonify(_plain_reasons(payload)), code
+
+
 @agent_bp.route("/cz-gate/plan", methods=["POST"])
 def cz_gate_plan():
     """The gate dialog's plan, for an agent. Writes nothing."""
     from quam_state_manager.web import cz_gate_routes as czr
-    return czr.plan_answer()
+    return _plain_answer(czr.plan_answer())
 
 
 @agent_bp.route("/cz-gate/check", methods=["POST"])
 def cz_gate_check():
     """The gate dialog's check, for an agent: the same token as a person's."""
     from quam_state_manager.web import cz_gate_routes as czr
-    return czr.check_answer()
+    return _plain_answer(czr.check_answer())
 
 
 #: what the create card says about the way to the chip, by apply mode
@@ -3224,6 +3248,7 @@ def cz_gate_create():
     data = data if isinstance(data, dict) else {}
     tok = czr._token(data.get("check_token")) or {}
     payload, code = _answer_of(czr.create_answer())
+    payload = _plain_reasons(payload)
     if code != 200 or not payload.get("ok"):
         return jsonify(payload), code
     ctx, store = r._active_ctx(), r._store()

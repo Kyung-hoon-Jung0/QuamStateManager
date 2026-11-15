@@ -411,9 +411,12 @@
         var range = typeof c.range === 'number' ? 'range ±' + fmt(c.range) + ' V' : 'range not known';
         return (port ? 'port ' + port : 'port not known') + ', ' + range;
     }
+    /* A reason a new gate name fixes goes under Name, even when it names a
+       spectator operation. */
     function spectRefusals(pair) {
         var pr = planRow(pair);
-        return ((pr && !pr.ok && pr.refusals) || []).filter(function (r) { return /spectator/i.test(r); });
+        var named = (pr && pr.name_refusals) || [];
+        return ((pr && !pr.ok && pr.refusals) || []).filter(function (r) { return /spectator/i.test(r) && named.indexOf(r) < 0; });
     }
     function fillSpect() {
         var panel = $('czg-spect');
@@ -782,9 +785,28 @@
         return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(payload) })
             .then(function (r) {
-                return r.json().then(function (j) { return { r: r, j: j || {} }; },
+                return r.json().then(function (j) { return { r: r, j: plainAnswer(j || {}) }; },
                                      function () { return { r: r, j: {} }; });
             });
+    }
+    /* The server tags a reason a new gate name fixes with "name: ". The tag
+       routes, it is never shown: every plan, check and create answer passes
+       here once, so each refusal, verdict reason, skipped reason and error
+       reads plainly, and a row's tagged reasons are kept in name_refusals. */
+    var NAME_TAG = /(^|\s)name: (?=[A-Z])/g;
+    var REASON_KEYS = { refusals: 1, class_refusals: 1, reason: 1, error: 1, headline: 1 };
+    function plainReason(r) { return typeof r === 'string' ? r.replace(NAME_TAG, '$1') : r; }
+    function plainAnswer(x, under) {
+        if (Array.isArray(x)) return x.map(function (v) { return plainAnswer(v, under); });
+        if (x && typeof x === 'object') {
+            var out = {};
+            Object.keys(x).forEach(function (k) { out[k] = plainAnswer(x[k], under || REASON_KEYS[k] === 1); });
+            if (Array.isArray(x.refusals)) {
+                out.name_refusals = x.refusals.filter(function (r) { return typeof r === 'string' && r.indexOf('name: ') === 0; }).map(plainReason);
+            }
+            return out;
+        }
+        return under ? plainReason(x) : x;
     }
     function plan() {
         var b = body();
@@ -813,7 +835,8 @@
         var why = clear($('czg-name-why'));
         var aboutClass = fp && !fp.ok ? (fp.class_refusals || []) : [];
         var aboutSpect = fp ? spectRefusals(fp.pair) : [];
-        var split = splitRefusals(fp && !fp.ok ? (fp.refusals || []).filter(function (r) { return aboutClass.indexOf(r) < 0 && aboutSpect.indexOf(r) < 0; }) : []);
+        var split = splitRefusals(fp && !fp.ok ? (fp.refusals || []).filter(function (r) { return aboutClass.indexOf(r) < 0 && aboutSpect.indexOf(r) < 0; }) : [],
+                                  fp && !fp.ok ? (fp.name_refusals || []) : []);
         var bad = split.names;
         var general = clear($('czg-refusals'));
         split.rest.forEach(function (r) {
@@ -866,11 +889,12 @@
     }
     /* The server names a refused value by "<slot>.<field>: <sentence>" or
        "gate setting <key>: <sentence>": those go on the field they name.
-       "name: <sentence>" belongs under Name, independent of its wording. */
-    function splitRefusals(list) {
+       A reason the server tagged "name: " (plainAnswer keeps it in
+       name_refusals) belongs under Name, independent of its wording. */
+    function splitRefusals(list, named) {
         var fields = [], rest = [], names = [];
         list.forEach(function (r) {
-            if (r.indexOf('name: ') === 0) { names.push(r.slice(6)); return; }
+            if ((named || []).indexOf(r) >= 0) { names.push(r); return; }
             var m = /^gate setting (.+?): (Type .+)$/.exec(r);
             if (m && findField('@settings', m[1])) { fields.push({ field: '@settings', name: m[1], why: m[2] }); return; }
             m = /^([^.:\s]+)\.([^:]+): (.+)$/.exec(r);

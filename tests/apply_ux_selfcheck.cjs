@@ -146,6 +146,23 @@ window.showToast = function (msg) { toasts.push(String(msg)); };
                 ok(activate.isConnected && !activate.disabled && !activate.hasAttribute('aria-busy'), 'a connected button is restored after a failed response');
             }
         }
+        // a second Make active button (another gate) is refused while the first request is pending
+        {
+            const one = '<div class="gate-status" data-n="N"><button class="gate-status-activate" hx-post="/make-active-N" hx-target="closest .gate-status" hx-swap="outerHTML">Make active</button></div>';
+            w.document.getElementById('wrap').innerHTML = one.replace(/N/g, '1') + one.replace(/N/g, '2');
+            w.htmx.process(w.document.body);
+            const [first, second] = w.document.querySelectorAll('button');
+            pending = null;
+            first.click();
+            const firstXhr = pending;
+            second.click();
+            await flush(10);
+            ok(firstXhr && pending === firstXhr && w.GateStatus.busy() && !second.disabled && !second.hasAttribute('aria-busy'),
+               'a second Make active button sends nothing while the first activation is pending');
+            firstXhr.answer(200, '<div class="gate-status">Active now</div>');
+            await flush(30);
+            ok(!w.GateStatus.busy() && pending === firstXhr, 'the first answer releases the latch; the refused press never sent');
+        }
         w.document.addEventListener('htmx:beforeRequest', (ev) => ev.preventDefault(), { once: true });
         w.document.querySelector('button').click();
         ok(!w.GateStatus.busy(), 'a cancelled request does not strand the latch');

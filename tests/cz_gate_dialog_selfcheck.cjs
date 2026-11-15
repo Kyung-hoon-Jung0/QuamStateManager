@@ -311,11 +311,28 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     box.dispatchEvent(new window.Event('change', { bubbles: true }));
     await settle();
     ok(sent[sent.length - 1].body.pairs.join() === 'q1-2,q2-3' && /can be created/.test($('#czg-more-list').textContent), 'other pairs join the plan and say so');
-    queue.check.push((b) => checkOk(b, { refuse: 'q2-3' }));
+    // the server's name tag routes a reason; it is never shown, on any pair's row
+    const noTag = (t) => !/(^|\s)name: [A-Z]/.test(t);
+    {
+        const TAGGED = 'name: The pair q2-3 already has a gate named this way. Pick another gate name.';
+        const amp = $('input[data-czg-name="amplitude"]');
+        const was = amp.value;
+        queue.plan.push((b) => { const j = planOk(b); j.pairs[1].ok = false; j.pairs[1].refusals = [TAGGED]; return j; });
+        type(amp, was);
+        await settle();
+        const why = $('#czg-more-list [data-czg-more-row] input[value="q2-3"]').closest('[data-czg-more-row]').querySelector('[data-czg-more-why]');
+        ok(why.textContent === TAGGED.slice(6) && noTag($('#czg-writes').textContent) && $('#czg-name-why').hidden,
+           'the second pair name refusal reads plainly in its row and in What will be written');
+        type(amp, was);
+        await settle();
+    }
+    queue.check.push((b) => { const j = checkOk(b, { refuse: 'q2-3' }); j.pairs[1].verdict.reason = 'name: ' + j.pairs[1].verdict.reason; return j; });
     prim().click();
     await settle();
     if (process.env.CZG_DEBUG) console.log('DBG', prim().textContent, '|', alertText(), '|', $('#czg-status').textContent, sent.slice(-2).map(s => s.kind));
     ok(prim().textContent === 'Create gate' && /1 of 2 cannot be created: q2-3/.test(alertText()) && /can still be created/.test(alertText()) && /A gate named so exists/.test(alertText()), 'one pair refused: named in the banner, the rest can still be created');
+    ok(noTag(alertText()) && noTag($('#czg-writes').textContent) && /A gate named so exists/.test($('#czg-writes').textContent),
+       'a tagged verdict reason reads plainly in the banner and in What will be written');
     ok(!$('#czg-pairs').hidden && $('#czg-pairs').querySelectorAll('[data-czg-pair-idx]').length === 2 && $('#czg-pairs .ui-segmented-on').textContent.indexOf('q2-3') === 0 && $('#czg-pairs .ui-badge--danger'), 'pair switch: one option per pair with its mark, the failing pair shown first');
     ok(!$('#czg-zone-result').classList.contains('ui-zone--quiet') && $('#czg-empty').hidden, 'after a check answer the Result zone is not quiet');
     ok([...$('#czg-pairs').querySelectorAll('[data-czg-pair-idx]')].every((b) => ![...b.childNodes].some((n) => n.nodeType === 3 && /^\s*$/.test(n.textContent))),
@@ -903,6 +920,22 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
         type(fld('q4', 'level'), '-0.03');
         await settle();
         ok(!errOf(fld('q3', 'level')) && !prim().disabled, 'valid levels: no error, Check enabled');
+        // a spectator operation that already exists is fixed by another gate name: once, under Name, untagged
+        {
+            const SP_HIT = 'The operation cz_sp_spectator_pulse_q1_q2 already exists on q3.z. Pick another gate name.';
+            const before = $('#czg-name').value;
+            queue.plan.push((b) => { const j = spectPlan(b, planOk(b)); j.pairs[0].ok = false; j.pairs[0].refusals = ['name: ' + SP_HIT]; return j; });
+            type($('#czg-name'), 'cz_sp');
+            await settle();
+            const leaves = [...doc.querySelectorAll('#czg-dialog *')].filter((n) => n.children.length === 0);
+            const hits = [...doc.querySelectorAll('#czg-form *')].filter((n) => n.children.length === 0 && n.textContent.indexOf(SP_HIT) >= 0);
+            ok($('#czg-name-why').textContent === SP_HIT && $('#czg-name').getAttribute('aria-invalid') === 'true'
+               && hits.length === 1 && $('#czg-name-why').contains(hits[0]) && $('#czg-spect-body').textContent.indexOf('already exists') < 0
+               && leaves.every((n) => !/name: The operation/.test(n.textContent)),
+               'a spectator operation collision is said once in the form, under Name, without the tag, not in the spectator panel');
+            type($('#czg-name'), before);
+            await settle();
+        }
         ok(JSON.stringify(last().spectators) === JSON.stringify({ 'q1-2': [{ qubit: 'q3', length: 48, level: 0.05 }, { qubit: 'q4', length: 32, level: -0.03 }] }),
            'one pair: the spectators field equals the server contract\'s example');
         ok(/q3\.z will hold 1 spectator operation, q4\.z will hold 2 spectator operations/.test($('[data-czg-spect-ops="q1-2"]').textContent)
