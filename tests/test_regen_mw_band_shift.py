@@ -190,6 +190,15 @@ def test_the_route_asks_once_and_honours_shift_and_keep(tmp_path, monkeypatch):
     assert mw["2"]["delay"] == 20 and lf["2"]["delay"] == 83
 
 
+def test_the_route_states_the_time_of_flight_before_the_shift(tmp_path, monkeypatch):
+    client, body = _route(tmp_path, monkeypatch, _chip(ro_band=3, tof=32))
+    body["mw_shift_ack"] = "shift"
+    res = client.post("/regenerate/build", json=body).get_json()
+    assert res.get("ok") is True
+    tof = res["result"]["output_timing"]["tof"]
+    assert tof and all(t["moved"] is True and t["from"] == 32 and t["value"] == 52 for t in tof)
+
+
 def test_both_offers_are_one_question(tmp_path, monkeypatch):
     state, wiring = _chip()
     state["ports"]["analog_outputs"]["con1"]["3"]["9"]["delay"] = 0   # the old coupler 0
