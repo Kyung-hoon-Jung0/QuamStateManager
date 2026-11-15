@@ -78,10 +78,24 @@ window.runLoadCheck = (function () {
                 for (var j = 0; j < det.length; j++) html += '<p class="ui-callout-text">' + esc(det[j]) + '</p>';
                 html += '</details>';
             }
+            if (window.CoreRecommend) html += window.CoreRecommend.html(f);
             html += '</div>';
         }
-        return html;
+        return html ? '<div data-loadcheck-core>' + html + '</div>' : '';
     }
+    // After a staged recommendation, the warning lines are re-read from the working copy.
+    function onCoreFindings(list) {
+        document.querySelectorAll('[data-loadcheck-core]').forEach(function (slot) {
+            var h = coreWarnHtml(list);
+            if (!h) { slot.innerHTML = ''; return; }
+            var tmp = document.createElement('div');
+            tmp.innerHTML = h;
+            slot.innerHTML = tmp.firstChild.innerHTML;
+        });
+    }
+    setTimeout(function () {
+        if (window.CoreRecommend) window.CoreRecommend.onApplied(onCoreFindings);
+    }, 0);
     function envLabel(env) {
         if (!env || !env.name) return '';
         var src = { project: 'project', selected: 'selected machine-wide', chosen: 'chosen here' }[env.source] || '';
@@ -161,3 +175,148 @@ document.addEventListener('click', function (evt) {
 });
 
 /* ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ */
+/* Recommend core layout (Load check and Chip Status)                  */
+/* Press -> preview -> confirm step, Auto-Sync note read now -> staged */
+/* undo group through window.applyDiagFixAll -> re-read the findings.  */
+/* ------------------------------------------------------------------ */
+window.CoreRecommend = (function () {
+    var NOTE_FAILED = 'Could not read the Auto-Sync state; try again.';
+    function esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, function (ch) {
+            return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+        });
+    }
+    function num(x) { return (typeof x === 'number' && isFinite(x)) ? String(x) : ''; }
+    function val(x) { return x == null ? 'null' : String(x); }
+    function where(p) { return esc(p.controller) + ' FEM ' + esc(p.fem); }
+    function previewHtml(p) {
+        var est = p.cores && p.cores.estimated ? ' (estimated)' : '';
+        var h = '<p class="ui-callout-text" data-core-rec-counts>Cores on ' + where(p) + ': '
+            + num(p.cores.before) + ' / ' + num(p.cores.limit) + ' now, '
+            + num(p.cores.after) + ' / ' + num(p.cores.limit) + est + ' after.</p>';
+        var g = p.groups_after || [];
+        if (g.length) {
+            h += '<table class="ui-table" aria-label="Shared cores after"><thead><tr><th>core</th>'
+                + '<th>elements</th><th class="ui-table-num">cost</th></tr></thead><tbody>';
+            g.forEach(function (x) {
+                h += '<tr><td>' + esc(x.core) + '</td><td>' + esc((x.elements || []).join(', '))
+                    + '</td><td class="ui-table-num">' + num(x.cost) + '</td></tr>';
+            });
+            h += '</tbody></table>';
+        }
+        var c = p.changes || [];
+        if (c.length) {
+            h += '<table class="ui-table" aria-label="Changes" data-core-rec-changes><thead><tr>'
+                + '<th>element</th><th>key</th><th>now</th><th>after</th></tr></thead><tbody>';
+            c.forEach(function (x) {
+                h += '<tr><td>' + esc(x.element) + '</td><td>' + esc(x.key) + '</td><td>'
+                    + esc(val(x.before)) + '</td><td>' + esc(val(x.after)) + '</td></tr>';
+            });
+            h += '</tbody></table>';
+        }
+        (p.kept || []).forEach(function (k) {
+            h += '<p class="ui-callout-text" data-core-rec-kept>' + esc(k.element) + ' ' + esc(k.note) + '</p>';
+        });
+        (p.unresolved || []).forEach(function (u) {
+            h += '<p class="ui-callout-text" data-core-rec-unresolved>' + esc(u.element) + '.'
+                + esc(u.field) + ': port not read (' + esc(u.reason) + '); not placed.</p>';
+        });
+        return h;
+    }
+    /* One finding's recommendation block ('' when it carries none). */
+    function html(f) {
+        var p = f && f.preview;
+        if (!p) return '';
+        if (!p.button) {
+            return p.panel_line ? '<p class="ui-callout-text" data-core-rec-panel>' + esc(p.panel_line) + '</p>' : '';
+        }
+        var items = JSON.stringify(f.fixes || []);
+        return '<div data-core-rec>'
+            + '<div class="ui-actions ui-actions--start"><button type="button" class="btn-sync" data-core-rec-open>'
+            + 'Recommend core layout</button></div>'
+            + '<div data-core-rec-preview hidden>' + previewHtml(p)
+            + '<p class="ui-callout-text" data-core-rec-note hidden></p>'
+            + '<div class="ui-actions ui-actions--start">'
+            + '<button type="button" class="btn-sync" data-core-rec-apply disabled data-items="' + esc(items) + '">'
+            + 'Stage this layout</button>'
+            + '<button type="button" class="btn-sync" data-core-rec-cancel>Cancel</button></div></div></div>';
+    }
+    function openPreview(box) {
+        var pv = box.querySelector('[data-core-rec-preview]');
+        var note = box.querySelector('[data-core-rec-note]');
+        var apply = box.querySelector('[data-core-rec-apply]');
+        pv.hidden = false; apply.disabled = true; note.hidden = true; note.textContent = '';
+        return fetch('/diagnostics/auto-push-note', { headers: { 'Accept': 'application/json' } })
+            .then(function (r) { if (!r.ok) throw new Error('status ' + r.status); return r.json(); })
+            .then(function (d) {
+                if (!d || d.ok !== true) throw new Error('bad body');
+                if (d.note) { note.textContent = d.note; note.hidden = false; }
+                apply.disabled = false;
+            })
+            .catch(function () { note.textContent = NOTE_FAILED; note.hidden = false; apply.disabled = true; });
+    }
+    var refreshers = [];
+    function onApplied(fn) { if (typeof fn === 'function') refreshers.push(fn); }
+    /* Re-read the core findings from the working copy and hand them to every surface. */
+    function refresh() {
+        return fetch('/diagnostics/core-findings', { headers: { 'Accept': 'application/json' } })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                var list = (d && Array.isArray(d.findings)) ? d.findings : [];
+                refreshers.forEach(function (fn) { try { fn(list); } catch (e) { /* one surface only */ } });
+                return list;
+            })
+            .catch(function () { return null; });
+    }
+    function press(apply) {
+        if (!window.applyDiagFixAll) return null;
+        var p = window.applyDiagFixAll(apply);
+        return p && p.then ? p.then(function () { return refresh(); }) : null;
+    }
+    document.addEventListener('click', function (evt) {
+        var t = evt.target && evt.target.closest ? evt.target : null;
+        if (!t) return;
+        var box = t.closest('[data-core-rec]');
+        if (!box) return;
+        if (t.closest('[data-core-rec-open]')) { evt.preventDefault(); openPreview(box); return; }
+        if (t.closest('[data-core-rec-cancel]')) {
+            evt.preventDefault();
+            box.querySelector('[data-core-rec-preview]').hidden = true;
+            box.querySelector('[data-core-rec-apply]').disabled = true;
+            return;
+        }
+        var ap = t.closest('[data-core-rec-apply]');
+        if (ap && !ap.disabled) { evt.preventDefault(); press(ap); }
+    });
+    /* Chip Status: one warning block per core layout finding that carries a
+       recommendation, in a slot right after the given element; re-rendered in
+       place when the findings are re-read. */
+    function blocks(list) {
+        var h = '';
+        (list || []).forEach(function (f) {
+            if (!f || !f.preview || (f.category && f.category !== 'core_layout')) return;
+            h += '<div class="ui-callout ui-callout--warn"><p class="ui-callout-text"><span class="ui-callout-title">'
+                + esc('Core layout warning: ' + (f.message || '')) + '</span></p>' + html(f) + '</div>';
+        });
+        return h;
+    }
+    function mountAfter(anchor, list) {
+        if (!anchor || !anchor.parentNode) return null;
+        var slot = anchor.parentNode.querySelector('[data-core-rec-slot]');
+        if (!slot) {
+            slot = document.createElement('div');
+            slot.setAttribute('data-core-rec-slot', '');
+            anchor.parentNode.insertBefore(slot, anchor.nextSibling);
+        }
+        slot.innerHTML = blocks(list);
+        return slot;
+    }
+    onApplied(function (list) {
+        document.querySelectorAll('[data-core-rec-slot]').forEach(function (slot) { slot.innerHTML = blocks(list); });
+    });
+    return { html: html, previewHtml: previewHtml, refresh: refresh, onApplied: onApplied,
+             mountAfter: mountAfter, blocks: blocks,
+             NOTE_FAILED: NOTE_FAILED };
+})();

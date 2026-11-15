@@ -19227,7 +19227,7 @@ def wiring_view():
             history_count=history_count,
             chip_view=chip_view,
             diag_summary=diag_summary,
-            diag_findings=[f.as_dict() for f in diag_findings],
+            diag_findings=_chip_status_findings(diag_findings),
             # docs/167: SM's seed bands stay, because the editor's per-row
             # "default / edited" marker is a comparison against them. What the
             # page now COMPUTES verdicts from is the lab's resolved spec, and
@@ -36903,12 +36903,33 @@ def _loadcheck_env_name(python_path: str) -> str:
     return parent.name or str(p)
 
 
-def _loadcheck_core_findings(merged: dict) -> list:
-    """The static core budget warnings for the load check (never raises)."""
+def _ctx_read_only(ctx) -> bool:
+    """A chip opened from a run archive (read-only): no staged fix is offered."""
+    return bool(ctx) and ctx.get("type") == "quam" and (ctx.get("origin") or "live") != "live"
+
+
+def _chip_status_findings(findings: list) -> list:
+    """Finding dicts for Chip Status; on a read-only chip the core layout
+    recommendation (its fixes and preview) is left out, so no button shows."""
+    out = [f.as_dict() for f in findings]
+    if _ctx_read_only(_active_ctx()):
+        for d in out:
+            if d.get("category") == "core_layout":
+                d["fixes"], d["preview"] = None, None
+    return out
+
+
+def _loadcheck_core_findings(merged: dict, read_only: bool = False) -> list:
+    """The static core budget warnings for the load check (never raises). A
+    read-only chip (run archive) gets no recommendation button."""
     try:
         from quam_state_manager.core import core_layout
-        return [core_layout.finding_line(f)
-                for f in core_layout.surface_findings(merged, "load_check")]
+        out = [core_layout.finding_line(f)
+               for f in core_layout.surface_findings(merged, "load_check")]
+        if read_only:
+            for f in out:
+                f["fixes"], f["preview"] = [], None
+        return out
     except Exception:  # noqa: BLE001 -- the load verdict never depends on the count
         logger.warning("core budget skipped in the load check", exc_info=True)
         return []
@@ -37015,7 +37036,7 @@ def state_load_check():
                         "lib_versions": result.get("lib_versions") or {},
                         "env": env_info,
                         "links": links,
-                        "core_findings": _loadcheck_core_findings(merged_copy)})
+                        "core_findings": _loadcheck_core_findings(merged_copy, _ctx_read_only(ctx))})
     finally:
         try:
             shutil.rmtree(tmp_root)
@@ -52077,8 +52098,18 @@ def diagnostics_apply_fix():
     # enforces chip identity, current values and current wiring pairing.
     offered = _diag_offered_fixes(modifier.store)
     for item in clean:
-        if item["action"] not in ("set_value", "set_pointer"):
+        if item["action"] not in ("set_value", "set_pointer", "create_value"):
             return jsonify(ok=False, error="unsupported fix action"), 400
+        if item["action"] == "create_value":
+            # Only a missing ``core`` key under an existing element dict may be created.
+            parent_path = item["dot_path"].rpartition(".")[0]
+            try:
+                parent = modifier.store.get_value(parent_path) if parent_path else None
+            except KeyError:
+                parent = None
+            if not (item["dot_path"].endswith(".core") and isinstance(parent, dict)
+                    and "core" not in parent):
+                return jsonify(ok=False, error="fix may only create a missing core key"), 400
         if item["action"] == "set_pointer" and not (
                 item["dot_path"].endswith(".downconverter_frequency")
                 and item["pointer"].startswith("#/ports/mw_outputs/")
@@ -52105,6 +52136,9 @@ def diagnostics_apply_fix():
                 if item["action"] == "set_pointer":
                     modifier.set_value(item["dot_path"], item["pointer"], coerce=False, group_id=gid)
                     new = item["pointer"]
+                elif item["action"] == "create_value":
+                    new = _tp.parse_value(item["value"])
+                    modifier.create_subtree(item["dot_path"], new, group_id=gid)
                 else:
                     new = _tp.parse_value(item["value"])
                     modifier.set_value(item["dot_path"], new, group_id=gid)
@@ -52155,13 +52189,38 @@ def _diag_offered_fixes(store) -> set:
         _downconverter_findings, _frequency_consistency_findings,
     )
     out = set()
+    from quam_state_manager.core.core_layout import offered_fixes as _core_offered
     for fnd in (_frequency_consistency_findings(store) + _downconverter_findings(store.merged)):
         for fix in [fnd.fix, *(fnd.fixes or [])]:
             if not isinstance(fix, dict) or fix.get("action") not in ("set_value", "set_pointer"):
                 continue
             out.add((fix["action"], fix.get("dot_path"),
                      fix.get("pointer") if fix["action"] == "set_pointer" else fix.get("value")))
+    for fix in _core_offered(store.merged):
+        if fix.get("action") in ("set_value", "create_value"):
+            out.add((fix["action"], fix.get("dot_path"), fix.get("value")))
     return out
+
+
+@bp.route("/diagnostics/core-findings", methods=["GET"])
+def diagnostics_core_findings():
+    """The core layout warning lines, re-read from the working copy (after a staged fix)."""
+    ctx = _active_ctx()
+    store = ctx.get("store") if ctx else None
+    if store is None:
+        return jsonify(ok=False, findings=[]), 409
+    return jsonify(ok=True, findings=_loadcheck_core_findings(store.merged, _ctx_read_only(ctx)))
+
+
+@bp.route("/diagnostics/auto-push-note", methods=["GET"])
+def diagnostics_auto_push_note():
+    """The Auto-Sync push sentence, read when a confirm step opens (empty when not armed)."""
+    try:
+        note = _auto_push_note()
+    except Exception:  # noqa: BLE001 - the confirm shows its own failure line
+        logger.warning("auto push note failed", exc_info=True)
+        return jsonify(ok=False), 500
+    return jsonify(ok=True, note=(note or "").strip())
 
 
 # --- Fit Audit (gate-migration triage, docs/50) ---------------------------

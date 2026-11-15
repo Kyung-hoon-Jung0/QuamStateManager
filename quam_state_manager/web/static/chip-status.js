@@ -6184,6 +6184,7 @@ window.ChipStatus.mount = function (opts) {
                 '</div></a>';
         tiles.innerHTML = html;
         if (window.htmx) htmx.process(tiles);
+        if (window.CoreRecommend) window.CoreRecommend.mountAfter(tiles, diagFindings);
 
         // ── Plain-language verdict banner (traffic light) ────────────
         var banner = document.getElementById('topo-verdict-banner');

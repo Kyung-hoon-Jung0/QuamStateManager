@@ -623,7 +623,10 @@ def core_budget_findings(state: dict) -> list:
         rep = core_budget(state)
         if rep.get("error"):
             return [_failed(Finding, rep["error"])]
-        return _findings(Finding, rep)
+        out = _findings(Finding, rep)
+        if any((fd.values or {}).get("kind") == "fem_budget" for fd in out):
+            _attach_recommendation(out, state)
+        return out
     except Exception as exc:
         return [_failed(Finding, type(exc).__name__)]
 
@@ -669,6 +672,22 @@ def _findings(Finding, rep: dict) -> list:
     return out
 
 
+def _attach_recommendation(findings: list, state: dict) -> None:
+    """Put the per-FEM recommendation on each per-FEM finding: ``preview`` and ``fixes``."""
+    fems = recommend_layout(state)["fems"]
+    for fd in findings:
+        v = fd.values if isinstance(fd.values, dict) else {}
+        if v.get("kind") != "fem_budget":
+            continue
+        p = fems.get((v.get("controller"), v.get("fem")))
+        if p is None:
+            continue
+        preview = {k: val for k, val in p.items() if k != "fixes"}
+        fd.preview = preview
+        fd.fixes = list(p["fixes"]) or None
+        v["recommend"] = {"button": p["button"], "panel_line": p["panel_line"]}
+
+
 def surface_fix_line(fem_finding_values: dict, surface: str) -> str:
     """The fix sentence for a per-FEM finding on one surface (``load_check``,
     ``diagnostics`` or ``review``). Core layout cannot fix a route overage."""
@@ -676,7 +695,12 @@ def surface_fix_line(fem_finding_values: dict, surface: str) -> str:
         return PANEL_ROUTES
     if fem_finding_values.get("fem") is None:
         return FIX_REVIEW_CONTROLLER if surface == "review" else FIX_MOVE_CONTROLLER
-    return FIX_REVIEW if surface == "review" else FIX_MOVE
+    if surface == "review":
+        return FIX_REVIEW
+    rec = fem_finding_values.get("recommend") or {}
+    if rec.get("button"):
+        return FIX_RECOMMEND
+    return rec.get("panel_line") or FIX_MOVE
 
 
 def assumed_type_note(fem: dict) -> str | None:
@@ -725,6 +749,8 @@ def surface_findings(state: dict, surface: str) -> list:
         v = fd.values if isinstance(fd.values, dict) else {}
         if v.get("kind") == "fem_budget" and fd.location in by_place:
             fd.detail = fem_detail(by_place[fd.location], surface_fix_line(v, surface))
+        if surface == "review":  # no loaded chip to stage edits on
+            fd.fixes, fd.preview = None, None
     return out
 
 
@@ -735,7 +761,9 @@ def finding_line(finding) -> dict:
     return {"kind": v.get("kind"), "location": finding.location, "message": finding.message,
             "severity": "info" if info else "warning",
             "line": (INFO_LINE_PREFIX if info else LINE_PREFIX).format(message=finding.message),
-            "detail": [ln for ln in (finding.detail or "").split("\n") if ln]}
+            "detail": [ln for ln in (finding.detail or "").split("\n") if ln],
+            "fixes": list(getattr(finding, "fixes", None) or []),
+            "preview": getattr(finding, "preview", None)}
 
 
 def review_table(state: dict) -> dict | None:
@@ -791,3 +819,228 @@ def review_summary(state: dict) -> dict | None:
         return None
     return {"table": table, "findings": findings,
             "risk_note": RISK_NOTE if table and table["shared_groups"] else None}
+
+
+# --- Recommend core layout (a loaded chip) --------------------------------------------
+PANEL_NO_LOWER = "No lower core layout to recommend on {con} FEM {fem}; move elements off that FEM."
+KEPT_NOTE = "keeps '{core}'; no longer shares with {other}"
+
+
+class _Port:
+    """What the shared pinning rule reads from a port: its controller and FEM."""
+    __slots__ = ("controller_id", "fem_id")
+
+    def __init__(self, con, fem):
+        self.controller_id = con
+        self.fem_id = fem
+
+
+class _Node:
+    """A read view of one dict of the raw state, shaped like the quam object the
+    wizard's pinning rule walks. Port fields resolve to a :class:`_Port`; a port
+    that cannot be read resolves to a port with no controller (so the rule never
+    groups it) and is recorded by name. Writing ``core`` records the new name;
+    reading ``core`` returns only a name recorded here, as on a fresh build."""
+
+    def __init__(self, root, path, d, rec):
+        object.__setattr__(self, "_root", root)
+        object.__setattr__(self, "_path", path)
+        object.__setattr__(self, "_d", d)
+        object.__setattr__(self, "_rec", rec)
+
+    def __bool__(self):
+        return bool(self._d)
+
+    def _wrap(self, key, v):
+        path = self._path + (str(key),)
+        if isinstance(v, dict):
+            return _Node(self._root, path, v, self._rec)
+        if isinstance(v, str) and v.startswith("#"):
+            try:
+                tp = target_path(self._root, v, path)
+                target = _get_path(self._root, tuple(tp)) if tp else None
+            except Exception:  # noqa: BLE001 - an unreadable pointer is no object
+                target = None
+            if isinstance(target, dict):
+                return _Node(self._root, tuple(tp), target, self._rec)
+            return None
+        return v
+
+    def items(self):
+        return [(k, self._wrap(k, v)) for k, v in self._d.items() if isinstance(v, dict)]
+
+    def values(self):
+        return [w for _k, w in self.items()]
+
+    def __getattr__(self, name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        if name == "core":
+            return self._rec["assigned"].get(".".join(self._path))
+        if name in _PORT_KEYS:
+            ref = self._d.get(name)
+            if ref is None:
+                return None
+            try:
+                _kind, con, fem, _pd = _resolve_port(self._root, self._path + (name,), ref, name)
+            except (_Unresolved, RecursionError) as exc:
+                reason = exc.reason if isinstance(exc, _Unresolved) else REASON_CYCLE
+                self._rec["unresolved"].append({"element": ".".join(self._path), "field": name,
+                                                "ref": ref, "reason": reason})
+                return _Port(None, None)
+            return _Port(con, fem)
+        if name not in self._d:
+            return None
+        return self._wrap(name, self._d[name])
+
+    def __setattr__(self, name, value):
+        if name != "core":
+            raise AttributeError(name)
+        self._rec["assigned"][".".join(self._path)] = value
+
+
+def _pin_rule():
+    """The wizard build's own pinning function (one implementation)."""
+    from quam_state_manager.core.script_emitter import _run_build
+    return _run_build()._pin_cores
+
+
+def _name_is_text(name) -> bool:
+    from quam_state_manager.core.type_policy import parse_value
+    try:
+        return isinstance(name, str) and parse_value(name) == name
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def recommended_assignment(state: dict) -> tuple[dict, list]:
+    """({element dot path: core name}, unresolved ports) that the wizard's layout rule
+    gives this state, read from the raw dict."""
+    rec: dict = {"assigned": {}, "unresolved": []}
+    if isinstance(state, dict):
+        _pin_rule()(_Node(state, (), state, rec))
+    seen, unresolved = set(), []
+    for u in rec["unresolved"]:
+        key = (u["element"], u["field"])
+        if key not in seen:
+            seen.add(key)
+            unresolved.append(u)
+    return rec["assigned"], unresolved
+
+
+def _fem_key(f: dict) -> tuple:
+    return (f["controller"], f["fem"])
+
+
+def recommend_layout(state: dict) -> dict:
+    """The recommended core layout per (controller, FEM) for a loaded chip.
+
+    ``{"fems": {(con, fem): preview}, "unresolved": [...]}``; each preview holds
+    controller, fem, fem_type, cores (limit, before, after, firm_after, estimated),
+    routes, groups_after, changes, kept, button, panel_line, fixes and the
+    unresolved ports of that FEM. Fixes are offered on a FEM only when the layout
+    lowers its static count and the firm count after it is within the limit.
+    Elements the rule does not name keep their value; one that shared a replaced
+    name is listed in ``kept``. A port that cannot be read is listed, never dropped."""
+    import copy
+
+    out: dict = {"fems": {}, "unresolved": []}
+    if not isinstance(state, dict):
+        return out
+    assigned, unresolved = recommended_assignment(state)
+    out["unresolved"] = unresolved
+    before = core_budget(state)
+    if before.get("error"):
+        return out
+    where: dict = {}
+    for f in before["fems"]:
+        for g in f["groups"]:
+            for e in g["elements"]:
+                where.setdefault(e, []).append(_fem_key(f))
+    elements: list = []
+    _iter_elements(state, (), elements)
+    by_path = {".".join(t): (t, e) for t, e in elements}
+
+    plan: dict = {}  # fem key -> [(path, name, elem)]
+    for path, name in sorted(assigned.items()):
+        if path not in by_path or not _name_is_text(name) or len(where.get(path, [])) != 1:
+            continue
+        plan.setdefault(where[path][0], []).append((path, name, by_path[path][1]))
+
+    after_state = copy.deepcopy(state)
+    for items in plan.values():
+        for path, name, _e in items:
+            tgt = _get_path(after_state, by_path[path][0])
+            tgt["core"] = name
+            if isinstance(tgt.get("thread"), str) and tgt["thread"]:
+                tgt["thread"] = None
+    after = core_budget(after_state)
+    after_by = {_fem_key(f): f for f in after.get("fems") or []}
+
+    for f in before["fems"]:
+        key = _fem_key(f)
+        fa = after_by.get(key, f)
+        limit = f["cores"]["limit"]
+        before_n, after_n = f["cores"]["count"], fa["cores"]["count"]
+        firm_after = fa["cores"]["firm_count"]
+        over_cores = before_n > limit
+        over_routes = f["routes"]["count"] > f["routes"]["limit"]
+        lowers = after_n < before_n
+        fixes, changes, kept = [], [], []
+        moved: dict = {}  # old name -> first element leaving it
+        if lowers:
+            for path, name, elem in plan.get(key, []):
+                old_core, old_thread = elem.get("core"), elem.get("thread")
+                old_name, _src = effective_core_name(elem)
+                if old_core != name:
+                    action = "set_value" if "core" in elem else "create_value"
+                    fixes.append({"action": action, "dot_path": f"{path}.core", "value": name})
+                    changes.append({"element": path, "key": "core", "before": old_core, "after": name})
+                if isinstance(old_thread, str) and old_thread:
+                    fixes.append({"action": "set_value", "dot_path": f"{path}.thread", "value": "null"})
+                    changes.append({"element": path, "key": "thread", "before": old_thread,
+                                    "after": None})
+                if old_name and old_name != name:
+                    moved.setdefault(old_name, path)
+            touched = {p for p, _n, _e in plan.get(key, [])}
+            for g in f["groups"]:
+                if g["core"] in moved:
+                    for e in g["elements"]:
+                        if e not in touched:
+                            kept.append({"element": e, "core": g["core"],
+                                         "note": KEPT_NOTE.format(core=g["core"], other=moved[g["core"]])})
+        if over_cores and firm_after > limit:
+            panel = PANEL_STILL_OVER.format(firm_after=_num(firm_after), limit=limit,
+                                            con=f["controller"], fem=f["fem"])
+        elif not (over_cores and lowers and fixes and f["fem"] is not None):
+            panel = (PANEL_ROUTES if over_routes else
+                     PANEL_NO_LOWER.format(con=f["controller"], fem=f["fem"]))
+        else:
+            panel = None
+        button = panel is None
+        out["fems"][key] = {
+            "controller": f["controller"], "fem": f["fem"], "fem_type": f["fem_type"],
+            "cores": {"limit": limit, "before": float(before_n), "after": float(after_n),
+                      "firm_after": float(firm_after), "estimated": bool(fa["cores"]["estimated"])},
+            "routes": {"limit": f["routes"]["limit"], "count": f["routes"]["count"],
+                       "estimated": f["routes"]["estimated"],
+                       "estimated_terms": [t for t in f["estimated_terms"]
+                                           if t not in f.get("core_estimated_terms", [])]},
+            "groups_after": [{"core": g["core"], "elements": list(g["elements"]), "cost": g["cost"]}
+                             for g in fa["groups"] if g["core"]],
+            "changes": changes if button else [], "kept": kept if button else [],
+            "button": button, "panel_line": panel, "fixes": fixes if button else [],
+            "unresolved": [u for u in unresolved if key in where.get(u["element"], [key])],
+        }
+    return out
+
+
+def offered_fixes(state: dict) -> list:
+    """Every recommendation item a live core-layout finding offers now (the apply door's check)."""
+    out: list = []
+    try:
+        for p in recommend_layout(state)["fems"].values():
+            out.extend(p["fixes"])
+    except Exception:  # noqa: BLE001 - nothing offered is a refusal, never a crash
+        return []
+    return out

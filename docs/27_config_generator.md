@@ -685,3 +685,21 @@ a coupler's moving qubit's shift to the coupler, and the readout shift to the ti
 offer names the resonators whose time of flight to re-check and the qubits whose xy-readout spacing
 changes. Ports a rebuild adds follow the source chip's base (`follow_source_time_base`): an
 unshifted source gives them today's per-band values, so the offer covers them too.
+
+## Recommend core layout on a loaded chip
+
+When a FEM's static core count is over its limit, the Load check and Chip Status core layout warning can carry a
+"Recommend core layout" button. `core_layout.recommended_assignment(state)` runs the wizard build's own
+`_pin_cores` (loaded from `generator/run_build.py`, not copied) over the raw state through a small proxy.
+`recommend_layout(state)` turns that into one preview per FEM: cores before and after, the shared groups,
+every `core` / `thread` leaf that changes, elements that keep a name others leave, and every port that could not
+be read. Unreadable ports are named, not placed.
+- The button shows only when cores are over, the layout lowers the count, and the firm count after it fits.
+  Otherwise one panel line says why: still over, routes over, or no lower layout.
+- Stage posts the preview's items to `/diagnostics/apply-fix`, which re-checks them against the current offer.
+  They are written into the working copy as one undo group. A missing `core` key is created (`create_value`,
+  allowed only for a missing `.core` leaf) and `thread` is set to null. Nothing reaches the live files unless
+  Auto-Sync is armed, and the preview says so before the press.
+- `GET /diagnostics/core-findings` re-reads the findings afterwards.
+- On a run archive (read-only), no fixes are offered and apply-fix answers 409.
+- Tests: `tests/test_core_layout_recommend.py` and `tests/core_recommend_selfcheck.cjs`.
