@@ -362,3 +362,8 @@ archive result, not a claim that all node estimates or SM estimates are correct.
 Final-review evidence and unresolved suspicions are recorded outside the
 repository in the release QA notes. See also [plot provenance](306_plot_provenance.md)
 and [the original reproduction path](46_interactive_replot.md).
+
+The waveform lock is machine-wide across environments and SM processes. Each failed OS-lock attempt closes
+its handle and releases the thread RLock before retrying. File initialisation happens only after acquiring the
+OS lock, using the file size rather than reading the locked byte. Draw, warm-config and gate checks wait at most
+30 seconds by default, then answer that the lab environment is busy; no lab job starts on that path.

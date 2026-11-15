@@ -168,6 +168,51 @@ def _shape_ports(ports: Any) -> list:
     return out
 
 
+def _align_ports(ports: list, rows: list) -> float | None:
+    """One common leading-edge latency; missing or disagreeing lanes keep raw time.
+
+    Use the half-height edge to avoid the noise floor. The sharpest intended
+    edge supplies the estimate; every driven lane must agree within one sample.
+    """
+    if not rows:
+        return None
+    estimates = []
+    for port in ports:
+        matching = [r for r in rows if r.get("element") in port["elements"]
+                    and "/".join(map(str, r.get("port") or [])) == port["key"]]
+        if not matching or port["dt_ns"] is None or port["decimated"] or port["cut_at_end"]:
+            return None
+        first = min(matching, key=lambda r: r["start_ns"])
+        if first.get("truncated"):
+            return None
+        scale = first.get("scale", 1)
+        vals = ([first["constant"]] if first.get("constant") is not None
+                else first.get("samples") or [])
+        vals = [float(v) * scale for v in vals]
+        peak = max(map(abs, vals), default=0)
+        sim_peak = max(map(abs, port["volts"]), default=0)
+        if peak == 0 or sim_peak == 0:
+            return None
+        i = next(i for i, v in enumerate(vals) if abs(v) >= peak * .5)
+        j = next(i for i, v in enumerate(port["volts"]) if abs(v) >= sim_peak * .5)
+        rate = first.get("sampling_rate") or 1e9
+        intended_step = 1e9 / rate
+        expected = first["start_ns"] + i * intended_step
+        latency = port["t0_ns"] + j * port["dt_ns"] - expected
+        sharpness = max(abs(v - (vals[k - 1] if k else 0)) for k, v in enumerate(vals)) / peak
+        estimates.append((latency, port["dt_ns"], sharpness))
+    # A missing output must not silently disappear from the agreement test.
+    if any(not any(r.get("element") in p["elements"] and
+                   "/".join(map(str, r.get("port") or [])) == p["key"] for p in ports) for r in rows):
+        return None
+    common = max(estimates, key=lambda e: e[2])[0]
+    if common < 0 or any(abs(v - common) > step for v, step, _sharp in estimates):
+        return None
+    for port in ports:
+        port["t0_ns"] -= common
+    return common
+
+
 def from_status(st: dict, meta: dict) -> dict:
     """The page's answer from one :meth:`Runs.status` reading."""
     where = meta.get("where")
@@ -196,11 +241,15 @@ def from_status(st: dict, meta: dict) -> dict:
     ports = _shape_ports(res.get("ports"))
     if not ports:
         return answer("failed", reason="the simulator returned no output for the gate's ports", **base)
+    latency = _align_ports(ports, res.get("intended") or [])
     out = answer("done", sim_ns=res.get("sim_ns"), where=res.get("backend_label") or where,
                  **{k: v for k, v in base.items() if k != "where"})
     out.update(ports=ports, sim_ns=res.get("sim_ns"), length_from=res.get("length_from"),
                cannot_draw=res.get("cannot_draw"),
-               note="Simulated output after the port's filters; the time axis starts at the program start.")
+               note=("Simulated output after the port's filters; "
+                     + (f"aligned by {latency:g} ns (simulator start latency)." if latency is not None
+                        else "raw simulator time axis, simulator start at 0 ns; no common start latency found.")),
+               start_latency_ns=latency)
     unknown = [p["port_text"] for p in ports if p["time_step_unknown"]]
     if unknown:
         out["time_step_note"] = ("The time step of these ports is not known (the simulator and the "

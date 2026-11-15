@@ -695,6 +695,22 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
             ok(/every check passed/.test(alertText()) && /^6 of 6 passed$/.test($('#czg-checks-sum').textContent), 'shared case checked: every check passed, 6 of 6');
         }
     }
+    // Length and general refusals keep Name reserved for name errors.
+    queue.plan.push((b) => { const j = planOk(b); j.pairs[0].ok = false;
+        j.pairs[0].refusals = ['flux_pulse_qubit.length: The pulse length 18 ns must be a multiple of 4 ns.', 'The selected port is unavailable.']; return j; });
+    type($('#czg-name'), 'cz_lengths');
+    await settle();
+    { const i = doc.querySelector('[data-czg-field="flux_pulse_qubit"][data-czg-name="length"]');
+      ok(i.getAttribute('aria-invalid') === 'true' && /multiple of 4/.test(i.closest('.ui-field').textContent), 'length refusal reaches Length');
+      ok(prim().disabled, 'a length refusal disables Check');
+      ok($('#czg-name-why').hidden && !$('#czg-name').hasAttribute('aria-invalid'), 'length and general refusals leave Name clean');
+      ok(/port is unavailable/.test($('#czg-refusals').textContent) && !$('#czg-refusals').hidden, 'unrouted refusal has a general line'); }
+    for (const [idx, message] of ['The gate name cz bad is not a valid name. Use letters.', 'The pair already has a gate named cz_used. Pick another name.'].entries()) {
+        queue.plan.push((b) => { const j = planOk(b); j.pairs[0].ok = false; j.pairs[0].refusals = [message]; return j; });
+        type($('#czg-name'), 'cz_name_refusal_' + idx);
+        await settle();
+        ok($('#czg-name-why').textContent === message && $('#czg-name').getAttribute('aria-invalid') === 'true', 'invalid and existing names still show under Name');
+    }
     // E a value the server refuses goes on its field (mutation: splitRefusals returns every refusal as rest)
     queue.plan.push((b) => { const j = planOk(b); j.pairs[0].ok = false; j.pairs[0].refusals = ['flux_pulse_qubit.amplitude: Type a number.']; return j; });
     type($('#czg-name'), 'cz_r12c');
@@ -726,6 +742,26 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
        'script hooks are data attributes; no class without a kit rule');
     window.CzGate.close();
 
+    dataOverride = JSON.parse(JSON.stringify(DATA));
+    dataOverride.classes[0].slots.push(Object.assign({}, DATA.classes[0].slots[0], { field: 'coupler_flux_pulse', line: 'coupler' }));
+    await window.CzGate.open({ pair: 'q1-2' });
+    await settle();
+    type($('#czg-name'), 'cz_timing');
+    await settle();
+    queue.check.push((b) => { const j = checkOk(b); j.pairs[0].tiles = [{ key: 'timing', value: '61', unit: 'ns', label: 'Timing', note: 'gap, no overlap', tone: 'warn' }]; return j; });
+    prim().click();
+    await settle();
+    ok(/61 ns gap with no overlap/.test(alertText()) && /port delays/.test(alertText()), 'server gap appears in verdict warning');
+    ok(!prim().disabled && /Create/.test(prim().textContent), 'the gap warning does not block an intentionally ordered gate');
+    ok(/^2 lines$/.test($('#czg-pulses-sum').textContent), 'two-lane gap header does not claim together');
+    type($('#czg-name'), 'cz_overlap');
+    await settle();
+    prim().click();
+    await settle();
+    ok(!/gap with no overlap/.test(alertText()), 'overlapping check has no gap warning');
+    window.CzGate.close();
+
+    dataOverride = null;
     // the slot takes the server's lane colour (mutation: drop recolourSlots()); no Pico spinner after Create (mutation: set aria-busy again)
     await window.CzGate.open({ pair: 'q1-2' });
     await settle();

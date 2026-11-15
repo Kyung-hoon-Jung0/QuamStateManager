@@ -980,7 +980,7 @@ def _plan_known(merged, pair_id, p, gate_name, gate_class, pulses, lines,
         provenance[s.field] = prov
         r = length_rule(pulse)
         if r:
-            reasons.append(r)
+            reasons.append(f"{s.field}.length: {r}")
         try:
             key = operation_name(gate_name, s.role, control, target)
         except ValueError:
@@ -1884,7 +1884,7 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
         provenance[f] = prov
         r = length_rule(pulse)
         if r:
-            reasons.append(r)
+            reasons.append(f"{f}.length: {r}")
         if isinstance(model.get(f), dict):
             directions[f] = MACRO_OWNS
             owned = norm(pulse)

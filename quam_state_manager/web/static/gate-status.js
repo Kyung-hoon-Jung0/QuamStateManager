@@ -64,5 +64,21 @@
         if (first && first.focus) first.focus();
     });
 
-    window.GateStatus = { closeOffer: closeOffer, offerOpen: offerOpen };
+    var activating = new Set();
+    document.addEventListener('htmx:beforeRequest', function (ev) {
+        var b = (ev.detail || {}).elt;
+        if (!b || !b.classList || !b.classList.contains('gate-status-activate')) return;
+        if (activating.size) { ev.preventDefault(); return; }
+        activating.add(b);
+        b.disabled = true;
+        b.setAttribute('aria-busy', 'true');
+    });
+    document.addEventListener('htmx:afterRequest', function (ev) {
+        var b = (ev.detail || {}).elt;
+        if (!activating.delete(b)) return;
+        b.disabled = false;
+        b.removeAttribute('aria-busy');
+    });
+
+    window.GateStatus = { busy: function () { return activating.size > 0; }, closeOffer: closeOffer, offerOpen: offerOpen };
 })();

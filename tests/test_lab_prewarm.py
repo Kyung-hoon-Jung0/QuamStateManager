@@ -148,7 +148,7 @@ class TestThePrewarm:
         assert _w().prewarmed and _w().requests == 2
 
     def test_it_never_takes_the_env_from_a_running_check(self, labpkg):
-        lk = lab_waveform._env_lock(sys.executable)
+        lk = lab_waveform._machine_lock(sys.executable)
         with lk:
             assert lab_waveform.prewarm(sys.executable, [CLS], start_thread=False)
         assert lab_waveform.PREWARM_LOG[sys.executable]["state"] == "check-running"
@@ -603,7 +603,7 @@ def test_a_background_batch_waits_while_a_check_waits(tmp_path, monkeypatch):
                    "error": None} for _ in items]})
     monkeypatch.setattr(lab_waveform, "_env_sig", lambda p: "sig")
     lab_waveform.MEMO.clear()
-    lk = lab_waveform._env_lock(py)
+    lk = lab_waveform._machine_lock(py)
     lk.acquire()
     held = True
     try:

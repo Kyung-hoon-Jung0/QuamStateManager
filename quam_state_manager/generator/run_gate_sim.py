@@ -214,6 +214,20 @@ def _port_elements(config, plays) -> dict:
     return out
 
 
+def _intended(rows, ops):
+    """Config leading edges, including port delays, for this exact run."""
+    out = []
+    by_op = {(o["element"], o["operation"]): o for o in ops}
+    for row in rows:
+        d = row._asdict() if hasattr(row, "_asdict") else dict(row)
+        op = by_op.get((d["element"], d["operation"]), {})
+        wf = op.get("waveform") or {}
+        d.update(samples=wf.get("samples"), constant=wf.get("sample"),
+                 sampling_rate=op.get("sampling_rate"), truncated=wf.get("truncated", False))
+        out.append(d)
+    return out
+
+
 def build(job: dict) -> dict:
     """Load the copy, build the config and the program, size the simulation."""
     folder = job["folder"]
@@ -236,7 +250,8 @@ def build(job: dict) -> dict:
     except ValueError as exc:
         return {"ok": False, "error_kind": "gate", "error": str(exc)}
     return {"ok": True, "config": cfg, "program": prog, "plays": plays, "sim_ns": ns,
-            "length_from": how, "cannot_draw": tl.get("cannot_draw")}
+            "length_from": how, "cannot_draw": tl.get("cannot_draw"),
+            "intended": _intended(tl.get("rows") or [], ops)}
 
 
 #: an LF-FEM output port without a stated ``sampling_rate`` runs at 1 GS/s (the config default)
@@ -348,6 +363,7 @@ def main() -> int:
                       "backend_label": res.get("backend_label"), "sim_ns": built["sim_ns"],
                       "length_from": built["length_from"], "cannot_draw": built["cannot_draw"],
                       "local_error": res.get("local_error"),
+                      "intended": built.get("intended"),
                       "ports": _ports(res.get("traces") or {},
                                       _port_elements(built["config"], built["plays"]),
                                       built["config"])}

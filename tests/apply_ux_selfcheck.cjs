@@ -95,6 +95,19 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
 window.showToast = function (msg) { toasts.push(String(msg)); };
 
 (async function () {
+    // Drive the real status lifecycle and Apply entry point while the check is pending.
+    window.eval(fs.readFileSync(path.join(STATIC, 'gate-status.js'), 'utf8'));
+    const activate = window.document.createElement('button');
+    activate.className = 'btn-sm outline secondary gate-status-activate';
+    window.document.body.appendChild(activate);
+    activate.dispatchEvent(new window.CustomEvent('htmx:beforeRequest', { bubbles: true, cancelable: true, detail: { elt: activate } }));
+    ok(activate.disabled && activate.getAttribute('aria-busy') === 'true', 'Make active wears the kit busy state during its check');
+    const beforeActiveApply = syncBodies.length;
+    window.doStateSync('apply');
+    await new Promise((r) => setTimeout(r, 30));
+    ok(syncBodies.length === beforeActiveApply && toasts.some((t) => /Make active is still checking/.test(t)), 'Apply sends nothing while Make active is in flight and explains why');
+    activate.dispatchEvent(new window.CustomEvent('htmx:afterRequest', { bubbles: true, detail: { elt: activate, failed: true } }));
+    ok(!window.GateStatus.busy() && !activate.disabled && !activate.hasAttribute('aria-busy'), 'completion including errors releases the activation latch');
     /* A1 — needs_confirm decline toasts */
     syncPayload = { status: 'needs_confirm', mode: 'discard', message: 'staged content' };
     confirmAnswer = false;

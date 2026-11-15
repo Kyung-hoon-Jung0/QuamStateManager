@@ -292,6 +292,7 @@ def test_explicit_length_multiple_of_four_and_at_least_sixteen(length, ok):
     res = _plan(_chip(), pulses=_square(length=length))
     assert ("creates" in res) is ok
     if not ok:
+        assert "flux_pulse_qubit.length: The pulse length" in res["error"]
         assert "multiple of 4 ns" in res["error"]
 
 

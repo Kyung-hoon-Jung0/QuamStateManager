@@ -513,7 +513,7 @@ def test_busy_lock_is_a_typed_result(tmp_path, monkeypatch):
 
         def release(self):
             raise AssertionError("never taken")
-    monkeypatch.setattr(lab_waveform, "_env_lock", lambda p: Taken())
+    monkeypatch.setattr(lab_waveform, "_machine_lock", lambda p: Taken())
     res = lab_waveform.run_gate_check(str(py), "B", "A", [PATH], lock_wait=0.2)
     assert res["status"] == "busy" and "busy" in res["error"]
     assert gate_check.evaluate([GATE], res)["status"] == "busy"

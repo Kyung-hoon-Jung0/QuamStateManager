@@ -18,13 +18,14 @@ def lock(tmp_path, monkeypatch):
 
 def _free_from_another_thread(lk) -> bool:
     out = []
-    t = threading.Thread(target=lambda: out.append(lk.acquire(blocking=False)))
+    def probe():
+        got = lk.acquire(blocking=False)
+        out.append(got)
+        if got:
+            lk.release()
+    t = threading.Thread(target=probe)
     t.start()
     t.join(5)
-    if out and out[0]:
-        t2 = threading.Thread(target=lk.release)
-        t2.start()
-        t2.join(5)
     return bool(out and out[0])
 
 
@@ -47,7 +48,7 @@ def test_normal_release_frees(lock):
 def test_gate_check_after_a_failing_release_is_not_busy(tmp_path, monkeypatch):
     lk = lab_worker._MachineLock()
     lk.path = tmp_path / "m.lock"
-    monkeypatch.setattr(lab_waveform, "_env_lock", lambda p: lk)
+    monkeypatch.setattr(lab_waveform, "_machine_lock", lambda p: lk)
     py = tmp_path / "python.exe"
     py.write_text("")
     monkeypatch.setattr(lab_worker, "_lab_dir", lambda p: None)

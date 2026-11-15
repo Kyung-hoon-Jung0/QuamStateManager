@@ -746,3 +746,53 @@ def test_the_two_flags_are_set_only_by_a_stored_true():
         assert p["decimated"] is False and p["cut_at_end"] is False
     [p] = sim._shape_ports([dict(base, decimated=True, cut_at_end=True)])
     assert p["decimated"] is True and p["cut_at_end"] is True
+
+
+def _delayed_run(second_latency=72, *, missing=False, shaped=False):
+    # An arbitrary per-run latency; the real delay between ports is independent.
+    ports, intended = [], []
+    shape = [0, .025, .05, .075, .1, .1, .075, .05, .025, 0] if shaped else [.1] * 100
+    for n, (delay, latency) in enumerate([(0, 72), (161, second_latency)], 1):
+        intended.append({"element": "line" + str(n), "port": ["con", 1, n], "start_ns": delay,
+                         "samples": shape, "sampling_rate": 1e9})
+        if missing and n == 2:
+            continue
+        wave = [v for v in shape for _ in range(2)]
+        ports.append({"controller": "con", "fem": 1, "port": n, "elements": ["line" + str(n)],
+                      "kind": "lf", "dt_ns": .5, "t0_ns": 0,
+                      "volts": [0.] * int((delay + latency) * 2) + wave + [0.] * 20})
+    return {"state": "done", "result": {"ok": True, "sim_ns": 600, "ports": ports, "intended": intended}}
+
+
+@pytest.mark.parametrize("shaped", [False, True])
+def test_simulator_alignment_uses_one_latency_and_keeps_port_delays(shaped):
+    out = sim.from_status(_delayed_run(shaped=shaped), {})
+    assert out["start_latency_ns"] == 72
+    assert "aligned by 72 ns (simulator start latency)" in out["note"]
+    assert [p["t0_ns"] for p in out["ports"]] == [-72, -72]
+    starts = [p["t0_ns"] + next(i for i,v in enumerate(p["volts"]) if v) * p["dt_ns"] for p in out["ports"]]
+    assert starts[1] - starts[0] == 161
+
+
+@pytest.mark.parametrize("kwargs", [{"second_latency": 75}, {"missing": True}])
+def test_simulator_disagreement_or_missing_output_keeps_raw_axis(kwargs):
+    out = sim.from_status(_delayed_run(**kwargs), {})
+    assert out["start_latency_ns"] is None
+    assert all(p["t0_ns"] == 0 for p in out["ports"])
+    assert "raw simulator time axis" in out["note"] and "start at 0 ns" in out["note"]
+
+
+def test_runner_preserves_intended_edges_from_its_config():
+    ops = [_tl_op("line1", 100, 0), _tl_op("line2", 100, 161, port=("con1", 1, 2))]
+    rows, _ = _tl_rows(ops)
+    intended = rgs._intended(rows, ops)
+    assert [r["start_ns"] for r in intended] == [0, 161]
+    assert [r["constant"] for r in intended] == [.1, .1]
+
+
+def test_simulator_one_sample_slack_does_not_fit_each_lane_separately():
+    out = sim.from_status(_delayed_run(second_latency=72.5), {})
+    assert out["start_latency_ns"] == 72
+    assert [p["t0_ns"] for p in out["ports"]] == [-72, -72]
+    starts = [p["t0_ns"] + next(i for i,v in enumerate(p["volts"]) if v) * p["dt_ns"] for p in out["ports"]]
+    assert starts[1] - starts[0] == 161.5

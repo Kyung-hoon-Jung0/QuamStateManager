@@ -5205,6 +5205,10 @@ window._autoSyncPullRequest = function(chip) {
 };
 
 window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
+    if (mode === "apply" && window.GateStatus && window.GateStatus.busy()) {
+        if (window.showToast) window.showToast("Make active is still checking. Wait for it to finish, then press Apply.", "warning");
+        return;
+    }
     // docs/187 R2: `expectChip` is optional and only the automatic
     // merge passes it -- the chip the server said conflicted, carried on
     // the autoSyncMerge signal. Every existing caller passes nothing and

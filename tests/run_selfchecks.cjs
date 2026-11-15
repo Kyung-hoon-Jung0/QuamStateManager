@@ -17,9 +17,15 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const here = __dirname;
+const requested = new Set(process.argv.slice(2));
 const files = fs.readdirSync(here)
-  .filter((f) => f.endsWith('_selfcheck.cjs'))
+  .filter((f) => f.endsWith('_selfcheck.cjs') && (!requested.size || requested.has(f)))
   .sort();
+
+if (requested.size && files.length !== requested.size) {
+  console.error('Unknown selfcheck: ' + [...requested].filter((f) => !files.includes(f)).join(', '));
+  process.exit(1);
+}
 
 let pass = 0, fail = 0, skip = 0;
 const failed = [];

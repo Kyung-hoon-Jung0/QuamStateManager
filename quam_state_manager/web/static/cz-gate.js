@@ -614,7 +614,7 @@
                 .map(function (s) { return slotChannel(s.field, s.line, fp); })
             : Object.keys((fp && fp.ok && fp.pulses) || {}).map(function (f) { return slotChannel(f, null, fp); });
         var sum = $('czg-pulses-sum');
-        if (sum) { var nl = S.slotChannels.length; sum.textContent = nl === 1 ? '1 line' : nl + ' lines play together'; }
+        if (sum) { var nl = S.slotChannels.length; sum.textContent = nl === 1 ? '1 line' : nl + ' lines'; }
         if (c.layout === 'known') {
             (c.slots || []).forEach(function (s) {
                 var b = slotBlock(s.field, slotChannel(s.field, s.line, fp), '');
@@ -814,7 +814,12 @@
         var aboutClass = fp && !fp.ok ? (fp.class_refusals || []) : [];
         var aboutSpect = fp ? spectRefusals(fp.pair) : [];
         var split = splitRefusals(fp && !fp.ok ? (fp.refusals || []).filter(function (r) { return aboutClass.indexOf(r) < 0 && aboutSpect.indexOf(r) < 0; }) : []);
-        var bad = split.rest;
+        var bad = split.rest.filter(function (r) { return /^(The gate name|The pair already has a gate named)\b/.test(r); });
+        var general = clear($('czg-refusals'));
+        split.rest.filter(function (r) { return bad.indexOf(r) < 0; }).forEach(function (r) {
+            general.appendChild(el('p', 'ui-note', r));
+        });
+        general.hidden = !general.childNodes.length;
         renderClassWhy(S.noClass ? [] : aboutClass);
         bad.forEach(function (r) { why.appendChild(el('span', 'czg-why-line', r)); });
         why.hidden = !bad.length;
@@ -866,7 +871,7 @@
         list.forEach(function (r) {
             var m = /^gate setting (.+?): (Type .+)$/.exec(r);
             if (m && findField('@settings', m[1])) { fields.push({ field: '@settings', name: m[1], why: m[2] }); return; }
-            m = /^([^.:\s]+)\.([^:]+): (Type .+)$/.exec(r);
+            m = /^([^.:\s]+)\.([^:]+): (.+)$/.exec(r);
             if (m && findField(m[1], m[2])) { fields.push({ field: m[1], name: m[2], why: m[3] }); return; }
             rest.push(r);
         });
@@ -1213,6 +1218,12 @@
                     : 'The lab\'s code built ' + (many ? 'these gates' : 'this gate') + ' on a copy of the chip. '
                       + line.charAt(0).toUpperCase() + line.slice(1)), 'verdict');
         }
+        pairs.forEach(function (p) {
+            (p.tiles || []).filter(function (t) { return t.key === 'timing' && t.tone === 'warn'; }).forEach(function (t) {
+                $('czg-alert').appendChild(el('p', 'ui-note', (many ? p.pair + ': ' : '')
+                    + 'The gate lines have a ' + t.value + ' ns gap with no overlap. Check the port delays.'));
+            });
+        });
         // a stacked dialog has the banner above the form: bring it into view
         var al = $('czg-alert');
         if (al && al.scrollIntoView) { try { al.scrollIntoView({ block: 'nearest' }); } catch (e) { /* old engine */ } }

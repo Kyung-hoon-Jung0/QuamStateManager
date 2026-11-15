@@ -36,38 +36,50 @@ class _MachineLock:
         self.path = _COORD_DIR / "qsm_lab_worker.lock"
 
     def acquire(self, blocking=True):
-        if not self.local.acquire(blocking=blocking):
-            return False
-        depth = getattr(self.depth, "value", 0)
-        if depth and not blocking:
-            self.local.release()
-            return False
-        if depth:
-            self.depth.value = depth + 1
-            return True
-        fh = self.path.open("a+b")
-        fh.seek(0)
-        if not fh.read(1):
-            fh.write(b"0")
-            fh.flush()
         while True:
-            try:
-                fh.seek(0)
-                if os.name == "nt":
-                    import msvcrt
-                    msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
-                else:
-                    import fcntl
-                    fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                self.depth.fh = fh
-                self.depth.value = 1
-                return True
-            except OSError:
+            if not self.local.acquire(blocking=blocking):
+                return False
+            depth = getattr(self.depth, "value", 0)
+            if depth:
                 if not blocking:
-                    fh.close()
                     self.local.release()
                     return False
-                time.sleep(.05)
+                self.depth.value = depth + 1
+                return True
+            fh = None
+            owned = False
+            try:
+                fh = self.path.open("a+b")
+                fh.seek(0)
+                try:
+                    if os.name == "nt":
+                        import msvcrt
+                        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+                    else:
+                        import fcntl
+                        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError:
+                    if not blocking:
+                        return False
+                else:
+                    # Byte zero may be unreadable while another process owns it.
+                    # Initialise only after locking, without reading that byte.
+                    if os.stat(self.path).st_size == 0:
+                        fh.write(b"0")
+                        fh.flush()
+                    self.depth.fh = fh
+                    self.depth.value = 1
+                    owned = True
+                    return True
+            finally:
+                if not owned:
+                    try:
+                        if fh is not None:
+                            fh.close()
+                    finally:
+                        self.local.release()
+            # No thread lock is held while waiting for another process.
+            time.sleep(.05)
 
     @staticmethod
     def _os_unlock(fh):
