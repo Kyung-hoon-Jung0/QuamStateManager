@@ -249,7 +249,7 @@ def test_the_virtual_row_is_the_table_row_but_for_its_thumbnail(vt):
     app, client, _ = vt
     ids = {p: t for p, _, t in _vdata(client.get("/pulses?rows=1&per_page=0").data.decode())["rows"]}
     paged = client.get("/pulses?rows=1&per_page=50").data.decode()
-    cell = re.compile(r'(<td class="pulse-spark-cell"[^>]*>).*?(</td>)', re.S)
+    cell = re.compile(r'(<td class="pulse-spark-cell ui-col-secondary"[^>]*>).*?(</td>)', re.S)
     for p, text in ids.items():
         m = re.search(r'(<tr class="clickable-row" data-pulse-path="%s".*?</tr>)' % re.escape(p), paged, re.S)
         assert m, p
@@ -314,7 +314,7 @@ def test_the_virtual_view_selfcheck():
     node = shutil.which("node")
     if not node:
         pytest.skip("node not installed")
-    if not (root / "node_modules" / "jsdom").exists():
+    if subprocess.run([node, "-e", "require('jsdom')"], cwd=root, capture_output=True, timeout=30).returncode:
         pytest.skip("jsdom not installed")
     r = subprocess.run([node, str(root / "tests" / "pulses_vt_selfcheck.cjs")],
                        capture_output=True, text=True, encoding="utf-8",

@@ -157,6 +157,10 @@ Uses: `static/chip-status.js` (the Chip Status metric segmented control), `stati
 `static/port-play.js` and the `ui-actions` rows of the diagram, diagnostics, explorer, history and
 bulk-edit templates. One control height across the app is intended.
 
+`ui-segmented-bar` is the one wrapper for a segmented control that sits directly above a list or table (the
+Pulses channel tabs): it keeps the space the older tab rows left below them (`margin: 0 0 var(--ui-gap-3)`, 0.75rem).
+The segmented control itself stays flush (`margin-bottom: 0`), so every other use keeps its spacing.
+
 **Which control when**
 
 | The choice | Use |
@@ -301,7 +305,8 @@ down (the test warns with the new maximum). Re-measure with
 | 5 | `window.confirm` / `alert` |
 | 6 | macro and `ui.js` build the same tree for every sample (`tests/ui_kit_selfcheck.cjs`, jsdom) |
 | 7 | token contrast pairs x 3 themes >= AA (4.5:1 text, 3:1 state dots), computed from the theme variables in pico.min.css / style.css; a known failure is frozen by name |
-| 7b | stage-0 boundary: one `:root` block of `--ui-*` names only, no redeclared style.css variable, every other selector starts with `.ui-`, no `:has(` / `[` / `:where(`, no at-rule blocks |
+| priority | `ui-col-secondary` is the sole narrow-column media rule; header and row carry it; values remain in detail (`tests/test_reading_order_small.py`) |
+| 7b | stage-0 boundary: one `:root` block of `--ui-*` names only, no redeclared style.css variable, every other selector starts with `.ui-`, no `:has(` / `[` / `:where(`, only the priority-column media rule |
 | 7c | CSP: `hx-on` and trigger filters per file do not grow; the `attributesToSettle` meta is unchanged; the kit files hold no `hx-on`, `eval(`, `new Function`, `innerHTML` |
 | 9 | dead classes: an element whose literal classes ALL lack a CSS rule; frozen as an explicit class-name list plus a per-file count (no prefix allowances) |
 | 10 | style.css rule and line counts only go down |
@@ -314,3 +319,13 @@ files; dead classes 330 names on 380 elements in 118 files; style.css 5,943 rule
 (app.js 4, auto-apply.js 1), trigger filters 4; one known contrast failure -- light theme,
 `--ui-warn-border` on a card is 1.63:1 against the 3:1 non-text minimum (the warning dot on
 white), to be fixed in the theme variables in a later stage, not here.
+
+### Priority columns
+
+`ui-col-secondary` on the matching header and data cells hides secondary evidence at
+viewport widths of 900 px or less. Primary names keep the released space. Keep the
+values reachable in row detail. Spacer and spanning rows retain their logical colspan.
+Navigation options in `ui_segmented` / `UI.segmented` accept `href` and `attrs`;
+`ui-menu.js` supplies arrow keys, Home, End and selection; a key with Alt, Ctrl or Meta is left to the
+browser. A link option is never underlined and carries `aria-current` when selected; a button option
+carries `aria-pressed`. The group wraps onto further lines at a narrow width instead of clipping.

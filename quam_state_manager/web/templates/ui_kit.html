@@ -21,6 +21,15 @@
 </div>
 {%- endfor %}
 {% if ns.section is not none %}</section>{% endif %}
+<section class="ui-kit-section"><h2 class="ui-kit-section-title">Priority columns</h2>
+<p class="ui-note">Secondary columns hide at 900 px and below. Open the row detail for their values.</p>
+<table class="ui-table"><thead><tr><th>Name</th><th class="ui-col-secondary">Class</th></tr></thead>
+<tbody><tr><td>q1</td><td class="ui-col-secondary">Pulse</td></tr></tbody></table>
+</section>
+<section class="ui-kit-section"><h2 class="ui-kit-section-title">Segmented options, many</h2>
+<p class="ui-note">Seven link options in a 360 px column wrap onto a second line; none is clipped.</p>
+<div class="ui-kit-col-narrow"><nav class="ui-segmented-bar">{{ ui.ui_segmented([{'label': 'All', 'href': '#', 'selected': True}, {'label': 'XY', 'href': '#'}, {'label': 'Z', 'href': '#'}, {'label': 'Resonator', 'href': '#'}, {'label': 'Pair flux', 'href': '#'}, {'label': 'Pair CR/ZZ', 'href': '#'}, {'label': 'Other places', 'href': '#'}], 'Sample channels') }}</nav></div>
+</section>
 {#- K14 tabs (stage 2): markup only, an existing tab row gains the classes -#}
 <section class="ui-kit-section"><h2 class="ui-kit-section-title">Tabs</h2>
 <div class="ui-tabs" role="tablist" aria-label="Sample tabs">

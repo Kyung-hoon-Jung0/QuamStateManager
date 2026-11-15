@@ -97,7 +97,9 @@
 {%- endmacro -%}
 
 {%- macro ui_segmented(options, label, labelledby=None) -%}
-<div class="ui-segmented" role="group"{% if labelledby %} aria-labelledby="{{ labelledby }}"{% else %} aria-label="{{ label }}"{% endif %}>{% for o in options %}<button type="button" class="ui-segmented-opt{% if o.selected %} ui-segmented-on{% endif %}"{% if not o.command %} aria-pressed="{{ 'true' if o.selected else 'false' }}"{% endif %}>{{ o.label }}</button>{% endfor %}</div>
+<div class="ui-segmented" role="group"{% if labelledby %} aria-labelledby="{{ labelledby }}"{% else %} aria-label="{{ label }}"{% endif %}>{% for o in options %}
+{%- set tag = 'a' if o.href else 'button' -%}
+<{{ tag }}{% if o.href %} href="{{ o.href }}"{% else %} type="button"{% endif %}{% for k, v in (o.attrs or {}).items() %} {{ k }}="{{ v }}"{% endfor %}{% if o.href %}{% if o.selected %} aria-current="true"{% endif %}{% elif not o.command %} aria-pressed="{{ 'true' if o.selected else 'false' }}"{% endif %} class="ui-segmented-opt{% if o.selected %} ui-segmented-on{% endif %}{% if o.href and o.selected %} active{% endif %}">{{ o.label }}</{{ tag }}>{% endfor %}</div>
 {%- endmacro -%}
 
 {#- K18 choosing (docs/308 §4b). The class sits on the native <select> /

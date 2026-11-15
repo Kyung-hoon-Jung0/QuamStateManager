@@ -544,7 +544,9 @@ def test_7b_stage0_boundary_only_ui_selectors_and_one_token_block():
         assert k.startswith("--ui-"), f"token block declares a non-kit variable {k}"
         assert k not in style_vars, f"{k} redeclares a style.css variable"
     for sel, body, stack in blocks:
-        assert not stack, f"no at-rule (theme or media) blocks in ui-kit.css: {stack}"
+        if stack:
+            assert stack == ["@media (max-width: 900px)"] and sel == ".ui-col-secondary"
+            assert dict(_decls(body)) == {"display": "none"}
         if sel == ":root":
             continue
         for part in sel.split(","):
@@ -792,6 +794,42 @@ def test_6b_ui_menu_behaviour_selfcheck():
         pytest.skip("jsdom not installed for node")
     assert res.returncode == 0, res.stdout + "\n" + res.stderr
     assert "ok ui_menu_selfcheck" in res.stdout and " 0 failed" in res.stdout
+
+
+def test_6d_arrow_key_handlers_in_ui_menu_check_modifiers_first():
+    """Keys the browser owns stay its own: Alt/Meta + Left/Right (history) in every handler, any
+    Alt/Ctrl/Meta with an arrow in the toolbar, any modifier in the segmented control. Every keydown
+    handler that prevents the default of an arrow key must run one of these guards before it does."""
+    src = _read(_STATIC / "ui-menu.js")
+    def body(name):
+        m = re.search(r"function %s\(e\)\s*\{([^}]*)\}" % name, src)
+        assert m, name
+        return m.group(1)
+    assert all(t in body("hasMod") for t in ("altKey", "ctrlKey", "metaKey"))
+    assert 'hasMod(e)' in body("arrowMod") and '"Arrow"' in body("arrowMod")
+    nav = body("browserNav")
+    assert all(t in nav for t in ("altKey", "metaKey", "ArrowLeft", "ArrowRight")) and "ctrlKey" not in nav
+    chunks = re.split(r"document\.addEventListener\(", src)[1:]
+    handlers = [c for c in chunks if re.match(r"""["']keydown["']""", c)]
+    assert len(handlers) >= 3
+    guarded = 0
+    for h in handlers:
+        h = h.split("window.UIMenu")[0]
+        if "preventDefault" in h and "Arrow" in h:
+            head = h[:h.index("preventDefault")]
+            assert re.search(r"if \((browserNav|arrowMod|hasMod)\(e\)", head), h[:80]
+            guarded += 1
+    assert guarded >= 3
+    # each handler runs ITS OWN guard first: only the toolbar rule keeps Home/End (with any modifier) working
+    def first_guard(marker):
+        picked = [h for h in handlers if marker in h.split("window.UIMenu")[0]]
+        assert len(picked) == 1, marker
+        m = re.match(r"""["']keydown["'],\s*function \(e\) \{\s*if \((\w+)\(e\)""", picked[0])
+        assert m, marker
+        return m.group(1)
+    assert first_guard("menuOf(e.target)") == "browserNav"
+    assert first_guard("var tb = t && t.closest") == "arrowMod"
+    assert first_guard("closest('.ui-segmented-opt')") == "hasMod"
 
 
 def test_6c_field_macro_ids_and_relations():

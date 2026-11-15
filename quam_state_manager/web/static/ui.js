@@ -185,9 +185,11 @@
         g.setAttribute("role", "group");
         if (labelledby) g.setAttribute("aria-labelledby", labelledby); else g.setAttribute("aria-label", label);
         (options || []).forEach(function (o) {
-            var b = el("button", "ui-segmented-opt" + (o.selected ? " ui-segmented-on" : ""), o.label);
-            b.type = "button";
-            if (!o.command) b.setAttribute("aria-pressed", o.selected ? "true" : "false");
+            var b = el(o.href ? "a" : "button", "ui-segmented-opt" + (o.selected ? " ui-segmented-on" : "") + (o.href && o.selected ? " active" : ""), o.label);
+            if (o.href) b.setAttribute("href", o.href); else b.type = "button";
+            Object.keys(o.attrs || {}).forEach(function (k) { b.setAttribute(k, o.attrs[k]); });
+            if (o.href) { if (o.selected) b.setAttribute("aria-current", "true"); }
+            else if (!o.command) b.setAttribute("aria-pressed", o.selected ? "true" : "false");
             g.appendChild(b);
         });
         return g;
