@@ -115,9 +115,64 @@ def test_coupler_without_id_is_found_by_pair_name():
     assert why is None and ("coupler decouple offset", 0.2) in levels
 
 
-def test_coupler_with_no_stored_offset_is_not_checked():
+def test_coupler_with_no_stored_offset_reads_the_class_default():
     levels, why = _levels(_coupler_chip(flux_point="off"), "coupler_a_b")
-    assert levels is None and "decouple_offset" in why
+    assert why is None
+    assert levels == [("channel offset", 0.0), ("coupler decouple offset (class default)", 0.0)]
+
+
+def test_coupler_stored_zero_is_not_labelled_a_default():
+    levels, why = _levels(_coupler_chip(flux_point="off", decouple_offset=0.0), "coupler_a_b")
+    assert why is None
+    assert levels == [("channel offset", 0.0), ("coupler decouple offset", 0.0)]
+
+
+def test_coupler_none_offset_is_still_refused():
+    levels, why = _levels(_coupler_chip(flux_point="off", decouple_offset=None), "coupler_a_b")
+    assert levels is None and "qubit_pairs.a-b.coupler.decouple_offset" in why
+
+
+def test_coupler_absent_flux_point_reads_off():
+    levels, why = _levels(_coupler_chip(decouple_offset=0.1, interaction_offset=0.4), "coupler_a_b")
+    assert why is None
+    assert levels == [("channel offset", 0.0), ("coupler decouple offset", 0.1)]
+
+
+def test_coupler_zero_flux_point_adds_zero_level():
+    levels, why = _levels(_coupler_chip(flux_point="zero", decouple_offset=0.1), "coupler_a_b")
+    assert why is None
+    assert levels == [("channel offset", 0.0), ("coupler decouple offset", 0.1),
+                      ("coupler zero flux point", 0.0)]
+
+
+def test_coupler_text_id_wins_over_pair_name():
+    m = _coupler_chip(flux_point="off", decouple_offset=0.2)
+    levels, why = _levels(m, "a-b.coupler")
+    assert why is None and levels == [("channel offset", 0.0)]
+
+
+def test_coupler_absent_offset_message_names_the_leaf():
+    m = _coupler_chip(flux_point="on", decouple_offset=0.1)
+    levels, why = _levels(m, "coupler_a_b")
+    assert levels is None
+    assert why == "no value is stored at qubit_pairs.a-b.coupler.interaction_offset"
+
+
+def test_dangling_coupler_reference_is_refused_naming_the_leaf():
+    m = {"qubits": {"q1": {}, "q2": {}},
+         "qubit_pairs": {"q1-2": {"qubit_control": "#/qubits/q1", "qubit_target": "#/qubits/q2",
+                                  "coupler": "#/nowhere"}}}
+    levels, why = _levels(m, "c12")
+    assert levels is None
+    assert "qubit_pairs.q1-2.coupler" in why and "could not be followed" in why
+
+
+def test_resolvable_coupler_reference_is_followed():
+    m = _coupler_chip(flux_point="off", decouple_offset=0.2)
+    m["lines"] = {"c": m["qubit_pairs"]["a-b"]["coupler"]}
+    m["qubit_pairs"]["a-b"]["coupler"] = "#/lines/c"
+    levels, why = _levels(m, "coupler_a_b")
+    assert why is None and levels == [("channel offset", 0.0), ("coupler decouple offset", 0.2)]
 
 
 @pytest.mark.parametrize("bad", [float("nan"), math.inf, True, "0.2"])
@@ -158,10 +213,55 @@ def test_mutual_flux_bias_is_a_level_of_each_qubit():
     assert ("mutual flux bias of a-b", -0.2) in _levels(m, "b.z")[0]
 
 
+def test_dangling_pair_role_with_a_stored_bias_is_refused():
+    m = _mutual_chip([0.5, 0.5])
+    m["qubit_pairs"]["a-b"]["qubit_control"] = "#/nowhere"
+    levels, why = _levels(m, "a.z")
+    assert levels is None
+    assert "qubit_pairs.a-b.qubit_control" in why and "could not be followed" in why
+
+
+def test_numpy_integer_is_a_number_bool_is_not():
+    np = pytest.importorskip("numpy")
+    assert flux_dc._number(np.int64(1)) and flux_dc._number(np.float64(0.5))
+    assert not flux_dc._number(True) and not flux_dc._number(np.bool_(True))
+    m = _mutual_chip([np.int64(1), 0])
+    assert ("mutual flux bias of a-b", 1.0) in _levels(m, "a.z")[0]
+
+
 @pytest.mark.parametrize("bias", [[float("nan"), 0], [True, 0], ["x", 0], [0.1], 0.3])
 def test_mutual_flux_bias_bad_value_is_refused(bias):
     levels, why = _levels(_mutual_chip(bias), "a.z")
     assert levels is None and "qubit_pairs.a-b.mutual_flux_bias" in why
+
+
+# ---- min offset ----------------------------------------------------------
+
+def test_stored_min_offset_is_always_a_level():
+    m = {"qubits": {"q": {"z": {"flux_point": "joint", "joint_offset": 0.1, "min_offset": 0.3}},
+                    "r": {"z": {"flux_point": "zero", "min_offset": -0.2}}}}
+    assert _levels(m, "q.z") == ([("channel offset", 0.0), ("joint flux-point offset", 0.1),
+                                  ("min flux-point offset", 0.3)], None)
+    assert ("min flux-point offset", -0.2) in _levels(m, "r.z")[0]
+
+
+def test_min_flux_point_lists_min_offset_once():
+    m = {"qubits": {"q": {"z": {"flux_point": "min", "min_offset": 0.3}}}}
+    assert _levels(m, "q.z") == ([("channel offset", 0.0), ("min flux-point offset", 0.3)], None)
+
+
+def test_no_min_offset_no_level():
+    for z in ({"flux_point": "joint", "joint_offset": 0.1},
+              {"flux_point": "joint", "joint_offset": 0.1, "min_offset": None}):
+        levels, why = _levels({"qubits": {"q": {"z": z}}}, "q.z")
+        assert why is None and not any(lab.startswith("min") for lab, _ in levels)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), True, "0.1", "#/nowhere"])
+def test_bad_min_offset_is_refused_naming_the_leaf(bad):
+    m = {"qubits": {"q": {"z": {"flux_point": "joint", "joint_offset": 0.1, "min_offset": bad}}}}
+    levels, why = _levels(m, "q.z")
+    assert levels is None and "qubits.q.z.min_offset" in why
 
 
 # ---- unchanged output for a plain chip ---------------------------------
