@@ -5104,6 +5104,8 @@
         "chip and " + (oneC ? "its" : "their") + " time of flight was not moved: measure time " +
         "of flight again.");
     }
+    // a stored value SM did not place: the server's one sentence, as is
+    (t.tof_unplaced || []).forEach(function (u) { quiet(u.note); });
     if (t.note) quiet(t.note);
     return wrap;
   }

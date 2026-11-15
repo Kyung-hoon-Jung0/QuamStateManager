@@ -215,6 +215,17 @@ function spec(qubits, fluxFem) {
   ok(box.textContent.includes(unplaced) && /MW output c8/.test(box.textContent) &&
      /Time of flight of q1: 28 to 48 ns\. Re-check it on the chip\./.test(box.textContent),
      '[grid] offer keeps the other lines and names the unplaced one');
+  // after Apply the result review names a stored value SM did not place, with the server's sentence
+  const follows = 'Time of flight of q2 is a reference to qubits/q1/resonator/time_of_flight; it ' +
+    'follows that value (now 48 ns).';
+  const notNumber = "Time of flight of q3 is not moved: the stored value 'abc' is not a number SM " +
+    'can place; measure time of flight again.';
+  const review = T.outputTimingResultTable({ mw: [{ label: 'p8', band: 3, delay: 20 }], flux: [],
+    tof: [{ qubit: 'q1', shift: 20, value: 48, moved: true, from: 28 }],
+    tof_unplaced: [{ qubit: 'q2', note: follows }, { qubit: 'q3', note: notNumber }] });
+  const rvn = Array.from(review.querySelectorAll('p.ui-note')).map(function (p) { return p.textContent; });
+  ok(rvn.indexOf(follows) >= 0 && rvn.indexOf(notNumber) >= 0,
+     '[grid] result review names every unplaced value: ' + JSON.stringify(rvn));
   console.log(fails ? fails + ' failure(s)' : 'OK (' + asserts + ' assertions)');
   process.exit(fails ? 1 : 0);
 })();

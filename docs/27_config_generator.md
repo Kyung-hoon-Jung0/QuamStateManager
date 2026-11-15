@@ -700,16 +700,24 @@ same rule applies to every readout, provisionally untested on LF-FEM and OPX+.
   is written as 28: 18 ns after). Either way the time of flight is measured again.
 - The Re-generate band shift plan writes `new` = the nearest allowed value and keeps `sum` = the raw
   sum. SM never replaces a QUAM pointer with a literal at the resonator leaf: a pointer may be shared
-  by several elements, and overwriting it would cut the link silently. A stored pointer that resolves
-  to a finite number is therefore not moved; it is listed in `tof_unplaced` (with its `target`) as
-  "Time of flight of q2 is a reference to <target>; it is not moved. Move it at <target> if that is
-  meant.". Apply leaves the pointer string at that leaf; the target moves only as its own element's
-  line (a resonator time of flight on a shifted output), never on behalf of the pointer. A pointer that does not resolve to
-  a number is named like any other value the rule cannot place. A stored value the rule cannot place is not
-  written: it is listed in `tof_unplaced` with a sentence naming why (no time of flight stored, a
-  value that is still not a number, a value that is not finite, or a sum that is negative), and the
-  rest of the shift is still offered. The Re-generate question names those qubits in one clause; the
-  full sentence is its own line under it, in the offer text and in the applied note.
+  by several elements, and overwriting it would cut the link silently. A stored pointer is read with
+  the store's resolver and named by the leaf its chain lands on (`pointer_resolver.landing_path`,
+  with "(through <first hop>)" for a chain); it is listed in `tof_unplaced` (with its `target`) and
+  Apply leaves the pointer string at that leaf. When the target is a time of flight the same plan
+  moves, the item carries `follows` and reads "Time of flight of q2 is a reference to <target>; it
+  follows that value (now 48 ns)." (also for a resonator on an unshifted readout output). Any other
+  pointer to a finite number reads "... is a reference to <target>; it is not moved. Move it at
+  <target> if that is meant."; the target moves only as its own element's line. A pointer that gives
+  no finite number (dangling, a cycle, text, a bool, nan / inf, a `#./` form the resolver does not
+  follow) reads "... is a reference to <target> that does not resolve to a number (it holds nan); it
+  is not moved.". Any other stored value the rule cannot place is not written: it is listed in
+  `tof_unplaced` with a sentence naming why (no time of flight stored, a value that is not a number, a
+  value that is not finite, or a sum that is negative), and the rest of the shift is still offered.
+  The Re-generate question names the qubits not moved in one clause (every one of them; a `follows`
+  item is not in it); the full sentence is its own line under it, in the offer text and in the
+  applied note. After Apply the output timing review (`output_timing.summary` `tof_unplaced`) lists
+  each such resonator with the same sentence: all of them come from `output_timing.tof_unplaced_note`
+  over the sentence helpers in `generator/_script_common.py`.
 - A value the user set stays as entered, with the reason and nearest allowed value (`tof_kept_note`);
   on an undelayed readout output the review names only the grid. A default SM pre-filled, or a
   builder value nobody set, is written on the grid. Stored values SM does not move stay unchanged.

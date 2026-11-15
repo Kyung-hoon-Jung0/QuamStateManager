@@ -233,8 +233,6 @@ def test_build_result_carries_the_moves_into_the_review():
 
 @pytest.mark.parametrize("bad, clause", [
     (float("inf"), "the stored value is inf, not a finite number"),
-    ("#/qubits/nobody/resonator/time_of_flight",
-     "the stored value '#/qubits/nobody/resonator/time_of_flight' is not a number SM can place"),
     ("abc", "the stored value 'abc' is not a number SM can place"),
     (None, "the stored value None is not a number SM can place"),
     ("missing", "no time of flight is stored"),
@@ -283,14 +281,110 @@ def test_a_stored_pointer_to_a_number_is_not_moved_and_names_its_target(tmp_path
     assert written["qubits"]["q1"]["resonator"]["time_of_flight"] == 48
 
 
-def test_a_relative_pointer_names_its_absolute_target():
+FOLLOWS_Q1 = ("Time of flight of q2 is a reference to qubits/q1/resonator/time_of_flight; it "
+              "follows that value (now 48 ns).")
+
+
+@pytest.mark.parametrize("pointer", ["#/qubits/q1/resonator/time_of_flight",
+                                     "#../../q1/resonator/time_of_flight"])
+def test_a_pointer_to_a_value_this_run_moves_follows_it(tmp_path, pointer):
     state, wiring = _chip(ro_band=3, tof=28)
     state["qubits"]["q1"]["resonator"]["time_of_flight"] = 26
-    state["qubits"]["q2"]["resonator"]["time_of_flight"] = "#../../q1/resonator/time_of_flight"
+    state["qubits"]["q2"]["resonator"]["time_of_flight"] = pointer
     plan = regenerate.mw_band_shift_plan(state, wiring)
+    assert [(t["qubit"], t["new"]) for t in plan["tof"]] == [("q1", 48)]
+    (ref,) = plan["tof_unplaced"]
+    assert ref["target"] == "qubits/q1/resonator/time_of_flight" and ref["follows"] is True
+    assert ref["note"] == FOLLOWS_Q1 and "Move it at" not in ref["note"]
+    assert FOLLOWS_Q1 in regenerate.mw_band_shift_offer_text(plan)
+    why = regenerate.mw_band_shift_question(plan)["why"]
+    assert why == ("Band 1/3 MW outputs leave 20 ns before band 2 ones. Re-check the time of "
+                   "flight of q1.")
+    _write(tmp_path, state, wiring)
+    regenerate.apply_mw_band_shift(tmp_path)
+    written = json.loads((tmp_path / "state.json").read_text())["qubits"]
+    assert written["q2"]["resonator"]["time_of_flight"] == pointer
+    assert written["q1"]["resonator"]["time_of_flight"] == 48
+
+
+def test_a_pointer_on_an_unshifted_readout_still_names_that_it_follows():
+    state, wiring = _chip(ro_band=3, tof=28)
+    # q2 reads out on a band 2 port nothing shifts
+    state["ports"]["mw_outputs"]["con1"]["1"]["9"] = dict(
+        state["ports"]["mw_outputs"]["con1"]["1"]["8"], band=2)
+    wiring["wiring"]["qubits"]["q2"]["rr"]["opx_output"] = "#/ports/mw_outputs/con1/1/9"
+    state["qubits"]["q2"]["resonator"]["time_of_flight"] = "#/qubits/q1/resonator/time_of_flight"
+    plan = regenerate.mw_band_shift_plan(state, wiring)
+    assert [t["qubit"] for t in plan["tof"]] == ["q1"]
+    (ref,) = plan["tof_unplaced"]
+    assert ref["note"] == FOLLOWS_Q1
+
+
+@pytest.mark.parametrize("held", [26, 28])
+def test_a_pointer_to_a_value_nothing_moves_keeps_the_reference_sentence(held):
+    state, wiring = _chip(ro_band=3, tof=28)
+    state["shared"] = {"time_of_flight": held}
+    state["qubits"]["q2"]["resonator"]["time_of_flight"] = "#/shared/time_of_flight"
+    plan = regenerate.mw_band_shift_plan(state, wiring)
+    (ref,) = plan["tof_unplaced"]
+    assert ref["note"] == REF_NOTE and not ref.get("follows")
+
+
+def test_a_pointer_chain_names_its_final_leaf():
+    state, wiring = _chip(ro_band=3, tof=28)
+    state["shared"] = {"a": "#/shared/b", "b": 26}
+    state["qubits"]["q2"]["resonator"]["time_of_flight"] = "#/shared/a"
+    plan = regenerate.mw_band_shift_plan(state, wiring)
+    (ref,) = plan["tof_unplaced"]
+    assert ref["target"] == "shared/b"
+    assert ref["note"] == ("Time of flight of q2 is a reference to shared/b (through shared/a); it "
+                           "is not moved. Move it at shared/b if that is meant.")
+
+
+NOT_A_NUMBER = ("Time of flight of q2 is a reference to {} that does not resolve to a number{}; "
+                "it is not moved.")
+
+
+@pytest.mark.parametrize("pointer, shared, target, held", [
+    ("#/shared/nothing", {}, "shared/nothing", ""),
+    ("#/shared/a", {"a": "#/shared/b", "b": "#/shared/a"}, "shared/a", ""),
+    ("#/shared/a", {"a": "text"}, "shared/a", " (it holds 'text')"),
+    ("#/shared/a", {"a": True}, "shared/a", " (it holds True)"),
+    ("#/shared/a", {"a": float("nan")}, "shared/a", " (it holds nan)"),
+    ("#/shared/a", {"a": "#/shared/b", "b": float("inf")}, "shared/b", " (it holds inf)"),
+    ("#./tof_base", None, "qubits/q2/resonator/tof_base", " (SM does not follow a #./ reference)"),
+])
+def test_a_pointer_that_gives_no_finite_number_is_named(tmp_path, pointer, shared, target, held):
+    state, wiring = _chip(ro_band=3, tof=28)
+    if shared is None:
+        state["qubits"]["q2"]["resonator"]["tof_base"] = 26
+    else:
+        state["shared"] = shared
+    state["qubits"]["q2"]["resonator"]["time_of_flight"] = pointer
+    plan = regenerate.mw_band_shift_plan(state, wiring)
+    assert [t["qubit"] for t in plan["tof"]] == ["q1"]
     (miss,) = plan["tof_unplaced"]
-    assert miss["target"] == "qubits/q1/resonator/time_of_flight"
-    assert "a reference to qubits/q1/resonator/time_of_flight;" in miss["note"]
+    assert miss["note"] == NOT_A_NUMBER.format(target, held)
+    _write(tmp_path, state, wiring)
+    regenerate.apply_mw_band_shift(tmp_path)
+    written = json.loads((tmp_path / "state.json").read_text())
+    assert written["qubits"]["q2"]["resonator"]["time_of_flight"] == pointer
+
+
+@pytest.mark.parametrize("n", [2, 3])
+def test_the_question_names_every_unplaced_qubit(n):
+    state, wiring = _chip(xy_bands=(2, 1, 1)[:n], z=(61, 63, 65)[:n], ro_band=3, tof=28)
+    state["qubits"]["q1"]["resonator"]["time_of_flight"] = -50
+    state["qubits"]["q2"]["resonator"]["time_of_flight"] = "#/shared/nothing"
+    if n == 3:
+        state["qubits"]["q3"]["resonator"]["time_of_flight"] = "abc"
+    plan = regenerate.mw_band_shift_plan(state, wiring)
+    names = ["q1", "q2", "q3"][:n]
+    assert [t["qubit"] for t in plan["tof_unplaced"]] == names
+    why = regenerate.mw_band_shift_question(plan)["why"]
+    assert why.endswith(" Time of flight of " + ", ".join(names) + " is not moved.")
+    text = regenerate.mw_band_shift_offer_text(plan)
+    assert all(t["note"] in text for t in plan["tof_unplaced"])
 
 
 def test_the_unplaced_sentence_appears_once_in_the_question():
@@ -311,3 +405,34 @@ def test_the_applied_note_names_the_unplaced_value(tmp_path, monkeypatch):
     assert res.get("ok") is True
     note = next(w for w in res["result"]["warnings"] if w.startswith("MW outputs shifted: "))
     assert note.endswith(". " + UNPLACED_NEG), note
+
+
+@pytest.mark.parametrize("stored, extra, expected", [
+    ("#/qubits/q1/resonator/time_of_flight", None, FOLLOWS_Q1),
+    ("#/shared/time_of_flight", {"time_of_flight": 26}, REF_NOTE),
+    ("abc", None, "Time of flight of q2 is not moved: the stored value 'abc' is not a number SM "
+                  "can place; measure time of flight again."),
+    ("#/shared/a", {"a": float("nan")}, NOT_A_NUMBER.format("shared/a", " (it holds nan)")),
+])
+def test_the_result_review_names_a_value_sm_did_not_place(tmp_path, stored, extra, expected):
+    state, wiring = _chip(ro_band=3, tof=28)
+    if extra:
+        state["shared"] = extra
+    state["qubits"]["q2"]["resonator"]["time_of_flight"] = stored
+    source = copy.deepcopy((state, wiring))
+    plan = regenerate.mw_band_shift_plan(state, wiring)
+    (miss,) = plan["tof_unplaced"]
+    _write(tmp_path, state, wiring)
+    applied = regenerate.apply_mw_band_shift(tmp_path)
+    after = json.loads((tmp_path / "state.json").read_text())
+    timing = output_timing.summary(after, wiring, source=source,
+                                   tof_moved={t["qubit"]: t["old"] for t in applied["tof"]})
+    assert timing["tof_unplaced"] == [{"qubit": "q2", "note": expected}]
+    assert miss["note"] == expected        # one sentence, before and after Apply
+    assert "q2" not in timing.get("tof_check", [])
+
+
+def test_a_chip_with_plain_numbers_has_no_unplaced_review_line():
+    state, wiring = _chip(ro_band=3, tof=28)
+    state["ports"]["mw_outputs"]["con1"]["1"]["8"]["delay"] = 20
+    assert "tof_unplaced" not in output_timing.summary(state, wiring)

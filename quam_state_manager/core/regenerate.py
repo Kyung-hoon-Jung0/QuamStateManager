@@ -484,30 +484,8 @@ def _num(v) -> bool:
 
 
 def _stored_tof(doc: dict, rr: dict, path: str):
-    """A resonator's stored time of flight as ``(value, None, None)``, or
-    ``(stored, why_not, target)`` when no number is placed at this leaf.
-    ``why_not`` is the clause naming why; ``target`` is set only for a QUAM
-    pointer that resolves to a finite number: SM never replaces a pointer with
-    a literal (it may be shared by several elements), so that value is not
-    moved and its target is named instead."""
-    import math
-
-    if "time_of_flight" not in rr:
-        return None, "no time of flight is stored", None
-    stored = rr["time_of_flight"]
-    value = stored
-    holder = tuple(path.split("/"))
-    if pointer_resolver.is_pointer(value):
-        value = pointer_resolver.resolve_pointer(doc, value, holder)
-    if not _num(value):
-        return stored, f"the stored value {stored!r} is not a number SM can place", None
-    if not math.isfinite(value):
-        return stored, f"the stored value is {value:g}, not a finite number", None
-    if pointer_resolver.is_pointer(stored):
-        parts = pointer_resolver.target_path(doc, stored, holder)
-        target = "/".join(parts) if parts else stored
-        return stored, "it is a reference", target
-    return value, None, None
+    """:func:`output_timing.stored_tof` (the one reading)."""
+    return output_timing.stored_tof(doc, rr, path)
 
 
 def _node(doc: dict, path: str):
@@ -546,7 +524,12 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
     goes to ``tof_unplaced`` with the reason, and the rest of the shift is
     still offered. A stored QUAM pointer is never replaced by a literal, even
     one that resolves to a number: it goes to ``tof_unplaced`` with a sentence
-    naming its target."""
+    naming the leaf its chain lands on (``target``). When that leaf is a time
+    of flight this plan moves, the item carries ``follows`` and its sentence
+    says the reference follows the planned new value (also for a resonator
+    whose own readout output is not shifted); a pointer that does not resolve
+    to a finite number is named as such. Every sentence is
+    :func:`output_timing.tof_unplaced_note`."""
     try:
         mw = output_timing.mw_outputs_in_use(state, wiring)
         bands = {p.get("band") for _, p in mw}
@@ -567,6 +550,7 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
                                       "new": shift[path]})
         seen: set = set()
         xy_shift: dict = {}
+        refs: list = []
         for qid, q in ((state or {}).get("qubits") or {}).items():
             if not isinstance(q, dict):
                 continue
@@ -584,34 +568,32 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
             rr = q.get("resonator") if isinstance(q.get("resonator"), dict) else {}
             ro_path, _ = _resolve_ref(doc, rr.get("opx_output"))
             r = shift.get(ro_path, 0)
-            if r:
-                path = f"qubits/{qid}/resonator/time_of_flight"
-                old, why_not, target = _stored_tof(doc, rr, path)
-                raw = old + r if why_not is None else None
-                if why_not is None:
-                    try:
+            path = f"qubits/{qid}/resonator/time_of_flight"
+            if r or pointer_resolver.is_pointer(rr.get("time_of_flight")):
+                reading = _stored_tof(doc, rr, path)
+                old, why_not, ref = reading
+                if ref is not None:
+                    # a pointer is never replaced by a literal: the link stays,
+                    # and its sentence depends on what this run moves (below);
+                    # one on an unshifted readout is named only if it follows
+                    refs.append({"qubit": qid, "path": path, "old": old, "sum": None,
+                                 "target": ref["target"], "_reading": reading,
+                                 "_shifted": bool(r)})
+                elif r:
+                    unplaced = output_timing.tof_unplaced_note(qid, reading, shift=r)
+                    if unplaced is not None:
+                        # one stored value the rule cannot place: the other
+                        # lines are still offered, this one is named and not written
+                        plan["tof_unplaced"].append({
+                            "qubit": qid, "path": path, "old": old,
+                            "sum": old + r if why_not is None else None, "note": unplaced[0]})
+                    else:
+                        raw = old + r
                         ok, nearest, reason = output_timing.tof_on_grid(raw)
-                    except ValueError as exc:
-                        why_not = (f"{old:g} + {r:g} ns gives {raw:g} ns, and {exc}")
-                if target is not None:
-                    # a pointer is never replaced by a literal: the link stays
-                    plan["tof_unplaced"].append({
-                        "qubit": qid, "path": path, "old": old, "sum": None,
-                        "target": target,
-                        "note": (f"Time of flight of {qid} is a reference to {target}; it is "
-                                 f"not moved. Move it at {target} if that is meant.")})
-                elif why_not is not None:
-                    # one stored value the rule cannot place: the other lines
-                    # are still offered, this one is named and not written
-                    plan["tof_unplaced"].append({
-                        "qubit": qid, "path": path, "old": old, "sum": raw,
-                        "note": (f"Time of flight of {qid} is not moved: {why_not}; measure "
-                                 "time of flight again.")})
-                else:
-                    item = {"qubit": qid, "path": path, "old": old, "new": nearest, "sum": raw}
-                    if not ok:
-                        item["grid_note"] = output_timing.tof_rounded_note(raw, nearest, reason)
-                    plan["tof"].append(item)
+                        item = {"qubit": qid, "path": path, "old": old, "new": nearest, "sum": raw}
+                        if not ok:
+                            item["grid_note"] = output_timing.tof_rounded_note(raw, nearest, reason)
+                        plan["tof"].append(item)
             if rr and s != r:
                 plan["spacing"].append({"qubit": qid, "xy_shift": s, "readout_shift": r})
         for pid, pair in ((state or {}).get("qubit_pairs") or {}).items():
@@ -626,6 +608,19 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
                 plan["flux"].append({"pair": pid, "port": c_path,
                                      "port_label": _port_label(c_port, c_path),
                                      "old": c_port["delay"], "new": c_port["delay"] + s})
+        # a reference to a time of flight this run moves follows it (the
+        # planned new value); any other reference is named as not moved
+        moved = {t["path"]: t["new"] for t in plan["tof"]}
+        order = list(((state or {}).get("qubits") or {}))
+        for item in refs:
+            note, kind = output_timing.tof_unplaced_note(item["qubit"], item.pop("_reading"), moved)
+            if not item.pop("_shifted") and kind != "follows":
+                continue
+            item["note"] = note
+            if kind == "follows":
+                item["follows"] = True
+            plan["tof_unplaced"].append(item)
+        plan["tof_unplaced"].sort(key=lambda t: order.index(t["qubit"]))
         return plan if plan["ports"] else None
     except (AttributeError, TypeError, ValueError, KeyError):
         return None
@@ -639,10 +634,11 @@ def mw_band_shift_question(plan: dict) -> dict:
     if plan.get("tof"):
         why += (" Re-check the time of flight of " +
                 ", ".join(t["qubit"] for t in plan["tof"]) + ".")
-    if plan.get("tof_unplaced"):
-        # the full sentence is the question's own line under it; one clause here
-        why += (" Time of flight of " +
-                ", ".join(t["qubit"] for t in plan["tof_unplaced"]) + " is not moved.")
+    still = [t["qubit"] for t in plan.get("tof_unplaced") or () if not t.get("follows")]
+    if still:
+        # the full sentence is the question's own line under it; one clause
+        # here (a reference that follows a moved value is not "not moved")
+        why += " Time of flight of " + ", ".join(still) + " is not moved."
     return {"kind": "mw_shift", "question": "Shift the band 1/3 MW outputs by 20 ns?",
             "why": why}
 

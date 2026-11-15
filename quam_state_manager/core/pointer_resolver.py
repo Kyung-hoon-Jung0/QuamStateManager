@@ -354,8 +354,10 @@ def _get(root: Any, path: list[str]) -> Any:
     return node
 
 
-def _landing(root: Any, ptr: str, field_path: tuple[str, ...], hops: int = 16) -> list[str] | None:
-    """The real path a pointer chain lands on (following pointer to pointer)."""
+def landing_path(root: Any, ptr: str, field_path: tuple[str, ...], hops: int = 16) -> list[str] | None:
+    """The real path a pointer chain lands on (following pointer to pointer):
+    the final leaf, not the first hop. ``None`` for a dangling chain or a
+    cycle (no landing within *hops*)."""
     path = field_path
     for _ in range(hops):
         # every form, "#./" aliases included (quam follows them too)
@@ -371,6 +373,9 @@ def _landing(root: Any, ptr: str, field_path: tuple[str, ...], hops: int = 16) -
             continue
         return list(path)
     return None
+
+
+_landing = landing_path   # the name the package's callers import
 
 
 def _walk_relative(root: Any, pointer: str, current_path: tuple[str, ...]) -> list[str] | None:

@@ -15,8 +15,12 @@ cannot count differently: a port no element plays does not count.
 
 from __future__ import annotations
 
+import math
+
+from quam_state_manager.core import pointer_resolver
 from quam_state_manager.generator._script_common import (  # noqa: F401  (re-exported)
-    tof_kept_note, tof_on_grid, tof_rounded_note)
+    tof_follows_note, tof_kept_note, tof_not_moved_note, tof_on_grid,
+    tof_reference_not_number_note, tof_reference_note, tof_rounded_note)
 
 
 def _grid(value):
@@ -40,6 +44,84 @@ LATENCY_NOTE = ("The 20 ns step between MW band 2 and bands 1 / 3 is documented.
 
 _MW_PREFIX = "ports/mw_outputs/"
 _LF_PREFIX = "ports/analog_outputs/"
+
+
+def _finite(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def stored_tof(doc: dict, rr: dict, path: str):
+    """A resonator's stored time of flight, read with the store's resolver
+    (``pointer_resolver.resolve_pointer``), as ``(value, why_not, ref)``.
+
+    ``value`` is the plain finite number stored (``why_not`` None), else
+    the stored value (a pointer string included); ``why_not`` the clause naming why
+    no number is placed at this leaf. ``ref`` is set for a QUAM pointer:
+    ``{"target", "through", "resolves", "held"}`` where ``target`` is the
+    leaf the chain lands on (``pointer_resolver.landing_path``; the first
+    hop when the chain dangles or loops), ``through`` the first hop,
+    ``resolves`` whether it gives a finite number, ``held`` what the landing
+    leaf holds when that is not a finite number. SM never replaces a pointer
+    with a literal (it may be shared by several elements), so a pointer is
+    never placed, even one that resolves."""
+    if not isinstance(rr, dict) or "time_of_flight" not in rr:
+        return None, "no time of flight is stored", None
+    stored = rr["time_of_flight"]
+    if pointer_resolver.is_pointer(stored):
+        holder = tuple(path.split("/"))
+        try:
+            value = pointer_resolver.resolve_pointer(doc, stored, holder)
+            first = pointer_resolver.target_path(doc, stored, holder)
+            land = pointer_resolver.landing_path(doc, stored, holder)
+        except (AttributeError, TypeError, ValueError, KeyError, IndexError):
+            value, first, land = stored, None, None   # named as not resolving
+        through = "/".join(first) if first else stored
+        ref = {"target": "/".join(land) if land else through, "through": through,
+               "resolves": _finite(value), "held": None}
+        if ref["resolves"]:
+            return stored, "it is a reference", ref
+        if pointer_resolver.is_self_ref(stored):
+            ref["held"] = "SM does not follow a #./ reference"
+        elif not pointer_resolver.is_pointer(value):
+            # the chain lands on a value: name it (text, a bool, nan, ...)
+            ref["held"] = ("it holds " + (f"{value:g}" if isinstance(value, float) else
+                                          repr(value) if isinstance(value, (str, bool, int))
+                                          or value is None else "an object"))
+        return stored, "it is a reference that does not resolve to a number", ref
+    if not isinstance(stored, (int, float)) or isinstance(stored, bool):
+        return stored, f"the stored value {stored!r} is not a number SM can place", None
+    if not math.isfinite(stored):
+        return stored, f"the stored value is {stored:g}, not a finite number", None
+    return stored, None, None
+
+
+def tof_unplaced_note(qubit: str, reading, moved: dict | None = None, shift=None):
+    """The one sentence for a stored time of flight SM does not write, or
+    ``None`` when the grid rule places it. ``reading`` is :func:`stored_tof`'s
+    answer, ``moved`` ``{path: new value}`` of the times of flight this run
+    moves (a reference to one of them follows it), ``shift`` the readout
+    output delay change (a plain number whose sum is negative is named).
+    Returns ``(note, kind)`` with kind ``follows`` / ``reference`` /
+    ``not_number`` / ``not_moved``, or ``None``. The band shift plan, its
+    offer, the applied note and the result review all print this sentence."""
+    value, why_not, ref = reading
+    if ref is not None:
+        target = ref["target"]
+        if not ref["resolves"]:
+            return tof_reference_not_number_note(qubit, target, ref["held"]), "not_number"
+        if target in (moved or {}):
+            return tof_follows_note(qubit, target, moved[target], ref["through"]), "follows"
+        return tof_reference_note(qubit, target, ref["through"]), "reference"
+    if why_not is None:
+        if shift is None:
+            return None
+        raw = value + shift
+        try:
+            tof_on_grid(raw)
+            return None
+        except ValueError as exc:
+            why_not = f"{value:g} + {shift:g} ns gives {raw:g} ns, and {exc}"
+    return tof_not_moved_note(qubit, why_not), "not_moved"
 
 
 def _rb():
@@ -129,6 +211,11 @@ def _readout_delays(state: dict, wiring: dict) -> dict:
     return out
 
 
+def _moved_value(state: dict, qid: str):
+    rr = (((state or {}).get("qubits") or {}).get(qid) or {}).get("resonator")
+    return rr.get("time_of_flight") if isinstance(rr, dict) else None
+
+
 def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=(),
             tof_unrecorded=(), source=None) -> dict | None:
     """The output timing written on a chip, or ``None`` when it has no MW output
@@ -155,7 +242,13 @@ def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=(),
     the source chip does not have) and was not moved is counted in
     ``tof_check`` (its time of flight must be measured again). Without
     ``source`` every unmoved resonator is in ``tof_check``: nothing says its
-    delay was already there."""
+    delay was already there.
+
+    ``tof_unplaced``: ``{qubit, note}`` per resonator on such a readout
+    output whose stored time of flight is not a finite number (a reference,
+    text, nan, none stored), with :func:`tof_unplaced_note`'s sentence, the
+    one the band shift plan and its applied note print; a reference to a
+    time of flight this run moved is listed even on an undelayed output."""
     try:
         doc = _doc(state, wiring)
         mw = [{"port": p, "label": port_label(v, p), "band": v.get("band"),
@@ -182,7 +275,7 @@ def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=(),
             f.pop("_rank")
         delay_of = {m["port"]: m["delay"] for m in mw}
         delay_of.update({f["port"]: f["delay"] for f in flux})
-        tof, unrecorded, unchanged, check = [], [], [], []
+        tof, unrecorded, unchanged, check, unplaced = [], [], [], [], []
         typed, unrec = set(tof_typed or ()), set(tof_unrecorded or ())
         before = _readout_delays(*source) if source else {}
         old_tof = tof_moved if isinstance(tof_moved, dict) else {}
@@ -193,9 +286,22 @@ def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=(),
                 continue
             path, _ = _resolve(doc, rr.get("opx_output"))
             s = delay_of.get(path, 0)
-            if not (_num(s) and s >= 0 and _num(rr.get("time_of_flight"))):
+            if not (_num(s) and s >= 0):
                 continue
             same = qid in before and same_number(before[qid][0], s)
+            if not _finite(rr.get("time_of_flight")):
+                # a value SM could not place (a reference, text, nan, none):
+                # the same sentence the plan and the applied note print
+                tof_path = f"qubits/{qid}/resonator/time_of_flight"
+                reading = stored_tof(doc, rr, tof_path)
+                moved_to = {f"qubits/{m}/resonator/time_of_flight": v for m in moved_set
+                            if _finite(v := _moved_value(state, m))}
+                note = tof_unplaced_note(qid, reading, moved_to)
+                follows = note is not None and note[1] == "follows"
+                if note is not None and (follows or (s != 0 or (
+                        tof_moved is not None and qid in before and not same))):
+                    unplaced.append({"qubit": qid, "note": note[0]})
+                continue
             typed_off_grid = qid in typed and not _grid(rr["time_of_flight"])[0]
             if s == 0 and not typed_off_grid and not (tof_moved is not None and (
                     qid in moved_set or (qid in before and not same))):
@@ -236,6 +342,8 @@ def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=(),
             out["tof_unchanged"] = unchanged
         if check:
             out["tof_check"] = check
+        if unplaced:
+            out["tof_unplaced"] = unplaced
         if mw and flux:
             out["note"] = LATENCY_NOTE
         return out

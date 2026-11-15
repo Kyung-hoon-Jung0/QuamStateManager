@@ -149,3 +149,38 @@ def tof_kept_note(value, nearest, reason):
     """The sentence for an off-grid time of flight the user set, which SM keeps."""
     return (f"Time of flight {value:g} ns is kept as you set it, but {reason} "
             f"(nearest allowed {nearest:g} ns).")
+
+
+# The sentences for a stored time of flight a band shift does not write.
+# The plan, its offer, the applied note and the result review all print
+# these, so the wording exists once.
+
+def tof_not_moved_note(qubit, why_not):
+    """A stored value the grid rule cannot place (``why_not`` names why)."""
+    return f"Time of flight of {qubit} is not moved: {why_not}; measure time of flight again."
+
+
+def _via(target, through):
+    return f"{target} (through {through})" if through and through != target else f"{target}"
+
+
+def tof_reference_note(qubit, target, through=None):
+    """A stored reference to a number nothing in this run moves; ``target``
+    is the leaf the chain lands on, ``through`` its first hop."""
+    return (f"Time of flight of {qubit} is a reference to {_via(target, through)}; it is not "
+            f"moved. Move it at {target} if that is meant.")
+
+
+def tof_follows_note(qubit, target, value, through=None):
+    """A stored reference to a time of flight this same run moves: the link
+    is kept, so the value follows its target (``value`` is the target's new value)."""
+    return (f"Time of flight of {qubit} is a reference to {_via(target, through)}; it follows "
+            f"that value (now {value:g} ns).")
+
+
+def tof_reference_not_number_note(qubit, target, held=None):
+    """A stored reference that does not resolve to a finite number (dangling,
+    a cycle, text, nan / inf, or a form the resolver does not follow).
+    ``held`` is the text naming what the landing leaf holds, when known."""
+    return (f"Time of flight of {qubit} is a reference to {target} that does not resolve to "
+            f"a number{f' ({held})' if held else ''}; it is not moved.")
