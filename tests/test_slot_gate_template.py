@@ -28,7 +28,10 @@ def test_round_trip_and_source(slots, spectators):
     tree = ast.parse(source)
     assert not any(isinstance(n, ast.Name) and n.id == "chip" for n in ast.walk(tree))
     assert not re.search(r"\bchip\b", source)
-    assert "AMP_SCALE_LIMIT" not in source and "2.0" not in source
+    assert "AMP_SCALE_LIMIT" not in source
+    assert (f"< {T.AMP_SCALE_LIMIT!r}" in source) == spectators
+    if not spectators:
+        assert repr(T.AMP_SCALE_LIMIT) not in source
     for slot in T.SLOTS:
         assert (f"    {slot}_flux_pulse:" in source) == (slot in slots)
         assert (f"self.{slot}_flux_pulse_label," in source) == (slot in slots)
@@ -100,7 +103,7 @@ def test_shared_unit_operation_across_gates():
         assert constant == "spectator_unit"
         operations.setdefault("spectator", {}).setdefault(constant, {"amplitude": 0.1})
         assert name not in constant
-        assert "amp(level / unit)" in source and "duration=length_ns // 4" in source
+        assert "amp(level / unit)" in source and f"duration=length_ns // {T.LENGTH_STEP_NS})" in source
         assert not any(isinstance(n, (ast.Assign, ast.AnnAssign, ast.AugAssign))
                        and any(isinstance(t, ast.Subscript) for t in (n.targets if isinstance(n, ast.Assign) else [n.target]))
                        for n in ast.walk(ast.parse(source)))
@@ -340,5 +343,128 @@ def test_lab_spectator_extra_key_guard(tmp_path, key):
                        spectators={"spectator": [0, 16, 0.1]},
                        spectator_keys={key: ["spectator", "extra"]})
     assert not result["ok"] and "keys differ" in result["error"] and "extra" in result["error"], result
+    assert result["program_build_started"]
+    assert result["slots_played"] == result["spectator_plays"] == result["alignments"] == []
+
+
+ACCEPTED_REFS = ["#/qubits/q1", "q1", " q1 ", " #/qubits/q1 "]
+REFUSED_REFS = ["#/qubits/", "", "  ", "#/qubit_pairs/x", "#/qubits/q1/z", "a/b", "#./q1", "#../q1", "#q1",
+                "#/qubits//", 5, None]
+
+
+@pytest.mark.parametrize("ref", ACCEPTED_REFS)
+def test_qubit_name_accepts(ref):
+    assert T.qubit_name(ref) == "q1"
+    assert T.spectator_rows_problem(**rows(ref=ref)) is None
+
+
+@pytest.mark.parametrize("ref", REFUSED_REFS)
+@pytest.mark.parametrize("where", ["spectator", "control", "target"])
+def test_qubit_name_refuses(ref, where):
+    assert T.qubit_name(ref) is None
+    args = rows() if where != "spectator" else rows(ref=ref)
+    if where != "spectator":
+        args[where] = ref
+    problem = T.spectator_rows_problem(**args)
+    if where == "control" and ref is None or where == "target" and ref is None:
+        assert problem is None  # no role given
+        return
+    assert isinstance(problem, str) and "must be a reference string or name" in problem, problem
+    assert ("'s' qubit" if where == "spectator" else where) in problem
+
+
+def test_other_collection_is_not_the_own_qubit():
+    problem = T.spectator_rows_problem(**rows(ref="#/qubit_pairs/q1", control="#/qubits/q1"))
+    assert "must be a reference string or name" in problem and "control or target" not in problem
+    assert T.spectator_rows_problem(**rows(ref="#/qubits/q4", control="#/qubits/q1")) is None
+
+
+def test_spectator_of_another_pair_is_accepted():
+    # q2 controls some other pair; here it is only a spectator.
+    assert T.spectator_rows_problem(**rows(ref="#/qubits/q4", control="#/qubits/q1", target="q5")) is None
+
+
+@pytest.mark.parametrize("unit", [0, True, "0.1", float("nan"), float("inf"), 10**400])
+def test_unit_problem_blames_the_unit(unit):
+    problem = T.spectator_rows_problem(**rows(unit_amplitudes={"s": unit}))
+    assert problem == T.UNIT_VALUE_PROBLEM.format(name="s", value=unit)
+    assert "'s'" in problem and T.SPECTATOR_UNIT_OP in problem and "level" not in problem
+    assert problem.count(".") - repr(unit).count(".") == 1  # one sentence
+
+
+@pytest.mark.parametrize("level", [None, "0.1", True, float("nan"), float("inf"), 0.2, -0.2, 10**400])
+def test_level_problem_is_neutral(level):
+    problem = T.spectator_rows_problem(**rows(level=level))
+    assert problem == T.LEVEL_PROBLEM.format(name="s", value=level)
+    assert "must be a finite number" in problem and "boolean" not in problem
+    for value in (level, 1):
+        message = T.level_scale_problem(value, 0.1) if value is level else T.level_scale_problem(1, None)
+        assert message and "boolean" not in message
+
+
+def test_fallback_returns_a_sentence(monkeypatch):
+    def boom(value):
+        raise RuntimeError("forced")
+    monkeypatch.setattr(T, "spectator_length_problem", boom)
+    problem = T.spectator_rows_problem(**rows())
+    assert isinstance(problem, str) and "could not be read" in problem and "RuntimeError" in problem
+
+
+@pytest.mark.parametrize("pair", [("q1", "#/qubits/q1"), ("#/qubits/q1", " q1 "), ("q1", "q1")])
+def test_duplicate_spectator_qubit(pair):
+    problem = T.spectator_rows_problem({"a": pair[0], "b": pair[1]}, {"a": 0.1, "b": 0.1}, {"a": 16, "b": 16},
+                                       unit_amplitudes={"a": 0.1, "b": 0.1})
+    assert problem == T.DUPLICATE_PROBLEM.format(first="a", second="b")
+    assert T.spectator_rows_problem({"a": "q1", "b": "q4"}, {"a": 0.1, "b": 0.1}, {"a": 16, "b": 16},
+                                    unit_amplitudes={"a": 0.1, "b": 0.1}) is None
+
+
+def test_length_step_matches_shared_rule():
+    from quam_state_manager.core.cz_gate_build import length_rule
+    step, low = T.LENGTH_STEP_NS, T.MIN_LENGTH_NS
+    assert length_rule({"length": low + step}) is None
+    assert all(length_rule({"length": low + d}) is not None for d in range(1, step))
+    assert str(step) + " ns" in T.LENGTH_PROBLEM
+    source = T.render(T.SlotSpec("ExampleGate", T.SLOTS, True))
+    assert f"value % {step} or value < {low}:" in source and f"length_ns // {step})" in source
+    assert len(re.findall(r"% \d+", source)) == 1 and len(re.findall(r"// \d+", source)) == 1
+    assert T.spectator_rows_problem(**rows(low + step)) is None
+    assert T.spectator_rows_problem(**rows(low + step // 2))
+
+
+def _pure_ok(level, unit=0.1):
+    return T.spectator_rows_problem(**rows(level=level, unit_amplitudes={"s": unit})) is None
+
+
+LEVEL_EDGES = [0.0, 0.1999, -0.1999, 0.2, -0.2, 0.25, True, False, float("nan"), float("inf"), 10**400, None, "0.1"]
+
+
+@lab
+@pytest.mark.parametrize("level", LEVEL_EDGES)
+def test_lab_level_parity(tmp_path, level):
+    result = run_check(tmp_path, T.render(T.SlotSpec("ExampleGate", T.SLOTS, True)),
+                       spectators={"spectator": [level, 16, 0.1]})
+    assert result["program_build_started"]
+    assert result["ok"] == _pure_ok(level), result
+    if not result["ok"]:
+        assert result["error"] == "ValueError: " + T.LEVEL_PROBLEM.format(name="spectator", value=level), result
+        assert result["slots_played"] == result["spectator_plays"] == result["alignments"] == []
+
+
+@lab
+@pytest.mark.parametrize("unit", [0, 0.0, float("nan"), float("inf")])
+def test_lab_unit_parity(tmp_path, unit):
+    result = run_check(tmp_path, T.render(T.SlotSpec("ExampleGate", T.SLOTS, True)),
+                       spectators={"spectator": [0.0, 16, unit]})
+    assert not _pure_ok(0.0, unit) and not result["ok"], result
+    assert result["error"] == "ValueError: " + T.UNIT_VALUE_PROBLEM.format(name="spectator", value=unit), result
+
+
+@lab
+def test_lab_duplicate_spectator_guard(tmp_path):
+    result = run_check(tmp_path, T.render(T.SlotSpec("ExampleGate", T.SLOTS, True)),
+                       spectators={"a": [0.0, 16, 0.1], "b": [0.0, 16, 0.1]}, spectator_same={"b": "a"})
+    assert not result["ok"], result
+    assert result["error"] == "ValueError: " + T.DUPLICATE_PROBLEM.format(first="a", second="b"), result
     assert result["program_build_started"]
     assert result["slots_played"] == result["spectator_plays"] == result["alignments"] == []

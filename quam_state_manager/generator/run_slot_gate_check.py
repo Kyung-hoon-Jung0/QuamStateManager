@@ -3,7 +3,8 @@
 Standard library only at import time. --in and --out name JSON files.
 Input: file (absolute path), class_name, spectators (name: [V, ns, unit V]).
 Optional probes: inline_slots, probe_slot_values, spectator_keys (dict name:
-key list), spectator_own (spectator name: control or target), apply_kwargs.
+key list), spectator_own (spectator name: control or target), spectator_same
+(spectator name: another spectator name whose qubit it reuses), apply_kwargs.
 Output: status describes the script; ok describes the class. imports holds
 ok/error, slots_declared and slots_played are lists, spectator_plays holds
 name/scale/duration records. Errors include the line in the user's file.
@@ -106,6 +107,8 @@ def check(request):
                 params["spectator_" + key] = {n: params["spectator_" + key].get(n, 20) for n in names}
         for name, role in request.get("spectator_own", {}).items():
             params["spectator_qubits"][name] = getattr(pair, "qubit_" + role)
+        for name, other in request.get("spectator_same", {}).items():
+            params["spectator_qubits"][name] = params["spectator_qubits"][other]
         gate = Recorder(**params)
         if request.get("probe_slot_values"):
             result["slot_value_probes"] = []

@@ -33,14 +33,21 @@ AMP_SCALE_LIMIT = 2.0
 
 #: Shortest pulse length in ns; equal to the edge the shared ``length_rule`` enforces (pinned by a test).
 MIN_LENGTH_NS = 16
+#: Pulse length step in ns; equal to the step the shared ``length_rule`` enforces (pinned by a test).
+LENGTH_STEP_NS = 4
 #: Qubit z operation that spectator levels scale; one name for the pure check and the class.
 SPECTATOR_UNIT_OP = "spectator_unit"
 
 KEYS_PROBLEM = "Spectator keys differ: qubits={qubits}, levels={levels}, lengths={lengths}."
 OWN_PROBLEM = "Spectator {name!r} is the pair control or target qubit."
-LENGTH_PROBLEM = ("Spectator {name!r} length {value!r} must be a finite whole multiple of 4 ns, at least "
-                  + str(MIN_LENGTH_NS) + " ns.")
+LENGTH_PROBLEM = ("Spectator {name!r} length {value!r} must be a finite whole multiple of " + str(LENGTH_STEP_NS)
+                  + " ns, at least " + str(MIN_LENGTH_NS) + " ns.")
 UNIT_PROBLEM = "Spectator {name!r}: the unit operation " + repr(SPECTATOR_UNIT_OP) + " is missing on that qubit."
+UNIT_VALUE_PROBLEM = ("Spectator {name!r}: the unit operation " + repr(SPECTATOR_UNIT_OP)
+                      + " amplitude {value!r} must be a finite nonzero number.")
+LEVEL_PROBLEM = ("Spectator {name!r} level {value!r} must be a finite number with |level / unit| strictly below "
+                 + repr(AMP_SCALE_LIMIT) + ".")
+DUPLICATE_PROBLEM = "Spectators {first!r} and {second!r} name the same qubit."
 TYPE_PROBLEM = "Spectator {what} must be {kind}; received {value!r}."
 SLOT_PROBLEM = "The {slot} slot accepts {kinds}; received {value!r}."
 
@@ -96,7 +103,7 @@ def level_scale_problem(level, unit) -> str | None:
         except OverflowError:
             valid = False
         if not valid:
-            return f"Spectator {name} must be a finite number, not a boolean."
+            return f"Spectator {name} must be a finite number."
     if unit == 0:
         return "Spectator unit amplitude must be nonzero."
     try:
@@ -121,10 +128,18 @@ def spectator_length_problem(length_ns) -> str | None:
 
 
 def qubit_name(ref):
-    """Turn a reference string such as "#/qubits/<name>" or a bare name into the name; None if not a string."""
-    if not isinstance(ref, str) or not ref.strip():
+    """Return the qubit name of "#/qubits/<name>" or of a bare name; None for anything else.
+
+    Surrounding whitespace is stripped. The name must be non-empty and contain no "/"; a bare name
+    must also contain no "#". Relative references and other collections are not qubit references.
+    """
+    if not isinstance(ref, str):
         return None
-    return ref.strip().rstrip("/").rsplit("/", 1)[-1]
+    ref = ref.strip()
+    if ref.startswith("#/qubits/"):
+        name = ref[len("#/qubits/"):]
+        return name if name and "/" not in name else None
+    return ref if ref and "/" not in ref and "#" not in ref else None
 
 
 def spectator_rows_problem(qubits, levels, lengths, control=None, target=None, unit_amplitudes=None):
@@ -152,14 +167,18 @@ def spectator_rows_problem(qubits, levels, lengths, control=None, target=None, u
             if qubit_name(ref) is None:
                 return TYPE_PROBLEM.format(what=role, kind="a reference string or name", value=ref)
             own.add(qubit_name(ref))
+        seen = {}
         for name, ref in qubits.items():
             qname = qubit_name(ref)
             if qname is None:
                 return TYPE_PROBLEM.format(what=f"{name!r} qubit", kind="a reference string or name", value=ref)
             if qname in own:
                 return OWN_PROBLEM.format(name=name)
+            if qname in seen:
+                return DUPLICATE_PROBLEM.format(first=seen[qname], second=name)
+            seen[qname] = name
             value = lengths[name]
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or value % 4:
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value % LENGTH_STEP_NS:
                 return LENGTH_PROBLEM.format(name=name, value=value)
             problem = spectator_length_problem(value)
             if problem or value < MIN_LENGTH_NS:
@@ -167,9 +186,10 @@ def spectator_rows_problem(qubits, levels, lengths, control=None, target=None, u
             unit = unit_amplitudes.get(name)
             if unit is None:
                 return UNIT_PROBLEM.format(name=name)
-            problem = level_scale_problem(levels[name], unit)
-            if problem:
-                return f"Spectator {name!r} level {levels[name]!r}: {problem}"
+            if level_scale_problem(0.0, unit) is not None:
+                return UNIT_VALUE_PROBLEM.format(name=name, value=unit)
+            if level_scale_problem(levels[name], unit):
+                return LEVEL_PROBLEM.format(name=name, value=levels[name])
         return None
     except Exception as exc:  # never raise on any input shape
         return f"Spectator rows could not be read: {type(exc).__name__}."
@@ -219,13 +239,36 @@ def _region(spec):
         lines += ["        qubits, levels, lengths = self.spectator_qubits, self.spectator_levels, self.spectator_lengths",
                   "        if set(qubits) != set(levels) or set(qubits) != set(lengths):",
                   f"            raise ValueError({KEYS_PROBLEM!r}.format(qubits=sorted(qubits), levels=sorted(levels), lengths=sorted(lengths)))",
+                  "        seen = []",
                   "        for name, qubit in qubits.items():",
                   "            if qubit is pair.qubit_control or qubit is pair.qubit_target:",
                   f"                raise ValueError({OWN_PROBLEM!r}.format(name=name))",
+                  "            for first, other in seen:",
+                  "                if other is qubit:",
+                  f"                    raise ValueError({DUPLICATE_PROBLEM!r}.format(first=first, second=name))",
+                  "            seen.append((name, qubit))",
                   "            value = lengths[name]",
-                  "            if isinstance(value, bool) or not isinstance(value, (int, float)) or value % 4"
+                  f"            if isinstance(value, bool) or not isinstance(value, (int, float)) or value % {LENGTH_STEP_NS}"
                   f" or value < {MIN_LENGTH_NS}:",
-                  f"                raise ValueError({LENGTH_PROBLEM!r}.format(name=name, value=value))"]
+                  f"                raise ValueError({LENGTH_PROBLEM!r}.format(name=name, value=value))",
+                  "            if SPECTATOR_UNIT_OP not in qubit.z.operations:",
+                  f"                raise ValueError({UNIT_PROBLEM!r}.format(name=name))",
+                  "            unit, level = qubit.z.operations[SPECTATOR_UNIT_OP].amplitude, levels[name]",
+                  "            finite = []",
+                  "            for number in (unit, level):",
+                  "                try:",
+                  "                    finite.append(not isinstance(number, bool) and isinstance(number, (int, float))",
+                  "                                  and abs(float(number)) < float('inf'))",
+                  "                except OverflowError:",
+                  "                    finite.append(False)",
+                  "            if not finite[0] or unit == 0:",
+                  f"                raise ValueError({UNIT_VALUE_PROBLEM!r}.format(name=name, value=unit))",
+                  "            try:",
+                  f"                in_range = finite[1] and abs(level / unit) < {AMP_SCALE_LIMIT!r}",
+                  "            except OverflowError:",
+                  "                in_range = False",
+                  "            if not in_range:",
+                  f"                raise ValueError({LEVEL_PROBLEM!r}.format(name=name, value=level))"]
     lines += ["        align(*channels)"]
     for s in slots:
         flag = ", validate=False" if s == "coupler" else ""
@@ -238,7 +281,7 @@ def _region(spec):
                   "            length_ns = int(self.spectator_lengths[name])",
                   "            unit = qubit.z.operations[SPECTATOR_UNIT_OP].amplitude",
                   "            play(SPECTATOR_UNIT_OP * amp(level / unit), qubit.z.name,",
-                  "                 duration=length_ns // 4)"]
+                  f"                 duration=length_ns // {LENGTH_STEP_NS})"]
     lines += ["        align(*channels)"]
     for s in ("control", "target"):
         lines += [f"        if phase_shift_{s} is not None:",
