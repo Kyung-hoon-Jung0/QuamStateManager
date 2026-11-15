@@ -134,3 +134,26 @@ def test_joint_wrapper_and_phone_stack(body):
     for name in ("a", "b", "delta"):
         assert "content:" in _rule(phone, f".ui-run-diff-phone .diff-list-{name}::before")
     assert 'diff-wb-list ui-run-diff' in body
+
+
+def test_compact_table_bounds_and_long_segments():
+    kit = (ROOT / "static/ui-kit.css").read_text(encoding="utf-8")
+    compact = _rule(kit, ".ui-run-diff.ui-run-diff-compact")
+    assert "table-layout: fixed" in compact and "width: 100%" in compact
+    assert "overflow-wrap: anywhere" in _rule(kit, ".ui-run-diff-compact .ui-dot-name")
+    delta = _rule(kit, ".ui-run-diff-compact .diff-list-delta, .ui-run-diff-compact .diff-list-delta .val-delta")
+    assert "white-space: normal" in delta and "overflow-wrap: anywhere" in delta
+    assert "width: 2ch" in _rule(kit, ".ui-run-diff-compact th:nth-child(3), .ui-run-diff-compact .diff-list-arrow")
+    assert "white-space: normal" in _rule(kit, ".ui-run-diff-compact .diff-list-take")
+    app = create_app(testing=True)
+    value = "module." + "LongSegment" * 20
+    assert str(app.jinja_env.filters["path_breaks"](value)) == '<span class="ui-dot-name">module.<wbr>' + "LongSegment" * 20 + '</span>'
+
+
+def test_phone_only_hides_header_and_arrow():
+    kit = (ROOT / "static/ui-kit.css").read_text(encoding="utf-8")
+    hidden = []
+    for selectors, declarations in re.findall(r"([^{}]+)\{([^{}]*)\}", kit):
+        if re.search(r"display\s*:\s*none\b", declarations):
+            hidden.extend(s.strip() for s in selectors.split(",") if s.strip().startswith(".ui-run-diff-phone"))
+    assert hidden == [".ui-run-diff-phone thead", ".ui-run-diff-phone .diff-list-arrow"]

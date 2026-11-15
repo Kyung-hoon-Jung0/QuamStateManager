@@ -1289,13 +1289,17 @@
 .ui-root-select.ui-select { min-width: 0; max-width: 100%; width: 100%; }
 .ui-root-value { display: block; overflow-wrap: anywhere; font-size: var(--ui-fs-sm); }
 .ui-root-value:empty { display: none; }
-/* Joint breaks win over the value cell's emergency wrap for unstructured tokens. */
+/* Names prefer explicit joint breaks; compact cells can also split an oversized segment. */
 .ui-dot-name { word-break: normal; overflow-wrap: normal; white-space: normal; }
 .ui-generate #gen-env-list .gen-env-row { flex-wrap: wrap; min-width: 0; }
 .ui-generate #gen-env-list .gen-env-name,
 .ui-generate #gen-env-list .gen-env-status { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .ui-generate #gen-env-list .gen-env-path { flex: 1 1 20ch; overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
 .ui-run-diff.ui-run-diff-compact { table-layout: fixed; width: 100%; }
+.ui-run-diff-compact .ui-dot-name { overflow-wrap: anywhere; }
+.ui-run-diff-compact th:nth-child(3), .ui-run-diff-compact .diff-list-arrow { width: 2ch; }
+.ui-run-diff-compact .diff-list-delta, .ui-run-diff-compact .diff-list-delta .val-delta { white-space: normal; overflow-wrap: anywhere; }
+.ui-run-diff-compact .diff-list-take { white-space: normal; }
 .ui-run-diff-compact .diff-list-path, .ui-run-diff-compact .diff-list-a, .ui-run-diff-compact .diff-list-b { min-width: 0; }
 .ui-run-diff-phone, .ui-run-diff-phone tbody, .ui-run-diff-phone tr, .ui-run-diff-phone td { display: block; width: 100%; box-sizing: border-box; }
 .ui-run-diff-phone thead, .ui-run-diff-phone .diff-list-arrow { display: none; }

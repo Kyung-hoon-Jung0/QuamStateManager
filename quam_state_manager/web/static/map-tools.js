@@ -48,7 +48,7 @@
     function judge(payload) {
         var c = payload.clickable, no = 'not verified on this run';
         if (!c) return {chip: no, reason: 'none'};
-        if (c.verification_note) return {chip: no, reason: 'evidence'};
+        if (String(c.verification_note || '').trim()) return {chip: no, reason: 'evidence'};
         // verified only with positive, consistent proof: a count of verified writes between the
         // distinct target paths (a learned contract counts paths, one target per panel) and the
         // number of targets (a recipe counts targets)
@@ -114,7 +114,9 @@
         if (payload.status_chip) header.appendChild(statusChip);
         var contractChip = document.createElement('span'); contractChip.className = 'map-tools-chip';
         contractChip.textContent = verification(payload);
-        contractChip.title = verifyHint(payload);
+        var titleHint = verifyHint(payload);
+        var note = String((payload.clickable || {}).verification_note || '').trim();
+        contractChip.title = note && titleHint && !note.endsWith(titleHint) ? note + ' ' + titleHint : note || titleHint;
         var hint = null, hintText = verifyHint(payload);
         if (hintText) {
             // say why it is not verified, from the same reason verification() uses

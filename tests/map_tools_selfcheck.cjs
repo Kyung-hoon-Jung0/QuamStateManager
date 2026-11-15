@@ -233,7 +233,7 @@ function check(value, message) { checks++; assert.ok(value, message); }
     ]) {
         w.MapTools.mount(tile, plot, payload);
         const chip = Array.from(tile.querySelectorAll('.map-tools-chip')).find(el => el.textContent === 'not verified on this run');
-        check(chip && chip.title === w.MapTools.verifyHint(payload) && chip.title.length > 0,
+        check(chip && chip.title === ((payload.clickable || {}).verification_note ? payload.clickable.verification_note + ' ' + w.MapTools.VERIFY_HINT : w.MapTools.verifyHint(payload)) && chip.title.length > 0,
             'unverified title comes from the verification decision, including absent evidence');
     }
     check(w.MapTools.verifyHint({}).includes('No click contract'), 'missing contract is named honestly');
