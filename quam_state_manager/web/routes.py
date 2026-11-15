@@ -35648,7 +35648,7 @@ def _crash_token(store) -> str:
 @_journal_press
 def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
                              force=False, patch=None, journal=True, walk=False,
-                             hub: dict | None = None, kept_gate: bool = True):
+                             hub: dict | None = None, kept_gate: bool = True, kept_rows: dict | None = None):
     """Finish a ``mode=apply`` sync: save the re-applied edits to the working
     copy and push them to the live chip. Mirrors ``/state/apply-to-live`` but
     returns JSON so ``doStateSync`` can drive it. On a fresh staleness conflict
@@ -35674,7 +35674,8 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     back, a dataset apply its run). The result body carries the event id as
     ``hub_event`` when the write landed.
     ``kept_gate=False``: the caller replaced the working content wholesale (the dataset door),
-    so no unverified write's kept value rides on it (docs/254)."""
+    so no unverified write's kept value rides on it (docs/254). ``kept_rows`` receives the old and
+    kept values from the pre-write live read so that door can persist an unverified mark."""
     store = ctx["store"]
     wc = ctx["working_copy"]
     saver = ctx["saver"]
@@ -35771,6 +35772,8 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
                         "message": _UNBACKED_OVERWRITE_MSG}), 409
 
     _before_tree = None
+    if kept_rows is not None:
+        kept_rows["rows"] = None
     # docs/271: what this press records (see /state/apply-to-live)
     _hub = dict(hub or {})
     _staged = bool(ctx.get("staged_base"))
@@ -35799,6 +35802,12 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
             if journal and ctx.get("staged_base"):
                 _before_tree = _live_merged_tree(wc)
                 _bref["tree"] = _before_tree
+                if kept_rows is not None and _before_tree is not None:
+                    entries = Differ().diff(store, (_before_tree, {}), ignore_keys=set(), float_tolerance=0)
+                    kept_rows["rows"] = [{"path": e.dot_path, "old": e.new_value, "kept": e.old_value,
+                                          "src": "dataset_apply",
+                                          **({"removed": True} if e.change_type == "added" else {})}
+                                         for e in entries]
             working_copy.apply_to_live(
                 wc, force=force, record=_pend,
                 **({"backup_check": _forced_write_gate(wc, pre_apply_ts, _backup_hash, _bref)}
@@ -36077,7 +36086,7 @@ def _note_unverified_write(ctx, outcome: str, kept: list | None = None) -> None:
     press (:func:`_unverified_write_held`) then refuse until a person takes live or applies; a
     person's own Apply press names the kept values first (:func:`_unverified_kept_refusal`).
     *kept*: the rows the write kept (``{"path", "old", "kept"}``), None when it wrote a whole
-    document (docs/254)."""
+    document without readable live values (docs/254)."""
     if outcome == "unknown" and ctx is not None:
         ctx["live_diverged"] = True
         wc = ctx.get("working_copy")
@@ -36103,10 +36112,9 @@ def _unverified_kept_rows(ctx) -> tuple[list, bool]:
     """What a person's Apply would carry of the held mark's write (docs/254): ``([{"path",
     "old", "value"}], named)``. *named*: the mark lists its rows, and a row counts while the working
     copy still holds its kept value (a Ctrl+Z or a later edit took it out). A mark that names
-    none (older meta, a whole-document write) counts every value the working copy holds that
+    none (older meta or unreadable pre-write live values) counts every value the working copy holds that
     live does not, outside the tray's own edits. Live unreadable: no rows (the door's own
     missing/unreadable refusals speak then)."""
-    from quam_state_manager.core.value_delta import format_value
     wc, store = ctx.get("working_copy"), ctx.get("store")
     named = getattr(wc, "unverified_kept", None)
     rows: list = []
@@ -36114,10 +36122,14 @@ def _unverified_kept_rows(ctx) -> tuple[list, bool]:
         with store._lock:
             for k in named:
                 cur = _dot_get(store.merged, k["path"])
-                if cur is not _DOT_MISSING and _differ_mod.compare_equal(cur, k.get("kept"), tolerance=None):
-                    row = {"path": k["path"], "value": format_value(cur)}
+                removed = cur is _DOT_MISSING and k.get("removed", False)
+                if removed or (not k.get("removed") and cur is not _DOT_MISSING
+                               and _differ_mod.compare_equal(cur, k.get("kept"), tolerance=None)):
+                    row = {"path": k["path"],
+                           "value": "(removed)" if removed else json.dumps(cur, ensure_ascii=True)}
+                    # Only marks written before rows included old need the kept-only display.
                     if "old" in k:
-                        row["old"] = format_value(k["old"])
+                        row["old"] = json.dumps(k["old"], ensure_ascii=True)
                     rows.append(row)
         return rows, True
     try:
@@ -36131,7 +36143,7 @@ def _unverified_kept_rows(ctx) -> tuple[list, bool]:
         if e.dot_path in mine:
             continue
         rows.append({"path": e.dot_path,
-                     "value": "(removed)" if e.change_type == "added" else format_value(e.old_value)})
+                     "value": "(removed)" if e.change_type == "added" else json.dumps(e.old_value, ensure_ascii=True)})
     return rows, False
 
 
@@ -36148,7 +36160,8 @@ def _unverified_kept_refusal(ctx) -> dict | None:
     rows, named = _unverified_kept_rows(ctx)
     if not rows:
         return None
-    lead = UNVERIFIED_KEPT_LEAD if named else UNVERIFIED_KEPT_LEAD_WHOLE
+    from_run = any(row.get("src") == "dataset_apply" for row in (getattr(wc, "unverified_kept", None) or []))
+    lead = UNVERIFIED_KEPT_LEAD if named and not from_run else UNVERIFIED_KEPT_LEAD_WHOLE
     return {"ok": False, "status": "unverified_kept", "conflict": "unverified_kept", "token": mark,
             "paths": [r_["path"] for r_ in rows], "rows": rows,
             "message": lead + " Take live instead to see what the chip holds."}
@@ -48660,6 +48673,7 @@ def dataset_load_state(uid):
                 uid, ctx["path"])
 
     if apply_req:
+        _kept_rows = {}   # filled from the shared writer's pre-write live read
         # QA F1: which history dir files this chip BEFORE the push -- a run
         # whose state names another chip (extras.chip_name) moves it, and the
         # result line must say so (State History then lists the other name).
@@ -48671,7 +48685,7 @@ def dataset_load_state(uid):
         # apply core — same pre-apply snapshot (arms ↺ Revert last apply),
         # same staleness handling, same bookkeeping as the ⚡ button.
         try:
-            result = _sync_pull_apply_to_live(ctx, None, kept_gate=False)
+            result = _sync_pull_apply_to_live(ctx, None, kept_rows=_kept_rows, kept_gate=False)
             body = (result[0] if isinstance(result, tuple) else result).get_json()
         except Exception as exc:  # noqa: BLE001 -- v1.5.1: named, judged below
             logger.exception("dataset Apply to chip failed")
@@ -48689,7 +48703,8 @@ def dataset_load_state(uid):
             # reversibility via ↺ Revert last apply is what licenses this).
             # The unforced first attempt is what tells us drift existed at all.
             try:
-                result = _sync_pull_apply_to_live(ctx, None, force=True, kept_gate=False)
+                result = _sync_pull_apply_to_live(ctx, None, force=True,
+                                                  kept_rows=_kept_rows, kept_gate=False)
                 body = (result[0] if isinstance(result, tuple) else result).get_json()
             except Exception as exc:  # noqa: BLE001 -- v1.5.1: named, judged below
                 logger.exception("dataset Apply to chip (over drift) failed")
@@ -48746,7 +48761,7 @@ def dataset_load_state(uid):
         # own write look like outside drift, and "nothing was applied" false.
         _outcome = (body or {}).get("write_outcome")
         if _outcome in ("landed", "unknown"):
-            _note_unverified_write(ctx, _outcome)   # nobody knows what the chip holds
+            _note_unverified_write(ctx, _outcome, kept=_kept_rows.get("rows"))
             _fail = ((body or {}).get("detail") or _fail).rstrip(".") + (
                 ". The run's state stays staged in the working copy; Take live (top "
                 "bar) shows what the live chip holds, Apply pushes the staged state again.")

@@ -673,17 +673,20 @@ A person's own Apply press is the way out, but it never carries the kept values 
 may not have reached the chip will be written too. Take live instead to see what the chip holds."
 (`UNVERIFIED_KEPT_LEAD`). A row counts while the working copy still holds its kept value (a Ctrl+Z that took it out
 drops it; with no rows left the press is not asked). The UI-kit confirm (`smConfirm`) lists every row once as
-`path  old -> kept`, using contract 10's `core/value_delta.py` / `window.ValueDelta` value formatting. A legacy row
-without `old` shows `path  kept` alone; the sentence names no values.
+`path  old -> kept`. The server sends exact JSON value strings, preserving float precision and JSON lists;
+the dialog shows those strings unchanged. A row written before marks included `old` shows `path  kept` alone;
+the sentence names no values. The dataset door records `old` from the shared writer's pre-write live read.
+Its rows also retain `src: "dataset_apply"`, so its dialog says "an earlier live write" after a restart too.
+A removed path retains its old value and a `removed` flag; the dialog shows `old -> (removed)`.
 OK re-sends the same request with `ack_unverified=<token>`, which writes them and clears the mark on landed; Cancel
 writes nothing; the values stay in SM. In the top bar, open Apply not verified and choose Take live to check what
 the chip holds. The tray has no pending edit rows for those saved values. The token is the mark's id (microseconds),
 so a mark set after the confirm opened is named again. The gate sits on every door that writes live for a person:
-/state/apply-to-live (tray, Review,
-Keep mine, an Auto-Sync flush) after its stale check, /state/sync mode=apply before its pull (the pull would clear the
-mark and the replay would carry the rows), and `_sync_pull_apply_to_live` (the walk); the dataset door passes
-`kept_gate=False` (it replaces the working content wholesale, so nothing kept rides on it), and a history restore
-writes a chosen version. A legacy mark (meta without `unverified_kept`) names the working copy's differences from live
+/state/apply-to-live (tray, Review, Keep mine, an Auto-Sync flush) after its stale check, /state/sync mode=apply
+before its pull (the pull would clear the mark and the replay would carry the rows), and `_sync_pull_apply_to_live`
+(the walk); the dataset door passes `kept_gate=False` (it replaces the working content wholesale,
+so nothing kept rides on it), and a history restore writes a chosen version. A mark without rows (older meta or
+unreadable pre-write live values) names the working copy's differences from live
 outside the tray's own edits, led by `UNVERIFIED_KEPT_LEAD_WHOLE` ("These values from an earlier live write ...").
 With no mark held the press text is unchanged (contract 2 and docs/311 are otherwise unchanged). Pinned by
 `tests/test_unverified_kept_preflight.py`, which also walks every caller of the one writer.

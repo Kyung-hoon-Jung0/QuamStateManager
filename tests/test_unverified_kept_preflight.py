@@ -12,6 +12,7 @@ import pytest
 
 from tests.test_approval_now_anchor import (UNVERIFIED_HELD, _case, _ctx, _refused_first, _restarted,
                                             _second_approval, _sync_control_text, press)
+from tests.test_v151_r1_apply_to_chip import env as dataset_env
 
 LEAD = "These values from an approval that may not have reached the chip will be written too."
 LEAD_WHOLE = "These values from an earlier live write that may not have reached the chip will be written too."
@@ -91,7 +92,7 @@ def test_the_kept_rows_are_saved_beside_the_mark(tmp_path, monkeypatch):
 
 
 def test_a_mark_without_rows_names_what_the_working_copy_holds_that_live_does_not(tmp_path, monkeypatch):
-    """Meta written before the mark named its rows (or a whole-document write): the preflight lists
+    """Meta written before the mark named its rows: the preflight lists
     the working copy against live, outside the tray's own edits."""
     case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False)
     with case[0].app_context():
@@ -357,6 +358,18 @@ def test_the_dialog_lists_values_once_and_explains_cancel(two_kept_rows, legacy)
     if legacy:
         for row in body["rows"]:
             row.pop("old")
+    result = _dialog_result(body)
+    text = result["message"]
+    assert result["ok"] is False
+    assert text.count("value  " + ("" if legacy else "10 -> ") + "30") == 1
+    assert text.count("third  " + ("" if legacy else "5 -> ") + "7") == 1
+    assert text.count("30") == 1 and text.count("7") == 1
+    assert "Cancel = write nothing; the values stay in SM." in text
+    assert "In the top bar, open Apply not verified and choose Take live" in text
+    assert "the tray shows them" not in text
+
+
+def _dialog_result(body):
     script = r"""
 const fs = require('fs'), vm = require('vm');
 const data = JSON.parse(fs.readFileSync(0, 'utf8'));
@@ -372,16 +385,7 @@ window._confirmUnverifiedKept(data).then(ok => process.stdout.write(JSON.stringi
 """
     run = subprocess.run(["node", "-e", script], input=json.dumps(body), text=True,
                          capture_output=True, check=True, timeout=30)
-    result = json.loads(run.stdout)
-    text = result["message"]
-    assert result["ok"] is False
-    assert text.count("value  " + ("" if legacy else "10 -> ") + "30") == 1
-    assert text.count("third  " + ("" if legacy else "5 -> ") + "7") == 1
-    assert text.count("30") == 1 and text.count("7") == 1
-    assert "Cancel = write nothing; the values stay in SM." in text
-    assert "In the top bar, open Apply not verified and choose Take live" in text
-    assert "the tray shows them" not in text
-
+    return json.loads(run.stdout)
 
 
 def test_a_legacy_named_row_without_old_shows_only_the_kept_value(tmp_path, monkeypatch):
@@ -396,3 +400,85 @@ def test_a_legacy_named_row_without_old_shows_only_the_kept_value(tmp_path, monk
     assert body["status"] == "unverified_kept"
     assert body["rows"] == [{"path": "value", "value": "30"}]
     assert body["message"] == LEAD + " Take live instead to see what the chip holds."
+
+
+@pytest.mark.parametrize("old, kept", [
+    (0.12345671, 0.12345674),
+    (5221600123.0, 5221600523.5),
+    ([1, 2], [True, None]),
+    ([1, 2], [True, None] * 30),
+])
+def test_displayed_values_round_trip_to_every_persisted_value(tmp_path, monkeypatch, old, kept):
+    from quam_state_manager.core import working_copy
+    from quam_state_manager.web import routes
+    case = _case(tmp_path, {"value": old, "third": 5}, [
+        {"path": "value", "old": old, "new": kept}, {"path": "third", "old": 5, "new": 7}])
+
+    def raises(*args, **kwargs):
+        raise OSError(5, "read-back failed")
+
+    with monkeypatch.context() as held:
+        held.setattr(working_copy, "apply_to_live", raises)
+        held.setattr(routes, "_write_outcome", lambda pending: "unknown")
+        response = press(case, [{"path": "value", "seen_now": old, "new": kept},
+                                {"path": "third", "seen_now": 5, "new": 7}])
+        assert response.status_code == 409
+    with case[0].app_context():
+        meta_path = Path(_ctx(case)["working_copy"].meta_path())
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    body = _apply(case[1]).get_json()
+    assert body["status"] == "unverified_kept"
+    assert len(body["rows"]) == len(meta["unverified_kept"]) == 2
+    persisted = {row["path"]: row for row in meta["unverified_kept"]}
+    text = _dialog_result(body)["message"]
+    for row in body["rows"]:
+        saved = persisted[row["path"]]
+        assert json.loads(row["old"]) == saved["old"]
+        assert json.loads(row["value"]) == saved["kept"]
+        assert row["old"] != row["value"]
+        assert row["path"] + "  " + row["old"] + " -> " + row["value"] in text
+    assert _apply(case[1], ack_unverified=body["token"]).status_code == 200
+    assert _chip(case) == {"value": kept, "third": 7}
+
+
+def test_a_dataset_mark_records_the_live_old_value_before_writing(dataset_env, monkeypatch):
+    from quam_state_manager.core import safe_io, working_copy
+    from quam_state_manager.web import routes
+    env = dataset_env
+    live = env["live"].resolve()
+    state = json.loads((live / "state.json").read_text(encoding="utf-8"))
+    name = next(iter(state["qubits"]))
+    state["qubits"][name]["z"]["joint_offset"] = 0.081
+    state["removed_value"] = 42
+    (live / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    before = (live / "state.json").read_bytes()
+    real_write = safe_io.write_state_wiring_bytes
+
+    def raises(folder, *args, **kwargs):
+        if Path(folder).resolve() == live:
+            raise OSError(5, "write could not be confirmed")
+        return real_write(folder, *args, **kwargs)
+
+    with monkeypatch.context() as held:
+        held.setattr(safe_io, "write_state_wiring_bytes", raises)
+        held.setattr(routes, "_write_outcome", lambda pending: "unknown")
+        response = env["client"].post(f"/dataset/{env['uid']}/load-state?apply=1")
+        assert response.status_code == 409
+    with env["app"].app_context():
+        wc = routes._active_ctx()["working_copy"]
+    meta = json.loads(Path(wc.meta_path()).read_text(encoding="utf-8"))
+    rows = {row["path"]: row for row in meta["unverified_kept"]}
+    path = f"qubits.{name}.z.joint_offset"
+    assert rows[path] == {"path": path, "old": 0.081, "kept": 0.079, "src": "dataset_apply"}
+    assert rows["removed_value"] == {"path": "removed_value", "old": 42, "kept": None,
+                                     "src": "dataset_apply", "removed": True}
+    assert working_copy.load(env["app"].instance_path, live).unverified_kept == meta["unverified_kept"]
+    body = _door_keep_mine(env["client"]).get_json()
+    assert body["status"] == "unverified_kept"
+    assert body["message"] == LEAD_WHOLE + " Take live instead to see what the chip holds."
+    shown = next(row for row in body["rows"] if row["path"] == path)
+    assert shown == {"path": path, "old": "0.081", "value": "0.079"}
+    text = _dialog_result(body)["message"]
+    assert path + "  0.081 -> 0.079" in text
+    assert "removed_value  42 -> (removed)" in text
+    assert (live / "state.json").read_bytes() == before

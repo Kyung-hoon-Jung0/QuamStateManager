@@ -6106,9 +6106,9 @@ window._confirmUnverifiedKept = function (data) {
     var text = (data && data.message) || "";
     if (rows.length) {
         text += "\n\n  " + rows.map(function (r) {
-            var kept = window.ValueDelta.formatValue(r.value);
+            var kept = r.value;
             return r.path + "  " + (Object.prototype.hasOwnProperty.call(r, "old")
-                ? window.ValueDelta.formatValue(r.old) + " -> " + kept : kept);
+                ? r.old + " -> " + kept : kept);
         }).join("\n  ");
     }
     text += "\n\nOK = write them too.\nCancel = write nothing; the values stay in SM."
