@@ -1308,6 +1308,9 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # FB-12 port test: template scripts per element/port, download or run
     from quam_state_manager.web.port_test_routes import port_test_bp, resume_runs
     app.register_blueprint(port_test_bp)
+    # New CZ gate dialog: simulate the previewed gate (port test's connection)
+    from quam_state_manager.web.cz_gate_sim_routes import cz_gate_sim_bp
+    app.register_blueprint(cz_gate_sim_bp)
     # Standalone Port play page (rack + popup over the open chip)
     from quam_state_manager.web.port_play_page import port_play_page_bp
     app.register_blueprint(port_play_page_bp)
