@@ -115,9 +115,9 @@ def list_answer(store, ctx, pair: str, *, notice: dict | None = None,
 
 
 def gone_notice(pair: str, gate: str) -> dict:
-    """The plain sentence for a gate that is no longer there (two windows)."""
+    """Say what is known without guessing which window deleted the gate."""
     return {"tone": "warn", "title": f"{gate} is no longer on pair {pair}",
-            "text": "Another window may have deleted it. The list below is the chip as it is now."}
+            "text": "This gate is gone. The list below is the chip as it is now."}
 
 
 def by_name_note(holders: list[str]) -> str:

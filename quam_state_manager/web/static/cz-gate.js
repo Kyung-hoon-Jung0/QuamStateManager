@@ -1416,6 +1416,7 @@
         simReset();
         var gen = S.simGen;
         S.sim = { state: 'starting', pair: p.pair, t0: Date.now() };
+        simShow('Waiting for the simulator to answer.');
         simButton();
         var seq = simSeq(g, true);
         return simCall('/api/pulse/cz-gate/simulate/start', Object.assign({}, S.checkBody, { pair: p.pair }))

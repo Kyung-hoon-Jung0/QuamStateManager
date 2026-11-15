@@ -673,7 +673,7 @@
             var topAxis = n > TOP_AXIS_LANES;
             var margin = { l: gutter + TICK_ROOM, r: 12, t: topAxis ? 30 : 6, b: 38 };
             var span = spanOf(drawn);
-            var widthPx = Math.max(200, ((host.clientWidth || 900) - margin.l - margin.r));
+            var widthPx = Math.max(1, ((host.clientWidth || 900) - margin.l - margin.r));
             var family = uiFont();
             var traces = [], shapes = [], fixed = [];
             var layout = {
@@ -712,6 +712,7 @@
                 commonExt = [lo, hi];
             }
             var times = hoverTimes(drawn);
+            var pulseLabels = labels(span, widthPx);
             var y = 0;
             drawn.forEach(function (lane, i) {
                 var ax = i === 0 ? "y" : "y" + (i + 1);
@@ -763,11 +764,25 @@
                 var first = plan[i].segs[0];
                 // (only when the idle stretch is wide enough to hold the words)
                 var startText = first ? "starts at " + fmt(first.start_ns) + " ns" : "";
+                var startRight = first ? (first.start_ns - span[0]) * widthPx / (span[1] - span[0]) - 4 : 0;
+                var startLeft = startRight - startText.length * CHAR_PX;
+                var nearbyTitles = pulseLabels.filter(function (a) {
+                    if (a.meta.lane !== lane.key) return false;
+                    var x = (a.x - span[0]) * widthPx / (span[1] - span[0]);
+                    var textWidth = Math.max(a.meta.name.length, a.meta.shown2.length) * CHAR_PX;
+                    var left = a.xanchor === 'right' ? x - textWidth : x;
+                    return startRight > left && startLeft < left + textWidth;
+                });
                 // a place clear of the 0 V line and the shown limit lines, or none at all
                 var lineYs = [0].concat((lane.limit_v || []).filter(function (v) { return num(v) && v >= range[0] && v <= range[1]; }));
                 var spot = [0.5, 0.35, 0.62].filter(function (fy) {
                     var vAt = range[0] + fy * (range[1] - range[0]);
-                    return lineYs.every(function (ly) { return Math.abs(ly - vAt) * lanePx / (range[1] - range[0]) > 10; });
+                    // Keep clear of the pulse's two title lines and its own tick labels.
+                    return nearbyTitles.every(function (a) {
+                        return (a.meta.row === 'top' ? 1 - fy : fy) * lanePx > BAND_PX + TEXT_PX / 2 + 12;
+                    }) &&
+                        (startLeft > 12 || ticks.tickvals.every(function (tv) { return Math.abs(tv - vAt) * lanePx / (range[1] - range[0]) > TEXT_PX + 4; })) &&
+                        lineYs.every(function (ly) { return Math.abs(ly - vAt) * lanePx / (range[1] - range[0]) > 10; });
                 })[0];
                 if (spot !== undefined && first && num(first.start_ns) && first.start_ns > 0 &&
                     (first.start_ns - span[0]) * widthPx / (span[1] - span[0]) > startText.length * CHAR_PX + 12) {
@@ -776,7 +791,7 @@
                         xref: "x", yref: ax + " domain", x: first.start_ns, y: spot, xanchor: "right", yanchor: "middle",
                         xshift: -4, showarrow: false, text: "starts at " + fmt(first.start_ns) + " ns",
                         font: { size: TEXT_PX, color: c.muted },
-                        meta: { role: "starts-at", lane: lane.key }
+                        meta: { role: "starts-at", lane: lane.key, lanePx: lanePx }
                     });
                 }
                 // the 0 V line and the lane's limits when they fall inside what is shown
@@ -881,6 +896,7 @@
                             xref: "x", yref: ax + " domain", x: xa, xanchor: anchorRight ? "right" : "left", align: anchorRight ? "right" : "left",
                             y: row === "top" ? 1 : 0, yanchor: row === "top" ? "top" : "bottom",
                             showarrow: false, text: esc(name) + "<br>" + esc(l2),
+                            hovertext: esc(s.operation || ""),
                             font: { size: TEXT_PX, color: sev ? c.tones[sev].line : c.text },
                             meta: { role: "segment-text", lane: lane.key, operation: s.operation, row: row,
                                     name: name, line2: line2, shown2: l2 }
@@ -1274,7 +1290,20 @@
             var fl = plot._fullLayout;
             var xr = fl && fl.xaxis && fl.xaxis.range ? fl.xaxis.range.slice() : lastFigure.span;
             var w = fl && fl.xaxis && fl.xaxis._length ? fl.xaxis._length : lastFigure.widthPx;
-            var anns = lastFigure.fixedAnnotations.concat(lastFigure.labels(xr, w));
+            var texts = lastFigure.labels(xr, w);
+            var anns = lastFigure.fixedAnnotations.filter(function (a) {
+                if (!a.meta || a.meta.role !== 'starts-at') return true;
+                var right = (a.x - xr[0]) * w / (xr[1] - xr[0]) - 4;
+                var left = right - a.text.length * CHAR_PX;
+                return left > 8 && texts.every(function (t) {
+                    if (t.meta.lane !== a.meta.lane) return true;
+                    var x = (t.x - xr[0]) * w / (xr[1] - xr[0]);
+                    var textWidth = Math.max(t.meta.name.length, t.meta.shown2.length) * CHAR_PX;
+                    var titleLeft = t.xanchor === 'right' ? x - textWidth : x;
+                    return right <= titleLeft || left >= titleLeft + textWidth ||
+                        (t.meta.row === 'top' ? 1 - a.y : a.y) * a.meta.lanePx > BAND_PX + TEXT_PX / 2 + 12;
+                });
+            }).concat(texts);
             lastFigure.layout.annotations = anns;
             if (window.Plotly && window.Plotly.relayout) window.Plotly.relayout(plot, { annotations: anns });
         }

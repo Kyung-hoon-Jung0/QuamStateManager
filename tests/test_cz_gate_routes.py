@@ -145,6 +145,17 @@ def test_dialog_unknown_pair_says_so(chip):
     assert "Pair not found" in html and '<option value="nope"' not in html
 
 
+def test_waveform_toolbar_summary_can_shrink_and_wrap(chip):
+    html = chip.c.get("/pulse/cz-gate/dialog?pair=q1-2").get_data(as_text=True)
+    assert 'id="czg-chart-tools" class="ui-panel-sum"' in html
+    css = (Path(__file__).resolve().parents[1] / "quam_state_manager/web/static/ui-kit.css").read_text(encoding="utf-8")
+    rule = css.split(".ui-panel-sum {", 1)[1].split("}", 1)[0]
+    assert "flex: 0 1 auto" in rule and "min-width: 0" in rule
+    assert "flex-wrap: wrap" in rule and "white-space: normal" in rule
+    # Auto basis preserves the intrinsic desktop row; only the shrink factor changes.
+    assert "width:" not in rule.replace("min-width: 0", "")
+
+
 def test_dialog_lab_class_with_a_model_is_offered(tmp_path):
     a = App(tmp_path, _lab_chip())
     html = a.c.get("/pulse/cz-gate/dialog").get_data(as_text=True)
@@ -369,7 +380,7 @@ def test_simulate_client_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):
     r = subprocess.run([node, str(root / "tests" / "cz_gate_simulate_client_selfcheck.cjs")], env=env,
                        capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
-    assert "(52 assertions)" in r.stdout
+    assert "(54 assertions)" in r.stdout
 
 
 def test_headline_names_line_value_and_limit():

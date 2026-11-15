@@ -57,7 +57,8 @@ def cz_gate_simulate_start():
     if not python:
         return jsonify(ok=False, **sim.answer("no_env")), 400
     if target is None:
-        return jsonify(ok=False, **sim.answer("not_configured")), 400
+        # An expected refusal is a handled answer; API callers still get ok=False.
+        return jsonify(ok=False, **sim.answer("not_configured")), 200
     with store._lock:
         plans = dict(cz._plan_all(store.merged, body))
     plan = plans.get(pair) or {}

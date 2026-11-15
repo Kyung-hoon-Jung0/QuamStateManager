@@ -494,6 +494,7 @@ def test_second_delete_of_a_gone_gate_says_so_and_refreshes(rig):
     r = _del_list(rig, "cz_sq")
     body = r.get_data(as_text=True)
     assert r.status_code == 200 and "cz_sq is no longer on pair q1-q2" in body
+    assert "This gate is gone." in body and "Another window" not in body
     assert _rows(body) == ["cz_two"] and len(st.change_log) == n
 
 

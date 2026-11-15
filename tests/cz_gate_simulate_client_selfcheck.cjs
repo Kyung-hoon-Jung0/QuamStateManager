@@ -230,13 +230,19 @@ async function openAndCheck(two) {
     await checked();
     M.simQueue = { start: ['offline'] };
     simBtn().click();
-    await until(() => line() !== STARTING && line() !== '');
+    await until(() => line() === 'Not simulated: the app did not answer.');
     ok(line() === 'Not simulated: the app did not answer.' && simBtn().textContent === 'Simulate', 'network failure: the one client line');
     M.simQueue = { start: [[500, '__bad__']] };
     const startsBad = simOf('start').length;
     simBtn().click();
     await until(() => simOf('start').length > startsBad && window.CzGate.state().simApplied === window.CzGate.state().simReq);
     ok(line() === 'Not simulated: the app did not answer.', 'a non-JSON answer: the same line');
+    const REFUSAL = 'Not simulated: no simulator is set up.';
+    M.simQueue = { start: [[200, { ok: false, state: 'not_configured', line: REFUSAL }]] };
+    simBtn().click();
+    await until(() => line() === REFUSAL);
+    ok(line() === REFUSAL && simBtn().textContent === 'Simulate' && !simBtn().disabled,
+       '200 refusal keeps its honest line and offers Simulate again');
     const BUSY = 'A simulation is already running in this window. Stop it first.';
     M.simQueue = { start: [[409, { ok: true, state: 'busy', line: BUSY }]],
                    stop: [[200, { ok: true, state: 'stopped', line: 'Not simulated: stopped.' }]] };
@@ -285,6 +291,7 @@ async function openAndCheck(two) {
     simBtn().click();
     await until(() => held('start') === 1);
     ok(simBtn().textContent === 'Stop' && simBtn().disabled, 'starting without an id: Stop is shown disabled');
+    ok(line() === 'Waiting for the simulator to answer.', 'a held start request shows its waiting state');
     await window.CzGate._simulate();
     ok(simOf('stop').length === stops && simOf('start').length === starts + 1, 'a second press before the id is known sends nothing');
     release('start');

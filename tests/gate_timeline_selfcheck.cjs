@@ -197,6 +197,30 @@ ok([...Array(116).keys()].every((t) => hov.x.includes(t)), 'hover grid has every
     ok(shown(roomy), '"starts at" present once the idle stretch holds the words plus 12 px');
 }
 
+// A compact spectator must leave space for its title and its own tick labels.
+{
+    const draw = (group, width) => {
+        Object.defineProperty(host2, 'clientWidth', { configurable: true, value: width });
+        const hh = GT.render(host2, { lanes: [lane('late', group,
+            [seg('a_very_long_pulse_operation_name', [161, 261], [0.05, 0.05])])], notes: [] }, { foldSpectators: false });
+        const f = last(); hh.destroy(); return f;
+    };
+    const wide = draw('gate', 900);
+    ok(wide.layout.annotations.some(a => a.meta && a.meta.role === 'starts-at'), 'roomy gate keeps its starts-at label');
+    ok(draw('spectator', 900).layout.annotations.some(a => a.meta && a.meta.role === 'starts-at'), 'wide spectator keeps starts-at when title is horizontally clear');
+    const compact = draw('spectator', 450);
+    ok(!compact.layout.annotations.some(a => a.meta && a.meta.role === 'starts-at'), 'compact title and tick clearance hides starts-at even when words fit');
+    const shown = width => draw('spectator', width).layout.annotations.some(a => a.meta && a.meta.role === 'starts-at');
+    let lo = 450, hi = 900;
+    while (hi - lo > 1) { const mid = Math.floor((lo + hi) / 2); if (shown(mid)) hi = mid; else lo = mid; }
+    ok(!shown(hi - 1) && shown(hi), 'title collision edge: one pixel below clearance hides starts-at; at clearance it returns');
+    const narrow = draw('gate', 280); // chart body inside a 400 px dialog
+    ok(!narrow.layout.annotations.some(a => a.meta && a.meta.role === 'starts-at'), '400 px uses actual plot width for starts-at fit');
+    const text = segText(narrow, 'late')[0];
+    ok(text.meta.name.includes('\u2026') && text.hovertext === 'a_very_long_pulse_operation_name', 'short pulse title exposes the full name on hover');
+    delete host2.clientWidth;
+}
+
 // scales fit the data, not the limits
 const r1 = fig.layout.yaxis.range, r2 = fig.layout.yaxis2.range;
 ok(JSON.stringify(r1) !== JSON.stringify(r2), 'per lane: each lane has its own range');
