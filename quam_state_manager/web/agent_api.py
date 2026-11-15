@@ -2423,7 +2423,8 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
                 outcome = "unknown"
             if outcome in ("unknown", "landed"):
                 r._note_unverified_write(ctx, outcome, kept=[
-                    {"path": e.dot_path, "old": e.old_value, "kept": e.new_value} for e in staged])
+                    {"path": e.dot_path, "old": e.old_value, "kept": e.new_value,
+                     **({"absent": True} if e.created else {})} for e in staged])
                 out["saved_in_working_copy"] = True
                 out["write_outcome"] = outcome
                 out["error"] = _door_lead_then(out["error"], KEPT_UNVERIFIED)

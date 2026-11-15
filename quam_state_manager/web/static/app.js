@@ -6098,7 +6098,7 @@ document.addEventListener("htmx:beforeSwap", function (evt) {
         }
     }, 0);
 });
-/* docs/254: the values an approval's unverified live write kept are named before a person's
+/* docs/254: values an approval's or a dataset door's unverified live write kept are named before a person's
  * press carries them (the mark's id is the token, so a newer mark is named again). OK = write
  * them too; Cancel = write nothing, the values stay in SM. Resolves true/false. */
 window._confirmUnverifiedKept = function (data) {

@@ -35806,6 +35806,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
                     entries = Differ().diff(store, (_before_tree, {}), ignore_keys=set(), float_tolerance=0)
                     kept_rows["rows"] = [{"path": e.dot_path, "old": e.new_value, "kept": e.old_value,
                                           "src": "dataset_apply",
+                                          **({"absent": True} if e.change_type == "removed" else {}),
                                           **({"removed": True} if e.change_type == "added" else {})}
                                          for e in entries]
             working_copy.apply_to_live(
@@ -36108,6 +36109,11 @@ UNVERIFIED_KEPT_LEAD_WHOLE = ("These values from an earlier live write that may 
                               "will be written too.")
 
 
+def _unverified_kept_value(value) -> str:
+    """Exact JSON for the values a person's confirmation would write (docs/254)."""
+    return json.dumps(value, ensure_ascii=False)
+
+
 def _unverified_kept_rows(ctx) -> tuple[list, bool]:
     """What a person's Apply would carry of the held mark's write (docs/254): ``([{"path",
     "old", "value"}], named)``. *named*: the mark lists its rows, and a row counts while the working
@@ -36126,10 +36132,10 @@ def _unverified_kept_rows(ctx) -> tuple[list, bool]:
                 if removed or (not k.get("removed") and cur is not _DOT_MISSING
                                and _differ_mod.compare_equal(cur, k.get("kept"), tolerance=None)):
                     row = {"path": k["path"],
-                           "value": "(removed)" if removed else json.dumps(cur, ensure_ascii=True)}
+                           "value": "(removed)" if removed else _unverified_kept_value(cur)}
                     # Only marks written before rows included old need the kept-only display.
                     if "old" in k:
-                        row["old"] = json.dumps(k["old"], ensure_ascii=True)
+                        row["old"] = "not set" if k.get("absent") else _unverified_kept_value(k["old"])
                     rows.append(row)
         return rows, True
     try:
@@ -36143,7 +36149,7 @@ def _unverified_kept_rows(ctx) -> tuple[list, bool]:
         if e.dot_path in mine:
             continue
         rows.append({"path": e.dot_path,
-                     "value": "(removed)" if e.change_type == "added" else json.dumps(e.old_value, ensure_ascii=True)})
+                     "value": "(removed)" if e.change_type == "added" else _unverified_kept_value(e.old_value)})
     return rows, False
 
 

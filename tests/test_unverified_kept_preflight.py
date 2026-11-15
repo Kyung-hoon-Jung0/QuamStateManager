@@ -407,6 +407,7 @@ def test_a_legacy_named_row_without_old_shows_only_the_kept_value(tmp_path, monk
     (5221600123.0, 5221600523.5),
     ([1, 2], [True, None]),
     ([1, 2], [True, None] * 30),
+    ("ns", "\u00b5s"),
 ])
 def test_displayed_values_round_trip_to_every_persisted_value(tmp_path, monkeypatch, old, kept):
     from quam_state_manager.core import working_copy
@@ -433,6 +434,8 @@ def test_displayed_values_round_trip_to_every_persisted_value(tmp_path, monkeypa
     text = _dialog_result(body)["message"]
     for row in body["rows"]:
         saved = persisted[row["path"]]
+        assert row["old"] == json.dumps(saved["old"], ensure_ascii=False)
+        assert row["value"] == json.dumps(saved["kept"], ensure_ascii=False)
         assert json.loads(row["old"]) == saved["old"]
         assert json.loads(row["value"]) == saved["kept"]
         assert row["old"] != row["value"]
@@ -482,3 +485,75 @@ def test_a_dataset_mark_records_the_live_old_value_before_writing(dataset_env, m
     assert path + "  0.081 -> 0.079" in text
     assert "removed_value  42 -> (removed)" in text
     assert (live / "state.json").read_bytes() == before
+
+
+@pytest.fixture
+def live_and_kept_values():
+    return {"present_value": 2, "null_value": None}, {"present_value": 1, "null_value": 1, "new_in_run": 1}
+
+
+@pytest.mark.parametrize("door", ["dataset", "approval"])
+def test_every_kept_row_builder_distinguishes_absent_from_null(
+        dataset_env, tmp_path, monkeypatch, live_and_kept_values, door):
+    from quam_state_manager.core import safe_io
+    from quam_state_manager.web import routes
+    live_values, kept_values = live_and_kept_values
+    env = dataset_env
+    for folder, values in [(env["live"], live_values), (env["run"] / "quam_state", kept_values)]:
+        path = folder / "state.json"
+        state = json.loads(path.read_text(encoding="utf-8"))
+        state.update(values)
+        path.write_text(json.dumps(state), encoding="utf-8")
+    if door == "approval":
+        approval_dir = tmp_path / "approval"
+        approval_dir.mkdir()
+        case = _case(approval_dir, live_values, [
+            {"path": path, "old": live_values.get(path), "new": value, "created": path not in live_values}
+            for path, value in kept_values.items()])
+        app, client, folder = case[:3]
+    else:
+        app, client, folder = env["app"], env["client"], env["live"]
+    real_write = safe_io.write_state_wiring_bytes
+
+    def raises(folder, *args, **kwargs):
+        if Path(folder).resolve() == live_folder:
+            raise OSError(5, "write could not be confirmed")
+        return real_write(folder, *args, **kwargs)
+
+    live_folder = folder.resolve()
+    before = (folder / "state.json").read_bytes()
+    with monkeypatch.context() as held:
+        held.setattr(safe_io, "write_state_wiring_bytes", raises)
+        held.setattr(routes, "_write_outcome", lambda pending: "unknown")
+        if door == "dataset":
+            response = client.post(f"/dataset/{env['uid']}/load-state?apply=1")
+        else:
+            response = press(case, [
+                {"path": path, "new": value, **({"seen_now": live_values[path]} if path in live_values
+                                               else {"seen_unknown": True})}
+                for path, value in kept_values.items()])
+        assert response.status_code == 409, response.get_json()
+    with app.app_context():
+        wc = routes._active_ctx()["working_copy"]
+    meta = json.loads(Path(wc.meta_path()).read_text(encoding="utf-8"))
+    rows = {row["path"]: row for row in meta["unverified_kept"]}
+    for path in kept_values:
+        assert rows[path].get("absent", False) is (path not in live_values)
+        assert ("absent" in rows[path]) is (path not in live_values)
+        assert rows[path]["old"] == live_values.get(path)
+    body = _door_keep_mine(client).get_json()
+    assert body["status"] == "unverified_kept"
+    text = _dialog_result(body)["message"]
+    assert "new_in_run  not set -> 1" in text
+    assert "null_value  null -> 1" in text
+    assert "present_value  2 -> 1" in text
+    assert (folder / "state.json").read_bytes() == before
+
+
+def test_every_preflight_value_uses_the_exact_json_helper():
+    from quam_state_manager.web import routes
+    import inspect
+    tree = ast.parse(inspect.getsource(routes._unverified_kept_rows))
+    calls = [node.func for node in ast.walk(tree) if isinstance(node, ast.Call)]
+    assert sum(isinstance(fn, ast.Name) and fn.id == "_unverified_kept_value" for fn in calls) == 3
+    assert not any(isinstance(fn, ast.Attribute) and fn.attr == "dumps" for fn in calls)

@@ -673,11 +673,13 @@ A person's own Apply press is the way out, but it never carries the kept values 
 may not have reached the chip will be written too. Take live instead to see what the chip holds."
 (`UNVERIFIED_KEPT_LEAD`). A row counts while the working copy still holds its kept value (a Ctrl+Z that took it out
 drops it; with no rows left the press is not asked). The UI-kit confirm (`smConfirm`) lists every row once as
-`path  old -> kept`. The server sends exact JSON value strings, preserving float precision and JSON lists;
-the dialog shows those strings unchanged. A row written before marks included `old` shows `path  kept` alone;
+`path  old -> kept`. The server sends exact JSON value strings, preserving float precision and JSON lists.
+Exact JSON avoids `value_delta.format_value`'s compacted digits and `sync_status.fmt_value`'s 80-character truncation.
+The dialog shows those strings unchanged. A row written before marks included `old` shows `path  kept` alone;
 the sentence names no values. The dataset door records `old` from the shared writer's pre-write live read.
 Its rows also retain `src: "dataset_apply"`, so its dialog says "an earlier live write" after a restart too.
 A removed path retains its old value and a `removed` flag; the dialog shows `old -> (removed)`.
+An absent live path carries `absent: True` and shows `not set -> kept`; a real JSON null still shows `null`.
 OK re-sends the same request with `ack_unverified=<token>`, which writes them and clears the mark on landed; Cancel
 writes nothing; the values stay in SM. In the top bar, open Apply not verified and choose Take live to check what
 the chip holds. The tray has no pending edit rows for those saved values. The token is the mark's id (microseconds),
