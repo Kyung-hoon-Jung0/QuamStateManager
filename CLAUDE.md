@@ -156,6 +156,7 @@ state.json + wiring.json
 | ndview, Interactive, click contracts | `docs/67_raw_netcdf_ndview.md`, `docs/82_repeat_axes.md`, `docs/48_ndview_click_contracts.md`, `docs/305_generic_interactive_map_tools.md` |
 | Pulses page, lab pulse classes, Z-line | `docs/40_pulses_page.md`, `docs/189_lab_pulse_class_plots.md`, `docs/217_pulses_in_ram_shape_discovery.md`, `docs/218_lab_pulse_classes_and_new_pulse.md`, `docs/219_zline_distortion.md`, `docs/228_labwarm_project_env.md` |
 | Save to quam_config (class files into lab code) | `docs/313_quam_config_save.md` |
+| Slot gate classes (make, read back, plan, spectators, check) | `docs/314_slot_gate_classes.md` |
 | Generate Config wizard, wiring diagram | `docs/27_config_generator.md`, `docs/53_generate_feedback_r3.md`, archive blocks 173-174 |
 | QDAC-II, bias tee | `docs/119_qdac2_bias_wizard.md`, archive blocks 175-176 and `docs/claude_md_archive/076_docs137.md` |
 | Root class, Re-generate, renames | `docs/176_generate_root_class.md`, `docs/51_regenerate_config.md`, `docs/72_regen_adaptive_fidelity.md`, `docs/202_class_substitution.md`, `docs/295_regen_rename_keeps_the_qubit.md`, `docs/296_rename_keeps_the_history.md` |
