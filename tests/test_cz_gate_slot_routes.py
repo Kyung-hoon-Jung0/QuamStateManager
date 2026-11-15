@@ -836,7 +836,9 @@ _WAIT = [{"kind": "wait", "length": 32}]
 
 @pytest.mark.parametrize("steps", [{"before": _WAIT}, {"after": _WAIT}, {"before": _WAIT, "after": _WAIT},
                                    {"before": _WAIT, "after": []}, {"after": "wait"}, {"before": 1},
-                                   {"before": {"kind": "wait"}}])
+                                   {"before": {"kind": "wait"}},
+                                   # only None, [] and () are no steps: every other value is refused
+                                   {"before": 0}, {"after": False}, {"before": ""}, {"after": {}}])
 def test_posted_steps_on_a_new_class_are_refused_and_nothing_is_written(env, steps):
     before = env.stored()
     r = env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": list(OWN), "spectators": True, **steps})
