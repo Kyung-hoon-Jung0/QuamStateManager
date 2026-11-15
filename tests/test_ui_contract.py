@@ -44,14 +44,11 @@ def _templates():
     return sorted(_TPL.glob("*.html"))
 
 
-# Third-party bundles built by a script under tools/ (pinned versions, not SM code):
-# scanned like a .min.js, i.e. not at all. The editor's own styling lives in ui-kit.css.
-_VENDORED_BUNDLES = {"cm-python.js"}
 
 
 def _scripts():
     return sorted(p for p in _STATIC.glob("*.js") if not p.name.endswith(".min.js")
-                  and not p.name.startswith("plotly") and p.name not in _VENDORED_BUNDLES)
+                  and not p.name.startswith("plotly"))
 
 
 def _rel(p: Path) -> str:
@@ -954,7 +951,7 @@ def measure_script_controls():
     known = _known_classes()
     out = {}
     for p in sorted(_STATIC.glob("*.js")):
-        if p.name.endswith(".min.js") or p.name in _SCRIPT_CONTROL_BUILDERS or p.name in _VENDORED_BUNDLES:
+        if p.name.endswith(".min.js") or p.name in _SCRIPT_CONTROL_BUILDERS:
             continue
         t = _read(p)
         n = len(re.findall(r"createElement\(\s*[\"'`](?:select|input|textarea)[\"'`]\s*\)", t, flags=re.I))

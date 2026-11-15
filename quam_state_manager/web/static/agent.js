@@ -583,7 +583,7 @@ window.AgentPanel = (function () {
     var x = stepState(s, p);
     return '<span class="ag-step-st ag-st-' + esc(x.st) + '" title="' + esc(x.title) + '">' + esc(STEP_GLYPH[x.st] || x.st) + "</span>";
   }
-  /* gl-ukt: a step whose held writes were rejected or expired ran, but wrote
+  /* a step whose held writes were rejected or expired ran, but wrote
      nothing; its badge must not be the applied step's check mark. Read from the
      step's live approval record (approval_state); without one, the plain badge. */
   function stepHeldNotWritten(s) {
@@ -750,7 +750,7 @@ window.AgentPanel = (function () {
     S.mounts.forEach(function (m) { renderPlan(m, p, true); });
   }
 
-  /* gl-ck9: a run's held writes read as the approval record holds them NOW
+  /* a run's held writes read as the approval record holds them NOW
      (r.approval_state, from the server), never as they were when the run ended. */
   function writesSummary(r, res) {
     var n = res.writes.length;
@@ -788,7 +788,7 @@ window.AgentPanel = (function () {
     // docs/249: what failed, in plain words, above the run's raw error ("QM host unreachable at 127.0.0.1:1")
     var what = res.failure && res.failure.what ? '<div class="ag-err ag-what"><strong>' + esc(String(res.failure.what).slice(0, 200)) + "</strong></div>" : "";
     var err = res.error ? '<div class="ag-err">' + esc(String(res.error).slice(0, 300)) + "</div>" : "";
-    // gl-e02: a settled approval is already said by the writes summary; never twice
+    // a settled approval is already said by the writes summary; never twice
     var settled = writes && res.approval && /^(approved|rejected|expired)$/.test((r.approval_state || {}).status || "");
     var how = r.how && !settled ? '<div class="muted ag-how">' + esc(r.how) + "</div>" : "";
     var log = res.log_tail ? '<details class="ag-log"><summary>log tail</summary><pre>' + esc(res.log_tail.slice(-1500)) + "</pre></details>" : "";

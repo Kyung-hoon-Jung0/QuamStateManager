@@ -1081,7 +1081,7 @@ def test_node_identity_write_is_held_with_approval_reason(c, inst, synth_folder,
     assert c.get('/api/agent/chip').get_json()['pending'] == 0
 
 
-# ------------------------------------------- gl-ck9 / gl-dke: a run reads its approval NOW
+# ------------------------------------------- a run reads its approval NOW
 
 def _run_views(c, key):
     """The three places a run is read: run_wait (the agent), the run list, the card feed."""
@@ -1122,7 +1122,7 @@ class TestRunReadsItsApprovalNow:
             assert v["approval_state"]["status"] == "approved", v
 
     def test_the_nested_result_approval_follows_the_record(self, c, inst, fake_run):
-        """gl-e02: result.approval never says pending beside a settled approval_state."""
+        """result.approval never says pending beside a settled approval_state."""
         _arm(c)
         r = _run(c).get_json()
         aid = r["result"]["approval"]["id"]
@@ -1136,7 +1136,7 @@ class TestRunReadsItsApprovalNow:
 
     @pytest.mark.parametrize("end_plan_first", [False, True])
     def test_a_plan_step_carries_its_settled_approval(self, c, inst, fake_run, end_plan_first):
-        """gl-bbi: a rejected step does not read like a pending one, also when the
+        """a rejected step does not read like a pending one, also when the
         plan ended before the person decided."""
         _arm(c)
         pid = _armed_plan(c)
@@ -1160,7 +1160,7 @@ class TestRunReadsItsApprovalNow:
         assert ls["approval_state"]["status"] == "rejected", ls
 
     def test_a_rejection_after_the_plan_ended_is_what_the_agent_reads(self, c, inst, fake_run):
-        """gl-dke: with no armed plan nobody is told, so the agent's own view must say it."""
+        """with no armed plan nobody is told, so the agent's own view must say it."""
         _arm(c)
         r = _run(c).get_json()
         aid = r["result"]["approval"]["id"]

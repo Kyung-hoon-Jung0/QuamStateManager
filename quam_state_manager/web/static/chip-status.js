@@ -816,7 +816,7 @@ window.ChipStatus._pickGateRows = function (topo) {
     });
     return topo;
 };
-// gl-mxs: the rows a pair's ONE 2Q number is chosen from. A pair whose `cz`
+// the rows a pair's ONE 2Q number is chosen from. A pair whose `cz`
 // alias names a macro (the server's query.pair_operational_gate, shipped as
 // e.op_gate) plays that macro, so its rows alone; with no alias every macro's
 // rows, and the best of them wins as before. Explicit per-macro views (a gate

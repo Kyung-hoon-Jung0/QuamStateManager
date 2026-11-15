@@ -17,7 +17,7 @@ const { JSDOM } = require("jsdom");
       failed_targets: ["q1"], n_targets: 2, outcome_note: note,
       failed_writes: [{ path: "/quam/qubits/q1/f_01", dotted: "qubits.q1.f_01", target: "q1" }] };
     const clean = { id: "b", name: "node", kind: "node", status: "done", enabled: true };
-    // gl-aat: after a partial revert one value is left; after a full one, none
+    // after a partial revert one value is left; after a full one, none
     const fw3 = ["f_01", "T1", "f_12"].map(k => ({ path: "/quam/qubits/q1/" + k, dotted: "qubits.q1." + k, target: "q1" }));
     const partial = Object.assign({}, failed, { id: "c", failed_writes: fw3, failed_revert: { ok: true,
       reverted: [{ path: "qubits.q1.f_01" }], refused: [{ path: "qubits.q1.T1", code: "changed" }], remaining: ["qubits.q1.f_12"],

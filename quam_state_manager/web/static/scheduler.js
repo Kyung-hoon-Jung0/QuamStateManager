@@ -644,7 +644,7 @@
           nameCell.appendChild(det);
         }
       }
-      // gl-aat: after a revert the button names only what a press can still put
+      // after a revert the button names only what a press can still put
       // back (rv.remaining), and is gone when nothing is left
       // the server evaluates what is retryable from the chip's values now
       // (revert_retryable) when the chip is open; else the stored list

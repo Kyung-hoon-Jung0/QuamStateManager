@@ -195,6 +195,8 @@ READONLY_REFUSED_DOORS = (
     "/api/agent/run-node", "/api/agent/plans", "/api/agent/approvals", "/api/agent/journal",
     "/api/agent/note", "/api/agent/take-live", "/api/agent/undo-mine",
     "/api/agent/generate/propose", "/api/agent/generate/propose-card", "/scheduler/settings",
+    "/api/agent/cz-gate/plan", "/api/agent/cz-gate/check", "/api/agent/cz-gate/create",
+    "/api/agent/class-file/save",
 )
 
 

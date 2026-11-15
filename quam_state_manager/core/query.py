@@ -863,7 +863,7 @@ class QueryEngine:
             # the key is missing, not when its value is None).
             macros = p.get("macros") or {}
             has_cz = bool(macros)
-            # gl-mxs: a `cz` alias names the gate the pair plays; its numbers
+            # a `cz` alias names the gate the pair plays; its numbers
             # are the pair's 2Q fidelity, never the best of its macros. With
             # no alias the best macro still wins, as before.
             op_gate = pair_operational_gate(pair_name, macros)

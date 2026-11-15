@@ -229,7 +229,7 @@ def test_a_real_quam_save_lands_at_the_named_folder_not_the_env_default(rex, tmp
     assert list(env_dir.iterdir()) == []
 
 
-# gl-cnx: a node whose recorded updates reach a list ELEMENT (a readout
+# a node whose recorded updates reach a list ELEMENT (a readout
 # confusion matrix row) must be captured, not skipped. quam stores lists as
 # QuamList (a UserList, not a list), so the fallback setter has to index it.
 

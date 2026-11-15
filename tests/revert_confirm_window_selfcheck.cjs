@@ -1,4 +1,4 @@
-/* gl-17y: the sync panel's "Revert last apply" two-press confirm keeps its
+/* the sync panel's "Revert last apply" two-press confirm keeps its
  * window for the full 5 s the button and the toast state, and survives a panel
  * refresh in between.
  *

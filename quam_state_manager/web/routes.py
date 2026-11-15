@@ -17751,7 +17751,7 @@ def _pair_bell(p: dict, op_gate: str | None = None) -> None:
     """docs/301 (F21): the one Bell fidelity a Pairs row shows, with the gate
     named (``bell_gate``) and the others listed.
 
-    gl-9ab: when the pair's ``cz`` alias names a macro (``op_gate``, from
+    when the pair's ``cz`` alias names a macro (``op_gate``, from
     query.pair_operational_gate) the row shows THAT macro's value, whatever it
     is -- the same rule as the topology edge. Without an alias: cz_flattop's
     when that gate states one (as before), else the highest any CZ macro
@@ -53742,7 +53742,7 @@ def _revert_value_text(v) -> str:
 
 
 def _revert_refusal_text(c: dict) -> str:
-    """gl-aat: why one value was not reverted, in plain words. The machine
+    """why one value was not reverted, in plain words. The machine
     fields (``code``, ``reason``) stay as the writer reported them."""
     code = c.get("code")
     if code == "changed":
@@ -53901,7 +53901,7 @@ def scheduler_revert_failed(item_id: str):
     blind = [{"path": w.get("dotted") or w.get("path"), "reason":
               "the run did not record the value this write replaced"}
              for w in writes if not w.get("has_old", True)]
-    # gl-aat: a second press puts back only what is left; a value already
+    # a second press puts back only what is left; a value already
     # reverted would otherwise be refused as changed (it now holds its old value).
     prev = item.get("failed_revert") or {}
     read = lambda k: _current_value(handle, k)  # noqa: E731
