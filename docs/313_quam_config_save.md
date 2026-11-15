@@ -114,12 +114,17 @@ quam_config refuse its own file, nor make gates using the class wait again.
   gate with no SM records is never listed): `[{pair, gate, files}]`, files = the changed ones.
 - While that list is non-empty, a warn callout (`_gate_recheck_notice.html`, `ui_callout` only) sits at the top of
   every pair's gate list and above the table on the Pulses page: "N gates wait for Re-check", each
-  "pair / gate (file)", and "Other chips that use this file were not checked." With an empty list nothing is
+  "pair / gate (file)", the instruction to press Re-check on the gate's status line (in the pair's CZ gates or the
+  gate's pulse detail), and "Other chips that use this file were not checked." With an empty list nothing is
   rendered (the Pulses slot `#gate-recheck-slot` stays empty). It only informs; it never refuses a press.
-- Refresh: the gate list re-renders it on every answer of its own (Re-check, Make active, delete in the list) and on
-  `cellsReverted` / `stateRestored` (undo, redo, pull). The Pulses slot re-fetches
-  `GET /pulse/cz-gate/recheck-notice` on `pulses-changed` (every gate write answers it) and on the same two events.
-  No poll.
+- Refresh: the gate list re-renders it on every answer of its own (Re-check, Make active, delete in the list), and
+  re-fetches itself on `pulses-changed` (every gate write answers it, so a Re-check or delete in the pulse detail on
+  the pair page renews it) and on `cellsReverted` / `stateRestored` (undo, redo, pull). static/gate-status.js skips
+  the `pulses-changed` of the list's own answer (no second fetch) and holds a refresh while a delete offer is open.
+  The Pulses slot re-fetches `GET /pulse/cz-gate/recheck-notice` on `pulses-changed` and on the same two events.
+- No poll: the notice is exact at every render and re-fetch. Another window that did not make the change shows the
+  new state on its own next refresh event (its own gate write, undo, redo or pull, or a page load), as the gate list
+  and the Pulses table do.
 
 ## The live-write check
 

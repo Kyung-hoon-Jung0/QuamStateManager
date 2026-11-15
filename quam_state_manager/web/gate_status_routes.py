@@ -135,7 +135,8 @@ def recheck_notice(store, ctx) -> dict | None:
     title = ("1 gate waits for Re-check" if n == 1 else f"{n} gates wait for Re-check")
     names = "; ".join(f"{w['pair']} / {w['gate']} ({', '.join(w['files'])})" for w in waiting)
     text = (f"The class file changed since the gate was checked: {names}. Press Re-check on "
-            f"the gate's line to check it with the file as it is now. {RECHECK_OTHER_CHIPS}")
+            f"the gate's status line (in the pair's CZ gates or the gate's pulse detail) to "
+            f"check it with the file as it is now. {RECHECK_OTHER_CHIPS}")
     return {"tone": "warn", "title": title, "text": text, "gates": waiting}
 
 

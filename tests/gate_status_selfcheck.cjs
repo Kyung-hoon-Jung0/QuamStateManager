@@ -58,10 +58,10 @@ function zonePage(withOffer) {
     w.document.querySelector('.gate-status-list').addEventListener('gate-list-refresh', function () { w.__refresh++; });
     return w;
 }
-function confirmOn(w, type) {
+function confirmOn(w, type, target) {
     const zone = w.document.querySelector('.gate-status-list');
     const e = new w.CustomEvent('htmx:confirm', { bubbles: true, cancelable: true,
-        detail: { elt: zone, triggeringEvent: { type: type } } });
+        detail: { elt: zone, triggeringEvent: { type: type, target: target } } });
     zone.dispatchEvent(e);
     return e.defaultPrevented;
 }
@@ -85,4 +85,20 @@ w = zonePage(false);
 ok(confirmOn(w, 'cellsReverted') === false, 'no offer open: the refresh runs at once');
 w.document.querySelector('.gate-status-slot').dispatchEvent(new w.CustomEvent('htmx:afterSwap', { bubbles: true }));
 ok(w.__refresh === 0, 'nothing held, nothing re-run');
+
+/* a gate write from the pulse detail (outside the zone) re-fetches the list;
+   the list's own answer (a press inside the zone) does not fetch twice */
+w = zonePage(false);
+const outside = w.document.createElement('div');
+w.document.body.appendChild(outside);
+ok(confirmOn(w, 'pulses-changed', outside) === false, 'a write from the pulse detail refreshes the list');
+ok(confirmOn(w, 'pulses-changed', w.document.querySelector('.gate-status-delete')) === true,
+   "the list's own answer is not fetched again");
+ok(!w.document.querySelector('.gate-status-list').hasAttribute('data-gate-stale'), 'and is not held for later');
+w = zonePage(true);
+const outside2 = w.document.createElement('div');
+w.document.body.appendChild(outside2);
+ok(confirmOn(w, 'pulses-changed', outside2) === true, 'a pulse detail write waits while a delete offer is open');
+w.document.querySelector('.gate-delete-cancel').click();
+ok(w.__refresh === 1, 'and runs once the offer closes');
 console.log('ALL OK (' + n + ' assertions)');

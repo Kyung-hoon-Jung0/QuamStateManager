@@ -201,9 +201,25 @@ def test_the_pulses_slot_refreshes_on_the_gate_list_events(chip2):
     trigger = tag.split('hx-trigger="', 1)[1].split('"', 1)[0]
     assert set(t.strip() for t in trigger.split(",")) == {
         "pulses-changed from:body", "cellsReverted from:document", "stateRestored from:document"}
-    # the pair's gate list refreshes on the same undo / pull events
+    # the pair's gate list refreshes on a gate write from the pulse detail and
+    # on the same undo / pull events
     zone = _page(chip2, "/pair/q1-q2")
-    assert "cellsReverted from:document, stateRestored from:document" in zone
+    start = zone.index('class="ui-zone gate-status-list')
+    tag = zone[start:zone.index(">", start)]
+    trigger = tag.split('hx-trigger="', 1)[1].split('"', 1)[0]
+    assert set(t.strip() for t in trigger.split(",")) == {
+        "pulses-changed from:body", "cellsReverted from:document", "stateRestored from:document",
+        "gate-list-refresh"}
+
+
+def test_the_instruction_points_at_a_line_on_every_page(chip2):
+    a, _b = chip2._files
+    a.write_bytes(b"changed a")
+    instruction = ("Press Re-check on the gate's status line (in the pair's CZ gates or the "
+                   "gate's pulse detail)")
+    for name, html in _views(chip2).items():
+        assert instruction in html.replace("&#39;", "'"), name
+        assert html.count('data-recheck-notice="') == 1, name
 
 
 def test_recheck_in_the_list_answers_without_the_notice(made, monkeypatch):  # noqa: F811
@@ -227,3 +243,30 @@ def test_recheck_in_the_list_answers_without_the_notice(made, monkeypatch):  # n
     assert "data-recheck-notice" not in body and SENTENCE not in body
     assert "pulses-changed" in r.headers.get("HX-Trigger", "")
     assert made.c.get("/pulse/cz-gate/recheck-notice").get_data(as_text=True).strip() == ""
+
+
+def test_recheck_from_the_pulse_detail_renews_the_pair_list(made, monkeypatch):  # noqa: F811
+    """The pulse detail's Re-check answers one line and `pulses-changed`; the
+    pair page's gate list listens to it and its re-fetch drops the notice."""
+    from quam_state_manager.core import config_generator
+    monkeypatch.setattr(config_generator, "get_selected_env", lambda inst: "C:/fake/python.exe")
+    target = made.folder / f"{CLASS}.py"
+    new_bytes = target.read_bytes() + b"\n# a later edit\n"
+    target.write_bytes(new_bytes)
+    rec_file = next(Path(made.app.instance_path).rglob(W.PUBLISHED_FILE))
+    receipt = json.loads(rec_file.read_text(encoding="utf-8"))
+    receipt["sha"] = hashlib.sha256(new_bytes).hexdigest()
+    rec_file.write_text(json.dumps(receipt), encoding="utf-8")
+    monkeypatch.setattr(gate_check, "check_gates",
+                        lambda store, py, gates, creates=(), **kw: _gate_check(store))
+    page = made.c.get(f"/pair/{PAIR}", headers={"HX-Request": "true"}).get_data(as_text=True)
+    assert SENTENCE in page and "pulses-changed from:body" in page
+    r = made.c.post("/api/pulse/cz-gate/recheck", data={"pair": PAIR, "gate": GATE},
+                    headers={"HX-Request": "true"})
+    body = r.get_data(as_text=True)
+    assert r.status_code == 200 and "gate-status-list" not in body, body[:300]
+    assert "pulses-changed" in r.headers.get("HX-Trigger", "")
+    again = made.c.get(f"/pulse/cz-gate/list?pair={PAIR}",
+                       headers={"HX-Request": "true"}).get_data(as_text=True)
+    assert "gate-status-list" in again
+    assert "data-recheck-notice" not in again and SENTENCE not in again

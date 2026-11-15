@@ -4,13 +4,15 @@
    one door that creates its first gate. `gate_lines`: web/gate_status_routes.gate_list.
    Make active and Delete answer this whole partial, so the summary and the rows update together;
    `gate_lines.notice` (a delete's result) sits above the rows, outside any row, under the chip-level
-   Re-check notice (`gate_lines.recheck_notice`, _gate_recheck_notice.html), which the same refresh renews. An undo or redo
-   (`cellsReverted`) or a sync pull (`stateRestored`) re-fetches the list; while a delete offer is
-   open static/gate-status.js holds that refresh until the offer closes (`gate-list-refresh`). #}
+   Re-check notice (`gate_lines.recheck_notice`, _gate_recheck_notice.html), which the same refresh renews. A gate
+   write from elsewhere on the page (the pulse detail's Re-check or delete answers `pulses-changed`), an undo or redo
+   (`cellsReverted`) or a sync pull (`stateRestored`) re-fetches the list; static/gate-status.js skips the
+   `pulses-changed` of the list's own answer (it already re-rendered the list) and, while a delete offer is
+   open, holds the refresh until the offer closes (`gate-list-refresh`). #}
 {% import "_ui.html" as ui %}
 {% if gate_lines and gate_lines.pair %}
 <section class="ui-zone gate-status-list{% if not gate_lines.count %} ui-zone--quiet{% endif %}" aria-label="CZ gates" data-gate-pair="{{ gate_lines.pair }}"
-         hx-get="/pulse/cz-gate/list?pair={{ gate_lines.pair | urlencode }}" hx-trigger="cellsReverted from:document, stateRestored from:document, gate-list-refresh" hx-target="this" hx-swap="outerHTML">
+         hx-get="/pulse/cz-gate/list?pair={{ gate_lines.pair | urlencode }}" hx-trigger="pulses-changed from:body, cellsReverted from:document, stateRestored from:document, gate-list-refresh" hx-target="this" hx-swap="outerHTML">
     <div class="ui-zone-head">
         <h3 class="ui-zone-title">CZ gates</h3>
         <button type="button" class="btn-sm outline" data-czg-open data-czg-pair="{{ gate_lines.pair }}" title="Create a new CZ gate on this pair">+ Gate</button>
