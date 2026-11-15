@@ -652,7 +652,8 @@ def t_cz_gate_create(a: dict) -> Any:
 def t_class_file_save(a: dict) -> Any:
     """Save to quam_config: the SM-made class file into the lab folder. The
     first call answers ``confirm`` (the folder); call again with
-    ``confirmed_folder`` to write. The answer carries the restart notice."""
+    ``confirmed_folder`` to write. The answer carries the restart notice.
+    A ``folder`` is passed on so SM refuses it with its reason."""
     body = {k: a[k] for k in ("cls", "confirmed_folder", "folder", "reason") if k in a}
     return _answer(*_sm().post_json("/api/agent/class-file/save", body, timeout=300))
 
@@ -832,9 +833,11 @@ TOOLS: dict[str, tuple[dict, Any]] = {
                        t_cz_gate_create),
     "class_file_save": (_s("Save to quam_config: write an SM-made pulse class file into the lab folder (the "
                            "pulse class page's door). First call answers `confirm` with the folder; call "
-                           "again with confirmed_folder. The answer carries `restart` (tell the human).",
+                           "again with confirmed_folder. The folder is always the one the chip's env "
+                           "imports (no other folder can be chosen here). The answer carries `restart` "
+                           "(tell the human).",
                            cls={"type": "string", "required": True}, confirmed_folder={"type": "string"},
-                           folder={"type": "string"}, reason={"type": "string"}), t_class_file_save),
+                           reason={"type": "string"}), t_class_file_save),
     "note_set": (_s("Pin a note on a qubit, pair or dotted path (shown on its row in SM, and to every agent in "
                     "sm_status / state_get), e.g. why a value was left alone. Signed with your client's name.",
                     subject={"type": "string", "required": True}, text={"type": "string", "required": True}),

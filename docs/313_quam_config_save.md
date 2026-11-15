@@ -153,15 +153,21 @@ A terminal agent (MCP bridge, `quam_state_manager/mcp.py`) builds a gate through
 
 - `class_file_save` -> `/api/agent/class-file/save` calls `pulse_class_page.save_config`, the function behind
   `/pulse-class/save-config`; the history line names the agent (`by_claude`, `by_codex`, `agent`). The payload's
-  `python` is dropped: the chip's chosen env runs the import. A saved file writes a journal line carrying the
-  restart notice (`RESTART_NEW` / `RESTART_EDIT`), which is how the person reads it (the cockpit's journal).
+  `python` is dropped: the chip's chosen env runs the import. A payload `folder` is refused (409,
+  `refused: folder_is_the_persons`, nothing written): the agent saves only to the folder the chip's env imports
+  (the person's door with no folder chosen); another folder stays the person's own choice. A saved file writes a
+  journal line carrying the restart notice (`RESTART_NEW` / `RESTART_EDIT`), which is how the person reads it
+  (the cockpit's journal).
 - `cz_gate_plan` / `cz_gate_check` / `cz_gate_create` -> `/api/agent/cz-gate/{plan,check,create}` call
   `cz_gate_routes.plan_answer` / `check_answer` / `create_answer`, the bodies of the dialog's routes. Every
-  refusal reads the same words; the check token is the same token. The person's `/api/pulse/cz-gate/create` and
-  `make-active` stay person-only.
+  refusal reads the same words. The check token records who ran the check (`person` when the callers gate finds
+  a person's window proof, else `agent`); a create by the other kind is refused (409, `check_again`). The
+  person's `/api/pulse/cz-gate/create` and `make-active` stay person-only.
 - Create stages the gate into the tray under the agent's actor and never writes the chip. The answer adds one card
   per gate: the pulses made, the check's timeline data, the gate's status line, and the restart notice of a class
-  file an agent saved in this SM process. A journal line names the staged gates.
+  file an agent saved in this SM process. A journal line names the staged gates with the agent's kind
+  (`by_claude`, `by_codex`, `agent`), as does the class save's line. While a queue runs, the run lock refuses the
+  agent's check and create like the person's two routes; the plan still answers.
 - The chip is written only by `apply_to_live`, so the live-write check above and the unseen-edit gate apply in
   auto mode too. The mode is the existing `routes._agent_apply_mode` (plan, then session, then the chip's
   default). Outside auto mode a tray with created rows is refused (`agent_structural_rows`): no approval card

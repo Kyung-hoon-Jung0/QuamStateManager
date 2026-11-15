@@ -37,7 +37,9 @@
     paths}], skipped: [{pair, reason}], count, group, tray_html}``. A store
     that moved is 409 ``stale: true`` with nothing written. This door writes
     the working copy only, never the live files; the new gate is not made
-    active (the pair's ``cz`` alias is never touched).
+    active (the pair's ``cz`` alias is never touched). The token keeps who
+    ran the check (a person or an agent, by the callers gate): a create by
+    the other kind is refused (409, ``check_again``).
 """
 from __future__ import annotations
 
@@ -649,6 +651,22 @@ def _remember(entry: dict) -> str:
     return tok
 
 
+#: who ran the check and who presses create must be the same kind of caller
+_CHECKED_BY_OTHER = {
+    "person": "This check was run by a person. An agent's create needs the agent's own check: "
+              "run the check again.",
+    "agent": "This check was run by an agent. A person's create needs a check pressed in the SM "
+             "window: press Check again.",
+}
+
+
+def _caller_kind() -> str:
+    """``person`` or ``agent``, by the callers gate (a person's window
+    proof), never by the absence of a header."""
+    from quam_state_manager.web import callers
+    return "person" if callers.from_person() else "agent"
+
+
 def _token(tok: Any) -> dict | None:
     if not isinstance(tok, str):
         return None
@@ -800,7 +818,7 @@ def check_answer():
         timelines[pid] = tl
         sigs[pid] = _creates_sig(p)
     seq = (res or {}).get("seq")
-    tok = _remember({"store_id": chip_copy.store_id(store),
+    tok = _remember({"by": _caller_kind(), "store_id": chip_copy.store_id(store),
                      "seq": seq if seq is not None else pre_seq,
                      "plan_sig": sig, "body": body, "verdicts": verdicts, "sigs": sigs,
                      "checks": checks_by, "timelines": timelines})
@@ -834,6 +852,9 @@ def create_answer():
     tok = _token(data.get("check_token"))
     if tok is None:
         return _refuse("This check is not known any more (it expired or the app restarted). "
+                       "Press Check again.", 409, check_again=True)
+    if tok.get("by") != _caller_kind():
+        return _refuse(_CHECKED_BY_OTHER.get(tok.get("by")) or "This check is not known any more. "
                        "Press Check again.", 409, check_again=True)
     if tok["used"]:
         return _refuse("These gates were already created from this check. Press Check "

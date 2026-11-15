@@ -162,19 +162,26 @@ def test_a_bad_class_is_refused_with_the_persons_words(chip, fake):
     ("archive", "This chip is a read-only archive. Open the live chip to create a gate."),
     ("foreign", "This check was made on another chip. Press Check again on this chip.")])
 def test_a_broken_create_is_refused_with_the_persons_words(chip, fake, breakage, words):
-    j = chip.c.post(A_CHECK, json=_body(), headers=AGENT).get_json()
-    payload = {"check_token": j["check_token"], "plan_sig": j["plan_sig"]}
+    # each door gets its own kind's check: a token is bound to who ran the check
+    jp = chip.c.post(CHECK, json=_body()).get_json()
+    ja = chip.c.post(A_CHECK, json=_body(), headers=AGENT).get_json()
+    payloads = [{"check_token": j["check_token"], "plan_sig": j["plan_sig"]} for j in (jp, ja)]
     if breakage == "plan_sig":
-        payload["plan_sig"] = chip.c.post(PLAN, json=_body(amp=0.3)).get_json()["plan_sig"]
+        sig = chip.c.post(PLAN, json=_body(amp=0.3)).get_json()["plan_sig"]
+        for p in payloads:
+            p["plan_sig"] = sig
     elif breakage == "stale":
         chip.ctx["modifier"].set_value("qubits.q3.z.operations.const.amplitude", 0.11)
     elif breakage == "archive":
         chip.ctx["origin"] = "dataset_archive"
     else:
-        czr._TOKENS[j["check_token"]]["store_id"] = -1
+        for p in payloads:
+            czr._TOKENS[p["check_token"]]["store_id"] = -1
     before = chip.snap()
-    (cp, jp), (ca, ja) = _both(chip, CREATE, A_CREATE, payload)
-    assert cp == ca == 409 and jp["error"] == ja["error"] == words
+    rp = chip.c.post(CREATE, json=payloads[0])
+    ra = chip.c.post(A_CREATE, json=payloads[1], headers=AGENT)
+    assert rp.status_code == ra.status_code == 409
+    assert rp.get_json()["error"] == ra.get_json()["error"] == words
     assert chip.snap() == before
 
 
@@ -192,6 +199,65 @@ def test_the_persons_create_route_still_refuses_an_agent(chip, fake):
         chip.app.config.pop("PROVE_CALLERS", None)
 
 
+# ------------------------------------------------------------ the check token knows who ran it
+
+def test_an_agent_cannot_create_from_a_persons_check(chip, fake):
+    j = chip.c.post(CHECK, json=_body()).get_json()
+    assert czr._TOKENS[j["check_token"]]["by"] == "person"
+    payload = {"check_token": j["check_token"], "plan_sig": j["plan_sig"]}
+    before = chip.snap()
+    r = chip.c.post(A_CREATE, json=payload, headers=AGENT)
+    assert r.status_code == 409 and r.get_json()["check_again"] is True
+    assert r.get_json()["error"] == czr._CHECKED_BY_OTHER["person"]
+    assert chip.snap() == before
+    r = chip.c.post(CREATE, json=payload)
+    assert r.status_code == 200 and r.get_json()["count"] == 1, "the person's own create still works"
+
+
+def test_a_person_cannot_create_from_an_agents_check(chip, fake):
+    j = chip.c.post(A_CHECK, json=_body(), headers=AGENT).get_json()
+    assert czr._TOKENS[j["check_token"]]["by"] == "agent"
+    payload = {"check_token": j["check_token"], "plan_sig": j["plan_sig"]}
+    before = chip.snap()
+    r = chip.c.post(CREATE, json=payload)
+    assert r.status_code == 409 and r.get_json()["check_again"] is True
+    assert r.get_json()["error"] == czr._CHECKED_BY_OTHER["agent"]
+    assert chip.snap() == before
+    r = chip.c.post(A_CREATE, json=payload, headers=AGENT)
+    assert r.status_code == 200 and r.get_json()["count"] == 1, "the agent's own create still works"
+
+
+def test_a_check_with_no_window_proof_is_not_a_persons(chip, fake):
+    """The kind comes from the callers gate: no header and no window cookie
+    is not a person."""
+    chip.app.config["PROVE_CALLERS"] = True
+    try:
+        j = chip.c.post(CHECK, json=_body()).get_json()
+    finally:
+        chip.app.config.pop("PROVE_CALLERS", None)
+    assert czr._TOKENS[j["check_token"]]["by"] == "agent"
+
+
+# ------------------------------------------------------------ the run lock
+
+def test_a_running_queue_locks_the_agents_check_and_create(chip, fake, monkeypatch):
+    from quam_state_manager.core import scheduler
+    ja = chip.c.post(A_CHECK, json=_body(), headers=AGENT).get_json()
+    jp = chip.c.post(CHECK, json=_body()).get_json()
+    monkeypatch.setattr(scheduler, "is_active", lambda _inst: True)
+    before = chip.snap()
+    calls = [(A_CHECK, _body(), AGENT),
+             (A_CREATE, {"check_token": ja["check_token"], "plan_sig": ja["plan_sig"]}, AGENT),
+             (CHECK, _body(), {}),
+             (CREATE, {"check_token": jp["check_token"], "plan_sig": jp["plan_sig"]}, {})]
+    for url, body, headers in calls:
+        r = chip.c.post(url, json=body, headers=headers)
+        assert r.status_code == 409 and r.get_json()["error"] == "scheduler_running", url
+    assert chip.snap() == before
+    r = chip.c.post(A_PLAN, json=_body(), headers=AGENT)
+    assert r.status_code == 200 and r.get_json()["pairs"][0]["ok"], "the plan writes nothing and still answers"
+
+
 # ------------------------------------------------------------ stage only, the agent's name
 
 def test_the_agents_create_stages_under_its_name_and_never_writes_live(chip, fake):
@@ -203,6 +269,16 @@ def test_the_agents_create_stages_under_its_name_and_never_writes_live(chip, fak
     assert _live_bytes(chip) == live
     text = _journal(chip)
     assert f"staged the CZ gate {PAIR} / {GATE} in the tray" in text and "a square CZ to compare" in text
+
+
+@pytest.mark.parametrize("cli", ["claude", "codex"])
+def test_the_journal_line_of_an_agents_create_names_its_cli(chip, fake, cli):
+    hdr = {"X-SM-Agent": cli}
+    j = chip.c.post(A_CHECK, json=_body(), headers=hdr).get_json()
+    r = chip.c.post(A_CREATE, json={"check_token": j["check_token"], "plan_sig": j["plan_sig"]},
+                    headers=hdr)
+    assert r.status_code == 200, r.get_json()
+    assert f"`by_{cli}` staged the CZ gate {PAIR} / {GATE}" in _journal(chip)
 
 
 def test_a_persons_create_still_names_the_person(chip, fake):
@@ -275,6 +351,40 @@ def test_class_file_then_gate_then_auto_apply_reaches_the_live_chip(lab):
     macro = _live_state(lab)["qubit_pairs"][PAIR]["macros"][GATE]
     assert macro["extras"]["sm_class_files"][0]["file"] == f"{CLASS}.py"
     assert approvals.pending(lab.app.instance_path, _chip_key(lab)) == []
+
+
+def test_the_agents_class_save_takes_no_folder(lab, monkeypatch):
+    other = lab.folder.parent.parent / "elsewhere" / "quam_config"
+    other.mkdir(parents=True)
+    real, seen = pulse_class_page.save_config, []
+
+    def spy(data, actor):
+        seen.append(dict(data))
+        return real(data, actor)
+    monkeypatch.setattr(pulse_class_page, "save_config", spy)
+    for payload in ({"cls": CLASS, "folder": str(other)},
+                    {"cls": CLASS, "folder": str(other), "confirmed_folder": str(other)}):
+        r = lab.c.post(A_CLASS, json=payload, headers=AGENT)
+        assert r.status_code == 409 and r.get_json()["error"] == agent_api.CLASS_FOLDER_REFUSAL
+        assert r.get_json()["refused"] == "folder_is_the_persons"
+    monkeypatch.setattr(mcp, "_link", ClientLink(lab.c))
+    out = mcp.t_class_file_save({"cls": CLASS, "folder": str(other)})
+    assert out["error"] == agent_api.CLASS_FOLDER_REFUSAL, "the bridge passes the folder on to be refused"
+    assert seen == [], "a payload folder never reaches the save"
+    assert list(other.iterdir()) == [] and not (lab.folder / f"{CLASS}.py").exists()
+    saved = _agent_save_class(lab)
+    assert saved["target"] == str(lab.folder / f"{CLASS}.py") and list(other.iterdir()) == []
+    assert seen and all("folder" not in d for d in seen)
+    assert f"`by_claude` saved the class file quam_config/{CLASS}.py" in _journal(lab)
+
+
+def test_the_class_save_journal_line_names_codex(lab):
+    hdr = {"X-SM-Agent": "codex"}
+    first = lab.c.post(A_CLASS, json={"cls": CLASS}, headers=hdr).get_json()
+    r = lab.c.post(A_CLASS, json={"cls": CLASS, "confirmed_folder": first["confirm"]["folder"]},
+                   headers=hdr)
+    assert r.status_code == 200, r.get_json()
+    assert f"`by_codex` saved the class file quam_config/{CLASS}.py" in _journal(lab)
 
 
 def test_a_changed_class_file_refuses_the_agents_apply_in_auto_mode(lab):

@@ -3244,17 +3244,29 @@ def cz_gate_create():
     return jsonify(payload), 200
 
 
+#: why the agent's class-file save takes no folder
+CLASS_FOLDER_REFUSAL = ("Not written: the agent saves a class file only to the folder the chip's "
+                        "environment imports. Send no folder; another folder is the person's own "
+                        "choice, in the pulse class page.")
+
+
 @agent_bp.route("/class-file/save", methods=["POST"])
 def class_file_save():
     """Save to quam_config for an agent: the person's door (the same
     function), recorded under the agent's name. The first call (no
     ``confirmed_folder``) answers the folder to confirm. A saved file puts
-    the restart notice into the journal, where the person reads it."""
+    the restart notice into the journal, where the person reads it. The
+    folder is always the one the chip's env imports (the person's door with
+    no folder chosen): a payload ``folder`` is refused, since another folder
+    is the person's own choice in the pulse class page."""
     from quam_state_manager.web import pulse_class_page
     r = _r()
     data = json_object({})
     data = dict(data) if isinstance(data, dict) else {}
     data.pop("python", None)                 # the chip's chosen env only
+    if data.get("folder"):
+        return jsonify(ok=False, refused="folder_is_the_persons",
+                       error=CLASS_FOLDER_REFUSAL), 409
     payload, code = pulse_class_page.save_config(data, r._request_actor())
     if code == 200 and payload.get("ok"):
         restart = payload.get("restart") or ""
