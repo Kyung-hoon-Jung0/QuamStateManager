@@ -516,8 +516,9 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
     each MW output of an earlier band gets ``s = 20`` ns; a qubit whose xy
     port shifted gets ``z += s``; a coupler port gets ``+= s`` of its pair's
     moving qubit (control when unset; a shared port is decided by the first
-    pair in chip order); a resonator gets ``time_of_flight += s`` of its
-    readout output port. Items: ``ports``, ``flux``, ``tof`` and ``spacing``
+    pair in chip order); a resonator's time of flight becomes
+    ``tof_on_grid(time_of_flight + s)`` of its readout output port (the item
+    keeps ``old``, the written ``new`` and the raw ``sum``). Items: ``ports``, ``flux``, ``tof`` and ``spacing``
     (qubits whose xy and readout shifts differ). A stored time of flight the
     grid rule cannot place (missing, not a number after its pointer is
     resolved, not finite, or negative after the shift) is not written; it
