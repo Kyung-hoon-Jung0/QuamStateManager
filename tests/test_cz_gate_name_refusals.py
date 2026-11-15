@@ -142,7 +142,16 @@ def test_a_capped_name_keeps_its_mark_at_every_door(chip, url, headers):  # noqa
     assert LONG not in json.dumps(row["refusals"]) and LONG not in json.dumps(row["name_refusals"])
 
 
-def test_the_person_doors_release_the_name_record(chip, monkeypatch):  # noqa: F811
+@pytest.fixture
+def no_record():
+    """No name record at the start, whatever ran before in this thread, and
+    whatever this test leaves restored after it: each release test stands alone."""
+    token = cgb._NAMED.set(None)
+    yield
+    cgb._NAMED.reset(token)
+
+
+def test_the_person_doors_release_the_name_record(chip, monkeypatch, no_record):  # noqa: F811
     """The record lives only while a person's plan or check runs, also when the
     door raises: a pooled server thread never keeps it."""
     from quam_state_manager.web import cz_gate_routes as czr
@@ -159,3 +168,23 @@ def test_the_person_doors_release_the_name_record(chip, monkeypatch):  # noqa: F
     with pytest.raises(RuntimeError, match="door failed"):
         chip.c.post(PLAN, json=_body(name="bad"))
     assert cgb._NAMED.get() is None
+
+
+def test_the_agent_doors_release_the_name_record(chip, monkeypatch, no_record):  # noqa: F811
+    """The agent's plan and check release the record when they end, also when
+    the door raises, on their own and in any test order."""
+    from quam_state_manager.web import cz_gate_routes as czr
+    for url in (A_PLAN, A_CHECK):
+        assert chip.c.post(url, json=_body(name="bad"), headers=AGENT).status_code == 200
+        assert cgb._NAMED.get() is None, url
+
+    def boom(*_a, **_k):
+        cgb.name_reason("The gate name 'bad' must start with cz_. Pick a name like cz_square.")
+        raise RuntimeError("door failed")
+
+    for name in ("plan_answer", "check_answer"):
+        monkeypatch.setattr(czr, name, boom)
+    for url in (A_PLAN, A_CHECK):
+        with pytest.raises(RuntimeError, match="door failed"):
+            chip.c.post(url, json=_body(name="bad"), headers=AGENT)
+        assert cgb._NAMED.get() is None, url

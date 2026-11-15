@@ -239,7 +239,7 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
        && $('#czg-empty').classList.contains('ui-zone-empty') && !$('#czg-zone-result').contains($('#czg-alert'))
        && !$('#czg-zone-result').contains($('#czg-pairs')),
        'before a check the Result zone is quiet with its one line; the banner and pair switch sit above it');
-    ok(/^1 line|lines play together$/.test($('#czg-zone-pulses .ui-zone-sum').textContent), 'the Pulses line count is the zone summary');
+    ok(/^(1 line|\d+ lines)$/.test($('#czg-zone-pulses .ui-zone-sum').textContent), 'the Pulses line count is the zone summary');
     ok($('.ui-slot.ui-line-1') && /^Qubit flux pulse/.test($('.ui-slot-head').textContent) && $('.ui-slot-chip').textContent === 'q1.z' && $('.ui-slot-head .ui-text-quiet').textContent === 'flux_pulse_qubit', 'slot: words, this pair\'s channel chip, line colour 1, field name quiet');
     ok(/control q1 \u2192 target q2/.test($('#czg-chips').textContent) && /moving qubit q1/.test($('#czg-chips').textContent), 'the head carries the pair as chips');
     ok(!$('#czg-chips').querySelector('input, select'), 'the mover is not an input');

@@ -191,6 +191,13 @@ def _choosing():
     ]
 
 
+def line_count_words(n):
+    """The Pulses summary words, as the gate dialog writes them (cz-gate.js
+    ``fillSlots``): a count only, never a claim that the lines play together,
+    which the Timing tile may contradict."""
+    return "1 line" if n == 1 else "%d lines" % n
+
+
 def reading_form(state):
     """The form column of the reading-order example (a new two-line gate)."""
     amp = "3.0" if state == "danger" else "0.1"
@@ -202,7 +209,7 @@ def reading_form(state):
             {"part": "field", "label": "Name", "control": {"part": "input", "value": "cz_fast", "block": True}},
             {"part": "field", "label": "Class", "control": {"part": "select", "options": ["CZ gate", "Square pulse"], "value": "CZ gate", "block": True}},
         ]},
-        {"part": "zone", "step": 2, "title": "Pulses", "summary": ["2 lines play together"], "body": [
+        {"part": "zone", "step": 2, "title": "Pulses", "summary": [line_count_words(2)], "body": [
             {"part": "slot", "title": "Qubit flux pulse", "chip": "q1.z", "line": 1, "body": [
                 {"part": "grid2", "items": [num("Length", "100", "ns", "entered"), num("Amplitude", amp, "V", "entered")]}]},
             {"part": "slot", "title": "Coupler pulse", "chip": "coupler_q1_q2", "line": 2, "body": [
@@ -275,7 +282,7 @@ def _reading():
             {"name": "Output range", "state": "fail", "why": "3 V on q1.z is above the 2.5 V limit."},
             {"name": "Hardware timing", "state": "skip"}]}),
         (sec, "Panel with step, hint and summary", {"part": "panel", "step": 2, "title": "Pulses", "hint": "program time",
-                                                    "summary": ["2 lines play together"],
+                                                    "summary": [line_count_words(2)],
                                                     "body": ["A quiet explanation sits in the body, never louder than the content."]}),
         (sec, "Panel folded, summary still visible", {"part": "panel", "title": "Checks", "fold": True,
                                                       "summary": [{"text": "6 of 6 passed", "level": "ok"}],

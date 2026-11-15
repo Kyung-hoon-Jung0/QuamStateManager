@@ -672,3 +672,23 @@ def test_tunable_refusals_carry_no_class_field(chip):
     assert not row["ok"] and "class_refusals" not in row
     ok = chip.c.post(PLAN, json=_body()).get_json()["pairs"][0]
     assert ok["ok"] and "class_refusals" not in ok
+
+
+def test_the_kit_gate_example_says_what_the_dialog_says():
+    """The UI kit's gate-dialog example writes the Pulses summary the way the
+    dialog does (a line count), so it never claims the lines play together
+    next to a Timing tile that shows a gap."""
+    from quam_state_manager.web import ui_kit_fixtures as kit
+    js = (Path(__file__).resolve().parents[1] / "quam_state_manager/web/static/cz-gate.js").read_text(encoding="utf-8")
+    assert "nl === 1 ? '1 line' : nl + ' lines'" in js
+    assert (kit.line_count_words(1), kit.line_count_words(2), kit.line_count_words(3)) == ("1 line", "2 lines", "3 lines")
+    for state in ("ok", "danger"):
+        pulses = [z for z in kit.reading_form(state) if z.get("title") == "Pulses"]
+        assert len(pulses) == 1
+        slots = [b for b in pulses[0]["body"] if b.get("part") == "slot"]
+        assert pulses[0]["summary"] == [kit.line_count_words(len(slots))]
+        tiles = {t["label"]: t for t in kit.reading_evidence(state)[0]["body"][1]["tiles"]}
+        assert tiles["Lines"]["value"] == str(len(slots))
+    assert "together" not in json.dumps([kit.specs(), kit.reading_form("ok"), kit.reading_form("danger"),
+                                         kit.reading_evidence("ok"), kit.reading_evidence("danger")])
+
