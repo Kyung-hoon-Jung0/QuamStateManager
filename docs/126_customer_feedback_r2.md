@@ -405,9 +405,9 @@ creatable) and a synth answer that says the truth — `digital_only: True`,
 "digital marker only — this pulse has no analog waveform" — instead of
 inventing a flat line or crying unrecognized. (The Pulses table deliberately
 still lists waveform pulses only — 524 rows; the trigger markers are wiring
-plumbing. Listing them is an easy follow-up if wanted.) It was pinned by the
-TestBarePulseRecognized class of test_gaussian_cz.py, removed with the builder on 2026-11-15
-(commit 193e0547); the catalog-shape pin remains.
+plumbing. Listing them is an easy follow-up if wanted.)
+Pinned by `tests/test_pulse_catalog.py::TestBarePulseRecognized` (its two tests moved there
+from test_gaussian_cz.py when the builder was removed on 2026-11-15, commit 193e0547).
 
 ## Round 3 — Auto-Sync polish, Versions, topology markers, chrome, honest outliers
 

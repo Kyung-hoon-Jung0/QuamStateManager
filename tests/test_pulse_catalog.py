@@ -249,6 +249,25 @@ class TestResolveQclass:
         assert resolve_qclass(42) == (None, None)
 
 
+class TestBarePulseRecognized:
+    """docs/126: the bare ``quam.components.pulses.Pulse`` is a digital-marker-only pulse (quam's own
+    waveform is None); chips carry it as their QDAC trigger pulses (docs/119). It is recognized with an
+    honest no-analog answer, never branded "Unrecognized pulse class"."""
+
+    def test_resolves_and_is_not_creatable(self):
+        spec, how = resolve_qclass("quam.components.pulses.Pulse")
+        assert spec is not None and spec.key == "Pulse" and how == "exact"
+        assert not spec.creatable
+        assert spec.label == "Digital marker only"
+
+    def test_synth_answers_digital_only_never_unrecognized(self):
+        from quam_state_manager.core import waveform_synth as ws
+        p = ws.synthesize("quam.components.pulses.Pulse", {"length": 100, "digital_marker": "ON"})
+        assert p["ok"] is False and p.get("digital_only") is True
+        assert "digital marker only" in p["error"]
+        assert "unrecognized" not in p["error"].lower()
+
+
 class TestInferSpecEx:
     def test_explicit_leaf_match(self):
         spec, how = infer_spec_ex(

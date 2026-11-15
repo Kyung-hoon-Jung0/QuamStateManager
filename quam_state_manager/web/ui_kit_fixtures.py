@@ -8,6 +8,10 @@ dialog, an environment upgrade card head); every name in them is generic.
 """
 from __future__ import annotations
 
+import functools
+import re
+from pathlib import Path
+
 LONG = ("A long sentence that keeps going to show how the part wraps when the text is longer than one line; "
         "it is never cut with an ellipsis, it wraps onto the next line and keeps its left edge.")
 
@@ -99,6 +103,10 @@ def _parts():
         ("Pieces", "Table", {"part": "table", "columns": ["Pair", "Status", "Length (ns)"], "numeric": [2], "rows": [
             [{"chip": "q1-2"}, {"dot": "ok", "text": "ready"}, "40"],
             [{"chip": "q2-3"}, {"dot": "warn", "text": "look"}, "1200"]]}),
+        ("Pieces", "Table cell that differs", {"part": "table", "columns": ["Setting", "Entered", "Now"],
+                                                "numeric": [1, 2], "rows": [
+            ["Length", "100 ns", {"text": "104 ns", "tone": "warn", "note": "differs"}],
+            ["Level", "0.1 V", "0.1 V"]]}),
         ("Pieces", "Key / value table", {"part": "table", "kv": True, "columns": [], "rows": [
             ["Generated from", {"chip": "state.json"}], ["Recorded", "2026-10-31 01:21"]]}),
         ("Pieces", "Segmented", {"part": "segmented", "label": "Select", "options": [
@@ -213,6 +221,71 @@ EXAMPLE_PORT_KIND = {"port_kind": "lf", "output_mode": "amplified"}
 OK_WHY = "The lab's code built this gate on a copy of the chip and every check passed."
 WARN_TAIL = " You can still create it; the record says it was not checked."
 DANGER_TAIL = " Change the inputs and check again."
+#: the example's pair and the other pair the More pairs panel offers
+EXAMPLE_PAIR, EXAMPLE_OTHER_PAIR = "q1-q2", "q2-q3"
+#: the Entered and actual columns when every line plays one level (cz-gate.js ``renderIntent``)
+INTENT_COLUMNS = ["Pulse", "Length entered", "In config", "Amplitude entered", "Level", "Starts at"]
+#: the line under What will be written with Auto-Sync off (cz-gate.js ``syncLine``)
+WRITES_LINE = "In the working copy. Not on the chip until you press Apply."
+
+
+@functools.lru_cache(maxsize=None)
+def dialog_words(name):
+    """The ``var <name> = {key: 'word', ...}`` map of cz-gate.js, read from the dialog's own file,
+    so the kit example names things with the dialog's words and never with a copy of them."""
+    js = (Path(__file__).resolve().parent / "static" / "cz-gate.js").read_text(encoding="utf-8")
+    body = re.search(r"\bvar %s = \{(.*?)\};" % re.escape(name), js, re.S).group(1)
+    pairs = re.findall(r"(\w+|'[^']*')\s*:\s*'((?:[^'\\]|\\.)*)'", body)
+    return {k.strip("'"): v.replace("\\'", "'") for k, v in pairs}
+
+
+def num(v, unit):
+    """A number and its unit as the dialog writes a table cell (cz-gate.js ``num``)."""
+    from quam_state_manager.core.gate_timeline_view import fmt_num
+    return "%s %s" % (fmt_num(v), unit)
+
+
+def over_summary(over):
+    """The Entered and actual summary for *over* cells over the limit (cz-gate.js ``renderIntent``)."""
+    return "%d over the limit" % over if over else "all as entered"
+
+
+def checks_summary(oc):
+    """The Checks summary the dialog writes from the server's outcome *oc* (cz-gate.js ``renderChecks``)."""
+    if oc["failed"]:
+        return "%d failed, %d passed" % (len(oc["failed"]), oc["passed"])
+    return "%d of %d passed" % (oc["passed"], oc["total"]) + (
+        ", %d could not run" % len(oc["not_run"]) if oc["not_run"] else "")
+
+
+def example_checks(over=False):
+    """``(checks, summary)``: the example's Checks as the dialog lists them. Every check the server
+    sends, in its order (``gate_check.CHECKS``), named by the dialog's ``CHECK_WORDS`` and stated by
+    its ``CHECK_STATE``; the range check is the check's own answer; the summary comes from the
+    server's outcome (``gate_check_log.outcome``) in the dialog's format."""
+    from quam_state_manager.core import gate_check, gate_check_log
+    found = {k: {"status": "pass", "message": ""} for k in gate_check.LAB_CHECKS}
+    found["range"] = range_check(over)
+    found[gate_check.OWN_CHECK] = {"status": "note", "message": gate_check.NO_SPECTATOR_ROWS}
+    words, state = dialog_words("CHECK_WORDS"), dialog_words("CHECK_STATE")
+    listed = [{"name": words.get(k, k), "state": state.get(c["status"], "skip"), "why": c["message"]}
+              for k, c in found.items()]
+    oc = gate_check_log.outcome({"status": "ok", "checked": True}, {"checks": found, "ran": True})
+    return listed, checks_summary(oc)
+
+
+def intent_rows(over=False):
+    """The Entered and actual rows of the example, cell by cell as cz-gate.js ``renderIntent`` fills
+    them: only a level over the port's limit is toned, with the limit beside it."""
+    peaks = _levels(over)
+    rows = []
+    for line, (k, a, b) in enumerate(EXAMPLE_SPANS, 1):
+        level = num(peaks[k], "V")
+        if over and k in EXAMPLE_OVER:
+            level = {"text": level, "tone": "danger", "note": limit_note()}
+        rows.append([{"text": EXAMPLE_OPS[k], "line": line}, num(b - a, "ns"), num(b - a, "ns"),
+                     num(peaks[k], "V"), level, num(a, "ns")])
+    return rows
 
 
 def example_limit_v():
@@ -298,24 +371,36 @@ def gap_note(tile):
 
 
 def reading_form(state):
-    """The form column of the reading-order example (a new two-line gate)."""
-    amp = "3.0" if state == "danger" else "0.1"
-    num = lambda i, v, u, src: {"part": "field", "label": i, "source": {"text": src, "tone": "accent" if src == "entered" else "neutral"},
-                                "control": {"part": "input", "num": True, "value": v, "unit": u, "block": True,
-                                            "invalid": state == "danger" and v == "3.0"}}
+    """The form column of the reading-order example (a new two-line gate). Every word is the dialog's:
+    the gate class labels the server offers, the slot titles and value sources of cz-gate.js
+    (``SLOT_WORDS``, ``SOURCE_WORDS``) and the field labels and units of the pulse class."""
+    from quam_state_manager.core import cz_gate_build as cgb, pulse_catalog
+    from quam_state_manager.web.cz_gate_routes import _CLASS_LABELS
+    params = {p.name: p for p in pulse_catalog.PULSE_CATALOG["SquarePulse"].params}
+    slots, src = dialog_words("SLOT_WORDS"), dialog_words("SOURCE_WORDS")
+    peaks = _levels(state == "danger")
+
+    def field(name, v, how):
+        p = params[name]
+        return {"part": "field", "label": p.label,
+                "source": {"text": src[how], "tone": "accent" if how == "given" else "neutral"},
+                "control": {"part": "input", "num": True, "value": v, "unit": p.unit, "block": True,
+                            "invalid": state == "danger" and name == "amplitude" and float(v) in EXAMPLE_OVER.values()}}
+    body = []
+    for line, (slot, (k, a, b)) in enumerate(zip(cgb.GATE_CLASSES[cgb.CZ_GATE]["slots"], EXAMPLE_SPANS), 1):
+        how = "given" if line == 1 else "default"
+        body.append({"part": "slot", "title": slots[slot.field], "chip": k, "line": line, "body": [
+            {"part": "grid2", "items": [field("length", str(b - a), "given"),
+                                        field("amplitude", repr(peaks[k]), how)]}]})
+    body.append({"part": "panel", "title": "More pairs", "fold": True, "summary": ["only " + EXAMPLE_PAIR],
+                 "body": [{"part": "check", "text": EXAMPLE_OTHER_PAIR}]})
     return [
         {"part": "zone", "step": 1, "title": "Gate", "body": [
             {"part": "field", "label": "Name", "control": {"part": "input", "value": "cz_fast", "block": True}},
-            {"part": "field", "label": "Class", "control": {"part": "select", "options": ["CZ gate", "Square pulse"], "value": "CZ gate", "block": True}},
+            {"part": "field", "label": "Class", "control": {"part": "select", "options": list(_CLASS_LABELS.values()),
+                                                            "value": _CLASS_LABELS[cgb.CZ_GATE], "block": True}},
         ]},
-        {"part": "zone", "step": 2, "title": "Pulses", "summary": [line_count_words(2)], "body": [
-            {"part": "slot", "title": "Qubit flux pulse", "chip": "q1.z", "line": 1, "body": [
-                {"part": "grid2", "items": [num("Length", "100", "ns", "entered"), num("Amplitude", amp, "V", "entered")]}]},
-            {"part": "slot", "title": "Coupler pulse", "chip": "coupler_q1_q2", "line": 2, "body": [
-                {"part": "grid2", "items": [num("Length", "60", "ns", "entered"), num("Amplitude", "0.05", "V", "default")]}]},
-            {"part": "panel", "title": "More pairs", "fold": True, "summary": ["only q1-q2"],
-             "body": [{"part": "check", "text": "Also q2-q3"}]},
-        ]},
+        {"part": "zone", "step": 2, "title": "Pulses", "summary": [line_count_words(len(EXAMPLE_SPANS))], "body": body},
     ]
 
 
@@ -324,7 +409,9 @@ READING_EMPTY = "Press Check: the lab's code builds this gate on a copy of the c
 
 def reading_evidence(state):
     """The evidence column: ONE result zone holding conclusion, key numbers, table, checks, what is written.
-    state "before": the zone before a check, quiet but still a visible region."""
+    state "before": the zone before a check, quiet but still a visible region. Panel titles and hints are
+    the dialog's (``_cz_gate_dialog.html``); rows, checks and summaries come from :func:`intent_rows`,
+    :func:`example_checks` and :func:`over_summary`."""
     if state == "before":
         return [{"part": "zone", "step": 3, "title": "Result", "fill": True, "quiet": READING_EMPTY}]
     ok = state == "ok"
@@ -334,54 +421,54 @@ def reading_evidence(state):
     lanes = example_lanes(over=not ok)
     gap = gap_note(timing_tile(lanes))
     stats = {"part": "stats", "label": "Key numbers", "tiles": dialog_tiles(lanes)}
-    rows = [[{"text": "cz_fast_pulse_q1_q2", "line": 1}, "100 ns",
-             "0.1 V" if ok else {"text": "3 V", "tone": "danger", "note": limit_note()},
-             {"text": "161 ns", "tone": "warn", "note": "port delay"}],
-            [{"text": "cz_fast_coupler_pulse_q1_q2", "line": 2}, "60 ns", "0.05 V", "0 ns"]]
+    rows = intent_rows(over=not ok)
+    over = sum(1 for r in rows for c in r if isinstance(c, dict) and c.get("tone") == "danger")
     table = {"part": "panel", "title": "Entered and actual", "flush": True,
-             "summary": [{"text": "all as entered", "level": "ok"} if ok else {"text": "1 over the limit", "level": "danger"}],
-             "body": [{"part": "table", "columns": ["Pulse", "Length", "Max level", "Starts at"], "numeric": [1, 2, 3], "rows": rows}]}
-    names = ["Chip loads", "Operations exist", "Pulse lengths", "Preview equals config", "Timeline"]
-    checks = [{"name": n, "state": "pass"} for n in names]
-    checks.append({"name": "Output range", "state": "pass"} if ok else
-                  {"name": "Output range", "state": "fail", "why": range_check(over=True)["message"]})
-    checks.append({"name": "Hardware timing", "state": "skip"})
-    chk = {"part": "panel", "title": "Checks",
-           "summary": [{"text": "6 of 6 passed", "level": "ok"}] if ok else [{"text": "1 failed", "level": "danger"}, "5 passed"],
+             "summary": [{"text": over_summary(over), "level": "danger" if over else "ok"}],
+             "body": [{"part": "table", "columns": INTENT_COLUMNS, "numeric": [1, 2, 3, 4, 5], "rows": rows}]}
+    checks, said = example_checks(over=not ok)
+    failed = any(c["state"] == "fail" for c in checks)
+    chk = {"part": "panel", "title": "Checks", "summary": [{"text": said, "level": "danger" if failed else "ok"}],
            "body": [{"part": "checks", "checks": checks}]}
-    written = {"part": "panel", "title": "Will be written", "fold": True, "hint": "working copy only; the chip changes on Apply",
-               "summary": [{"text": "3", "level": "strong"}, "objects"],
-               "body": ["Two pulses and one gate macro under the pair."]}
-    wave = {"part": "panel", "title": "Waveform", "hint": "program time, before filters",
-            "summary": [{"part": "line", "line": 1, "text": "q1.z"}, {"part": "line", "line": 2, "text": "coupler_q1_q2"}],
-            "body": [{"part": "placeholder", "text": "The lane chart renders here (gate timeline component)"}]}
+    n = len(EXAMPLE_OPS) + 1  # its pulses and the gate macro
+    written = {"part": "panel", "title": "What will be written", "fold": True, "summary": ["%d objects" % n],
+               "body": [{"part": "note", "text": WRITES_LINE}]}
+    wave = {"part": "panel", "title": "Waveform", "hint": "from the lab's config, program time before filters",
+            "summary": [{"part": "line", "line": i, "text": k} for i, (k, _a, _b) in enumerate(EXAMPLE_SPANS, 1)],
+            "body": [{"part": "placeholder", "text": WAVE_PLACEHOLDER}]}
     return [{"part": "zone", "step": 3, "title": "Result", "fill": True,
-             "summary": [{"text": "checked", "level": "ok"} if ok else {"text": "1 problem", "level": "danger"}],
              "body": [banner] + ([{"part": "note", "text": gap}] if gap else []) + [stats, wave, table, chk, written]}]
+
+
+#: the one kit-only sentence of the example: where the dialog draws its chart, the kit draws none
+WAVE_PLACEHOLDER = "The lane chart renders here (gate timeline component)"
 
 
 def _reading():
     """K19: each reading-order part alone, in every tone (docs/308 section 4c)."""
     sec = "Reading order"
+    words, state = dialog_words("CHECK_WORDS"), dialog_words("CHECK_STATE")
+    passing, passed = example_checks()
     out = []
     for tone, key, why in (("ok", "Ready to create", OK_WHY),
                            ("warn", "Not checked with the lab's code", warn_why()),
                            ("danger", "Cannot be created yet", danger_why()),
-                           ("note", "Not checked on hardware", "Only the samples written to the config are compared.")):
+                           # the dialog shows no note banner: this one is a plain sample of the tone
+                           ("note", "Read only", "This folder is an archive; nothing in it can be changed.")):
         out.append((sec, "Banner " + tone, {"part": "verdict", "strong": True, "tone": tone, "key": key, "why": why}))
     out += [
         (sec, "Stats, a danger and a warn tile", {"part": "stats", "label": "Key numbers",
                                                   "tiles": dialog_tiles(example_lanes(over=True))}),
         (sec, "Checks, one failed and one skipped", {"part": "checks", "checks": [
-            {"name": "Chip loads", "state": "pass"}, {"name": "Pulse lengths", "state": "pass"},
-            {"name": "Output range", "state": "fail", "why": range_check(over=True)["message"]},
-            {"name": "Hardware timing", "state": "skip"}]}),
+            {"name": words["load_config"], "state": state["pass"]}, {"name": words["length"], "state": state["pass"]},
+            next(c for c in example_checks(over=True)[0] if c["state"] == "fail"),
+            {"name": words["preview"], "state": state["skipped"]}]}),
         (sec, "Panel with step, hint and summary", {"part": "panel", "step": 2, "title": "Pulses", "hint": "program time",
                                                     "summary": [line_count_words(2)],
                                                     "body": ["A quiet explanation sits in the body, never louder than the content."]}),
         (sec, "Panel folded, summary still visible", {"part": "panel", "title": "Checks", "fold": True,
-                                                      "summary": [{"text": "6 of 6 passed", "level": "ok"}],
-                                                      "body": [{"part": "note", "text": "Six checks passed."}]}),
+                                                      "summary": [{"text": passed, "level": "ok"}],
+                                                      "body": [{"part": "checks", "checks": passing}]}),
         (sec, "Panel with a control in the summary", {"part": "panel", "title": "Waveform", "summary": [
             {"part": "segmented", "label": "Scale", "options": [{"label": "Per lane", "selected": True}, {"label": "Shared V"}]}],
             "body": [{"part": "note", "text": "The chart goes here."}]}),

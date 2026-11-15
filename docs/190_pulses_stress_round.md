@@ -36,8 +36,9 @@ A value the page let through reached code that had never been handed it:
 | F03 | Enter on an unchanged name in the Rename box | `modifier.rename_subtree` raises `ValueError("old and new paths are identical")`, caught nowhere → **500** | an early "Already named 'x'" 409 (and the catch names `ValueError` too) |
 | F50 | `nan` in the Gaussian CZ form | `_num()` accepted `float("nan")`, the type policy refused the write, the rollback branch answered **500** | the parser rejects non-finite; the rolled-back validation failure is a 400 |
 
-Pins: `TestPulseSynthApi` (+6), `TestPulseRename.test_rename_to_own_name_is_a_409_not_a_500`,
-`test_gaussian_cz.py::test_nan_and_inf_are_not_numbers`. Mutation sweep 8 of 8 RED —
+Pins: `TestPulseSynthApi` (+6), `TestPulseRename.test_rename_to_own_name_is_a_409_not_a_500`.
+F50 has no pin now: the Gaussian CZ form, its route and its test file were removed on 2026-11-15
+(commit 193e0547), so nothing is left to pin. Mutation sweep 8 of 8 RED:
 one guard (`int` kind, non-finite) went GREEN under mutation because the widened
 `except` already covered it, and was **dropped** rather than pinned vacuously.
 
