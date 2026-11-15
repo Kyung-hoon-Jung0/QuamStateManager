@@ -508,3 +508,102 @@ def test_recheck_refuses_when_the_chip_changed_during_the_check(made, monkeypatc
     r = made.c.post("/api/pulse/cz-gate/recheck", json={"pair": PAIR, "gate": GATE})
     assert r.status_code == 409 and r.get_json().get("stale") is True
     assert GS.sm_class_files(_macro_of(made)) == old
+
+
+# ------------------------------------------------------------ a gate with two SM-made classes
+
+CLASS2 = "RampPulse"
+QCLASS2 = f"quam_config.{CLASS2}.{CLASS2}"
+
+
+def _two_class_body():
+    b = _sm_class_body()
+    b["pulses"]["coupler_flux_pulse"] = {"class": QCLASS2, "fields": {"length": 48, "amplitude": 0.1}}
+    return b
+
+
+@pytest.fixture
+def made_two(env, monkeypatch):  # noqa: F811
+    """Two classes saved to quam_config, then a gate made with both."""
+    from quam_state_manager.core import pulse_catalog
+    real = pulse_catalog.by_qclass
+    monkeypatch.setattr(pulse_catalog, "by_qclass",
+                        lambda q: real("SquarePulse") if q in (QCLASS, QCLASS2) else real(q))
+    assert _save(env).status_code == 200
+    assert env.c.post("/pulse-class/new", json={"cls": CLASS2}).status_code == 200
+    first = env.c.post("/pulse-class/save-config", json={"cls": CLASS2, "python": "py"}).get_json()
+    r = env.c.post("/pulse-class/save-config", json={"cls": CLASS2, "python": "py",
+                                                     "confirmed_folder": first["confirm"]["folder"]})
+    assert r.status_code == 200, r.get_json()
+    fake = _fake()
+    monkeypatch.setattr(czr, "run_check", fake)
+    monkeypatch.setattr(czr, "_env_python", lambda: "C:/fake/python.exe")
+    j = env.c.post(CHECK, json=_two_class_body()).get_json()
+    assert j["pairs"][0]["verdict"]["allowed"], j["pairs"][0]
+    r = env.c.post(CREATE, json={"check_token": j["check_token"], "plan_sig": j["plan_sig"]})
+    assert r.status_code == 200 and r.get_json()["count"] == 1, r.get_json()
+    env.fake = fake
+    return env
+
+
+def test_two_classes_are_recorded_sorted_and_the_check_saw_both(made_two):
+    files = GS.sm_class_files(_macro_of(made_two))
+    assert [f["qclass"] for f in files] == sorted([QCLASS, QCLASS2])
+    assert [f["file"] for f in files] == [f"{CLASS}.py", f"{CLASS2}.py"]
+    for f in files:
+        assert f["sha256"] == hashlib.sha256((made_two.folder / f["file"]).read_bytes()).hexdigest()
+    checked = dict(made_two.fake.calls[-1]["creates"])[MPATH]
+    assert checked["extras"]["sm_class_files"] == files
+
+
+def test_every_class_of_a_gate_gets_its_own_notice(made_two):
+    html = _status_html(made_two)
+    for name in (CLASS, CLASS2):
+        line = (f'<div class="ui-text-quiet" data-status-key="needs">this chip now needs '
+                f"quam_config/{name}.py; every computer that opens this state needs the same "
+                "file</div>")
+        assert html.count(line) == 1, name
+
+
+def test_a_missing_file_is_shown_before_a_changed_one(made_two):
+    a, b = made_two.folder / f"{CLASS}.py", made_two.folder / f"{CLASS2}.py"
+    a.write_bytes(a.read_bytes() + b"\n# edited\n")
+    b.unlink()
+    html = _status_html(made_two)
+    assert f"class file missing: quam_config/{CLASS2}.py" in html
+    assert "class file changed since the gate was checked" not in html
+    assert "gate-status-recheck" not in html
+    # and the other way round: the first missing, the second changed
+    a.unlink()
+    b.write_bytes(b"class B: pass\n")
+    html = _status_html(made_two)
+    assert f"class file missing: quam_config/{CLASS}.py" in html
+    assert "gate-status-recheck" not in html
+
+
+def test_recheck_refreshes_the_hash_of_every_class_file(made_two, monkeypatch):
+    from quam_state_manager.core import config_generator
+    monkeypatch.setattr(config_generator, "get_selected_env", lambda inst: "C:/fake/python.exe")
+    old = GS.sm_class_files(_macro_of(made_two))
+    for name in (CLASS, CLASS2):
+        target = made_two.folder / f"{name}.py"
+        data = target.read_bytes() + b"\n# a later edit\n"
+        target.write_bytes(data)
+        rec = next(p for p in Path(made_two.app.instance_path).rglob(W.PUBLISHED_FILE)
+                   if p.parent.name == name)
+        receipt = json.loads(rec.read_text(encoding="utf-8"))
+        receipt["sha"] = hashlib.sha256(data).hexdigest()
+        rec.write_text(json.dumps(receipt), encoding="utf-8")
+    monkeypatch.setattr(gate_check, "check_gates",
+                        lambda store, py, gates, creates=(), **kw: _gate_check(store))
+    assert "gate-status-recheck" in _status_html(made_two)
+    r = made_two.c.post("/api/pulse/cz-gate/recheck", json={"pair": PAIR, "gate": GATE})
+    assert r.status_code == 200, r.get_json()
+    new = GS.sm_class_files(_macro_of(made_two))
+    assert len(new) == 2
+    for o, n in zip(old, new):
+        assert n["sha256"] == hashlib.sha256((made_two.folder / n["file"]).read_bytes()).hexdigest()
+        assert n["sha256"] != o["sha256"]
+    assert "gate-status-recheck" not in _status_html(made_two)
+    assert made_two.c.post("/undo").status_code == 200
+    assert GS.sm_class_files(_macro_of(made_two)) == old
