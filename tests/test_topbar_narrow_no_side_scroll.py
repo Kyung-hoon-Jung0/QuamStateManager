@@ -135,6 +135,7 @@ def test_no_wider_fit_level_sets_the_badge_flex():
     """
     import re
     css = _KIT.read_text(encoding="utf-8")
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)   # a comment must not hide a declaration
     offenders = []
     for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
         if "sync-control-main" not in selector or "tb-fit-" not in selector:
@@ -142,6 +143,6 @@ def test_no_wider_fit_level_sets_the_badge_flex():
         levels = set(re.findall(r"tb-fit-(\d+)", selector))
         if levels == {"11"}:
             continue
-        if re.search(r"(^|;)\s*flex(-grow|-shrink|-basis)?\s*:", body):
+        if re.search(r"(^|;)\s*flex(-grow|-shrink|-basis)?\s*:", body, re.I):
             offenders.append(" ".join(selector.split()))
     assert offenders == [], "badge flex is set only at the floor: %r" % offenders
