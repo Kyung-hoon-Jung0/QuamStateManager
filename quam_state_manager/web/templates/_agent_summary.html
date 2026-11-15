@@ -6,11 +6,11 @@
 {% set s = summary or {} %}
 {% set p = s.plan %}
 {% macro val(x) %}{% if x is none %}<span class="muted">not set</span>{% elif x is mapping or (x is iterable and x is not string) %}<code>{{ x | tojson }}</code>{% else %}{{ x }}{% endif %}{% endmacro %}
-{% macro rows(ws, more, show_now) %}
+{% macro rows(ws, more, show_now, seen=False) %}
 <div class="ag-tbl ns-tbl"><table>
   <thead><tr><th>value</th><th>old</th><th>new</th>{% if show_now %}<th>now</th>{% endif %}</tr></thead>
   <tbody>
-  {% for w in ws %}<tr><td title="{{ w.path }}"><code>{{ w.path }}</code></td><td>{{ val(w.old) }}</td><td>{{ val(w.new) }}</td>{% if show_now %}<td>{% if w.now_known %}{{ val(w.now) }}{% else %}<span class="muted">?</span>{% endif %}</td>{% endif %}</tr>{% endfor %}
+  {% for w in ws %}<tr{% if seen %} data-seen-path="{{ w.path }}"{% if w.now_known %} data-seen-now='{{ w.seen_now | tojson }}'{% else %} data-seen-unknown="1"{% endif %}{% endif %}><td title="{{ w.path }}"><code>{{ w.path }}</code></td><td>{{ val(w.old) }}</td><td>{{ val(w.new) }}</td>{% if show_now %}<td>{% if w.now_known %}{{ val(w.now) }}{% else %}<span class="muted">?</span>{% endif %}</td>{% endif %}</tr>{% endfor %}
   {% if more %}<tr><td colspan="{{ 4 if show_now else 3 }}" class="muted">+{{ more }} more</td></tr>{% endif %}
   </tbody></table></div>
 {% endmacro %}
@@ -55,7 +55,7 @@
       <div class="ns-line"><span class="ag-plan-st {{ 'ag-st-waiting' if pending else '' }}">{{ 'run request' if h.kind == 'run' else ('held' if pending else h.status) }}</span>
         <code>{{ h.node }}</code> {{ (h.targets or []) | join(' ') }}{% if h.run_id %} · #{{ h.run_id }}{% endif %}{% if h.step is not none %} · step {{ h.step }}{% endif %}
         <span class="muted">· {{ h.why }} · {{ h.created | ts_local(short=True) }}</span></div>
-      {% if h.kind == 'writes' %}{{ rows(h.writes, h.more, True) }}{% endif %}
+      {% if h.kind == 'writes' %}{{ rows(h.writes, h.more, True, pending) }}{% endif %}
       <div class="ns-acts">
       {% if pending %}
         <button type="button" class="btn-sm ns-approve" data-ns-act="approve" data-id="{{ h.id }}">{{ 'Allow run' if h.kind == 'run' else 'Write to chip' }}</button>

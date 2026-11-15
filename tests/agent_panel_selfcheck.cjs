@@ -180,15 +180,33 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   ok(unitCard && unitCard.textContent.includes('5.0000 GHz'), 'a card with a display unit shows its now in that unit');
   const unitFresh = JSON.parse(JSON.stringify(feed.live.approvals[0]));
   unitFresh.writes[0].now = 5.1e9;
-  approveReply = { status: 409, body: { ok: false, error: 'qubits.q1.f_01 changed to 5.1000 GHz since the card showed 5.0000 GHz; press again',
-    stage: { staged: 0, applied: false, seen_now_changed: true }, approval: unitFresh } };
+  // the server's text is for agents: the person's line is written by the card's own fmtRow
+  approveReply = { status: 409, body: { ok: false, error: 'server text for agents',
+    stage: { staged: 0, applied: false, seen_now_changed: true, path: 'qubits.q1.f_01' }, approval: unitFresh } };
   let releaseUnit; cardsGate = new Promise(function (r) { releaseUnit = r; });
+  const unitToasts = [], keepToast = window.showToast;
+  window.showToast = function (m, l) { unitToasts.push([String(m), l]); };
   P.approve('ap-unit', unitCard.querySelector('.ag-approve'));
   await tick(30);
+  window.showToast = keepToast;
   ok(unitCard.textContent.includes('now 5.1000 GHz') && !unitCard.textContent.includes('5100000000'), 'after the refusal the now cells keep the display unit');
+  ok(unitToasts.length === 1 && unitToasts[0][1] === 'error' && unitToasts[0][0] ===
+     "qubits.q1.f_01 changed to 5.1000 GHz since the card showed 5.0000 GHz; press again (stored in Hz: now 5100000000, the card's 5000000000)",
+     'the refusal toast is written from the returned card row: ' + JSON.stringify(unitToasts));
   cardsGate = null; releaseUnit(); await tick(30);
   feed.live.approvals = keptApprovals;
   await P.poll(true); await tick();
+
+  // one formatter: the card's fmtRow and apRefusedText against the vectors core/value_delta.py also passes
+  const cardVectors = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'card_row_vectors.json'), 'utf8'));
+  cardVectors.rows.forEach(function (c) {
+    const got = P.fmtRow(c.values, c.display);
+    ok(JSON.stringify(got) === JSON.stringify(c.expect), 'card row vector: ' + c.case + ' ' + JSON.stringify(got));
+  });
+  cardVectors.refusals.forEach(function (c) {
+    const got = P.apRefusedText(c.path, c.row, c.sent);
+    ok(got === c.expect, 'refusal vector: ' + c.case + ' ' + got);
+  });
 
   // W7-1: a 25c-shaped JSON-text value edits as a STRING literal, never an array.
   const lossText = '  [{"detuning_hz": 123000000.0, "reason": "synthetic\\nmap"}]  ';

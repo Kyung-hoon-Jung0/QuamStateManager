@@ -810,6 +810,25 @@ window.AgentPanel = (function () {
     return { cell: w.now_known === true ? t[0] : t[1], now: t[0], old: t[1], nw: t[2],
              shown: proposed === undefined ? "" : t[2] };   // W3-7: every row, so no row reads as missing it
   }
+  /* docs/254: the "changed since the card showed" line, written by fmtRow from the
+     refreshed card row (row: now_known / now / old / display) and what the press sent
+     (sent: seen_now or seen_unknown, new), so the person reads the numbers exactly as the
+     card writes them. core/value_delta.py format_card_row writes the server's copy for
+     agents; tests/fixtures/card_row_vectors.json pins the two alike. */
+  function apRefusedText(path, row, sent) {
+    var known = row.now_known === true, unknown = sent.seen_unknown === true;
+    var vals = [known ? row.now : null, unknown ? null : sent.seen_now, row.old, sent.new];
+    var d = row.display, t = fmtRow(vals, d).map(function (text, i) {
+      return typeof vals[i] === "string" ? JSON.stringify(vals[i]) : text;
+    });
+    var stored = "";
+    if (d && d.unit && isNum(d.scale) && d.scale !== 1) {
+      var parts = (known ? ["now " + JSON.stringify(vals[0])] : []).concat(unknown ? [] : ["the card's " + JSON.stringify(vals[1])]);
+      if (parts.length) stored = " (stored in " + (d.stored || "its own unit") + ": " + parts.join(", ") + ")";
+    }
+    return path + " changed to " + (known ? t[0] : "not set") + " since the card showed " +
+      (unknown ? "not set" : t[1]) + "; press again" + stored;
+  }
   function movedTitle(t) { return "the proposal was made from " + t.old + "; SM holds " + t.now + " now"; }
   function apPreview(inp) {
     var card = inp && inp.closest ? inp.closest(".ag-card") : null;
@@ -1733,9 +1752,16 @@ window.AgentPanel = (function () {
       repaintApproval(id);
       // review R2-2: "written" only when the door said applied; a refusal keeps the card and says why
       var applied = r.status === 200 && r.body && r.body.ok !== false;
+      var moved = !applied && r.body && r.body.stage && r.body.stage.seen_now_changed ? r.body.stage.path : null;
+      var why = null;
+      if (moved && r.body.approval && writes) {
+        var row = (r.body.approval.writes || []).filter(function (w) { return w.path === moved; })[0];
+        var sent = writes.filter(function (w) { return w.path === moved; })[0];
+        if (row && sent) why = apRefusedText(moved, row, sent);
+      }
       if (applied) delete S.typed[id];
       else if (r.body && r.body.stage && r.body.stage.seen_now_changed) apNowRefresh(id, r.body.approval);
-      if (!applied) toast(errText(r, "not applied"), "error");
+      if (!applied) toast(why || errText(r, "not applied"), "error");
       else if (a.kind !== "run") toast("written to the chip");
       // C-04 (docs/254): the agent that asked has to hear it, or the plan waits -- say which
       else if (r.body.agent_told) toast("run allowed — the agent was told to run it");
@@ -2414,7 +2440,7 @@ window.AgentPanel = (function () {
            setPlanMode: setPlanMode, approve: approve, reject: reject, stop: stop, arm: arm, disarm: disarm,
            endSession: endSession, clearAsk: clearAsk, archives: archives, openArchive: openArchive, closeArchive: closeArchive,
            setObserver: setObserver, setActor: setActor, actorName: actorName, showApprovals: showApprovals, apPreview: apPreview,
-           toggleFloat: toggleFloat, init: init, syncComposerClass: syncComposerClass, absorb: absorb, _state: S, fmtNum: fmtNum, fmtRow: fmtRow, fmtClock: fmtClock,
+           toggleFloat: toggleFloat, init: init, syncComposerClass: syncComposerClass, absorb: absorb, _state: S, fmtNum: fmtNum, fmtRow: fmtRow, apRefusedText: apRefusedText, fmtClock: fmtClock,
            grow: grow, toggleMore: toggleMore, toggleGroup: toggleGroup, togglePresets: togglePresets,
            liveKick: liveKick, livePaint: livePaint, _live: LIVE, liveClock: liveClock };
 })();

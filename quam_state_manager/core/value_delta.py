@@ -318,3 +318,163 @@ def describe_moved(old: Any, new: Any, unit: str = "") -> str:
     if info["dir"] == "same":
         return f"{right}{u}, unchanged"
     return f"{format_value(old)} → {right}{u} (Δ {info['text']})"
+
+
+# ---------------------------------------------------------------------------
+# docs/272 / docs/254: ONE row of an agent card, as agent.js ``fmtRow`` writes it.
+# The browser formats every card row itself; the server needs the same text for the
+# line an agent (or the MCP) reads when a press is refused because a value moved.
+# This is a port of fmtRow, character for character, including JavaScript's number
+# printing: ``toFixed`` / ``toExponential`` round an exact tie up (0.03125 -> "0.0313",
+# where Python's round-half-even gives "0.0312"), ``String(5e9)`` is "5000000000" and
+# ``JSON.stringify([1e9])`` is "[1000000000]". Pinned against the real agent.js by
+# tests/fixtures/card_row_vectors.json (tests/test_approval_now_anchor.py and
+# tests/agent_panel_selfcheck.cjs read the same file).
+
+CARD_MORE_DP = 6          # agent.js MORE_DP: at most this many extra decimals to tell values apart
+
+
+def _js_num(v: Any) -> bool:
+    """agent.js ``isNum``: a finite number, never a bool."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return False
+    try:
+        return math.isfinite(float(v))
+    except OverflowError:
+        return False
+
+
+def js_number_text(x: float) -> str:
+    """JavaScript ``String(x)`` for a number (Number::toString, radix 10)."""
+    x = float(x)
+    if math.isnan(x):
+        return "NaN"
+    if math.isinf(x):
+        return "Infinity" if x > 0 else "-Infinity"
+    if x == 0:
+        return "0"
+    sign = "-" if x < 0 else ""
+    t = Decimal(repr(abs(x))).normalize().as_tuple()     # shortest round-trip digits, like JS
+    digits = "".join(str(d) for d in t.digits)
+    k = len(digits)
+    n = k + t.exponent                                    # the decimal point sits after n digits
+    if k <= n <= 21:
+        body = digits + "0" * (n - k)
+    elif 0 < n <= 21:
+        body = digits[:n] + "." + digits[n:]
+    elif -6 < n <= 0:
+        body = "0." + "0" * (-n) + digits
+    else:
+        e = n - 1
+        body = (digits[0] + ("." + digits[1:] if k > 1 else "")) + ("e+" if e >= 0 else "e-") + str(abs(e))
+    return sign + body
+
+
+def js_to_fixed(x: float, dp: int) -> str:
+    """JavaScript ``x.toFixed(dp)``: the exact binary value, a tie rounded away from zero."""
+    x = float(x)
+    if not math.isfinite(x) or abs(x) >= 1e21:
+        return js_number_text(x)
+    if x == 0:
+        x = 0.0                                           # (-0).toFixed(2) is "0.00"
+    q = Decimal(x).quantize(Decimal(1).scaleb(-dp), rounding=ROUND_HALF_UP)
+    return f"{q:f}"
+
+
+def js_to_exponential(x: float, dp: int) -> str:
+    """JavaScript ``x.toExponential(dp)``."""
+    x = float(x)
+    if not math.isfinite(x):
+        return js_number_text(x)
+    if x == 0:
+        return ("0." + "0" * dp if dp else "0") + "e+0"
+    d = Decimal(abs(x))
+    e = d.adjusted()
+    q = Decimal(1).scaleb(-dp)
+    m = d.scaleb(-e).quantize(q, rounding=ROUND_HALF_UP)
+    if m >= 10:
+        e += 1
+        m = d.scaleb(-e).quantize(q, rounding=ROUND_HALF_UP)
+    return ("-" if x < 0 else "") + f"{m:f}" + ("e+" if e >= 0 else "e-") + str(abs(e))
+
+
+def js_json_text(v: Any) -> str:
+    """JavaScript ``JSON.stringify(v)`` for JSON-shaped data (no spaces, JS numbers)."""
+    import json as _json
+    if v is None or isinstance(v, bool):
+        return "null" if v is None else ("true" if v else "false")
+    if isinstance(v, (int, float)):
+        return js_number_text(v) if _js_num(v) else "null"
+    if isinstance(v, str):
+        return _json.dumps(v, ensure_ascii=False)
+    if isinstance(v, dict):
+        return "{" + ",".join(_json.dumps(str(k), ensure_ascii=False) + ":" + js_json_text(x)
+                              for k, x in v.items()) + "}"
+    if isinstance(v, (list, tuple)):
+        return "[" + ",".join(js_json_text(x) for x in v) + "]"
+    return _json.dumps(str(v), ensure_ascii=False)
+
+
+def _card_other(v: Any) -> str:
+    """agent.js ``fmtOther``: a value that is not a finite number."""
+    if v is None:
+        return "null"
+    if isinstance(v, (dict, list, tuple)):
+        return js_json_text(v)[:60]
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return js_number_text(v)
+    return str(v)
+
+
+def _distinct_at(xs: list, f) -> bool:
+    """agent.js ``distinctAt``: no two different values print alike."""
+    seen: dict = {}
+    for x in xs:
+        t = f(x)
+        if t in seen and seen[t] != x:
+            return False
+        seen[t] = x
+    return True
+
+
+def format_card_row(values: list, display: dict | None) -> list[str]:
+    """The values of ONE agent-card row as agent.js ``fmtRow(values, display)`` writes them:
+    one unit, one number of decimals, and two different values never printed alike."""
+    xs = [v for v in values if _js_num(v)]
+    disp = display if isinstance(display, dict) else None
+    if disp and disp.get("unit") and _js_num(disp.get("scale")):
+        scale = float(disp["scale"])
+
+        def sc(v):
+            return float(v) * scale
+        try:
+            dp = max(0, int(disp.get("dp") or 0))
+        except (TypeError, ValueError):
+            dp = 0
+        if not dp and any(not sc(v).is_integer() for v in xs):
+            dp = 1
+        top = dp + CARD_MORE_DP
+        while dp < top and not _distinct_at(xs, lambda v, _d=dp: js_to_fixed(sc(v), _d)):
+            dp += 1
+        unit = str(disp["unit"])
+
+        def each(v):
+            return js_to_fixed(sc(v), dp) + " " + unit
+    elif all(float(v).is_integer() for v in xs):
+        each = js_number_text
+    else:
+        m = max(abs(float(v)) for v in xs)
+        expo = m >= 1e6 or m < 1e-3
+        dp = 4 if expo else max(0, 4 - math.floor(math.log10(m)))
+        fx = js_to_exponential if expo else js_to_fixed
+        cap = dp + CARD_MORE_DP
+        while dp < cap and not _distinct_at(xs, lambda v, _d=dp: fx(v, _d)):
+            dp += 1
+        while dp > 0 and all(re.search(r"0(e|$)", fx(v, dp)) for v in xs):
+            dp -= 1
+
+        def each(v):
+            return fx(v, dp)
+    return [each(v) if _js_num(v) else _card_other(v) for v in values]

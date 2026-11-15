@@ -207,21 +207,30 @@ def _card_value(v: Any) -> Any:
     return _finite_or_none(_jsonable(v))
 
 
-def _card_text(values: list, spec: dict | None, beside: tuple = ()) -> list[str]:
-    """docs/254: values as the approval card writes them. A number in a field with a
-    display unit is scaled and written with the fewest decimals (from ``spec["dp"]``,
-    at most 6 more) that tell the values and the row's other cells (``beside``) apart,
-    like agent.js fmtRow; anything else is its JSON text."""
-    def num(v):
-        return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
-    xs = [v * spec["scale"] for v in (*values, *beside) if num(v)] if spec and spec.get("unit") else []
-    dp = max(0, int(spec.get("dp") or 0)) if xs else 0
-    if xs and not dp and any(float(x) != int(x) for x in xs):
-        dp = 1
-    while xs and dp < int(spec.get("dp") or 0) + 6 and len({f"{x:.{dp}f}" for x in xs}) < len(set(xs)):
-        dp += 1
-    return [f"{v * spec['scale']:.{dp}f} {spec['unit']}" if xs and num(v)
-            else json.dumps(v, ensure_ascii=True) for v in values]
+def _refusal_line(path: str, row: dict, sent: dict) -> str:
+    """docs/254: the "changed since the card showed" line, written as the card writes its
+    values: ``row`` is the refreshed card row (``now_known`` / ``now`` / ``old`` /
+    ``display``), ``sent`` what the press sent (``seen_now`` or ``seen_unknown``, ``new``).
+    The numbers come from core.value_delta.format_card_row, the port of agent.js fmtRow;
+    agent.js apRefusedText writes the same line from the same two dicts. The stored values
+    are added in brackets only when the display scales them (Hz shown in GHz)."""
+    from quam_state_manager.core.value_delta import format_card_row, js_json_text
+    known, unknown = row.get("now_known") is True, sent.get("seen_unknown") is True
+    vals = [row.get("now") if known else None, None if unknown else sent.get("seen_now"),
+            row.get("old"), sent.get("new")]
+    spec = row.get("display") if isinstance(row.get("display"), dict) else None
+    texts = [js_json_text(v) if isinstance(v, str) else t
+             for v, t in zip(vals, format_card_row(vals, spec))]
+    now_text = texts[0] if known else "not set"
+    shown = "not set" if unknown else texts[1]
+    stored = ""
+    scale = (spec or {}).get("scale")
+    if spec and spec.get("unit") and isinstance(scale, (int, float)) and scale != 1:
+        detail = ([f"now {js_json_text(vals[0])}"] if known else []) + (
+            [f"the card's {js_json_text(vals[1])}"] if not unknown else [])
+        if detail:
+            stored = f" (stored in {spec.get('stored') or 'its own unit'}: {', '.join(detail)})"
+    return f"{path} changed to {now_text} since the card showed {shown}; press again{stored}"
 
 
 def _seen_equal(now: Any, seen: Any, equal) -> bool:
@@ -2115,18 +2124,11 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
                 matches = readable and _seen_equal(current, w["seen_now"], compare_equal)
             if not matches:
                 from quam_state_manager.core import units
-                spec = units.display_spec(w["path"])
-                pair = [current if readable else None, None if unknown else w["seen_now"]]
-                texts = _card_text(pair, spec, (w.get("old"), w.get("new")))
-                now_text = texts[0] if readable else "not set"
-                shown = "not set" if unknown else texts[1]
-                raw = [json.dumps(v, ensure_ascii=True) for v in pair]
-                detail = ([f"now {raw[0]}"] if readable and texts[0] != raw[0] else []) + (
-                    [f"the card's {raw[1]}"] if not unknown and texts[1] != raw[1] else [])
-                stored = f" (stored in {spec.get('stored') or 'its own unit'}: {', '.join(detail)})" if detail else ""
+                row = {"now_known": readable, "now": current if readable else None, "old": w.get("old"),
+                       "display": units.display_spec(w["path"])}
                 return {"group_id": gid, "staged": 0, "applied": False, "unstaged": [],
-                        "seen_now_changed": True,
-                        "error": f"{w['path']} changed to {now_text} since the card showed {shown}; press again{stored}"}
+                        "seen_now_changed": True, "path": w["path"],
+                        "error": _refusal_line(w["path"], row, w)}
         for w in writes:
             root = None
             if w.get("created") and not w.get("deleted") and not _existing_leaf(store, w["path"]):
@@ -2979,6 +2981,16 @@ def approvals_decide(aid: str, verb: str):
             # a press that names no values writes what the card ticks by default: never a value
             # the node itself marked failed (those are written only when a person ticks them)
             writes = [dict(w) for w in (cur.get("writes") or []) if not w.get("failed_target")]
+            # docs/254: a press that names no values (the night summary) may still say what each
+            # listed row showed as now; those rows then refuse like the card's when it moved
+            seen = {str(x.get("path")): x for x in (data.get("seen") if isinstance(data.get("seen"), list) else [])
+                    if isinstance(x, dict)}
+            for w in writes:
+                x = seen.get(str(w.get("path")))
+                if x and "seen_now" in x:
+                    w["seen_now"] = x["seen_now"]
+                elif x and x.get("seen_unknown") is True:
+                    w["seen_unknown"] = True
             if not writes:
                 return _err("every value on this card comes from a target the node marked failed; "
                             "tick the ones to write on the card, or Reject it", 409,
@@ -4180,8 +4192,15 @@ def summary_data(plan_id: str | None) -> dict:
         target = r._resolve_edit_path(store, str(path)) or str(path)
         return store.get_value(target)
     _reconcile_grant()                              # never summarize a grant that ended as still running
-    return agent_overnight.summary(current_app.instance_path, _chip_key(), plan_id=plan_id,
-                                   live_folder=ctx.get("path"), current=current if store is not None else None)
+    out = agent_overnight.summary(current_app.instance_path, _chip_key(), plan_id=plan_id,
+                                  live_folder=ctx.get("path"), current=current if store is not None else None)
+    # docs/254: a held value's "now" as the approve door compares it (the card's own form),
+    # so the summary's Write to chip press sends what its row shows
+    for h in out.get("held") or []:
+        for w in h.get("writes") or []:
+            if w.get("now_known"):
+                w["seen_now"] = _card_value(w.get("now"))
+    return out
 
 
 @agent_bp.route("/plans/<pid>/end", methods=["POST"])

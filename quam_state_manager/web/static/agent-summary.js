@@ -57,9 +57,19 @@
     var item = btn && btn.closest(".ns-item");
     if (item) item.querySelectorAll("button").forEach(function (b) { b.disabled = true; });
     if (btn) btn.textContent = verb === "approve" ? "writing…" : "rejecting…";
+    // docs/254: a press means what the presser could see: each listed row's "now" goes
+    // with it, and the door refuses (nothing written) when one moved since the page showed it
+    var seen = [];
+    if (verb === "approve" && item) item.querySelectorAll("tr[data-seen-path]").forEach(function (tr) {
+      var p = tr.getAttribute("data-seen-path");
+      if (tr.hasAttribute("data-seen-now")) {
+        try { seen.push({ path: p, seen_now: JSON.parse(tr.getAttribute("data-seen-now")) }); } catch (e) { /* unreadable: legacy row */ }
+      } else if (tr.hasAttribute("data-seen-unknown")) seen.push({ path: p, seen_unknown: true });
+    });
     return fetch("/api/agent/approvals/" + encodeURIComponent(id) + "/" + verb, {
       method: "POST", credentials: "same-origin",
-      headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: "{}"
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify(seen.length ? { seen: seen } : {})
     }).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (j) { return { status: res.status, body: j || {} }; });
     }).then(function (r) {
