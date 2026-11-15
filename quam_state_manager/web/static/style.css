@@ -13028,11 +13028,11 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .diff-wb-list { font-size: 0.85em; margin-top: 0.3rem; }
 .diff-wb-list th { font-size: 0.9em; text-align: left; }
 .diff-wb-list td { padding: 0.15rem 0.5rem; vertical-align: baseline; }
-/* v1.3.0 B2: nowrap values beside a 45% path squeezed the path into a letter
-   tower at 1280 px and pushed the row's buttons past the pane. The path has a
-   floor, the buttons never wrap; breaks only at <wbr> (path_breaks), see ui-kit. */
-.diff-list-path { min-width: 14rem; overflow-wrap: break-word; }
-.diff-list-a, .diff-list-b { font-variant-numeric: tabular-nums; overflow-wrap: break-word; }
+/* v1.3.0 B2: path has a floor, buttons never wrap. Names prefer their <wbr>
+   joints; "anywhere" only breaks a jointless token (a hash) so it cannot widen
+   the table; the ch floor stops "ab" stacking; numbers carry .ui-cell-nowrap. */
+.diff-list-path { min-width: 14rem; overflow-wrap: anywhere; }
+.diff-list-a, .diff-list-b { min-width: 10ch; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .diff-list-take { white-space: nowrap; }
 .diff-list-arrow { color: var(--pico-muted-color); }
 .diff-row-added  .diff-list-path code { color: var(--color-success-text); }

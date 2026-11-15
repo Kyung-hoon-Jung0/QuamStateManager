@@ -68,14 +68,17 @@ def test_numbers_are_never_broken_and_keep_their_delta(body):
 
 def test_one_sided_and_long_rows_render(body):
     assert "(absent)" in _row(body, "only_a") and "-0.25" in _row(body, "only_a")
+    assert '<td class="diff-list-a"><span class="muted">(absent)</span>' in _row(body, "only_b")
+    assert '<td class="diff-list-b"><span class="muted">(absent)</span>' in _row(body, "only_a")
     assert "x" * 60 in _row(body, ">label<")
 
 
 def test_path_breaks_filter_keeps_numbers_whole():
     app = create_app(testing=True)
     f = app.jinja_env.filters["path_breaks"]
-    assert str(f("1.5e-3")) == "1.5e-3"
-    assert str(f("-0.25")) == "-0.25"
+    assert str(f("1.5e-3")) == '<span class="ui-cell-nowrap">1.5e-3</span>'
+    assert str(f("-0.25")) == '<span class="ui-cell-nowrap">-0.25</span>'
+    assert "<wbr>" not in str(f("123,456,789,012"))
     assert str(f("a/b.c")) == "a/<wbr>b.<wbr>c"
     assert str(f("<x>.y")) == "&lt;x&gt;.<wbr>y"
 
@@ -91,7 +94,27 @@ def test_css_contract():
     kit = (ROOT / "static" / "ui-kit.css").read_text(encoding="utf-8")
     for sel in (".diff-list-path", ".diff-list-a, .diff-list-b"):
         body = _rule(style, sel)
-        assert "break-all" not in body and "anywhere" not in body, sel
+        # break-all would split every word; "anywhere" is the long-token
+        # fallback that keeps a 200 character hash from widening the table.
+        assert "break-all" not in body and "overflow-wrap: anywhere" in body, sel
+        assert re.search(r"min-width:\s*\d+(ch|rem)", body), sel
     assert "overflow-x: auto" in _rule(kit, ".ui-xscroll")
     assert "nowrap" in _rule(kit, ".ui-cell-nowrap")
     assert "normal" in _rule(kit, ".ui-cell-nowrap > .ui-cell-note")
+
+
+def test_a_long_token_and_numbers_in_the_value_cells(tmp_path):
+    """A 200 character token with no joint relies on the CSS fallback (no
+    <wbr> is invented); a number cell is marked nowrap so it never splits."""
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    tok = "Z" * 200
+    a = _state_dir(tmp_path, "a", "c.A", 123456789012, tok)
+    b = _state_dir(tmp_path, "b", "c.A", 1, "ab")
+    r = app.test_client().get(f"/diff?a=run:{a}&b=run:{b}&tab=state&view=list",
+                              headers={"HX-Request": "true"})
+    body = r.get_data(as_text=True)
+    assert tok in _row(body, ">label<")
+    row = _row(body, ">length<")
+    assert '<code class="ui-cell-nowrap">123,456,789,012</code>' in row
+    assert '<code class="ui-cell-nowrap">1</code>' in row
+    assert "<code>ab</code>" in _row(body, ">label<")

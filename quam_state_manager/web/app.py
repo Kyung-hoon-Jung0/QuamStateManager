@@ -924,7 +924,7 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
         text = str(value if value is not None else "")
         try:
             float(text.replace(",", ""))
-            return Markup(escape(_units.group_digits(value)))
+            return Markup('<span class="ui-cell-nowrap">%s</span>') % _units.group_digits(value)
         except ValueError:
             pass
         out = []
