@@ -918,7 +918,7 @@ window.AgentPanel = (function () {
         (S.observer ? esc(t.nw) : '<span class="ag-ap-value">' + esc(t.shown) + '</span><span class="ag-ap-edit"><input class="ag-ap-new" data-i="' + i + '"' +
           (w.now_known === true ? ' data-seen-now="' + esc(JSON.stringify(w.now)) + '"' : (w.now_known === false ? ' data-seen-unknown="1"' : '')) +
           ' oninput="AgentPanel.apPreview(this)"' +
-          ' title="' + esc("the value written, as stored" + (stored ? " (" + stored + ")" : "") + " — edit to change it") + '" value="' +
+          ' title="' + esc("the value written, as stored" + (stored ? " (" + stored + ")" : "") + "; edit to change it") + '" value="' +
           esc(typed !== undefined ? typed : JSON.stringify(w.new)) + '">' +
           (stored ? '<span class="ag-ap-unit">' + esc(stored) + "</span>" : "") + "</span>") + "</td></tr>";
     }).join("");
