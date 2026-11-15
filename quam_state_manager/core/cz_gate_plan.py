@@ -574,6 +574,28 @@ def _natural(name):
     return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", str(name))]
 
 
+def _plural(n, one, many):
+    return f"{n} {one if n == 1 else many}"
+
+
+def pair_counts(rows, pair_names=None) -> dict:
+    """The one count of the CZ plan's operations and pairs, read by the page header and the
+    map legend: ``operations`` (aliases excluded), ``aliases``, ``with_op`` (pairs holding
+    at least one operation), ``total`` (every pair of the chip, *pair_names* plus any pair
+    a row names), ``without_op`` and the header text. The map legend (cz-map.js) adds how
+    many are shown and says how many pairs hold no operation, from these same numbers."""
+    with_op = {r["pair"] for r in rows}
+    names = set(pair_names if pair_names is not None else getattr(rows, "pair_names", ()) or ())
+    total = len(names | with_op)
+    n_alias = sum(1 for r in rows if r.get("alias_of"))
+    n_ops = len(rows) - n_alias
+    header = _plural(n_ops, "operation", "operations") + " on " + _plural(len(with_op), "pair", "pairs")
+    if n_alias:
+        header += ", plus " + _plural(n_alias, "alias", "aliases")
+    return {"operations": n_ops, "aliases": n_alias, "with_op": len(with_op), "total": total,
+            "without_op": total - len(with_op), "header": header}
+
+
 def chip_map(rows, conversions, op_name=None):
     """The chip frequency map: every qubit's idle frequency and stored population-loss
     data, and one operation per pair drawn at the frequency each member reaches.
@@ -655,7 +677,8 @@ def chip_map(rows, conversions, op_name=None):
                 pairs[pair]["coupler_amp_reason"] = coupler["amp_reason"]
     return {"qubits": [qubits[q] for q in order], "segments": segments, "planned": planned,
             "refused": refused, "missing": sorted(missing, key=_natural), "op": op_name or None,
-            "operations": sorted({r["operation"] for r in rows}, key=_natural), "pairs": pairs}
+            "operations": sorted({r["operation"] for r in rows}, key=_natural), "pairs": pairs,
+            "counts": pair_counts(rows, list(by_pair))}
 
 
 # ---------------------------------------------------------------- the chip

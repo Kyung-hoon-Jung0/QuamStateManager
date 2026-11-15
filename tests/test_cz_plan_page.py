@@ -500,3 +500,44 @@ def test_two_flux_standard_pulse_without_a_usable_length_is_not_checked(tmp_path
     assert len(hits) == 1 and hits[0].endswith("could not be derived"), r["notes"]
     assert "q2" in hits[0] and "q1" not in hits[0], hits[0]
     assert not (r.get("two_flux_lengths") or {}).get("mismatch")
+
+
+# ------------------------------------------------------------------ one pair count for header and map legend
+
+class _Rows(list):
+    pair_names = ()
+
+
+def _rows(pairs, ops, aliases=0):
+    rows = _Rows({"pair": p, "alias_of": None} for p in ops)
+    rows.extend({"pair": ops[0], "alias_of": "x"} for _ in range(aliases))
+    rows.pair_names = tuple(pairs)
+    return rows
+
+
+@pytest.mark.parametrize("pairs, ops, aliases, header, without", [
+    (("p1", "p2", "p3"), [], 0, "0 operations on 0 pairs", 3),                 # no pair has an operation
+    (("p1", "p2"), ["p1", "p1", "p2"], 0, "3 operations on 2 pairs", 0),       # every pair has one
+    (("p1",), ["p1"], 0, "1 operation on 1 pair", 0),                          # one pair
+    (("p1", "p2", "p3"), ["p1"] * 5 + ["p2"] * 5, 1, "10 operations on 2 pairs, plus 1 alias", 1),
+])
+def test_pair_counts_give_one_stated_meaning_per_number(pairs, ops, aliases, header, without):
+    from quam_state_manager.core.cz_gate_plan import pair_counts
+    c = pair_counts(_rows(pairs, ops, aliases))
+    assert c["header"] == header and c["without_op"] == without and c["total"] == len(pairs)
+    assert "(s)" not in c["header"]
+
+
+def test_header_and_map_legend_read_the_same_counts(client):
+    html = client.get("/cz-plan", headers={"HX-Request": "true"}).get_data(as_text=True)
+    m = client.get("/cz-plan/map").get_json()
+    from quam_state_manager.core.cz_gate_plan import pair_counts  # noqa: F401
+    assert "(" + m["counts"]["header"] + ")" in html
+    assert m["counts"]["total"] == len(m["pairs"])
+    assert m["counts"]["without_op"] == m["counts"]["total"] - m["counts"]["with_op"]
+
+
+def test_pair_counts_total_includes_a_pair_only_a_row_names():
+    from quam_state_manager.core.cz_gate_plan import pair_counts
+    c = pair_counts(_rows((), ["p1"]))
+    assert c["total"] == 1 and c["without_op"] == 0

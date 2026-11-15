@@ -19118,6 +19118,13 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
         .then(function(d) {
             if (timer) clearTimeout(timer);
             if (stale()) return;
+            if (d.not_drawn) {
+                // the server named why this figure cannot be drawn: an honest muted line,
+                // and no retry on scroll (the answer will not change)
+                div.innerHTML = '<p class="muted" data-not-drawn></p>';
+                div.firstChild.textContent = String(d.error);
+                return;
+            }
             if (d.error) {
                 div.innerHTML = '<p style="color:var(--pico-del-color)"></p>';
                 div.firstChild.textContent = String(d.error);

@@ -42,8 +42,14 @@ const note = 'recipe formula, not verified on this run (the node wrote no state)
 let t = honest(chips({ clickable: { verification_note: note, targets: [{ path: 'qubits.q0.f' }] }}), 'unchecked recipe');
 assert.deepStrictEqual(t, ['not verified on this run'], 'an unchecked recipe says not verified, once'); n++;
 assert.strictEqual(tile.querySelector('.map-tools-chip').title, note, 'the full reason is on hover'); n++;
+const hints = () => Array.from(tile.querySelectorAll('[data-verify-hint]')).map(h => h.textContent);
+assert.deepStrictEqual(hints(), [w.MapTools.VERIFY_HINT], 'a not-verified chip says, once and in words, what would verify it'); n++;
+assert.ok(/node of this run saved a value for each parameter the click sets/.test(hints()[0]), 'the hint states the rule: ' + hints()[0]); n++;
+chips({ clickable: { verification_note: note, targets: [{ path: 'qubits.q0.f' }] }});
+assert.strictEqual(hints().length, 1, 'a remount leaves one hint, not two'); n++;
 t = honest(chips({ clickable: { n_verified: 1, targets: [{ evidence_tier: 'applied' }] } }), 'verified recipe');
 assert.deepStrictEqual(t, ['verified on this run'], 'a verified recipe says verified, once'); n++;
+assert.strictEqual(hints().length, 0, 'a verified chip carries no what-would-verify hint'); n++;
 t = honest(chips({ clickable: { n_verified: 1, verified_against: 'proposals', targets: [{evidence_tier: 'proposed'}] } }), 'proposal-checked recipe');
 assert.deepStrictEqual(t, ['proposed, not applied'], 'a recipe checked against a proposal says so'); n++;
 t = honest(chips({ status_chip: 'Reproduced with the current analysis code', clickable: { n_verified: 1, evidence_tier: 'proposed', targets: [{evidence_tier: 'proposed'}] } }), 'replot');

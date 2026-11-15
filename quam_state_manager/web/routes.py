@@ -24660,6 +24660,7 @@ def cz_plan_page():
     paths = [r["path"] for r in table]
     selected = want if want in paths else (paths[0] if paths and unknown_pair is None else "")
     return render_template(template, **_ctx(page="czplan", rows=table, selected=selected,
+                                           plan_counts=czp.pair_counts(rows),
                                            operating_points=[p for r in table for p in r["operating_points"]],
                                            fixed_no_flux=(not rows and not any(q.get("z") for q in qubits.values() if isinstance(q, dict)) and not any(p.get("coupler") for p in pairs.values() if isinstance(p, dict))),
                                            coupler_model_fields=COUPLER_MODEL_FIELDS,
@@ -47565,6 +47566,12 @@ def dataset_interactive_plot(uid):
         from quam_state_manager.core.interactive_plots.registry import figure_unavailable_reason
         why = figure_unavailable_reason(run, fig_key)
         from quam_state_manager.core.interactive_plots.replot import not_drawn_line
+        # A figure the recipe knows but cannot draw (it names why) is an answer, not a
+        # missing resource: 200 with the honest line, so the page logs no failed request.
+        # A key this run's menu does not list stays a 404 (a recipe may still name a reason).
+        from quam_state_manager.core.interactive_plots import list_interactive_figures
+        if why and any(f.get("key") == fig_key for f in list_interactive_figures(run)):
+            return jsonify({"error": not_drawn_line(why), "not_drawn": True})
         return jsonify({"error": not_drawn_line(why)}), 404
     if fig.get("clickable"):
         # docs/296: the click contract names the RUN's qubits; a run saved

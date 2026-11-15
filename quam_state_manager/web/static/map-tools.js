@@ -34,6 +34,10 @@
         }
         return pass(pass(z, sx, false), sy, true);
     }
+    /** What would verify a click contract, in the words of verification() below: this run's
+     *  node saved a value (applied or proposed) for each parameter a click sets, and SM's
+     *  reading of the figure lands on that saved value. */
+    var VERIFY_HINT = 'A click is verified once the node of this run saved a value for each parameter the click sets and the reading SM takes from the figure matches that value.';
     /** The one verification status of a figure's click contract. A recipe the node never
      *  checked (it wrote no state) keeps its formula clickable but is NOT verified. */
     function verification(payload) {
@@ -94,7 +98,14 @@
         var contractChip = document.createElement('span'); contractChip.className = 'map-tools-chip';
         contractChip.textContent = verification(payload);
         contractChip.title = (payload.clickable && payload.clickable.verification_note) || payload.display_only_reason || '';
+        var hint = null;
+        if (contractChip.textContent === 'not verified on this run') {
+            // say what would verify it: the rule in verification() above
+            hint = document.createElement('span'); hint.className = 'muted'; hint.setAttribute('data-verify-hint', '');
+            hint.textContent = VERIFY_HINT;
+        }
         header.appendChild(contractChip);
+        if (hint) header.appendChild(hint);
         maps.forEach(function (_, index) { var opt = document.createElement('option'); opt.value = index; opt.textContent = 'Map ' + (index + 1); control('panel').appendChild(opt); });
         control('panel').parentElement.hidden = maps.length === 1;
         ['x', 'y'].forEach(function (axis) {
@@ -358,8 +369,8 @@
                     control('apply').disabled = false;
                 }).catch(function (error) { if (alive && seq === generation) control('status').textContent = error.message; });
         };
-        host._mapTools = {destroy: function () { alive = false; invalidate(); if (window.Plotly) window.Plotly.purge(side); strip.remove(); button.remove(); statusChip.remove(); contractChip.remove(); }};
+        host._mapTools = {destroy: function () { alive = false; invalidate(); if (window.Plotly) window.Plotly.purge(side); strip.remove(); button.remove(); statusChip.remove(); contractChip.remove(); if (hint) hint.remove(); }};
         return host._mapTools;
     }
-    window.MapTools = {mount: mount, localPreview: localPreview};
+    window.MapTools = {mount: mount, localPreview: localPreview, VERIFY_HINT: VERIFY_HINT};
 })();

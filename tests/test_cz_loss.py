@@ -651,9 +651,13 @@ def test_the_routes_answer_in_the_frozen_contract_shape(tmp_path):
             "data_rig5q": c.get("/cz-plan/data?op=qubit_pairs.q1-2.macros.cz").get_json()}
     for name in frozen:
         # UX-5 moves time-sample arithmetic to the shared server path.
-        extra = {"time_panel"} if name == "data_rig5q" else set()
+        # the map's one pair count (header and legend read it) is an added key
+        extra = {"time_panel"} if name == "data_rig5q" else {"counts"} if name == "map_rig5q" else set()
         assert set(live[name]) == set(frozen[name]) | extra, name
-        if extra:
+        if name == "map_rig5q":
+            assert set(live[name]["counts"]) == {"operations", "aliases", "with_op", "total", "without_op", "header"}
+            assert live[name]["counts"]["total"] == len(live[name]["pairs"])
+        if name == "data_rig5q":
             # D5 adds amplitude_v: each moving line's signed commanded Z amplitude per sample
             assert set(live[name]["time_panel"]) == {"time_ns", "series_hz", "detuning_mhz", "dwell", "levels",
                                                      "amplitude_v"}
