@@ -489,3 +489,241 @@ def test_lab_duplicate_spectator_guard(tmp_path):
     assert result["error"] == "ValueError: " + T.DUPLICATE_PROBLEM.format(first="a", second="b"), result
     assert result["program_build_started"]
     assert result["slots_played"] == result["spectator_plays"] == result["alignments"] == []
+
+
+# Sequence steps placed before and after the gate pulses.
+
+#: sha256 of the rendered source without sequence steps, taken from the template before steps existed.
+NO_STEP_SHA256 = {
+    ('control', False): 'cd2630a2f87e4d445ca7e408205696da0254432d5fa8bf16f664528b393c34a7',
+    ('control', True): '25a708f35d6e487b4171783ce5758581929feec0d9bc6a8c6312e42b605df2aa',
+    ('target', False): '4c42e2f82555d47f31fbb0675cc712fa3f4812f77eb32d3fc23fbd10e9497f60',
+    ('target', True): 'a1d5fe81673d625555c2ecc0aed62f082ac15d317c1c3ea81c4264996f976e06',
+    ('coupler', False): '54e3010f04d1ae5e7625b3a118e0286a3555965f90f43e24b9935e92143956a6',
+    ('coupler', True): '2f43c7ef30aeb5cb88a9b15e77e900363eb019637e3ccb05974b45a6f3d79ab2',
+    ('control+target', False): '1e6580ab0b40b5c7d08e1000612cf249b1a7ab34bcd19457ffcf01b3fe5a0590',
+    ('control+target', True): '3c91b9f729f7aeac074deb8e939281ffa81c90dcb2bb26bac905394dfff4b3a2',
+    ('control+coupler', False): '247f937083947fc57fbf59545d36820a8dbff69391f92c939b4214f3f2f76458',
+    ('control+coupler', True): 'dc85bcd97676d6b10ef8017010d70b03e2c9fc068758ebd4593b8cc65a6cb153',
+    ('target+coupler', False): 'a27da53d5e819b6a822b33efae4585594d2b4b90312d0adf1faf6f701f6cebe2',
+    ('target+coupler', True): 'e76cda2a1e27f736d5830cd7953c933f88aeb938b911cad6d01ece9fa1a2f83c',
+    ('control+target+coupler', False): '72fa3c11549129c385793cfe09f6db63af09705d8ca54cb95815c2e68965730f',
+    ('control+target+coupler', True): 'ec8161612bde80f574debd2a05232e7ef2c4ebff0ac2cbd66861f537500aed70',
+}
+WAIT = {"kind": "wait", "length": 16}
+XY = {"kind": "xy", "qubit": "control", "operation": "x180"}
+ALIGN = {"kind": "align"}
+NASTY = 'x"1\n\\y'
+
+
+def _sha(source):
+    import hashlib
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()
+
+
+@pytest.mark.parametrize("slots", COMBINATIONS)
+@pytest.mark.parametrize("spectators", [False, True])
+@pytest.mark.parametrize("empty", [None, (), []])
+def test_no_step_render_is_unchanged(slots, spectators, empty):
+    key = ("+".join(s for s in T.SLOTS if s in slots), spectators)
+    spec = T.SlotSpec("ExampleGate", slots, spectators) if empty is None else \
+        T.SlotSpec("ExampleGate", slots, spectators, empty, empty)
+    source = T.render(spec)
+    assert _sha(source) == NO_STEP_SHA256[key]
+    assert "wait" not in source and "# before" not in source and "Before the gate" not in source
+    assert T.parse(source).spec == T.SlotSpec("ExampleGate", slots, spectators)
+
+
+STEP_CASES = [([WAIT], []), ([XY], []), ([], [ALIGN]), ([WAIT, XY, ALIGN], [XY, WAIT]),
+              ([{"kind": "xy", "qubit": "target", "operation": "x90.drag-1"}, {"kind": "wait", "length": 52.0}],
+               [ALIGN])]
+
+
+def _step_order(source):
+    """Return (kind, where) for every step-like statement in apply outside the gate core, in source order."""
+    body = source.split("    def apply(", 1)[1]
+    lines = body.split("\n")
+    first_play = next(i for i, line in enumerate(lines) if ".play(self." in line)
+    head, tail = "\n".join(lines[:first_play - 1]), "\n".join(lines[first_play:])
+    rest = tail.rsplit("frame_rotation_2pi", 1)[1].split("\n", 1)[1]
+    found = []
+    for part, where in ((head, "before"), (rest, "after")):
+        for line in part.splitlines():
+            line = line.strip()
+            if line.startswith("wait("):
+                found.append(("wait", where))
+            elif ".xy.play(" in line:
+                found.append(("xy", where))
+            elif line == "align(*channels)":
+                found.append(("align", where))
+    return found
+
+
+@pytest.mark.parametrize("slots", COMBINATIONS)
+@pytest.mark.parametrize("spectators", [False, True])
+@pytest.mark.parametrize("before,after", STEP_CASES)
+def test_steps_round_trip_and_order(slots, spectators, before, after):
+    spec = T.SlotSpec("ExampleGate", slots, spectators, before, after)
+    source = T.render(spec)
+    parsed = T.parse(source)
+    assert parsed.ok, parsed.why
+    assert parsed.spec == T.SlotSpec("ExampleGate", slots, spectators, tuple(before), tuple(after))
+    assert T.render(parsed.spec) == source
+    # The first "after" align is the gate's own closing align after the phase corrections.
+    expected = [(s["kind"], "before") for s in before] + [("align", "after")] + [(s["kind"], "after") for s in after]
+    assert _step_order(source) == expected
+    lengths = [repr(s["length"]) for s in before + after if s["kind"] == "wait"]
+    assert re.findall(r"wait\(int\((.*?)\) // ", source) == lengths
+    plays = [repr(s["operation"]) for s in before + after if s["kind"] == "xy"]
+    assert re.findall(r"\.xy\.play\((.*?)\)\n", source) == plays
+    assert ("from qm.qua import align, amp, play, wait\n" in source) == any(
+        s["kind"] == "wait" for s in before + after)
+    ast.parse(source)
+    assert not re.search(r"\bchip\b", source)
+
+
+def test_class_docstring_names_the_steps():
+    source = T.render(T.SlotSpec("ExampleGate", {"coupler"}, False, [WAIT, XY], [ALIGN]))
+    doc = ast.get_docstring(ast.parse(source).body[-1]).splitlines()
+    assert "Before the gate pulses: wait 16 ns, then play x180 on the control xy channel." in doc
+    assert "After the gate pulses: align." in doc
+    source = T.render(T.SlotSpec("ExampleGate", {"coupler"}, False, [], [ALIGN]))
+    assert "Before the gate pulses: nothing." in ast.get_docstring(ast.parse(source).body[-1]).splitlines()
+
+
+@pytest.mark.parametrize("change", [
+    lambda s: s.replace("# before = [{'kind': 'wait', 'length': 16}", "# before = [{'kind': 'wait', 'length': 20}"),
+    lambda s: s.replace("        wait(int(16) // 4, *channels)\n", ""),
+    lambda s: s.replace("        pair.qubit_control.xy.play('x180')\n", ""),
+    lambda s: s.replace("# after = [{'kind': 'align'}]", "# after = []"),
+    lambda s: s.replace("# after = [{'kind': 'align'}]", "# after = [{'kind': 'reset'}]"),
+    lambda s: s.replace("# after = [{'kind': 'align'}]", "# after = not a list"),
+    lambda s: s.replace("    # after = [{'kind': 'align'}]\n", ""),
+    lambda s: s.replace("Before the gate pulses: wait 16 ns", "Before the gate pulses: wait 20 ns"),
+])
+def test_hand_edited_steps_are_refused(change):
+    source = T.render(T.SlotSpec("ExampleGate", {"coupler"}, False, [WAIT, XY], [ALIGN]))
+    edited = change(source)
+    assert edited != source
+    assert not T.parse(edited).ok
+
+
+def test_empty_step_lists_written_by_hand_are_refused():
+    source = T.render(T.SlotSpec("ExampleGate", {"coupler"}))
+    edited = source.replace("    # spectators = False\n", "    # spectators = False\n    # before = []\n    # after = []\n")
+    assert not T.parse(edited).ok
+
+
+@pytest.mark.parametrize("steps", [[], (), [ALIGN], [WAIT], [{"kind": "wait", "length": 52.0}], [XY],
+                                   [{"kind": "xy", "qubit": "target", "operation": "a_b.c-9"}]])
+def test_valid_steps(steps):
+    assert T.sequence_steps_problem(steps) is None
+
+
+@pytest.mark.parametrize("steps,number,words", [
+    ([ALIGN, {"kind": "reset"}], 2, "unknown kind"),
+    ([{"kind": 3}], 1, "unknown kind"),
+    ([{"length": 16}], 1, "mapping"),
+    ([None], 1, "mapping"),
+    ([ALIGN, ALIGN, {"kind": "wait", "length": "16"}], 3, "waits"),
+    ([{"kind": "wait"}], 1, "waits"),
+    ([{"kind": "wait", "length": 12}], 1, "waits"),
+    ([{"kind": "wait", "length": 0}], 1, "waits"),
+    ([{"kind": "wait", "length": 18}], 1, "waits"),
+    ([{"kind": "wait", "length": 52.5}], 1, "waits"),
+    ([{"kind": "wait", "length": True}], 1, "waits"),
+    ([{"kind": "wait", "length": float("nan")}], 1, "waits"),
+    ([{"kind": "wait", "length": float("inf")}], 1, "waits"),
+    ([{"kind": "xy", "qubit": "coupler", "operation": "x180"}], 1, "control or target"),
+    ([{"kind": "xy", "operation": "x180"}], 1, "control or target"),
+    ([{"kind": "xy", "qubit": "control", "operation": ""}], 1, "operation"),
+    ([{"kind": "xy", "qubit": "control", "operation": "a b"}], 1, "operation"),
+    ([{"kind": "xy", "qubit": "control", "operation": NASTY}], 1, "operation"),
+    ([{"kind": "xy", "qubit": "control", "operation": "x180\n"}], 1, "operation"),
+    ([{"kind": "xy", "qubit": "control", "operation": "x" + chr(233)}], 1, "operation"),
+    ([{"kind": "xy", "qubit": "control", "operation": 5}], 1, "operation"),
+])
+@pytest.mark.parametrize("where", ["before", "after"])
+def test_step_problems_name_the_step(steps, number, words, where):
+    problem = T.sequence_steps_problem(steps, where)
+    assert isinstance(problem, str) and problem.startswith(f"Sequence step {number} {where} the gate"), problem
+    assert words in problem
+    spec = T.SlotSpec("ExampleGate", {"coupler"}, False, **{where: steps})
+    assert problem in T.validate(spec)
+    with pytest.raises(ValueError):
+        T.render(spec)
+
+
+@pytest.mark.parametrize("steps", [None, "align", 7, {"kind": "align"}, [[1]],
+                                   [{"kind": "wait", "length": object()}]])
+def test_step_check_never_raises(steps):
+    problem = T.sequence_steps_problem(steps)
+    assert isinstance(problem, str) and problem
+
+
+def test_wait_rule_follows_the_shared_constants():
+    low, step = T.MIN_LENGTH_NS, T.LENGTH_STEP_NS
+    assert T.sequence_steps_problem([{"kind": "wait", "length": low}]) is None
+    assert T.sequence_steps_problem([{"kind": "wait", "length": low - step}])
+    assert T.sequence_steps_problem([{"kind": "wait", "length": low + step // 2}])
+    assert f"multiple of {step} ns, at least {low} ns" in T.WAIT_PROBLEM
+    source = T.render(T.SlotSpec("ExampleGate", {"coupler"}, False, [WAIT]))
+    assert f"16 % {step} or 16 < {low}):" in source and f"wait(int(16) // {step}, *channels)" in source
+    assert repr(T.WAIT_PROBLEM) in source
+
+
+def _forced(monkeypatch, before=(), after=()):
+    monkeypatch.setattr(T, "sequence_steps_problem", lambda steps, where="before": None)
+    return T.render(T.SlotSpec("ExampleGate", {"coupler"}, False, before, after))
+
+
+def test_unsafe_names_stay_inert_literals(monkeypatch):
+    assert T.sequence_steps_problem([{"kind": "xy", "qubit": "control", "operation": NASTY}])
+    payload = "16) or __import__('os') or (1"
+    source = _forced(monkeypatch, [{"kind": "xy", "qubit": "control", "operation": NASTY}],
+                     [{"kind": "wait", "length": payload}])
+    tree = ast.parse(source)
+    plays = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "attr", None) == "play"
+             and isinstance(n.func.value, ast.Attribute) and n.func.value.attr == "xy"]
+    assert len(plays) == 1 and isinstance(plays[0].args[0], ast.Constant) and plays[0].args[0].value == NASTY
+    assert not any(isinstance(n, ast.Name) and n.id == "__import__" for n in ast.walk(tree))
+    waits = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "int"]
+    assert [w.args[0].value for w in waits] == [payload]
+    assert "an unchecked operation" in ast.get_docstring(tree.body[-1])
+    assert T.parse(source).spec.before[0]["operation"] == NASTY
+
+
+@lab
+@pytest.mark.parametrize("before,after,expected", [
+    ([WAIT], [], ["wait 4", "align", "play coupler coupler_op", "align", "align"]),
+    ([XY], [], ["play control_xy x180", "align", "play coupler coupler_op", "align", "align"]),
+    ([], [ALIGN], ["align", "play coupler coupler_op", "align", "align", "align"]),
+    ([XY, {"kind": "wait", "length": 20}], [{"kind": "xy", "qubit": "target", "operation": "y90"}, WAIT],
+     ["play control_xy x180", "wait 5", "align", "play coupler coupler_op", "align", "align",
+      "play target_xy y90", "wait 4"]),
+])
+def test_lab_statement_order(tmp_path, before, after, expected):
+    source = T.render(T.SlotSpec("ExampleGate", {"coupler"}, False, before, after))
+    result = run_check(tmp_path, source, xy_operations={"control": ["x180"], "target": ["y90"]})
+    assert result["status"] == "ok" and result["ok"], json.dumps(result)
+    assert result["statements"] == expected
+
+
+@lab
+def test_lab_missing_xy_operation(tmp_path):
+    source = T.render(T.SlotSpec("ExampleGate", {"coupler"}, False, [WAIT], [ALIGN, XY]))
+    result = run_check(tmp_path, source, xy_operations={"target": ["x180"]})
+    assert not result["ok"]
+    assert result["error"] == "ValueError: " + T.XY_MISSING_PROBLEM.format(
+        number=2, where="after", role="control", operation="x180"), result
+    assert result["statements"] == []
+
+
+@lab
+@pytest.mark.parametrize("length", [18, 12, 52.5, True])
+def test_lab_wait_guard_without_the_pure_check(tmp_path, monkeypatch, length):
+    source = _forced(monkeypatch, [WAIT], [{"kind": "wait", "length": length}])
+    result = run_check(tmp_path, source)
+    assert not result["ok"]
+    assert result["error"] == "ValueError: " + T.WAIT_PROBLEM.format(number=1, where="after", value=length), result
+    assert result["statements"] == []
