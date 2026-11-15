@@ -36117,14 +36117,17 @@ def _live_landed_stamp(ctx=None) -> int:
 
 
 def _live_write_failure_response(ctx, message: str, code: str, *, auto=None,
-                                 tray: bool = True, detail: str | None = None):
+                                 tray: bool = True, detail: str | None = None,
+                                 outcome: str | None = None):
     """v1.5.1 (SA-F2): a known live-write failure answers 409 (never 500),
     names itself in ``X-SM-Error-Code`` and carries the tray (so a read-only
     pill raised by this very failure shows) plus a persistent error in the
     status bar -- an error there stays until closed. JSON callers get
     ``{ok: false, error: <code>, message, tray_html}``. *auto*: an armed
     auto-apply session is ended first (a background writer never keeps
-    pushing at a chip that refused it)."""
+    pushing at a chip that refused it). *outcome*: the write's
+    :func:`_write_outcome`, given to JSON callers as ``write_outcome`` (an
+    approval tells "nothing was written" apart from "maybe written")."""
     if auto is not None and ctx is not None:
         ctx.pop("auto_apply", None)
     cause = _write_denial(getattr(g, "_merge_failure", None),
@@ -36140,7 +36143,8 @@ def _live_write_failure_response(ctx, message: str, code: str, *, auto=None,
         resp = make_response(jsonify(ok=False, error=code, message=message,
                                      tray_html=_tray_html(), live_landed=_landed,
                                      live_landed_chip=_ctx_chip_key(ctx) or "",
-                                     **({"detail": detail} if detail else {})), 409)
+                                     **({"detail": detail} if detail else {}),
+                                     **({"write_outcome": outcome} if outcome else {})), 409)
     else:
         err = render_template("_status.html", level="error", message=message,
                               detail=detail, live_fail_at=_landed, live_fail_chip=_ctx_chip_key(ctx) or "")
@@ -36723,7 +36727,7 @@ def state_apply_to_live():
         return _live_write_failure_response(
             ctx, _live_write_failure_text(ctx, exc, "Apply", outcome=_outcome, with_exc=False)
             + EDITS_KEPT,
-            LIVE_WRITE_FAILED, auto=_auto, detail=str(exc))
+            LIVE_WRITE_FAILED, auto=_auto, detail=str(exc), outcome=_outcome)
     except Exception as exc:  # noqa: BLE001 — r16 6: honest message, never a dropped 500
         g._merge_failure = exc
         logger.exception("apply-to-live unexpected failure")

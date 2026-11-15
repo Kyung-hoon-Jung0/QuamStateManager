@@ -271,13 +271,24 @@ def _then(lead: str, tail: str) -> str:
 TAKEN_BACK = "; nothing was written, and the approval's values were taken back out of SM"
 
 
-def _taken_back(lead: str) -> str:
-    """The door's ``lead`` for an approval whose values were taken back out of SM: the door's
-    "Your edits are kept." goes (they are not kept), and the one taken-back clause follows."""
+#: what an approval says when its live write may have reached the chip (the door's write outcome
+#: is "unknown" or "landed"): the values stay, so SM shows what the chip may hold
+KEPT_UNVERIFIED = ("; the live write could not be verified, so the approval's values stay in SM's working copy; "
+                   "check the chip")
+
+
+def _door_lead_then(lead: str, clause: str) -> str:
+    """The door's ``lead`` with the approval's own ``clause``: the door's "Your edits are kept."
+    goes (the clause says what happened to the approval's values), and the clause follows."""
     kept = _r().EDITS_KEPT
     if lead.rstrip().endswith(kept.strip()):
         lead = lead.rstrip()[:-len(kept.strip())]
-    return _then(lead, TAKEN_BACK)
+    return _then(lead, clause)
+
+
+def _taken_back(lead: str) -> str:
+    """The door's ``lead`` for an approval whose values were taken back out of SM."""
+    return _door_lead_then(lead, TAKEN_BACK)
 
 
 def _err(msg: str, code: int = 400, **extra):
@@ -2388,6 +2399,15 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
             # Reject left them there and the NEXT approval's push carried them
             # to the chip under its own name. Take them back out, so a refused
             # press leaves SM exactly where it found it.
+            # Only when the chip certainly holds the old content: a write whose outcome is
+            # "unknown" or "landed" (routes._write_outcome) may be on the chip, and taking
+            # its values back would make SM show an old value the chip no longer holds.
+            outcome = (js or {}).get("write_outcome")
+            if outcome in ("unknown", "landed"):
+                out["saved_in_working_copy"] = True
+                out["write_outcome"] = outcome
+                out["error"] = _door_lead_then(out["error"], KEPT_UNVERIFIED)
+                return out
             why = _take_back_saved(r, ctx, staged, before)
             if why is None:
                 out["error"] = _taken_back(out["error"])

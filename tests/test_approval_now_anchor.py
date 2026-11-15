@@ -861,7 +861,7 @@ def _refusal_functions():
     # and the apply door it calls (routes: the unseen-edit refusal and the door itself)
     names = {agent_api: {"approvals_decide", "_stage_writes", "_unstaged_message", "_take_back_own",
                          "_take_back_saved", "_refusal_line", "_structural_why", "_count_of", "_then",
-                         "_taken_back"},
+                         "_taken_back", "_door_lead_then"},
              routes: {"_unseen_edit_refusal", "state_apply_to_live"}}
     found = {}
     for mod, want in names.items():
@@ -885,7 +885,8 @@ def test_no_approval_refusal_text_says_s_in_brackets():
     assert all(any(m in t for _, t in texts) for m in marks), marks
     assert not [(n, t) for n, t in texts if "(s)" in t.replace(journal, "")], texts
     from quam_state_manager.web import agent_api
-    assert "(s)" not in agent_api.TAKEN_BACK          # the taken-back clause is a module constant
+    for clause in (agent_api.TAKEN_BACK, agent_api.KEPT_UNVERIFIED):     # the clauses are module constants
+        assert "(s)" not in clause and clause.startswith("; "), clause
 
 
 def _refused_live_write(case, monkeypatch, save_stands):
@@ -919,3 +920,75 @@ def test_a_refused_live_write_says_the_approvals_values_were_taken_back(tmp_path
     assert case[1].get("/api/agent/tray").get_json()["entries"] == []
     with case[0].app_context():
         assert _ctx(case)["store"].merged["value"] == 10
+
+
+def _live_write_with_outcome(case, monkeypatch, outcome):
+    """An approval press whose live write raises with the door's write outcome ``outcome``
+    (routes._write_outcome). "landed" first writes the approval's value to the live file."""
+    from quam_state_manager.core import working_copy
+    from quam_state_manager.web import routes
+    live = case[2] / "state.json"
+
+    def raises(*a, **k):
+        if outcome == "landed":
+            live.write_text(json.dumps({"value": 30, "third": 5}), encoding="utf-8")
+        raise OSError(5, "read-back failed")
+    monkeypatch.setattr(working_copy, "apply_to_live", raises)
+    monkeypatch.setattr(routes, "_write_outcome", lambda pending: outcome)
+    # "failed" and "none" put the door's save back; this pins the branch where the save stands
+    monkeypatch.setattr(routes, "_press_undo", lambda ctx, press: False)
+    return press(case, [{"path": "value", "new": 30, "seen_now": 10}])
+
+
+_KEPT = "; the live write could not be verified, so the approval's values stay in SM's working copy; check the chip"
+
+
+@pytest.mark.parametrize("outcome, text, sm_value, chip_value", [
+    ("failed", "Apply failed: the live chip was not written; nothing was written, and the approval's values were "
+               "taken back out of SM", 10, 10),
+    ("unknown", "Apply is UNVERIFIED: SM cannot tell whether the live chip holds the write \u2014 "
+                "[Errno 5] read-back failed" + _KEPT, 30, 10),
+    ("landed", "Apply is UNVERIFIED: the write reached the live chip, but SM could not finish confirming it \u2014 "
+               "[Errno 5] read-back failed" + _KEPT, 30, 30),
+])
+def test_a_live_write_after_the_save_says_what_is_known_per_outcome(tmp_path, monkeypatch, outcome, text,
+                                                                    sm_value, chip_value):
+    case = _case(tmp_path, {"value": 10, "third": 5}, [{"path": "value", "old": 10, "new": 30}])
+    response = _live_write_with_outcome(case, monkeypatch, outcome)
+    assert response.status_code == 409, response.get_json()
+    body = response.get_json()
+    assert body["error"] == text, body["error"]
+    _assert_plain(body["error"])
+    if outcome != "failed":
+        # maybe written: never "nothing was written", and the values stay where the chip may hold them
+        assert "nothing was written" not in body["error"] and "taken back" not in body["error"]
+        assert body["stage"]["saved_in_working_copy"] is True
+        assert body["stage"]["write_outcome"] == outcome
+    else:
+        assert "saved_in_working_copy" not in body["stage"]
+    assert body["how"] == "the approval stays pending; see the error"
+    assert approvals.get(str(case[3]), case[4], case[5]["id"])["status"] == "pending"
+    assert case[1].get("/api/agent/tray").get_json()["entries"] == []
+    with case[0].app_context():
+        assert _ctx(case)["store"].merged["value"] == sm_value
+    assert json.loads((case[2] / "state.json").read_text(encoding="utf-8")) == {"value": chip_value, "third": 5}
+
+
+def test_the_human_apply_press_text_carries_no_approval_clause(tmp_path, monkeypatch):
+    """The door's own text for a person's Apply press is the door's, whatever the outcome."""
+    from quam_state_manager.core import working_copy
+    from quam_state_manager.web import routes
+    case = _case(tmp_path, {"value": 10, "third": 5}, [{"path": "value", "old": 10, "new": 30}])
+
+    def raises(*a, **k):
+        raise OSError(5, "read-back failed")
+    monkeypatch.setattr(working_copy, "apply_to_live", raises)
+    monkeypatch.setattr(routes, "_write_outcome", lambda pending: "unknown")
+    client = case[1]
+    assert client.post("/field/edit", data={"dot_path": "value", "value": "30"}).status_code == 200
+    response = client.post("/state/apply-to-live", data={"seen_changes": "1"},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == 409, response.get_json()
+    assert response.get_json()["message"] == ("Apply is UNVERIFIED: SM cannot tell whether the live chip holds "
+                                              "the write \u2014 [Errno 5] read-back failed Your edits are kept.")
+    assert response.get_json()["write_outcome"] == "unknown"

@@ -636,4 +636,19 @@ The night summary's Write to chip press (`agent-summary.js` `decide`) joins the 
 
 A refused live write (the door's 409 `live_write_failed`, "Apply failed: ... Your edits are kept.") that takes the approval's rows back says so: `_stage_writes` drops the door's "Your edits are kept." and adds the one taken-back clause, "; nothing was written, and the approval's values were taken back out of SM" (`agent_api._taken_back`, `TAKEN_BACK`), both when the door put its save back and the rows leave the tray, and when the save stood and `_take_back_saved` took them out of the working copy. A human press of Apply keeps the door's text (`routes.EDITS_KEPT`), and when no row of the approval could be taken back the door's text stays as it is. Pinned by `test_a_refused_live_write_says_the_approvals_values_were_taken_back` (both branches: exact text, empty tray, unchanged state.json). The overnight runner stages through the same `_stage_writes`, so its `apply_error` reads the same.
 
+That clause is said only when the chip certainly holds its old content. The door's write outcome
+(`routes._write_outcome`, handed to JSON callers as `write_outcome` by `_live_write_failure_response`) is "failed" (read
+back, the chip holds the old content) or "none" (no journal line committed, the write never happened): the door puts its
+save back (`_refused_after_save`), and when that is not provably safe the save stands and `_take_back_saved` takes the
+values out, as above. "unknown" (nobody can tell) and "landed" (the chip holds the write, its read-back or bookkeeping
+failed) keep the save (`_commit_journal`), and the chip may hold the approval's values: `_stage_writes` then leaves them
+in SM's working copy (taking them back would make SM show an old value the chip may no longer hold), sets
+`saved_in_working_copy` and `write_outcome`, and drops the door's "Your edits are kept." for the one clause "; the live
+write could not be verified, so the approval's values stay in SM's working copy; check the chip"
+(`agent_api.KEPT_UNVERIFIED`, joined by `_door_lead_then`), after the door's "Apply is UNVERIFIED: ..." lead. It never
+says "nothing was written" there. The approval stays pending; the overnight runner reads `saved_in_working_copy` as
+"apply refused after the save" and parks no second approval of the same writes. A human press of Apply keeps the door's
+text. Pinned per outcome by `test_a_live_write_after_the_save_says_what_is_known_per_outcome` (exact text, tray, working
+copy, state.json) and `test_the_human_apply_press_text_carries_no_approval_clause`.
+
 Wording outside the approval doors that these texts also change: the door's unseen-edit refusal ("1 edit was made ... write it" / "N edits were made ... write them", `routes._unseen_edit_refusal`) is also the confirm text of Apply to live, the Keep mine push and the grid direct push, and the MCP `apply_to_live` error; "N of M values cannot be staged" (`_unstaged_message`) is also the overnight runner's `apply_error`. It is safe because no consumer parses these texts: app.js reads only `data.status === "unseen_changes"` and the paths (app.js:5357, 5894, 6064); mcp.py branches on `conflict` only and passes the body through (mcp.py:444-470); tests/stress_applylive_phases.cjs:184 and tests/state_sync_selfcheck.cjs:370 match "another State Manager window", which stays; tests/test_agent_runs.py:804 matches "cannot be staged", which stays.
