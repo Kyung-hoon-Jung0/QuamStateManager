@@ -772,8 +772,9 @@
                 if (spot !== undefined && first && num(first.start_ns) && first.start_ns > 0 &&
                     (first.start_ns - span[0]) * widthPx / (span[1] - span[0]) > startText.length * CHAR_PX + 12) {
                     fixed.push({
-                        xref: "paper", yref: ax + " domain", x: 0, y: spot, xanchor: "left", yanchor: "middle",
-                        xshift: 4, showarrow: false, text: "starts at " + fmt(first.start_ns) + " ns",
+                        // anchored to the lane's own bar: right-aligned just before where the bar starts
+                        xref: "x", yref: ax + " domain", x: first.start_ns, y: spot, xanchor: "right", yanchor: "middle",
+                        xshift: -4, showarrow: false, text: "starts at " + fmt(first.start_ns) + " ns",
                         font: { size: TEXT_PX, color: c.muted },
                         meta: { role: "starts-at", lane: lane.key }
                     });

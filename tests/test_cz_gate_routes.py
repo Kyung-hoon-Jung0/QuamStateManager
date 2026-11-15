@@ -128,6 +128,18 @@ def test_dialog_preselects_the_pair_and_lists_classes(chip):
     assert slot["field"] == "flux_pulse_qubit" and any(pc["class"] == SQUARE for pc in slot["pulse_classes"])
 
 
+def test_dialog_waveform_source_line_is_never_cut(chip):
+    # the waveform source sits on its own wrapping line under the head, not in the head's one-line hint
+    html = chip.c.get("/pulse/cz-gate/dialog?pair=q1-2").get_data(as_text=True)
+    sec = html.split('id="czg-sec-chart"', 1)[1].split("</section>", 1)[0]
+    head = sec.split('class="ui-panel-head"', 1)[1].split("</div>", 1)[0]
+    assert "from the lab" not in head and "ui-panel-hint" not in head
+    assert '<p class="ui-panel-sub" data-czg-chart-source>from the lab' in sec and 'program time before filters</p>' in sec
+    css = (Path(__file__).resolve().parents[1] / "quam_state_manager/web/static/ui-kit.css").read_text(encoding="utf-8")
+    rule = css.split(".ui-panel-sub {", 1)[1].split("}", 1)[0]
+    assert "white-space: normal" in rule and "ellipsis" not in rule and "nowrap" not in rule
+
+
 def test_dialog_unknown_pair_says_so(chip):
     html = chip.c.get("/pulse/cz-gate/dialog?pair=nope").get_data(as_text=True)
     assert "Pair not found" in html and '<option value="nope"' not in html
