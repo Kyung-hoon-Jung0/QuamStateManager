@@ -252,10 +252,12 @@ def over_summary(over):
 
 def checks_summary(oc):
     """The Checks summary the dialog writes from the server's outcome *oc* (cz-gate.js ``renderChecks``)."""
-    if oc["failed"]:
-        return "%d failed, %d passed" % (len(oc["failed"]), oc["passed"])
-    return "%d of %d passed" % (oc["passed"], oc["total"]) + (
-        ", %d could not run" % len(oc["not_run"]) if oc["not_run"] else "")
+    if oc["kind"] == "none":
+        return ""
+    summary = ("%d failed, %d passed" % (len(oc["failed"]), oc["passed"]) if oc["failed"]
+               else "%d of %d passed" % (oc["passed"], oc["total"]))
+    not_run = oc.get("not_run") or []
+    return summary + (", %d could not run" % len(not_run) if not_run else "")
 
 
 def example_checks(over=False):

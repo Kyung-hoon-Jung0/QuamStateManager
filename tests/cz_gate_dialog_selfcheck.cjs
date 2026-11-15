@@ -781,7 +781,7 @@ function tableWidths(el, sw, cw) {
     type($('#czg-name'), 'cz_r12b');
     await settle();
     // the shared cases: the banner and the summary read the server's outcome
-    for (const name of ['partly', 'checked', 'failed', 'failed_beside_note_and_unrun']) {
+    for (const name of ['partly', ...Object.keys(OUTCOME_CASES).filter((n) => n !== 'partly')]) {
         const cs = OUTCOME_CASES[name];
         if (name !== 'partly') { type($('#czg-name'), 'cz_oc_' + name); await settle(); }
         const scrolled = [];
@@ -790,10 +790,21 @@ function tableWidths(el, sw, cw) {
             x.checks = Object.entries(cs.result.gates[0].checks).map(([n, c]) => ({ name: n, status: c.status, message: c.message })); }); return j; });
         prim().click();
         await settle();
+        const chips = [...$('#czg-checks').querySelectorAll('.ui-result')].map((c) => ({
+            state: c.classList.contains('ui-result--skip') ? 'skip'
+                : c.classList.contains('ui-result--fail') ? 'fail' : 'pass',
+            text: c.textContent,
+        }));
+        require('assert').deepStrictEqual(chips, cs.display.chips);
+        ok(true, 'shared case chips match the fixture: ' + name);
+        ok($('#czg-checks-sum').textContent === cs.display.summary,
+            'shared case summary matches the fixture: ' + name);
+        const lines = [...$('#czg-checks').querySelectorAll('p.ui-text-quiet')].map((p) => p.textContent);
+        require('assert').deepStrictEqual(lines, cs.display.quiet_lines);
+        ok(true, 'shared case quiet lines match the fixture: ' + name);
         if (name === 'partly') {
             ok(/Ready to create/.test(alertText()) && /5 checks passed, 1 could not run: preview comparison \(no preview for this pulse class\)\./.test(alertText())
                && !/every check passed/.test(alertText()) && !/not checked/i.test(alertText()), 'shared case partly: 5 passed, 1 could not run, with the reason; never every check passed');
-            ok(/^5 of 6 passed, 1 could not run$/.test($('#czg-checks-sum').textContent), 'shared case partly: the summary counts 5 of 6, 1 could not run');
             ok(prim().textContent === 'Create gate', 'shared case partly: it may be created');
             { const cols = $('#czg-dialog .czg-cols'); const was = Object.getOwnPropertyDescriptor(window.HTMLElement.prototype, 'clientWidth');
               Object.defineProperty(cols, 'clientWidth', { configurable: true, get: () => 900 }); window.dispatchEvent(new window.Event('resize'));
@@ -802,19 +813,8 @@ function tableWidths(el, sw, cw) {
               ok(narrow && !$('#czg-dialog').hasAttribute('data-czg-stacked') && was !== null, 'a narrow dialog is marked stacked (banner above the form), a wide one is not'); }
             ok(scrolled.indexOf('czg-alert') >= 0, 'after a check answer the banner is scrolled into view (stacked: it sits above the form)');
         } else if (name === 'checked') {
-            ok(/every check passed/.test(alertText()) && /^6 of 6 passed$/.test($('#czg-checks-sum').textContent),
+            ok(/every check passed/.test(alertText()),
                'shared case checked: every check passed, 6 of 6');
-        } else if (name === 'failed_beside_note_and_unrun') {
-            ok(/^1 failed, 3 passed, 2 could not run$/.test($('#czg-checks-sum').textContent),
-               'shared failure: 1 failed, 3 passed, 2 could not run');
-            const lines = [...$('#czg-checks').querySelectorAll('p.ui-text-quiet')].map((p) => p.textContent);
-            ok(lines.includes('1 check was not run (The gate runs with the lab\'s code): '
-                + 'Only some operations were compared.')
-                && lines.includes('1 check was not run (Preview equals the config): '
-                + 'No preview for this pulse class.'), 'shared failure names both checks that could not run');
-        } else {
-            ok(/^1 failed, 5 passed$/.test($('#czg-checks-sum').textContent),
-               'shared case failed: one failing of six reads 1 failed, 5 passed (the server count, never 0 passed)');
         }
     }
     type($('#czg-name'), 'cz_old_outcome');
@@ -824,7 +824,8 @@ function tableWidths(el, sw, cw) {
     }); return j; });
     prim().click();
     await settle();
-    ok($('#czg-checks-sum').textContent === '1 failed, 5 passed', 'old failure without not_run still renders');
+    ok($('#czg-checks-sum').textContent === OUTCOME_CASES.failed.display.summary,
+        'old failure without not_run still renders');
     // Length and general refusals keep Name reserved for name errors.
     queue.plan.push((b) => { const j = planOk(b); j.pairs[0].ok = false;
         j.pairs[0].refusals = ['flux_pulse_qubit.length: The pulse length 18 ns must be a multiple of 4 ns.',

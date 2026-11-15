@@ -1494,11 +1494,17 @@
         if (!p.ok) { (p.refusals || []).forEach(function (r) { host.appendChild(el('p', 'ui-text-quiet', r)); }); return; }
         if (allSkippedReason(p)) { if (sum) sum.textContent = ''; return; }
         var cs = p.checks || [];
-        var list = cs.map(function (c) { return { name: CHECK_WORDS[c.name] || c.name, state: CHECK_STATE[c.status] || 'skip', why: c.message }; });
-        var w = U.checks(list, 'Checks');
-        Array.prototype.slice.call(w.querySelectorAll('.ui-result')).forEach(function (li, k) { li.setAttribute('data-check', cs[k].name); });
         var oc = p.outcome;
         var notRun = (oc && oc.not_run) || [];
+        var list = cs.map(function (c) {
+            var skipped = notRun.some(function (x) { return x.check === c.name; });
+            return { name: CHECK_WORDS[c.name] || c.name,
+                state: skipped ? 'skip' : CHECK_STATE[c.status] || 'skip', why: c.message };
+        });
+        var w = U.checks(list, 'Checks');
+        Array.prototype.slice.call(w.querySelectorAll('.ui-result')).forEach(function (li, k) {
+            li.setAttribute('data-check', cs[k].name);
+        });
         // checks that could not run: one quiet line per reason, naming them
         var byWhy = {}, order = [];
         list.forEach(function (c) {

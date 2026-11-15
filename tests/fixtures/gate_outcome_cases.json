@@ -53,6 +53,36 @@
     ],
     "status": "ok",
     "why_not_checked": null
+   },
+   "display": {
+    "chips": [
+     {
+      "state": "pass",
+      "text": "passed: Pulse lengths"
+     },
+     {
+      "state": "pass",
+      "text": "passed: Chip loads and builds its config"
+     },
+     {
+      "state": "pass",
+      "text": "passed: The gate runs with the lab's code"
+     },
+     {
+      "state": "pass",
+      "text": "passed: Preview equals the config"
+     },
+     {
+      "state": "pass",
+      "text": "passed: Output range"
+     },
+     {
+      "state": "pass",
+      "text": "passed: Timeline"
+     }
+    ],
+    "summary": "6 of 6 passed",
+    "quiet_lines": []
    }
   },
   "failed": {
@@ -113,6 +143,36 @@
     ],
     "status": "ok",
     "why_not_checked": null
+   },
+   "display": {
+    "chips": [
+     {
+      "state": "pass",
+      "text": "passed: Pulse lengths"
+     },
+     {
+      "state": "pass",
+      "text": "passed: Chip loads and builds its config"
+     },
+     {
+      "state": "pass",
+      "text": "passed: The gate runs with the lab's code"
+     },
+     {
+      "state": "pass",
+      "text": "passed: Preview equals the config"
+     },
+     {
+      "state": "fail",
+      "text": "failed: Output range"
+     },
+     {
+      "state": "pass",
+      "text": "passed: Timeline"
+     }
+    ],
+    "summary": "1 failed, 5 passed",
+    "quiet_lines": []
    }
   },
   "failed_beside_note_and_unrun": {
@@ -187,6 +247,39 @@
     ],
     "status": "ok",
     "why_not_checked": null
+   },
+   "display": {
+    "chips": [
+     {
+      "state": "pass",
+      "text": "passed: Pulse lengths"
+     },
+     {
+      "state": "pass",
+      "text": "passed: Chip loads and builds its config"
+     },
+     {
+      "state": "skip",
+      "text": "skipped: The gate runs with the lab's code"
+     },
+     {
+      "state": "skip",
+      "text": "skipped: Preview equals the config"
+     },
+     {
+      "state": "fail",
+      "text": "failed: Output range"
+     },
+     {
+      "state": "pass",
+      "text": "passed: Timeline"
+     }
+    ],
+    "summary": "1 failed, 3 passed, 2 could not run",
+    "quiet_lines": [
+     "1 check was not run (The gate runs with the lab's code): Only some operations were compared.",
+     "1 check was not run (Preview equals the config): No preview for this pulse class."
+    ]
    }
   },
   "none": {
@@ -279,6 +372,11 @@
     ],
     "status": "no-env",
     "why_not_checked": "No Python environment is selected."
+   },
+   "display": {
+    "chips": [],
+    "summary": "",
+    "quiet_lines": []
    }
   },
   "partly": {
@@ -320,7 +418,8 @@
        },
        "preview": {
         "message": "No preview was given to compare.",
-        "status": "skipped"
+        "status": "note",
+        "not_run": true
        },
        "range": {
         "message": "Passed.",
@@ -343,6 +442,38 @@
     ],
     "status": "ok",
     "why_not_checked": null
+   },
+   "display": {
+    "chips": [
+     {
+      "state": "pass",
+      "text": "passed: Pulse lengths"
+     },
+     {
+      "state": "pass",
+      "text": "passed: Chip loads and builds its config"
+     },
+     {
+      "state": "pass",
+      "text": "passed: The gate runs with the lab's code"
+     },
+     {
+      "state": "skip",
+      "text": "skipped: Preview equals the config"
+     },
+     {
+      "state": "pass",
+      "text": "passed: Output range"
+     },
+     {
+      "state": "pass",
+      "text": "passed: Timeline"
+     }
+    ],
+    "summary": "5 of 6 passed, 1 could not run",
+    "quiet_lines": [
+     "1 check was not run (Preview equals the config): No preview was given to compare."
+    ]
    }
   }
  }

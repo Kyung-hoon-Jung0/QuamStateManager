@@ -54,6 +54,24 @@ def test_the_shared_cases_come_to_their_outcome(name):
     assert _oc(name) == CASES[name]["outcome"]
 
 
+@pytest.mark.parametrize("name", sorted(CASES))
+def test_shared_display_counts_match_the_kit_and_outcome(name):
+    from quam_state_manager.web.ui_kit_fixtures import checks_summary
+    case, oc = CASES[name], _oc(name)
+    display = case["display"]
+    assert checks_summary(oc) == display["summary"]
+    states = [c["state"] for c in display["chips"]]
+    if oc["kind"] == log.KIND_NONE:
+        assert states == display["quiet_lines"] == []
+    else:
+        assert states.count("pass") == oc["passed"]
+        assert states.count("fail") == len(oc["failed"])
+        assert states.count("skip") == len(oc["not_run"])
+        checks = case["result"]["gates"][0]["checks"]
+        reasons = {checks[c["check"]]["message"] for c in oc["not_run"]}
+        assert len(display["quiet_lines"]) == len(reasons)
+
+
 def test_outcome_wording_for_the_three_cases():
     assert _oc("checked")["summary"] == "every check passed."
     assert _oc("partly")["summary"] == ("5 checks passed, 1 could not run: preview comparison "
