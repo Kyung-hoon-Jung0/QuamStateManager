@@ -510,7 +510,7 @@ def test_an_edit_landing_before_the_staging_is_never_pushed_under_the_approval(t
     # refused by the empty-tray check, which runs after the never-touch read and before a row of
     # this approval was staged (not later by the count at the door, which names "another edit
     # reached"); that the check shares the staging's lock hold is pinned by the next test
-    assert response.get_json()["error"].startswith("the tray holds 1 staged edit(s)"), response.get_json()
+    assert response.get_json()["error"].startswith("the tray holds 1 staged edit;"), response.get_json()
     assert (case[2] / "state.json").read_bytes() == before
     tray = case[1].get("/api/agent/tray").get_json()["entries"]
     assert [(x["path"], x["new"]) for x in tray] == [("third", 99)]      # the other window's edit stays its own
@@ -554,7 +554,7 @@ def test_the_empty_tray_check_shares_the_staging_lock_hold(tmp_path):
     assert response.status_code == 409, response.get_json()
     # the edit that landed as the staging took the lock is seen by the check inside that hold;
     # a check taken before the hold would let it pass and leave it to the door's count
-    assert response.get_json()["error"].startswith("the tray holds 1 staged edit(s)"), response.get_json()
+    assert response.get_json()["error"].startswith("the tray holds 1 staged edit;"), response.get_json()
     assert (case[2] / "state.json").read_bytes() == before
     tray = case[1].get("/api/agent/tray").get_json()["entries"]
     assert [(x["path"], x["new"]) for x in tray] == [("third", 99)]
@@ -650,6 +650,8 @@ def test_a_created_key_another_window_changed_since_stays_whole(tmp_path, monkey
     error = response.get_json()["error"]
     assert "1 value(s) of this approval could not be taken back" in error and "(fresh)" in error
     assert "a human decides in the window" in error
+    # the count is the tray after the take-back: the created row that stayed + the other window's
+    assert "the tray holds 2 staged edits;" in error, error
     assert (case[2] / "state.json").read_bytes() == before
     with case[0].app_context():
         store = _ctx(case)["store"]
@@ -662,3 +664,100 @@ def test_a_created_key_another_window_changed_since_stays_whole(tmp_path, monkey
         else:
             assert log == [("fresh", True, False), ("fresh.x", False, False)]
             assert store.get_value("fresh.x") == 7
+
+
+def test_a_take_back_hands_the_chips_value_to_the_first_later_row(tmp_path, monkeypatch):
+    case = _case(tmp_path, {"value": 10, "third": 5}, [{"path": "value", "old": 10, "new": 30}])
+
+    def two_edits():
+        _foreign_edit(case, "value", 99)
+        _foreign_edit(case, "value", 7)
+    _land_after_staging(monkeypatch, two_edits)
+    before = (case[2] / "state.json").read_bytes()
+    response = press(case, [{"path": "value", "new": 30, "seen_now": 10}])
+    assert response.status_code == 409, response.get_json()
+    assert "the tray holds 2 staged edits;" in response.get_json()["error"], response.get_json()
+    assert (case[2] / "state.json").read_bytes() == before
+    tray = case[1].get("/api/agent/tray").get_json()["entries"]
+    # the chip's value is the FIRST later row's "before"; the second keeps the first's value
+    assert [(x["path"], x["old"], x["new"]) for x in tray] == [("value", 10, 99), ("value", 99, 7)]
+    with case[0].app_context():
+        ctx = _ctx(case)
+        ctx["modifier"].undo()
+        ctx["modifier"].undo()                  # two Ctrl+Z: the chip's value, never the refused 30
+        assert ctx["store"].get_value("value") == 10 and not ctx["store"].change_log
+
+
+def test_a_created_scalar_another_window_set_since_stays_whole(tmp_path, monkeypatch):
+    case = _case(tmp_path, {"value": 10, "third": 5},
+                 [{"path": "fresh", "old": None, "new": 1, "created": True}])
+    _land_after_staging(monkeypatch, lambda: _foreign_edit(case, "fresh", 7))
+    before = (case[2] / "state.json").read_bytes()
+    response = press(case, [{"path": "fresh", "new": 1, "seen_unknown": True}])
+    assert response.status_code == 409, response.get_json()
+    error = response.get_json()["error"]
+    assert "1 value(s) of this approval could not be taken back" in error and "(fresh)" in error
+    assert "the tray holds 2 staged edits;" in error, error
+    assert (case[2] / "state.json").read_bytes() == before
+    with case[0].app_context():
+        ctx = _ctx(case)
+        store = ctx["store"]
+        # the create row stays whole, never read as a plain set "None -> 7"
+        assert [(e.dot_path, e.old_value, e.new_value, e.created) for e in store.change_log] ==             [("fresh", None, 1, True), ("fresh", 1, 7, False)]
+        assert store.get_value("fresh") == 7
+        ctx["modifier"].undo()
+        ctx["modifier"].undo()                  # back to no key at all, never "fresh": null
+        assert "fresh" not in store.merged and not store.change_log
+
+
+def _created_key_case(tmp_path):
+    return _case(tmp_path, {"value": 10, "third": 5},
+                 [{"path": "fresh.x", "old": None, "new": 1, "created": True}])
+
+
+def _other_sets_fresh_x(case):
+    with case[0].app_context():
+        _ctx(case)["modifier"].set_value("fresh.x", 7)
+
+
+def test_a_stale_live_refusal_names_the_rows_that_stayed(tmp_path, monkeypatch):
+    case = _created_key_case(tmp_path)
+    from quam_state_manager.core import working_copy
+    once = []
+
+    def moved(wc):                              # another window's edit, and the live files moved
+        if not once:
+            once.append(1)
+            _other_sets_fresh_x(case)
+            return True
+        return False
+    monkeypatch.setattr(working_copy, "live_diverged_now", moved)
+    before = (case[2] / "state.json").read_bytes()
+    response = press(case, [{"path": "fresh.x", "new": 1, "seen_unknown": True}])
+    error = response.get_json()["stage"]["error"] if response.status_code == 200 else response.get_json()["error"]
+    assert error.startswith("stale_live:"), response.get_json()
+    assert "1 value(s) of this approval could not be taken back" in error and "(fresh)" in error, error
+    assert "a human decides in the window" in error
+    assert (case[2] / "state.json").read_bytes() == before
+
+
+def test_a_door_refusal_names_the_rows_that_stayed(tmp_path, monkeypatch):
+    case = _created_key_case(tmp_path)
+    from quam_state_manager.web import agent_api
+    real = agent_api._pre_door_state
+    once = []
+
+    def lands(r, ctx):                          # another window's edit, after the in-lock check
+        if not once:
+            once.append(1)
+            _other_sets_fresh_x(case)
+        return real(r, ctx)
+    monkeypatch.setattr(agent_api, "_pre_door_state", lands)
+    before = (case[2] / "state.json").read_bytes()
+    response = press(case, [{"path": "fresh.x", "new": 1, "seen_unknown": True}])
+    assert once, "the edit never landed before the door"
+    error = response.get_json()["stage"]["error"] if response.status_code == 200 else response.get_json()["error"]
+    assert not error.startswith("another edit reached the tray"), error      # the door refused, not the check
+    assert "1 value(s) of this approval could not be taken back" in error and "(fresh)" in error, error
+    assert "a human decides in the window" in error
+    assert (case[2] / "state.json").read_bytes() == before

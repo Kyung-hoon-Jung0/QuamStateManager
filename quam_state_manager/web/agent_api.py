@@ -2126,12 +2126,16 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
     mod, store = ctx["modifier"], ctx["store"]
     person = bool(presser) and not str(presser).startswith("by_")
 
-    def _tray_busy(n_other: int, lead: str = "") -> dict:
+    def _tray_busy(lead: str = "") -> dict:
         # review R1-M1: a person's approval press consents to THESE writes, never to whatever
-        # else the tray holds (another window's edit would ride along under this name)
+        # else the tray holds (another window's edit would ride along under this name).
+        # The count is what the tray holds NOW, read here for every caller: after a take-back
+        # it is the other window's rows plus any of this approval's rows that had to stay.
+        with store._lock:
+            n = len(store.change_log)
         return {"group_id": gid, "staged": 0, "applied": False, "unstaged": [],
-                "error": f"{lead}the tray holds {n_other} staged edit(s); apply or discard them in the window "
-                         "first, then approve"}
+                "error": f"{lead}the tray holds {n} staged edit{'' if n == 1 else 's'}; apply or discard "
+                         "them in the window first, then approve"}
     staged, unstaged = [], []
     # Q-4 (agents ver180): a path the person listed as never-touch is never staged for an agent
     try:
@@ -2171,7 +2175,7 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
         # modifier calls below take it again): an edit from another window cannot land
         # between them and be pushed under this person's name
         if person and store.change_log:
-            return _tray_busy(len(store.change_log))
+            return _tray_busy()
         # docs/254: compare every displayed value before staging any row.
         from quam_state_manager.core.differ import compare_equal
         for w in writes:
@@ -2297,8 +2301,8 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
         foreign = sum(1 for e in store.change_log if e.group_id != gid)
         if person and foreign:
             kept = _take_back()
-            busy = _tray_busy(foreign, "another edit reached the tray while this approval was staged, so "
-                                       "nothing was written: ")
+            busy = _tray_busy("another edit reached the tray while this approval was staged, so "
+                              "nothing was written: ")
             busy["error"] += kept
             return busy
         n = len(store.change_log)
