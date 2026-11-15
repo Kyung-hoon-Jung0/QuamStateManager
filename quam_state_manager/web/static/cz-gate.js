@@ -108,6 +108,7 @@
         return ((S.check && S.check.pairs) || []).filter(function (p) { return p.verdict && p.verdict.allowed; });
     }
     function refresh() {
+        simButton();
         var b = $('czg-primary');
         if (!b) return;
         if (S.phase === 'done') { b.textContent = 'Close'; b.disabled = false; return; }
@@ -764,6 +765,7 @@
     /* ---- the plan -------------------------------------------------------- */
     function inputsChanged() {
         S.seq++;
+        simReset();
         if (S.check) {
             var ev = $('czg-evidence');
             if (ev) ev.classList.add('czg-stale');
@@ -939,7 +941,9 @@
         clear($('czg-chart-tools'));
         // a spectator lane carries only color_index: it takes that colour (the one its
         // form chip and table dot wear), and the ticked spectators are shown unfolded
+        var simLanes = (S.sim && S.sim.lanes) || {};
         var data = Object.assign({}, tl, { lanes: (tl.lanes || []).map(function (ln) {
+            if (ln && simLanes[ln.key]) ln = Object.assign({}, ln, { sim: simLanes[ln.key] });
             return ln && ln.group === 'spectator' && typeof ln.color !== 'number' && typeof ln.color_index === 'number'
                 ? Object.assign({}, ln, { color: ln.color_index }) : ln;
         }) });
@@ -1141,6 +1145,7 @@
     function renderPair() {
         var pairs = (S.check && S.check.pairs) || [];
         var p = pairs[S.pairIdx] || pairs[0];
+        if (S.sim && (!p || S.sim.pair !== p.pair)) simReset();
         if (p) {
             renderChart(p.ok ? p.timeline : null);
             renderIntent(p.intent, p.timeline, p.pair);
@@ -1157,6 +1162,7 @@
         }
         renderPairSwitch();
         openLabel();
+        simButton();
     }
     /* What the checks that ran came to, in the server's words (one judgement
        for the banner, the summary and the record): "every check passed." or
@@ -1222,6 +1228,7 @@
         if (!S || S.busy) return Promise.resolve();
         var b = body();
         var mine = S.seq, g = S;
+        simReset();
         setBusy(true, 'Checking with the lab\'s code, about 10 s');
         return post('/api/pulse/cz-gate/check', b).then(function (x) {
             if (S !== g) return;
@@ -1232,12 +1239,187 @@
                 return;
             }
             S.check = x.j;
+            S.checkBody = b;
+            S.checkSeq = mine;
             renderCheck();
         }).catch(function (e) {
             if (S !== g) return;
             setBusy(false, '');
             alertBox(callout('danger', 'The check did not run', 'The app did not answer (' + e + '). Press Check to try again.'));
         });
+    }
+
+    /* ---- simulate -------------------------------------------------------- */
+    /* The server words every state (its `line` is shown verbatim); the only
+       client-worded line is the one for an app that did not answer. A run is
+       tied to the plan it was started for: any form edit, pair change or new
+       check drops its traces and its status. */
+    var SIM_POLL_MS = 1000;
+    var SIM_NO_ANSWER = 'Not simulated: the app did not answer.';
+    var SIM_LIVE = { starting: 1, running: 1 };
+    function simCall(url, payload) {
+        var init = payload === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                  body: JSON.stringify(payload) };
+        return fetch(url, init).then(function (r) {
+            return r.json().then(function (j) { return { r: r, j: (j && typeof j === 'object') ? j : null }; },
+                                 function () { return { r: r, j: null }; });
+        }, function () { return { r: null, j: null }; });
+    }
+    function shownPair() {
+        var pairs = (S && S.check && S.check.pairs) || [];
+        return pairs[S.pairIdx] || pairs[0] || null;
+    }
+    function simCanStart() {
+        var p = shownPair();
+        return !!(S && S.check && S.checkBody && S.checkSeq === S.seq && S.phase !== 'done'
+                  && p && p.ok && p.timeline);
+    }
+    function simButton() {
+        var b = $('czg-sim');
+        if (!b || !S) return;
+        var stop = !!(S.sim && (SIM_LIVE[S.sim.state] || S.sim.state === 'busy'));
+        b.textContent = stop ? 'Stop' : 'Simulate';
+        // Stop needs the run id: while the start answer is out there is nothing to stop yet
+        b.disabled = stop ? simNoId() : (S.busy || !simCanStart());
+    }
+    function simNoId() {
+        return !!(S && S.sim && S.sim.state === 'starting' && !S.sim.id);
+    }
+    function simShow(line, elapsed) {
+        var l = $('czg-sim-line');
+        if (l) l.textContent = line || '';
+        var e = $('czg-sim-elapsed');
+        if (e) e.textContent = typeof elapsed === 'number' && isFinite(elapsed) ? Math.round(elapsed) + ' s' : '';
+    }
+    function simReset() {
+        if (!S) return;
+        var had = S.sim;
+        S.simGen = (S.simGen || 0) + 1;
+        if (had && had.timer) clearTimeout(had.timer);
+        if (had && SIM_LIVE[had.state] && had.id) simCall('/api/pulse/cz-gate/simulate/stop', { id: had.id });
+        S.sim = null;
+        simShow('', null);
+        clear($('czg-sim-notes'));
+        if (had && had.lanes) {            // traces were drawn: draw the chart again without them
+            var p = shownPair();
+            if (p && p.ok) renderChart(p.timeline);
+        }
+        simButton();
+    }
+    function portKeys(pt) {
+        var parts = [pt.controller, pt.fem, pt.port];
+        var keys = [parts.join(' / '), parts.join('/')];
+        if (pt.fem === null || pt.fem === undefined) keys.push([pt.controller, pt.port].join(' / '));
+        if (pt.port_text) keys.push(pt.port_text);
+        return keys.map(String);
+    }
+    /* Each port goes onto the lane with the same controller / fem / port and an
+       element the port names; a port whose time step is unknown is never drawn. */
+    function simMatch(tl, ans) {
+        var lanes = (tl && tl.lanes) || [];
+        var got = {}, lines = [], unknown = {};
+        (ans.ports || []).forEach(function (pt) {
+            if (!pt) return;
+            var els = pt.elements || [];
+            if (pt.time_step_unknown) { els.forEach(function (e) { unknown[e] = true; }); return; }
+            var keys = portKeys(pt);
+            var hit = lanes.filter(function (ln) {
+                return ln && keys.indexOf(String(ln.port)) >= 0 && els.indexOf(ln.key) >= 0;
+            });
+            if (!hit.length) {
+                lines.push('The simulated output of ' + (pt.port_text || keys[0]) + ' (' + (els.join(', ') || 'no element named')
+                           + ') is not drawn: no timeline line plays on that port.');
+                return;
+            }
+            var v = (pt.volts || []).slice();
+            var t = v.map(function (_x, i) { return pt.t0_ns + i * pt.dt_ns; });
+            hit.forEach(function (ln) { got[ln.key] = { t_ns: t, v: v }; });
+        });
+        lanes.forEach(function (ln) {
+            if (ln && !got[ln.key] && !unknown[ln.key]) lines.push(ln.key + ' has no simulated output: the simulator gave no trace for its port.');
+        });
+        return { lanes: got, lines: lines };
+    }
+    function simNotes(ans, extra) {
+        var host = clear($('czg-sim-notes'));
+        if (!host) return;
+        [ans.time_step_note, ans.cut_note, ans.note, ans.cannot_draw].concat(extra || []).forEach(function (t) {
+            if (typeof t === 'string' && t) host.appendChild(el('p', 'ui-text-quiet', t));
+        });
+    }
+    /* Every request takes a sequence number; an answer older than the latest
+       action (start / stop) or the latest applied answer is ignored, so the
+       line shown is always the latest action's answer. */
+    function simSeq(g, action) {
+        g.simReq = (g.simReq || 0) + 1;
+        if (action) g.simAction = g.simReq;
+        return g.simReq;
+    }
+    function simAnswer(g, gen, x, seq, isStart) {
+        if (S !== g || S.simGen !== gen) {                     // closed, or the plan changed
+            // a run the server started for a plan that is gone is stopped by its id;
+            // the stop answer is not shown (it belongs to no plan on screen)
+            if (isStart && x && x.j && SIM_LIVE[x.j.state] && typeof x.j.id === 'string' && x.j.id)
+                simCall('/api/pulse/cz-gate/simulate/stop', { id: x.j.id });
+            return;
+        }
+        if (seq < (g.simAction || 0) || seq < (g.simApplied || 0)) return;   // a newer action owns the line
+        g.simApplied = seq;
+        var sim = S.sim || {};
+        if (sim.timer) clearTimeout(sim.timer);
+        sim.timer = null;
+        S.sim = sim;
+        if (!x.j || typeof x.j.line !== 'string') {
+            sim.state = 'error';
+            simShow(SIM_NO_ANSWER, null);
+            simButton();
+            return;
+        }
+        var j = x.j;
+        sim.state = j.state;
+        if (j.id) sim.id = j.id;
+        var live = !!SIM_LIVE[j.state];
+        var elapsed = typeof j.elapsed_s === 'number' ? j.elapsed_s : (sim.t0 ? (Date.now() - sim.t0) / 1000 : 0);
+        simShow(j.line, live ? elapsed : null);
+        if (j.state === 'done') {
+            var p = shownPair();
+            var m = simMatch(p && p.timeline, j);
+            sim.lanes = m.lanes;
+            if (p && p.ok) renderChart(p.timeline);
+            simNotes(j, m.lines);
+        } else if (live && sim.id) {
+            sim.timer = setTimeout(function () { simPoll(g, gen); }, SIM_POLL_MS);
+        }
+        simButton();
+    }
+    function simPoll(g, gen) {
+        if (S !== g || S.simGen !== gen || !S.sim || !S.sim.id) return;
+        S.sim.timer = null;
+        var seq = simSeq(g, false);
+        return simCall('/api/pulse/cz-gate/simulate/status?id=' + encodeURIComponent(S.sim.id))
+            .then(function (x) { simAnswer(g, gen, x, seq, false); });
+    }
+    function simulate() {
+        if (!S) return Promise.resolve();
+        var g = S;
+        if (S.sim && (SIM_LIVE[S.sim.state] || S.sim.state === 'busy')) {      // the action is Stop
+            if (simNoId()) return Promise.resolve();          // no id yet: nothing to stop, nothing sent
+            var gen0 = S.simGen;
+            if (S.sim.timer) { clearTimeout(S.sim.timer); S.sim.timer = null; }
+            var sseq = simSeq(g, true);
+            // without an id only after a 409 busy answer: the server stops this window's run
+            return simCall('/api/pulse/cz-gate/simulate/stop', S.sim.id ? { id: S.sim.id } : {})
+                .then(function (x) { simAnswer(g, gen0, x, sseq, false); });
+        }
+        if (!simCanStart()) return Promise.resolve();
+        var p = shownPair();
+        simReset();
+        var gen = S.simGen;
+        S.sim = { state: 'starting', pair: p.pair, t0: Date.now() };
+        simButton();
+        var seq = simSeq(g, true);
+        return simCall('/api/pulse/cz-gate/simulate/start', Object.assign({}, S.checkBody, { pair: p.pair }))
+            .then(function (x) { simAnswer(g, gen, x, seq, true); });
     }
 
     /* ---- create ---------------------------------------------------------- */
@@ -1424,7 +1606,7 @@
     function close(force) {
         if (S && S.creating && !force) return false;       // a create in flight: its answer must land
         var d = $('czg-dialog');
-        if (S) { clearTimeout(S.timer); if (S.handle && S.handle.destroy) { try { S.handle.destroy(); } catch (e) { /* gone */ } } }
+        if (S) { simReset(); clearTimeout(S.timer); if (S.handle && S.handle.destroy) { try { S.handle.destroy(); } catch (e) { /* gone */ } } }
         var opener = S && S.opener;
         S = null;
         if (d) {
@@ -1565,6 +1747,7 @@
                 .forEach(function (b) { if (+b.getAttribute('data-czg-pair-idx') === k) { try { b.focus(); } catch (e) { /* not focusable */ } } });
             return;
         }
+        if (t.closest('[data-czg-sim]')) { simulate(); return; }
         if (t.closest('#czg-primary')) {
             if (S.busy) return;
             if (S.phase === 'done') close();
@@ -1669,5 +1852,5 @@
     });
 
     window.CzGate = { open: open, close: close, state: function () { return S; },
-                      _check: check, _create: create, _plan: plan };
+                      _check: check, _create: create, _plan: plan, _simulate: simulate };
 })();
