@@ -235,7 +235,7 @@ def check_gates(req: RunRequest, *, session: dict | None, lim: dict, settings: d
                         "run_key": o.get("run_key")},
                 "how": f"`{o.get('name')}` from before SM restarted is still running (its node process, PID "
                        f"{o.get('worker_pid')}, is alive) and may be driving the OPX; SM will not collect what it "
-                       "writes. Wait until it ends -- this clears itself then -- or ask the human to stop it"}
+                       "writes. Wait until it ends and this clears itself, or ask the human to stop it"}
     dead_ids = {it.get("id") for it in left["dead"]}
     # review R1-C1: the chassis runs its queue FIFO -- a person's queued rows, or a leftover from a
     # previous life, would run FIRST under the click that authorized only the agent's node
@@ -542,7 +542,7 @@ def failure_info(cls: str | None, error: str | None, log_tail: str) -> dict | No
                 what = f"could not connect to the QM server: {first}" if first else "could not connect to the QM server"
             how = (f"the node could not reach the QM server at {where}{clu}{why}, so it never reached the "
                    "hardware and nothing was applied. Check the network and the chip's network config (host, port, "
-                   "cluster_name). Do NOT retry until that is fixed -- it fails the same way; tell the human")
+                   "cluster_name). Do NOT retry until that is fixed: it fails the same way; tell the human")
         else:
             what = f"lost the connection to the QM server{' at ' + d['target'] if d['target'] else ''}{why}"
             how = (f"the connection to the QM server dropped while the node ran{why}; nothing was applied. Check "
@@ -554,7 +554,7 @@ def failure_info(cls: str | None, error: str | None, log_tail: str) -> dict | No
         what = "the hardware is busy: another quantum machine or job holds what this node needs"
         if waited:
             what += f" (waited {waited.group(1)}s for it to free)"
-        how = ("the OPX is held elsewhere (another quantum machine, another user or session) -- hardware "
+        how = ("the OPX is held elsewhere (another quantum machine, another user or session). Hardware "
                "contention: do NOT retry now; tell the human, who decides when the hardware is free")
         return {"what": what, "how": how, "retry": "after_it_ends"}
     if cls == "timeout":
@@ -615,7 +615,7 @@ def interrupted_error(m: dict) -> str:
     wp = m.get("worker_pid")
     if wp and agent_session.pid_alive(wp):
         err += (f"; its node process (PID {wp}) was still running at the restart and may still be driving the "
-                "OPX -- SM will not collect what it writes")
+                "OPX. SM will not collect what it writes")
     return err
 
 
@@ -697,7 +697,7 @@ class Registry:
         targets = " ".join(m.get("targets") or []) or "(node defaults)"
         line = f"✗ ran `{m.get('node')}` on {targets} interrupted: {err}; nothing was applied"
         if disarmed:
-            line += "; the session was disarmed -- running again takes a person's Start on a plan"
+            line += "; the session was disarmed. Running again takes a person's Start on a plan"
         name = m.get("chip_name")
         if name:
             try:
@@ -1041,7 +1041,7 @@ class Registry:
         elif resized:
             # review R1-M6: a list that changed SHAPE cannot be staged leaf by leaf -- the overlapping cells
             # would land as a matrix that never existed
-            why = f"list resized at {', '.join(sorted(resized)[:3])} -- SM stages leaves, not a new shape; " \
+            why = f"list resized at {', '.join(sorted(resized)[:3])}. SM stages leaves, not a new shape; " \
                   "apply the run's state from Datasets → Apply to chip"
         elif mode != "auto":
             why = f"mode {mode}"

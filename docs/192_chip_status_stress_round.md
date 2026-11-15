@@ -1,5 +1,7 @@
 # 192 — Chip Status, pressed the same way
 
+> **Removed (2026-11-15):** the Gaussian CZ builder (`/pulse/gaussian-cz`, `/api/pulse/gaussian-cz*`, the "Gaussian CZ from cz_flattop" kind of + New pulse, the several-pairs dialog) and the pair page's experimental "+ Add gate" form (`/pair/<name>/gate/new`, `POST /pair/<name>/gate`) are gone. A CZ gate is created only in the CZ gate dialog (+ New pulse -> "CZ gate", the gate list on a pair page, or the CZ plan). What follows about them is history.
+
 Third surface of the stress round the user ordered (Pulses → Agent → **Chip
 Status** → Live Edit + Json Tree). Same method: press what the page offers with a
 real mouse and real keys, measure what it does, and believe the measurement over

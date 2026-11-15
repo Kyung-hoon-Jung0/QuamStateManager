@@ -9423,10 +9423,7 @@ tr.gen-pop-row-linked > td {
 [data-theme="dark"] #gen-message.gen-message-warn { border-left-color: color-mix(in srgb, var(--color-warning-text) 65%, transparent); }
 [data-theme="dark"] #gen-message.gen-message-error { border-left-color: color-mix(in srgb, var(--color-error-text) 65%, transparent); }
 
-/* ===== Add-gate UI (pair detail page) ============================== */
-.pair-add-gate-area {
-    margin: 0.8rem 0 1.2rem;
-}
+/* ===== Waveform view buttons (.add-gate-btn: the name stays for its JS hooks) ===== */
 .add-gate-btn {
     background: transparent;
     border: 1px dashed var(--color-border, #888);
@@ -9442,93 +9439,6 @@ tr.gen-pop-row-linked > td {
 .add-gate-btn:hover {
     border-color: var(--color-accent, #5b8def);
     color: var(--color-accent, #5b8def);
-}
-.add-gate-experimental {
-    font-size: 0.7rem;
-    padding: 0.05rem 0.4rem;
-    border-radius: 999px;
-    background: var(--color-warning-bg, rgba(200, 144, 32, 0.18));
-    color: var(--color-warning-text, #c89020);
-    border: 1px solid var(--color-warning-border, rgba(200, 144, 32, 0.4));
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-}
-.add-gate-form-wrap {
-    border: 1px solid var(--color-border, #888);
-    border-radius: 6px;
-    padding: 0.9rem 1rem;
-    background: var(--color-bg-elevated, rgba(0, 0, 0, 0.04));
-}
-.add-gate-form-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.6rem;
-}
-.add-gate-cancel {
-    background: transparent;
-    border: 0;
-    color: var(--color-text-muted, #888);
-    font-size: 1.2rem;
-    cursor: pointer;
-    line-height: 1;
-    padding: 0 0.3rem;
-}
-.add-gate-cancel:hover { color: var(--color-error-text, #c84432); }
-.add-gate-row {
-    display: grid;
-    grid-template-columns: 8rem 1fr;
-    gap: 0.5rem;
-    align-items: center;
-    margin-bottom: 0.45rem;
-}
-.add-gate-row label { font-size: 0.85rem; }
-.add-gate-row input, .add-gate-row select {
-    padding: 0.25rem 0.4rem;
-    font-size: 0.85rem;
-    margin: 0;
-}
-.add-gate-fields { margin: 0.6rem 0; padding: 0.4rem 0.6rem; border: 1px solid var(--color-border, #888); border-radius: 4px; }
-.add-gate-fields legend { font-size: 0.8rem; padding: 0 0.4rem; }
-.add-gate-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.4rem 0.8rem;
-}
-.add-gate-field { display: flex; flex-direction: column; font-size: 0.8rem; gap: 0.15rem; }
-.add-gate-field input { font-size: 0.85rem; padding: 0.2rem 0.4rem; margin: 0; }
-.add-gate-preview-wrap { margin: 0.5rem 0; font-size: 0.8rem; }
-.add-gate-preview {
-    background: var(--color-bg, #1c1f24);
-    color: var(--color-text, #ddd);
-    padding: 0.5rem 0.7rem;
-    border-radius: 4px;
-    max-height: 14rem;
-    overflow: auto;
-    font-size: 0.75rem;
-    line-height: 1.3;
-}
-.add-gate-actions {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 0.8rem;
-    margin-top: 0.6rem;
-}
-.add-gate-submit {
-    background: var(--color-accent, #5b8def);
-    color: #fff;
-    border: 0;
-    padding: 0.35rem 0.9rem;
-    border-radius: 4px;
-    font-size: 0.85rem;
-    cursor: pointer;
-}
-.add-gate-warning {
-    color: var(--color-warning-text, #c89020);
-    font-size: 0.75rem;
-    flex: 1;
-    text-align: right;
 }
 
 /* ===== Config Viewer (Surface A/B/C) ============================== */
@@ -14414,24 +14324,12 @@ tr.diag-row-collapsed { display: none; }
     box-shadow: 0 0 0 1px var(--color-error-border) inset;
 }
 
-/* docs/190 F20: a form of four 2-digit numbers is a ROW, not a column — full
-   width inputs made it ~600px tall and put its only submit below the fold. */
-.gcz-params-row { display: flex; flex-wrap: wrap; gap: .6rem 1rem; }
-.gcz-params-row > label { flex: 0 1 auto; font-size: .85em; margin: 0; }
-.gcz-params-row > label input { width: 7.5rem; margin-top: .15rem; }
-#gcz-root .gcz-about > summary { cursor: pointer; font-size: .82em; margin: .2rem 0 .5rem; }
-#gcz-root label > select { margin-top: .15rem; }
-
 /* docs/190 F18: in a short pane the pulse VALUES come first and the preview
    follows them — a 140px curve that costs every property row is a bad trade. */
 .pulse-detail-compact { display: flex; flex-direction: column; }
 .pulse-detail-compact > .pulse-plot-bar,
 .pulse-detail-compact > .pulse-view-bar,
 .pulse-detail-compact > #pulse-detail-plot { order: 9; }
-
-/* docs/190 F53: the Gaussian CZ header laid its close x under the title, unlike
-   every other inspector header; and Pico stretches a submit to 100%. */
-#gcz-root button[type=submit].btn-sm { width: auto; }
 
 /* docs/190 F38: a pointer that resolves and one that DANGLES wore the same
    badge -- only the title text differed, so nothing on screen said a reference
@@ -15966,34 +15864,21 @@ td.gen-gates { min-width: 12rem; }
 .gen-add-prop .gen-add-field input { width: 9rem; margin: 0; padding: 0.15rem 0.4rem; height: auto; }
 .landing-agent-line { margin: 0.5rem 0 0; font-size: 0.85em; }
 
-/* Gaussian CZ "to several pairs" dialog */
-/* Gaussian CZ to several pairs: the same kit parts as the rules' Apply dialog (D-56). */
-#gcz-several .gcz-sev-top { padding: var(--ui-gap-2) var(--ui-gap-4) 0; }
-#gcz-several .gcz-sev-top > .ui-callout { margin-top: var(--ui-gap-1); }
-#gcz-several .gcz-sev-select { display: flex; flex-wrap: wrap; gap: var(--ui-gap-2); align-items: center; margin: var(--ui-gap-2) 0 0; }
-#gcz-several .gcz-sev-select-label { font-size: var(--ui-fs-sm); color: var(--ui-text-2); }
-#gcz-several .gcz-sev-group { display: flex; gap: var(--ui-gap-2); align-items: flex-start; }
-#gcz-several .gcz-sev-group > details { flex: 1 1 auto; margin: 0; }
-#gcz-several .gcz-sev-tbl { width: 100%; }
-#gcz-several .gcz-sev-names { max-width: 18rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#gcz-several .gcz-sev-reason { display: flex; gap: var(--ui-gap-3); font-size: var(--ui-fs-sm); padding: var(--ui-gap-1) 0; }
-#gcz-several .gcz-sev-reason-pairs { color: var(--ui-text-2); }
-#gcz-several .gcz-sev-foot > .ui-note { margin-right: auto; }
 /* Generate Config -- addition rules: Apply / Review / confirm dialogs, menus, Rules card.
    The shell, head, body and foot are the kit's ui-dialog parts (D-48); this block only
    undoes Pico's bare <dialog> box and lays out what is particular to these dialogs. */
 /* Pico's bare ``dialog`` is a full-viewport flex ROW meant to centre an
    <article>; these dialogs have none, so undo that box (docs: Chrome showed
    every part side by side as columns). */
-dialog.gen-rule-dlg, dialog#gcz-several { display: none; position: fixed; inset: 0; margin: auto;
+dialog.gen-rule-dlg { display: none; position: fixed; inset: 0; margin: auto;
   min-width: 0; min-height: 0; height: fit-content; flex-direction: column; align-items: stretch;
   max-width: calc(100vw - 2 * var(--ui-gap-4)); }
-dialog.gen-rule-dlg[open], dialog#gcz-several[open] { display: flex; }
+dialog.gen-rule-dlg[open] { display: flex; }
 /* Only the list scrolls; the head and the footer (Add to N pairs) stay in view. */
 dialog.gen-rule-dlg > * { flex: 0 0 auto; }
 dialog.gen-rule-dlg > .gen-rule-body, dialog.gen-rule-dlg > .gen-rule-rv-list { flex: 1 1 auto; min-height: 0; overflow: auto; }
 dialog.gen-rule-dlg.gen-rule-review { overflow: hidden; }
-dialog.gen-rule-dlg::backdrop, dialog#gcz-several::backdrop { background: rgba(0, 0, 0, .35); }
+dialog.gen-rule-dlg::backdrop { background: rgba(0, 0, 0, .35); }
 /* Review: one ui-item per pair; the moves table, then Details (left) and the actions (right). */
 .gen-rule-rv-moves { margin: 0; align-self: flex-start; min-width: 60%; }
 .gen-rule-rv-other { font-size: var(--ui-fs-sm); }
@@ -16018,9 +15903,9 @@ dialog.gen-rule-dlg::backdrop, dialog#gcz-several::backdrop { background: rgba(0
 .gen-rule-select-label { font-size: var(--ui-fs-sm); color: var(--ui-text-2); }
 /* Pico styles every [role=group] as a full-width joined button bar; these rows are a
    label + one kit segmented control + a note, so undo that (same leak as .bulk-segmented). */
-.gen-rule-select[role=group], #gcz-several .gcz-sev-select[role=group] { width: auto; margin-bottom: 0; border-radius: 0; box-shadow: none; overflow: visible; }
-.gen-rule-select[role=group] > *, #gcz-several .gcz-sev-select[role=group] > * { flex: 0 0 auto; width: auto; margin: 0; border-radius: 0; }
-.gen-rule-select[role=group] > .ui-segmented, #gcz-several .gcz-sev-select[role=group] > .ui-segmented { border-radius: var(--ui-r-md); }
+.gen-rule-select[role=group] { width: auto; margin-bottom: 0; border-radius: 0; box-shadow: none; overflow: visible; }
+.gen-rule-select[role=group] > * > * { flex: 0 0 auto; width: auto; margin: 0; border-radius: 0; }
+.gen-rule-select[role=group] > .ui-segmented > .ui-segmented { border-radius: var(--ui-r-md); }
 /* FB-07 B: a text selection must be visible in every editor, both themes.
  * Native inputs used the browser's own dark-scheme highlight (a dim blue on
  * the near-black field), and the CodeMirror panel drew its selection UNDER an

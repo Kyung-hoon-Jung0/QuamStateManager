@@ -85,6 +85,8 @@ def synth_folder(tmp_path, request):
         }
     if getattr(request, "param", None) == "null_leaf":
         state["qubits"]["qA1"]["rb_details"] = {"alpha_stderr": None, "epc_stderr": 0.004}
+        state["qubits"]["qA1"]["rb_null_parent"] = None
+        state["qubits"]["qA1"]["rb_ptr"] = "#/qubits/qA1/rb_details/alpha_stderr"
     if getattr(request, "param", None) == "new_key":
         state["qubits"]["qA1"]["rb_details"] = {f"k{i}": float(i) for i in range(10)}
         state["qubits"]["qA1"]["rb_list"] = [{"a": 1.0}]
@@ -798,7 +800,7 @@ class TestRun:
         fake_run.extra = {"T1": {"brand_new_key": 1}}
         res = _run(c).get_json()["result"]
         assert res["applied"] is False
-        assert sorted(u["path"] for u in res["unstaged"]) == ["qubits.qA1.T1", "qubits.qA1.T1.brand_new_key"] and "new/removed key" in res["unstaged"][0]["why"]
+        assert sorted(u["path"] for u in res["unstaged"]) == ["qubits.qA1.T1", "qubits.qA1.T1.brand_new_key"] and res["unstaged"][0]["why"].startswith("removed key")
         assert "cannot be staged" in res["apply_error"] and "nothing was written" in res["apply_error"]
         assert res["approval"] and "apply refused" in res["why_held"], "the writes wait for a person instead of half-landing"
         from quam_state_manager.core import approvals as apm
@@ -1249,6 +1251,98 @@ def test_number_to_null_on_existing_leaf_is_staged(c, inst, synth_folder):
     assert "epc_stderr" in d and d["epc_stderr"] is None
 
 
+def _live_rb(synth_folder):
+    return json.loads((synth_folder / "state.json").read_text(encoding="utf-8"))["qubits"]["qA1"]
+
+
+@pytest.mark.parametrize("synth_folder", ["null_leaf"], indirect=True)
+@pytest.mark.parametrize("new", [0.25, 7, "fit failed", [1.0, 2.0], {"a": 1.0}],
+                         ids=["float", "int", "str", "list", "dict"])
+def test_null_leaf_takes_the_proposed_value_with_its_own_type(c, inst, synth_folder, new):
+    """An existing null leaf is an ordinary edit: the edit door's rule for an
+    old value of null keeps the new value as it is, with its own type."""
+    ap = _null_leaf_approval(c, inst, [
+        {"path": "qubits.qA1.rb_details.epc_stderr", "old": 0.004, "new": 0.005},
+        {"path": "qubits.qA1.rb_details.alpha_stderr", "old": None, "new": new, "created": True}])
+    res = c.post(f"/api/agent/approvals/{ap['id']}/approve", json={}, headers=HUMAN).get_json()
+    assert res["ok"] and res["stage"]["applied"] and res["stage"]["staged"] == 2, res
+    v = _live_rb(synth_folder)["rb_details"]["alpha_stderr"]
+    assert v == new and type(v) is type(new)
+    assert approvals.get(str(inst), _chip(c), ap["id"])["status"] == "approved"
+
+
+@pytest.mark.parametrize("synth_folder", ["null_leaf"], indirect=True)
+def test_null_leaf_undo_and_redo_write_live(c, inst, synth_folder):
+    """Ctrl+Z after the approval puts JSON null back in the live file (key kept);
+    Ctrl+Y puts the number back."""
+    ap = _null_leaf_approval(c, inst, [
+        {"path": "qubits.qA1.rb_details.alpha_stderr", "old": None, "new": 0.0123, "created": True}])
+    assert c.post(f"/api/agent/approvals/{ap['id']}/approve", json={}, headers=HUMAN).get_json()["stage"]["applied"]
+    assert _live_rb(synth_folder)["rb_details"]["alpha_stderr"] == 0.0123
+    u = c.post("/undo", headers={**HUMAN, "Accept": "application/json"})
+    assert u.status_code == 200, u.get_data(as_text=True)[:300]
+    d = _live_rb(synth_folder)["rb_details"]
+    assert "alpha_stderr" in d and d["alpha_stderr"] is None
+    y = c.post("/redo", headers={**HUMAN, "Accept": "application/json"})
+    assert y.status_code == 200, y.get_data(as_text=True)[:300]
+    assert _live_rb(synth_folder)["rb_details"]["alpha_stderr"] == 0.0123
+
+
+@pytest.mark.parametrize("synth_folder", ["null_leaf"], indirect=True)
+def test_key_under_a_null_parent_is_refused_and_named(c, inst, synth_folder):
+    """A null container is not a place for keys: the write is a new key,
+    refused as a whole, and the answer names the path and what to do."""
+    res = _refused(c, synth_folder, [
+        {"path": "qubits.qA1.rb_details.alpha_stderr", "old": None, "new": 0.1},
+        {"path": "qubits.qA1.rb_null_parent.x", "old": None, "new": 1.0, "created": True}])
+    assert [u["path"] for u in res["unstaged"]] == ["qubits.qA1.rb_null_parent.x"]
+    assert "under 'qubits.qA1.rb_null_parent'" in res["unstaged"][0]["why"] and "(null)" in res["unstaged"][0]["why"]
+    assert "qubits.qA1.rb_null_parent.x" in res["error"] and "Apply to chip" in res["error"] and "Reject" in res["error"]
+    assert " -- " not in res["error"]
+
+
+@pytest.mark.parametrize("synth_folder", ["new_key"], indirect=True)
+def test_two_true_new_keys_refused_message_lists_both(c, inst, synth_folder):
+    rows = [{"path": f"qubits.qA1.rb_details.k{i}", "old": float(i), "new": float(i) + 0.5} for i in range(10)]
+    rows += [{"path": "qubits.qA1.rb_scalar.x", "old": None, "new": 1.0, "created": True},
+             {"path": "qubits.qA1.rb_list.3.a", "old": None, "new": 1.0, "created": True}]
+    res = _refused(c, synth_folder, rows)
+    assert res["error"].startswith("2 of 12 value(s) cannot be staged"), res["error"]
+    assert "qubits.qA1.rb_scalar.x" in res["error"] and "qubits.qA1.rb_list.3.a" in res["error"]
+    assert "nothing was written" in res["error"] and "Apply to chip" in res["error"]
+
+
+@pytest.mark.parametrize("synth_folder", ["null_leaf"], indirect=True)
+def test_pointer_to_a_null_leaf_writes_the_target(c, inst, synth_folder):
+    """A write through a pointer alias lands on the null target, never on the pointer string."""
+    ap = _null_leaf_approval(c, inst, [{"path": "qubits.qA1.rb_ptr", "old": None, "new": 0.031}])
+    res = c.post(f"/api/agent/approvals/{ap['id']}/approve", json={}, headers=HUMAN).get_json()
+    assert res["ok"] and res["stage"]["applied"], res
+    q = _live_rb(synth_folder)
+    assert q["rb_ptr"] == "#/qubits/qA1/rb_details/alpha_stderr" and q["rb_details"]["alpha_stderr"] == 0.031
+
+
+@pytest.mark.parametrize("synth_folder", ["null_leaf"], indirect=True)
+def test_null_leaf_edited_meanwhile_is_not_overwritten_silently(c, inst, synth_folder):
+    """The proposal says old=null but a person set a number since. An edit still in
+    the tray refuses the press; once applied, the card shows the number SM holds,
+    so the press means what the presser could see."""
+    ap = _null_leaf_approval(c, inst, [
+        {"path": "qubits.qA1.rb_details.alpha_stderr", "old": None, "new": 0.0123, "created": True}])
+    assert c.post("/field/edit", data={"dot_path": "qubits.qA1.rb_details.alpha_stderr",
+                                       "value": "0.5"}).status_code == 200
+    r1 = c.post(f"/api/agent/approvals/{ap['id']}/approve", json={}, headers=HUMAN)
+    assert r1.status_code == 409 and "staged edit" in r1.get_json()["error"], r1.get_json()
+    assert _live_rb(synth_folder)["rb_details"]["alpha_stderr"] is None
+    assert approvals.get(str(inst), _chip(c), ap["id"])["status"] == "pending"
+    with c.application.app_context():
+        n = len(_ctx(c)["store"].change_log)
+    a = c.post("/state/apply-to-live", data={"seen_changes": str(n)}, headers={**HUMAN, "Accept": "application/json"})
+    assert a.status_code == 200, a.get_data(as_text=True)[:300]
+    card = c.get("/api/agent/chat/cards?after=0").get_json()["live"]["approvals"][0]["writes"][0]
+    assert card["old"] is None and card["now_known"] is True and card["now"] == 0.5, card
+
+
 # ---------------------------------------------- a new key in an existing dict
 
 def _ctx(c):
@@ -1317,7 +1411,7 @@ def test_new_key_in_new_list_element_refuses_whole(c, inst, synth_folder):
     res = _refused(c, synth_folder, [
         {"path": "qubits.qA1.rb_details.k0", "old": 0.0, "new": 9.0},
         {"path": "qubits.qA1.rb_list.1.a", "old": None, "new": 2.0, "created": True}])
-    assert "new/removed key" in res["unstaged"][0]["why"]
+    assert res["unstaged"][0]["why"].startswith("new key inside the list 'qubits.qA1.rb_list'"), res
 
 
 @pytest.mark.parametrize("synth_folder", ["new_key"], indirect=True)
@@ -1352,3 +1446,202 @@ def test_card_marks_new_keys_without_a_cannot_stage_note(c, inst, synth_folder):
         assert card[p].get("new_key") is True and card[p].get("created") is True and "now" not in card[p], card[p]
     assert not card["qubits.qA1.rb_details.k0"].get("new_key")
     assert not card["qubits.qA1.rb_scalar.x"].get("new_key"), "a refused row keeps the cannot-stage note"
+
+
+# ---------------------------------------------- non-finite numbers and text into a null leaf
+
+def _np():
+    return pytest.importorskip("numpy")
+
+
+@pytest.mark.parametrize("synth_folder", ["null_leaf"], indirect=True)
+@pytest.mark.parametrize("kind", ["nan", "inf", "-inf", "np_nan", "np32_inf", "list", "dict"])
+def test_non_finite_value_is_refused_whole_and_named(c, inst, synth_folder, kind):
+    """NaN / Infinity is not JSON: the approval door refuses the whole card,
+    names the field, and the live file stays byte-identical."""
+    vals = {"nan": float("nan"), "inf": float("inf"), "-inf": float("-inf"),
+            "np_nan": "np_nan", "np32_inf": "np32_inf", "list": [1.0, float("nan")], "dict": {"a": 1.0, "b": float("inf")}}
+    v = vals[kind]
+    if v == "np_nan":
+        v = _np().float64("nan")
+    elif v == "np32_inf":
+        v = _np().float32("inf")
+    original = (synth_folder / "state.json").read_bytes()
+    with c.application.app_context():
+        from quam_state_manager.web import routes as r
+        store = _ctx(c)["store"]
+        n = len(store.change_log)
+        res = aa._stage_writes(c.application, str(r._active_path()), [
+            {"path": "qubits.qA1.rb_details.epc_stderr", "old": 0.004, "new": 0.005},
+            {"path": "qubits.qA1.rb_details.alpha_stderr", "old": None, "new": v}],
+            "g-nf", "by_claude", None, True)
+        assert res["staged"] == 0 and not res["applied"], res
+        assert len(store.change_log) == n
+    assert [u["path"] for u in res["unstaged"]] == ["qubits.qA1.rb_details.alpha_stderr"]
+    assert "qubits.qA1.rb_details.alpha_stderr" in res["error"] and "not a finite number" in res["error"], res
+    if kind == "list":
+        assert "alpha_stderr.1'" in res["error"]
+    assert (synth_folder / "state.json").read_bytes() == original
+
+
+@pytest.mark.parametrize("synth_folder", ["null_leaf"], indirect=True)
+def test_non_finite_approval_stays_pending(c, inst, synth_folder):
+    ap = _null_leaf_approval(c, inst, [{"path": "qubits.qA1.rb_details.alpha_stderr", "old": None, "new": float("nan")}])
+    res = c.post(f"/api/agent/approvals/{ap['id']}/approve", json={}, headers=HUMAN)
+    assert res.status_code == 409 and "not a finite number" in res.get_json()["error"]
+    assert approvals.get(str(inst), _chip(c), ap["id"])["status"] == "pending"
+    assert "NaN" not in (synth_folder / "state.json").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("synth_folder", ["null_leaf"], indirect=True)
+@pytest.mark.parametrize("new", [float("nan"), [1.0, float("inf")]])
+def test_card_press_never_writes_the_null_a_nonfinite_proposal_shows(c, inst, synth_folder, new):
+    """The card shows a NaN proposal as null and sends that null back: the press
+    is refused, the card says why, and a typed value still writes."""
+    path = "qubits.qA1.rb_details.epc_stderr"
+    original = (synth_folder / "state.json").read_bytes()
+    ap = _null_leaf_approval(c, inst, [{"path": path, "old": 0.004, "new": new}])
+    rows = c.get("/api/agent/chat/cards?after=0").get_json()["live"]["approvals"][0]["writes"]
+    assert rows[0].get("nonfinite") is True, rows[0]
+    sent = {"writes": [{"path": w["path"], "new": w["new"]} for w in rows]}   # what approve() posts
+    res = c.post(f"/api/agent/approvals/{ap['id']}/approve", json=sent, headers=HUMAN)
+    assert res.status_code == 409 and "not a finite number" in res.get_json()["error"], res.get_json()
+    assert path in res.get_json()["error"]
+    assert approvals.get(str(inst), _chip(c), ap["id"])["status"] == "pending"
+    assert (synth_folder / "state.json").read_bytes() == original
+    typed = 0.006          # the leaf holds a float: a typed float writes, whatever the node proposed
+    ok = c.post(f"/api/agent/approvals/{ap['id']}/approve",
+                json={"writes": [{"path": path, "new": typed}]}, headers=HUMAN).get_json()
+    assert ok["stage"]["applied"], ok
+    assert _live_rb(synth_folder)["rb_details"]["epc_stderr"] == typed
+
+
+@pytest.mark.parametrize("synth_folder", ["null_leaf"], indirect=True)
+def test_card_flags_only_nonfinite_rows(c, inst, synth_folder):
+    _null_leaf_approval(c, inst, [{"path": "qubits.qA1.rb_details.epc_stderr", "old": 0.004, "new": 0.005}])
+    rows = c.get("/api/agent/chat/cards?after=0").get_json()["live"]["approvals"][0]["writes"]
+    assert not rows[0].get("nonfinite"), rows[0]
+
+
+@pytest.mark.parametrize("synth_folder", ["null_leaf"], indirect=True)
+def test_large_finite_number_still_stages(c, inst, synth_folder):
+    ap = _null_leaf_approval(c, inst, [{"path": "qubits.qA1.rb_details.alpha_stderr", "old": None, "new": 1e308}])
+    res = c.post(f"/api/agent/approvals/{ap['id']}/approve", json={}, headers=HUMAN).get_json()
+    assert res["stage"]["applied"], res
+    assert _live_rb(synth_folder)["rb_details"]["alpha_stderr"] == 1e308
+
+
+def test_nonfinite_where_is_one_answer_for_every_shape():
+    from quam_state_manager.core.type_policy import nonfinite_where
+    np = _np()
+    for ok in (0.1, 7, True, None, "nan", [1.0, 2], {"a": 1e308}, np.float64(1.5), np.int64(3)):
+        assert nonfinite_where(ok) is None, ok
+    assert nonfinite_where(float("nan")) == ""
+    assert nonfinite_where(np.float32("-inf")) == ""
+    assert nonfinite_where([0.0, [1.0, float("inf")]]) == ".1.1"
+    assert nonfinite_where({"x": {"y": np.float64("nan")}}) == ".x.y"
+
+
+def test_state_edit_refuses_non_finite_before_sending():
+    from quam_state_manager import mcp
+    for v in (float("nan"), [1.0, float("inf")], "[NaN]", {"a": float("-inf")}):
+        with pytest.raises(mcp.ToolError, match="not a finite number"):
+            mcp._refuse_nonfinite("qubits.qA1.x", v)
+    for v in (0.1, "1e-3", "[1, 2]", None, "nan"):
+        mcp._refuse_nonfinite("qubits.qA1.x", v)
+
+
+@pytest.mark.parametrize("synth_folder", ["null_leaf"], indirect=True)
+def test_card_says_text_or_reference_goes_into_a_null_leaf(c, inst, synth_folder):
+    _null_leaf_approval(c, inst, [
+        {"path": "qubits.qA1.rb_details.alpha_stderr", "old": None, "new": "1e-3"},
+        {"path": "qubits.qA1.rb_details.alpha_stderr", "old": None, "new": "#/qubits/qA1/rb_details/epc_stderr"},
+        {"path": "qubits.qA1.rb_details.alpha_stderr", "old": None, "new": "#../nope_missing"},
+        {"path": "qubits.qA1.rb_details.alpha_stderr", "old": None, "new": 0.5},
+        {"path": "qubits.qA1.rb_details.epc_stderr", "old": 0.004, "new": "text"}])
+    rows = c.get("/api/agent/chat/cards?after=0").get_json()["live"]["approvals"][0]["writes"]
+    assert rows[0].get("text_into_null") is True and not rows[0].get("becomes_ref"), rows[0]
+    assert rows[1]["becomes_ref"] == "qubits.qA1.rb_details.epc_stderr" and rows[1]["ref_resolves"] is True, rows[1]
+    assert not rows[1].get("text_into_null")
+    assert rows[2]["becomes_ref"] and rows[2]["ref_resolves"] is False, rows[2]
+    for r_ in rows[3:]:
+        assert not r_.get("text_into_null") and not r_.get("becomes_ref"), r_
+
+
+@pytest.mark.parametrize("w, merged, starts", [
+    ({"path": "a.b", "deleted": True}, {"a": {"b": 1}}, "removed key:"),
+    ({"path": "a.n", "new": {"x": 1}, "created": True}, {"a": {}}, "new key holding a group of values"),
+    ({"path": "a.l.0.x", "new": 1, "created": True}, {"a": {"l": [1]}}, "new key inside the list 'a.l': an approval"),
+    ({"path": "a.s.x", "new": 1, "created": True}, {"a": {"s": 3}}, "new key under 'a.s', which holds a single value (int)"),
+    ({"path": "a.m.0", "new": 1, "created": True}, {"a": {}}, "new key with a numbered part under 'a'"),
+    ({"path": "z.q", "new": 1, "created": True}, {"a": {}}, "new key with"),
+], ids=["deleted", "container", "list", "scalar", "numbered", "missing-root-numberless"])
+def test_structural_why_names_each_shape(w, merged, starts):
+    """Each refused shape gets its own plain reason (the old answer was one
+    generic line for all of them)."""
+    from types import SimpleNamespace
+    why = aa._structural_why(SimpleNamespace(merged=merged), w, set())
+    if starts == "new key with":
+        assert why == "new key the chip does not have", why
+    else:
+        assert why.startswith(starts), why
+
+
+def test_unstaged_message_lists_six_then_counts_the_rest():
+    rows = [{"path": f"q.p{i}", "why": "new key the chip does not have"} for i in range(8)]
+    msg = aa._unstaged_message(rows, 9)
+    assert msg.startswith("8 of 9 value(s) cannot be staged: q.p0 (")
+    assert "q.p5" in msg and "q.p6" not in msg and " and 2 more" in msg
+    assert msg.endswith(aa.STRUCTURAL_WHAT_TO_DO)
+    plain = aa._unstaged_message([{"path": "q.x", "why": "the value is odd"}], 1)
+    assert plain.endswith("nothing was written"), plain
+
+
+def test_nonfinite_masked_is_judged_element_by_element():
+    from quam_state_manager.web.agent_api import _nonfinite_masked
+    nan = float("nan")
+    assert _nonfinite_masked(nan, None) is True
+    assert _nonfinite_masked([nan, 2.0], [None, 3.0]) is True       # one element edited
+    assert _nonfinite_masked([nan, 2.0], [5.0, 3.0]) is False
+    assert _nonfinite_masked({"a": [1.0, nan]}, {"a": [1.0, None]}) is True
+    assert _nonfinite_masked({"a": [1.0, nan]}, {"a": [1.0, 2.0]}) is False
+    assert _nonfinite_masked([nan, 2.0], [3.0]) is False             # shorter list: changed
+    assert _nonfinite_masked([nan], 4.0) is False                    # other shape: changed
+    assert _nonfinite_masked([1.0, 2.0], [None, None]) is False      # nothing was non-finite
+
+
+@pytest.mark.parametrize("synth_folder", ["null_leaf"], indirect=True)
+def test_card_press_refuses_a_masked_element_and_writes_a_typed_list(c, inst, synth_folder):
+    """[NaN, 2.0] sent back as [null, 3.0] is refused (409, names the path);
+    sent back as [5.0, 3.0] it writes."""
+    path = "qubits.qA1.rb_details.alpha_stderr"
+    original = (synth_folder / "state.json").read_bytes()
+    ap = _null_leaf_approval(c, inst, [{"path": path, "old": None, "new": [float("nan"), 2.0]}])
+    res = c.post(f"/api/agent/approvals/{ap['id']}/approve",
+                 json={"writes": [{"path": path, "new": [None, 3.0]}]}, headers=HUMAN)
+    assert res.status_code == 409 and path in res.get_json()["error"], res.get_json()
+    assert (synth_folder / "state.json").read_bytes() == original
+    ok = c.post(f"/api/agent/approvals/{ap['id']}/approve",
+                json={"writes": [{"path": path, "new": [5.0, 3.0]}]}, headers=HUMAN).get_json()
+    assert ok["stage"]["applied"], ok
+    assert _live_rb(synth_folder)["rb_details"]["alpha_stderr"] == [5.0, 3.0]
+
+
+def test_orphan_running_refusal_text_has_no_double_dash():
+    """The text a person reads for a run left from before a restart uses plain
+    punctuation, not a spaced double dash."""
+    import ast
+    from pathlib import Path as _P
+    src = (_P(__file__).resolve().parents[1] / "quam_state_manager/core/agent_runs.py").read_text(
+        encoding="utf-8")
+    hows = []
+    for n in ast.walk(ast.parse(src)):
+        if isinstance(n, ast.Dict):
+            kv = {k.value: v for k, v in zip(n.keys, n.values) if isinstance(k, ast.Constant)}
+            r = kv.get("refused")
+            if isinstance(r, ast.Constant) and r.value == "orphan_running" and "how" in kv:
+                hows.append("".join(c.value for c in ast.walk(kv["how"])
+                                    if isinstance(c, ast.Constant) and isinstance(c.value, str)))
+    mine = [h for h in hows if "ask the human to stop it" in h]
+    assert len(hows) >= 1 and len(mine) == 1, hows
+    assert " -- " not in mine[0], mine[0]

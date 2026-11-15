@@ -80,7 +80,7 @@ PERSON_ONLY = {
     "main.generate_proposal_dismiss": "dismissing an agent's proposal",
     "main.generate_proposals_context": "recording the wizard's draft chip",
     "main.generate_rules_apply": "adding a gate rule to pairs",
-    "main.api_pulse_gaussian_cz_apply_several": "adding Gaussian CZ pulses to several pairs",
+    "main.api_cz_gate_create": "creating a CZ gate",
     "main.api_cz_gate_make_active": "making a CZ gate the pair's active gate",
 }
 

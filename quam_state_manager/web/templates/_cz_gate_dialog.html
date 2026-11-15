@@ -1,0 +1,107 @@
+{#- The CZ gate dialog (one door for every entry point). The server renders the
+    shell from UI-kit parts and hands the chip data as one JSON block; cz-gate.js
+    builds the form from it, asks /api/pulse/cz-gate/plan on every change and
+    /check before /create. Nothing here writes the live chip.
+    Reading order: the verdict banner first, then the key numbers, then each
+    group in its own panel with a one-phrase summary. -#}
+{%- from '_ui.html' import ui_callout -%}
+<dialog id="czg-dialog" class="ui-dialog ui-dialog--xl czg" aria-labelledby="czg-title">
+    <div class="ui-dialog-head">
+        <h2 id="czg-title" class="ui-head-title">New CZ gate</h2>
+        <div id="czg-chips" class="ui-toolbar czg-chips" role="toolbar" aria-label="The pair"></div>
+        <button type="button" class="ui-btn-icon" data-czg-close aria-label="Close" title="Close">&#10005;</button>
+    </div>
+    <div class="ui-dialog-body czg-body">
+        <div id="czg-top" class="czg-alert">
+            {%- if unknown_pair %}{{ ui_callout('warn', 'Pair not found', 'This chip has no pair ' ~ unknown_pair ~ '. Pick a pair from the list.') }}{% endif -%}
+            {%- if not data.pairs %}{{ ui_callout('danger', 'No pairs', 'This chip has no qubit pairs, so there is nowhere to add a gate. Add a pair from the chip diagram first.') }}{% endif -%}
+        </div>
+        <div class="czg-cols ui-scroll">
+            <form id="czg-form" class="czg-form ui-scroll" autocomplete="off" aria-label="The gate">
+                <section id="czg-zone-gate" class="ui-zone" aria-label="Gate">
+                    <div class="ui-zone-head"><span class="ui-zone-step" aria-hidden="true">1</span><h3 class="ui-zone-title">Gate</h3></div>
+                    <div class="ui-zone-body ui-field-stack">
+                        <div class="ui-field"><div class="ui-field-head"><label class="ui-field-label" for="czg-pair">Pair</label></div>
+                            <select id="czg-pair" class="ui-select ui-select--block" name="pair">
+                                <option value="">Pick a pair</option>
+                                {%- for p in data.pairs %}<option value="{{ p.id }}"{% if p.id == selected %} selected{% endif %}>{{ p.id }}</option>{% endfor -%}
+                            </select>
+                        </div>
+                        <div class="ui-field"><div class="ui-field-head"><label class="ui-field-label" for="czg-name">Name</label></div>
+                            <input id="czg-name" class="ui-input ui-input--block" name="gate_name" type="text" value="cz_" spellcheck="false" aria-describedby="czg-name-why">
+                            <p id="czg-name-why" class="ui-field-error" role="alert" hidden></p>
+                        </div>
+                        <div class="ui-field"><div class="ui-field-head"><span class="ui-field-label">Class</span></div>
+                            <div id="czg-class-host"></div>
+                            <p id="czg-class-why" class="ui-field-error" role="alert" hidden></p>
+                        </div>
+                        <div class="ui-field" id="czg-model-field" hidden><div class="ui-field-head"><span class="ui-field-label">Model gate</span></div>
+                            <div id="czg-model-host"></div>
+                        </div>
+                        <div class="ui-field"><div class="ui-field-head"><label class="ui-field-label" for="czg-from">Start from</label></div>
+                            <select id="czg-from" class="ui-select ui-select--block" name="copy_from"></select>
+                        </div>
+                    </div>
+                </section>
+                <section id="czg-zone-pulses" class="ui-zone" aria-label="Pulses">
+                    <div class="ui-zone-head"><span class="ui-zone-step" aria-hidden="true">2</span><h3 class="ui-zone-title">Pulses</h3><span id="czg-pulses-sum" class="ui-zone-sum"></span></div>
+                    <div id="czg-slots" class="ui-zone-body ui-field-stack"></div>
+                </section>
+                <section id="czg-settings-panel" class="ui-panel" aria-label="Gate settings" hidden>
+                    <div class="ui-panel-head"><h3 class="ui-panel-title">Gate settings</h3><span id="czg-settings-sum" class="ui-panel-sum"></span></div>
+                    <div id="czg-settings" class="ui-panel-body ui-field-stack"></div>
+                </section>
+                <details id="czg-more" class="ui-panel ui-panel--fold">
+                    <summary class="ui-panel-head"><h3 class="ui-panel-title">More pairs</h3><span id="czg-more-count" class="ui-panel-sum"></span></summary>
+                    <div class="ui-panel-body">
+                        <p class="ui-text-quiet">The same starting values go to every pair.</p>
+                        <div id="czg-more-list" class="czg-more-list" aria-label="Other pairs"></div>
+                    </div>
+                </details>
+            </form>
+            <section id="czg-evidence" class="czg-evidence ui-scroll" aria-label="What the lab's code made">
+                <div id="czg-alert" class="czg-alert" aria-live="polite" data-czg-lead></div>
+                <div id="czg-pairs" data-czg-lead hidden></div>
+                {#- the banner and the pair switch stay above the zone: a stacked dialog lifts them over the form -#}
+                <section id="czg-zone-result" class="ui-zone ui-zone--fill ui-zone--quiet" aria-label="Result">
+                <div class="ui-zone-head"><span class="ui-zone-step" aria-hidden="true">3</span><h3 class="ui-zone-title">Result</h3></div>
+                <div class="ui-zone-body">
+                <p id="czg-empty" class="ui-zone-empty">Press Check: the lab's code builds this gate on a copy of the chip and the result shows here.</p>
+                <section id="czg-model-panel" class="ui-panel" aria-label="From the model gate" hidden>
+                    <div class="ui-panel-head"><h3 class="ui-panel-title">From the model gate</h3></div>
+                    <div id="czg-model-facts" class="ui-panel-body"></div>
+                </section>
+                <div id="czg-tiles"></div>
+                <section id="czg-sec-chart" class="ui-panel" aria-label="Waveform" hidden>
+                    <div class="ui-panel-head"><h3 class="ui-panel-title">Waveform</h3><span class="ui-panel-hint">from the lab's config, program time before filters</span><span id="czg-chart-tools" class="ui-panel-sum"></span></div>
+                    <div id="czg-chart" class="ui-panel-body czg-chart"></div>
+                </section>
+                <section id="czg-sec-intent" class="ui-panel" aria-label="Entered and actual" hidden>
+                    <div class="ui-panel-head"><h3 class="ui-panel-title">Entered and actual</h3><span id="czg-intent-sum" class="ui-panel-sum"></span></div>
+                    <div id="czg-intent" class="ui-panel-body"></div>
+                </section>
+                <section id="czg-sec-checks" class="ui-panel" aria-label="Checks" hidden>
+                    <div class="ui-panel-head"><h3 class="ui-panel-title">Checks</h3><span id="czg-checks-sum" class="ui-panel-sum"></span></div>
+                    <div id="czg-checks" class="ui-panel-body"></div>
+                </section>
+                <details class="ui-panel ui-panel--fold">
+                    <summary class="ui-panel-head"><h3 class="ui-panel-title" id="czg-writes-title">What will be written</h3><span id="czg-writes-sum" class="ui-panel-sum"></span></summary>
+                    <div id="czg-writes" class="ui-panel-body"></div>
+                </details>
+                </div>
+                </section>
+            </section>
+        </div>
+        <div id="czg-done" class="czg-done" hidden></div>
+        <div id="czg-status-slot"></div>
+    </div>
+    <div class="ui-dialog-foot">
+        <span id="czg-status" class="ui-text-quiet" role="status"></span>
+        <div class="ui-actions">
+            <button type="button" class="btn-sync outline" data-czg-close id="czg-cancel">Cancel</button>
+            <button type="button" class="btn-sync outline" id="czg-open-pair" hidden>Open the pair</button>
+            <button type="button" class="btn-sync primary" id="czg-primary" disabled>Check</button>
+        </div>
+    </div>
+    <script type="application/json" id="czg-data">{{ data | tojson }}</script>
+</dialog>

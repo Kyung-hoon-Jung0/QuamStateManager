@@ -102,7 +102,7 @@ class TestPlan:
         rows, _ = C.operations(_plan_state({"length": 40, "__class__": "x.SquarePulse"}))
         line = rows[0]["lines"][0]
         assert line["amplitude_v"] is None
-        assert line["point"]["reason"].endswith(": the operation amplitude is missing")
+        assert line["point"]["reason"].endswith(".amplitude is missing or not a number")
         assert any("cannot be read" in n for n in rows[0]["notes"])
 
     def test_a_missing_f01_names_f01(self):

@@ -667,8 +667,21 @@ def check_fit(run_id: int):
         return store.get_value(dotted)
 
     verdicts = gates.evaluate_run(run_obj, fam, targets, current_value_of=current_value_of)
-    return jsonify(ok=True, run_id=run_id, family=getattr(fam, "key", None) or str(fam),
-                   verdicts={t: _jsonable(v) for t, v in verdicts.items()})
+    # per target: only a pass may be proposed for writing; every other
+    # target is named with its reasons so the value is not offered
+    do_not_write = {t: list(getattr(v, "reasons", []) or [])
+                    for t, v in verdicts.items()
+                    if getattr(v, "verdict", None) != "pass"}
+    body = dict(ok=True, run_id=run_id, family=getattr(fam, "key", None) or str(fam),
+                verdicts={t: _jsonable(v) for t, v in verdicts.items()},
+                # nothing judged is not "everything passed"
+                all_pass=bool(verdicts) and not do_not_write,
+                do_not_write=do_not_write)
+    if not verdicts:
+        body["note"] = ("no target of this run was judged: the run names no "
+                        "qubit or pair the gates could check, so nothing is "
+                        "cleared for writing")
+    return jsonify(**body)
 
 
 # ------------------------------------------------------------------ notes
@@ -1847,7 +1860,7 @@ def _take_back_saved(r, ctx, staged: list, before: dict) -> str | None:
                 # docs/255 P3: the old value goes back VERBATIM -- a coercing write turned an
                 # int field widened by a float back into 7126044234.0, which then reached live
                 inv = mod.set_value(e.dot_path, e.old_value, _defer_hooks=True, coerce=False,
-                                    group_id=f"{e.group_id}:takeback")
+                                    group_id=f"{e.group_id}:takeback", restore=True)
                 inv.actor = getattr(e, "actor", "human")
             store._clear_pointer_cache()
             if store.search_index is not None:
@@ -1933,6 +1946,67 @@ def _existing_leaf(store, path: str) -> bool:
     return not isinstance(value, (dict, list))
 
 
+STRUCTURAL_WHAT_TO_DO = ("to write it, open the run in Datasets and press Apply to chip, "
+                         "or Reject this card")
+
+
+def _structural_why(store, w: dict, resized: set[str] | None = None) -> str:
+    """Plain words for a row the approval cannot stage because it changes the
+    chip's shape: a removed key, or a new key whose place does not exist."""
+    path = str(w.get("path"))
+    if w.get("deleted"):
+        return "removed key: the run deleted this key, and an approval only changes values"
+    if isinstance(w.get("new"), (dict, list)):
+        return "new key holding a group of values: an approval only adds single values"
+    for lp in resized or ():
+        if path == lp or path.startswith(lp + "."):
+            return f"new key inside the list '{lp}', whose length the run changed"
+    parts = path.split(".")
+    node = store.merged
+    for i, seg in enumerate(parts):
+        here = ".".join(parts[:i]) or "the chip root"
+        if isinstance(node, list):
+            return f"new key inside the list '{here}': an approval does not add list entries"
+        if not isinstance(node, dict):
+            shown = "null" if node is None else type(node).__name__
+            return f"new key under '{here}', which holds a single value ({shown}), not a group of keys"
+        if seg not in node:
+            if any(s.isdigit() for s in parts[i:]):
+                return f"new key with a numbered part under '{here}': it may be a list entry"
+            break
+        node = node[seg]
+    return "new key the chip does not have"
+
+
+def _unstaged_message(unstaged: list[dict], total: int) -> str:
+    """The one answer a refused group gives: every refused path (up to six),
+    why, and what the person can do. Nothing of the group was written."""
+    shown = unstaged[:6]
+    lines = "; ".join(f"{u['path']} ({str(u['why'])[:140]})" for u in shown)
+    more = f" and {len(unstaged) - len(shown)} more" if len(unstaged) > len(shown) else ""
+    tail = ""
+    if any(str(u.get("why", "")).startswith(("new key", "removed key")) for u in unstaged):
+        tail = "; " + STRUCTURAL_WHAT_TO_DO
+    return (f"{len(unstaged)} of {total} value(s) cannot be staged: {lines}{more}; "
+            f"nothing was written{tail}")
+
+
+def _nonfinite_rows(writes: list[dict]) -> list[dict]:
+    """The proposed values that hold NaN or Infinity (not JSON): one row per
+    write, naming the field. One check, ``type_policy.nonfinite_where``."""
+    from quam_state_manager.core.type_policy import nonfinite_where
+    out = []
+    for w in writes:
+        if w.get("deleted"):
+            continue
+        hit = nonfinite_where(w.get("new"))
+        if hit is not None:
+            field = str(w.get("path")) + hit
+            out.append({"path": w.get("path"),
+                        "why": f"the value proposed for '{field}' is not a finite number (NaN or Infinity)"})
+    return out
+
+
 def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan_id: str | None,
                   apply: bool, *, presser: str | None = None) -> dict:
     """Stage ``writes`` onto the chip's working copy as ONE group with the
@@ -1979,6 +2053,10 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
                 "unstaged": [{"path": w["path"], "why": w["capture_error"]}
                              for w in writes if w.get("capture_error")],
                 "error": "node writes could not be captured; nothing was written"}
+    bad = _nonfinite_rows(writes)
+    if bad:
+        return {"group_id": gid, "staged": 0, "applied": False, "unstaged": bad[:50],
+                "error": "; ".join(u["why"] for u in bad[:6]) + "; nothing was written"}
     from quam_state_manager.core.agent_runs import resized_lists
     resized = resized_lists(writes)
     creations: dict[str, dict] = {}     # first missing path -> nested dict of the new leaves (or a scalar)
@@ -1988,8 +2066,7 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
             if w.get("created") and not w.get("deleted") and not _existing_leaf(store, w["path"]):
                 root = _new_key_root(store, w["path"], w.get("new"), resized)
             if w.get("deleted") or (w.get("created") and not _existing_leaf(store, w["path"]) and root is None):
-                unstaged.append({"path": w["path"], "why": "new/removed key -- SM stages existing leaves only; "
-                                                            "apply the run's state from Datasets → Apply to chip"})
+                unstaged.append({"path": w["path"], "why": _structural_why(store, w, resized)})
                 continue
             if root is not None:
                 rest = w["path"][len(root) + 1:].split(".") if w["path"] != root else []
@@ -2050,8 +2127,7 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
                 store.search_index.update_entry(e.dot_path, e.new_value)
     out = {"group_id": gid, "staged": len(staged), "unstaged": unstaged, "applied": False, "error": None}
     if unstaged:
-        out["error"] = f"{len(unstaged)} of {len(writes)} value(s) cannot be staged ({unstaged[0]['path']}: " \
-                       f"{unstaged[0]['why'][:80]}); nothing was written"
+        out["error"] = _unstaged_message(unstaged, len(writes))
         return out
     if not staged or not apply:
         return out
@@ -2121,10 +2197,10 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
             # press leaves SM exactly where it found it.
             why = _take_back_saved(r, ctx, staged, before)
             if why is None:
-                out["error"] += " -- nothing was written; the approval's values were taken back out of SM"
+                out["error"] += "; nothing was written, and the approval's values were taken back out of SM"
             else:
                 out["saved_in_working_copy"] = True
-                out["error"] += (" -- the values are saved in SM's working copy (unapplied) and could not be "
+                out["error"] += ("; the values are saved in SM's working copy (unapplied) and could not be "
                                  f"taken back ({why}); a human decides in the window")
         return out
     if r._change_count() == 0 and not ctx.get("live_diverged"):
@@ -2749,6 +2825,34 @@ def approvals_list():
     return jsonify(ok=True, pending=pend, recent=recent, waiting=len(pend))
 
 
+def _nonfinite_masked(proposed_new, sent_new) -> bool:
+    """True when a position the proposal held as a non-finite number is still
+    null in the value sent back. The card shows that position as null, so a
+    null there is the display, not a value the person chose; judged element by
+    element, so editing one element of [NaN, 2.0] to send [null, 3.0] is still
+    refused. A position the sent value no longer has (a shorter list, a
+    removed key, a different shape) was changed by the person and passes."""
+    import math
+
+    def walk(prop, sent) -> bool:
+        if isinstance(prop, float) and not math.isfinite(prop):
+            return sent is None
+        if isinstance(prop, dict):
+            if not isinstance(sent, dict):
+                return False
+            return any(walk(v, sent[k]) for k, v in prop.items() if k in sent)
+        if isinstance(prop, (list, tuple)):
+            if not isinstance(sent, (list, tuple)):
+                return False
+            return any(walk(v, sent[i]) for i, v in enumerate(prop) if i < len(sent))
+        return False
+
+    try:
+        return walk(proposed_new, sent_new)
+    except Exception:  # noqa: BLE001 -- an odd value is judged by the stage door
+        return False
+
+
 @agent_bp.route("/approvals/<aid>/<verb>", methods=["POST"])
 def approvals_decide(aid: str, verb: str):
     """approve / reject, by a person. Approving ``writes`` stages them as the
@@ -2790,6 +2894,18 @@ def approvals_decide(aid: str, verb: str):
                     + " was not among them", 400)
             # keep each proposal's own `old`: the value is the person's to
             # change, the anchor it is compared against is not
+            # a node that proposed NaN or Infinity is shown null (JSON has no
+            # such number), so the card sends that null back unchanged. That
+            # null is the display, never a value the person chose: writing it
+            # would erase a calibrated value with nothing.
+            masked = [str(w.get("path")) for w in writes
+                      if _nonfinite_masked(proposed[str(w.get("path"))].get("new"), w.get("new"))]
+            if masked:
+                return _err(
+                    "the node proposed a value that is not a finite number (NaN or Infinity) for "
+                    + ", ".join(masked[:6])
+                    + (" and %d more" % (len(masked) - 6) if len(masked) > 6 else "")
+                    + "; type a value for it, or untick it", 409)
             writes = [dict(proposed[str(w.get("path"))], new=w.get("new"))
                       for w in writes]
         if verb == "approve" and cur.get("kind") == "writes" and writes is None:
@@ -3242,6 +3358,29 @@ def _may_change(steps: list[dict], cap: int = 60) -> tuple[list[dict], int]:
     return out, total
 
 
+def _text_into_null(store, target: str, new: str) -> dict:
+    """A string proposed for a leaf that holds null keeps its own type, so the
+    card says so before the Yes: a pointer string makes the field a reference
+    (``becomes_ref`` names the target, ``ref_resolves`` says whether SM finds
+    it); any other string is TEXT going into the field (``text_into_null``)."""
+    from quam_state_manager.core.pointer_resolver import target_path
+    if new.startswith(("#/", "#./", "#../")):
+        segs = None
+        try:
+            segs = target_path(store.merged, new, target.split("."))
+        except Exception:  # noqa: BLE001 -- an unreadable pointer is named as not found
+            segs = None
+        found = False
+        if segs:
+            try:
+                store.get_value(".".join(segs))
+                found = True
+            except Exception:  # noqa: BLE001
+                found = False
+        return {"becomes_ref": ".".join(segs) if segs else new, "ref_resolves": found}
+    return {"text_into_null": True}
+
+
 def _approval_view(ap: dict, store) -> dict:
     """An approval as the card shows it: each write also carries ``now`` --
     the value SM holds for that leaf NOW (through the pointer alias, the way
@@ -3263,6 +3402,9 @@ def _approval_view(ap: dict, store) -> dict:
         elif w.get("created") and not w.get("deleted") and _new_key_root(
                 store, str(w.get("path")), w.get("new"), _resized) is not None:
             w2["new_key"] = True          # staged as a key creation; the card says "new key"
+        from quam_state_manager.core.type_policy import nonfinite_where
+        if nonfinite_where(w.get("new")) is not None:
+            w2["nonfinite"] = True        # the card says the node gave no finite number
         if not (w2.get("created") or w2.get("deleted")):
             try:
                 target = r._resolve_edit_path(store, str(w.get("path"))) or str(w.get("path"))
@@ -3270,6 +3412,9 @@ def _approval_view(ap: dict, store) -> dict:
                 w2["now_known"] = True
             except Exception:  # noqa: BLE001 -- a leaf SM cannot read says "not set", never a guess
                 w2["now_known"] = False
+            else:
+                if w2["now"] is None and isinstance(w.get("new"), str):
+                    w2.update(_text_into_null(store, target, w["new"]))
         rows.append(w2)
     out["writes"] = rows
     return out

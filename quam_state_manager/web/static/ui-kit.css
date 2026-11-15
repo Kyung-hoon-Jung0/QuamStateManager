@@ -132,6 +132,15 @@
     --ui-caps-track: .06em;
     --ui-fw-bold: 700;
     --ui-step: 18px;
+    /* zones (docs/308 section 4d): the strong container for a main region; panels group inside it.
+       The boundary is the accent mixed into a text-derived grey: a cool line, never a selected state. */
+    --ui-zone-border: color-mix(in srgb, var(--ui-accent) 30%, color-mix(in srgb, var(--ui-text) 40%, var(--ui-surface-0)));
+    --ui-zone-head-bg: color-mix(in srgb, var(--ui-accent) 10%, var(--ui-surface-1));
+    --ui-zone-bg: var(--ui-surface-1);
+    --ui-zone-title: var(--ui-text);
+    --ui-fs-zone: calc(var(--font-size-base) * 14 / 17);
+    --ui-zone-empty-h: 160px;
+    --ui-kit-col-zone: 360px;       /* the sample page's narrow zone column */
     --ui-banner-icon: 26px;
     --ui-fs-banner: calc(var(--font-size-base) * 15 / 17);
     --ui-fs-stat: calc(var(--font-size-base) * 19 / 17);
@@ -170,6 +179,30 @@
     --ui-dialog-m: 760px;
     --ui-dialog-l: 920px;
     --ui-dialog-max-h: 82vh;
+    --ui-dialog-xl: min(1240px, 96vw);
+    --ui-dialog-xl-max-h: 90vh;
+    --ui-backdrop: color-mix(in srgb, black 35%, transparent);
+    /* scroll region (docs/308 section 4e): thin always-on thumb, a bottom fade over the region's own ground */
+    --ui-scroll-thumb: var(--ui-text-3);
+    --ui-scroll-bg: var(--ui-surface-1);
+    --ui-scroll-fade-h: calc(var(--ui-gap-4) * 2);
+    --ui-scroll-bar-w: 8px;
+    --ui-scroll-fade: linear-gradient(transparent, var(--ui-scroll-bg) 80%);
+    --ui-czg-form-w: 360px;
+    --ui-czg-evidence-min: 640px;
+    --ui-pce-col-min: 320px;
+    --ui-pce-code-h: 460px;
+    --ui-pce-code-min: 560px;
+    --ui-pce-preview-min: 280px;
+    --ui-pce-field-cols: minmax(0, 3fr) minmax(var(--ui-ctl-min-w), 2fr) minmax(0, 2fr) minmax(0, 1.5fr) auto;
+    --ui-code-keyword: var(--ui-line-2);
+    --ui-code-string: var(--ui-ok-text);
+    --ui-code-number: var(--ui-warn-text);
+    --ui-code-comment: var(--ui-text-3);
+    --ui-code-name: var(--ui-accent);
+    --ui-code-selection: var(--ui-accent-bg);
+    --ui-code-active-line: color-mix(in srgb, var(--ui-accent) 6%, var(--ui-surface-0));
+    --ui-code-protected: var(--ui-surface-2);
     --ui-disclosure-marker: "\25B8";
     --ui-disclosure-marker-open: "\25BE";
     /* K16 checkbox (D-105): the sidebar's rounded box, one look app-wide */
@@ -520,6 +553,7 @@
 .ui-dialog--s { width: var(--ui-dialog-s); }
 .ui-dialog--m { width: var(--ui-dialog-m); }
 .ui-dialog--l { width: var(--ui-dialog-l); }
+.ui-dialog--xl { width: var(--ui-dialog-xl); max-height: var(--ui-dialog-xl-max-h); }
 .ui-dialog-head { display: flex; align-items: flex-start; gap: var(--ui-gap-2); padding: var(--ui-gap-3) var(--ui-gap-4) 0; }
 .ui-dialog-head > .ui-head { flex: 1 1 auto; margin: 0; }
 .ui-dialog-head .ui-head-title { font-size: var(--ui-fs-lg); }
@@ -1076,6 +1110,23 @@
 .ui-panel-body--flush .ui-table-head:first-child, .ui-panel-body--flush .ui-table-cell:first-child { padding-left: var(--ui-gap-3); }
 .ui-panel-body--flush .ui-table-head:last-child, .ui-panel-body--flush .ui-table-cell:last-child { padding-right: var(--ui-gap-3); }
 .ui-panel-body--flush .ui-table tr:last-child > .ui-table-cell { border-bottom: 0; }
+/* zone: page or dialog > zone > panel > field (docs/308 section 4d) */
+.ui-zone { display: flex; flex-direction: column; margin: 0; border: var(--ui-bw) solid var(--ui-zone-border); border-radius: var(--ui-r-panel); background: var(--ui-zone-bg); min-width: 0; overflow: hidden; }
+.ui-zone--fill { flex: 1 1 auto; }
+.ui-zone-head { display: flex; align-items: center; gap: var(--ui-gap-2); min-height: var(--ui-ctl-h); padding: var(--ui-gap-1) var(--ui-gap-3); border-bottom: var(--ui-bw) solid var(--ui-zone-border); background: var(--ui-zone-head-bg); }
+.ui-zone-step { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: var(--ui-step); height: var(--ui-step); border-radius: var(--ui-r-round); background: var(--ui-accent-fill); color: var(--ui-on-accent); font-size: var(--ui-fs-xs); font-weight: var(--ui-fw-bold); line-height: var(--ui-lh-tight); }
+.ui-zone-title { margin: 0; font-size: var(--ui-fs-zone); font-weight: var(--ui-fw-bold); line-height: var(--ui-lh-tight); color: var(--ui-zone-title); }
+.ui-zone-sum { display: flex; align-items: center; gap: var(--ui-gap-2); margin-left: auto; flex: 0 0 auto; color: var(--ui-text-2); font-size: var(--ui-fs-sm); white-space: nowrap; }
+.ui-zone-body { display: flex; flex: 1 1 auto; flex-direction: column; gap: var(--ui-gap-3); padding: var(--ui-gap-2); min-width: 0; }
+.ui-zone--quiet > .ui-zone-body { align-items: center; justify-content: center; min-height: var(--ui-zone-empty-h); }
+.ui-zone-empty { margin: 0; max-width: 40ch; color: var(--ui-text-2); font-size: var(--ui-fs-sm); text-align: center; }
+/* scroll region: a region that scrolls inside a dialog or pane shows that it continues (docs/308 section 4e).
+   The fade takes its own space at the end, so at the scroll end it covers nothing. */
+.ui-scroll { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--ui-scroll-thumb) transparent; scrollbar-gutter: stable; }
+.ui-scroll::-webkit-scrollbar { width: var(--ui-scroll-bar-w); }
+.ui-scroll::-webkit-scrollbar-thumb { border-radius: var(--ui-r-round); background: var(--ui-scroll-thumb); }
+.ui-scroll::-webkit-scrollbar-track { background: transparent; }
+.ui-scroll::after { content: ""; display: block; position: sticky; bottom: 0; flex: 0 0 var(--ui-scroll-fade-h); height: var(--ui-scroll-fade-h); background: var(--ui-scroll-fade); pointer-events: none; }
 
 /* banner: the conclusion is ui-verdict--strong (one per region) */
 .ui-verdict.ui-verdict--strong { display: grid; grid-template-columns: var(--ui-banner-icon) minmax(0, 1fr); column-gap: var(--ui-gap-3); row-gap: 0; align-items: center; margin: 0; padding: var(--ui-gap-2) var(--ui-gap-3); border: var(--ui-bw) solid var(--ui-border-strong); border-radius: var(--ui-r-panel); background: var(--ui-surface-2); }
@@ -1172,8 +1223,13 @@
 .ui-field-head > .ui-badge.ui-badge--accent { border-color: var(--ui-accent-border); background: var(--ui-accent-bg); color: var(--ui-accent); }
 .ui-toolbar.ui-toolbar > .btn-sm { min-height: var(--ui-ctl-h); }
 .ui-kit-reading { display: grid; grid-template-columns: var(--ui-kit-col-form) minmax(0, 1fr); border: var(--ui-bw) solid var(--ui-border); border-radius: var(--ui-r-lg); overflow: hidden; margin: 0 0 var(--ui-gap-3); }
-.ui-kit-reading-form { display: flex; flex-direction: column; gap: var(--ui-gap-3); padding: var(--ui-gap-3); border-right: var(--ui-bw) solid var(--ui-border); background: var(--ui-surface-0); min-width: 0; }
-.ui-kit-reading-ev { display: flex; flex-direction: column; gap: var(--ui-gap-3); padding: var(--ui-gap-3); background: var(--ui-surface-2); min-width: 0; }
+.ui-kit-reading-form { display: flex; flex-direction: column; gap: var(--ui-gap-3); padding: var(--ui-gap-2); border-right: var(--ui-bw) solid var(--ui-border); background: var(--ui-surface-0); min-width: 0; }
+.ui-kit-zones { display: grid; grid-template-columns: var(--ui-kit-col-zone) minmax(0, 1fr); gap: var(--ui-gap-3); align-items: start; padding: var(--ui-gap-3); background: var(--ui-surface-0); }
+.ui-kit-zones-col { display: flex; flex-direction: column; gap: var(--ui-gap-3); min-width: 0; }
+.ui-kit-scrolls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--ui-gap-3); }
+.ui-kit-scroll-box { display: flex; flex-direction: column; gap: var(--ui-gap-1); max-height: var(--ui-zone-empty-h); padding: var(--ui-gap-2); border: var(--ui-bw) solid var(--ui-border); border-radius: var(--ui-r-panel); background: var(--ui-scroll-bg); }
+.ui-kit-scroll-row { margin: 0; padding: var(--ui-gap-1) var(--ui-gap-2); border: var(--ui-bw) solid var(--ui-border); border-radius: var(--ui-r-panel); }
+.ui-kit-reading-ev { display: flex; flex-direction: column; gap: var(--ui-gap-3); padding: var(--ui-gap-2); background: var(--ui-surface-2); min-width: 0; }
 .ui-grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--ui-gap-2); }
 
 /* ===== stage 1: existing button classes and focus (docs/308, D-27..D-30, D-52) =====
@@ -1598,6 +1654,46 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 /* The qubits page draws large stones: its map scales to the pane width. */
 .cm-svg.cm-hl-qubits { max-width: var(--ui-opxmon-full-width); height: auto; }
 
+/* A native <dialog> wearing the kit shell: hidden when closed, a centred fixed
+   column with a backdrop when open. The two older kit dialogs keep their own
+   rules in style.css and are left out here, so they render as before. */
+dialog.ui-dialog:not(.gen-rule-dlg) { position: fixed; inset: 0; margin: auto; padding: 0; height: fit-content; min-width: 0; min-height: 0; max-width: 96vw; }
+dialog.ui-dialog:not(.gen-rule-dlg):not([open]) { display: none; }
+dialog.ui-dialog:not(.gen-rule-dlg)[open] { display: flex; flex-direction: column; align-items: stretch; }
+dialog.ui-dialog:not(.gen-rule-dlg)::backdrop { background: var(--ui-backdrop); }
+
+/* The CZ gate dialog: the form on the left, the lab's evidence on the right;
+   they stack on a narrow window, and each column scrolls on its own. */
+.czg .czg-body { display: flex; flex-direction: column; gap: var(--ui-gap-3); overflow: hidden; min-height: 0; }
+.czg-alert { display: flex; flex-direction: column; gap: var(--ui-gap-2); }
+.czg-alert:empty, .czg-done:empty { display: none; }
+.czg-cols { display: flex; flex-wrap: wrap; gap: var(--ui-gap-4); align-items: flex-start; min-height: 0; overflow: auto; }
+.czg-form { flex: 0 0 var(--ui-czg-form-w); max-width: 100%; }
+.czg-evidence { flex: 1 1 var(--ui-czg-evidence-min); min-width: 0; }
+.czg-form, .czg-evidence { max-height: calc(var(--ui-dialog-xl-max-h) - 12rem); }
+/* side by side each column scrolls (ui-scroll); stacked only .czg-cols does: one scrollbar, one fade */
+.czg:not([data-czg-stacked]) .czg-cols { scrollbar-gutter: auto; }
+.czg:not([data-czg-stacked]) .czg-cols::after, .czg[data-czg-stacked] .czg-form::after, .czg[data-czg-stacked] .czg-evidence::after { display: none; }
+.czg-form, .czg-evidence, .czg-slots { display: flex; flex-direction: column; gap: var(--ui-gap-2); margin: 0; }
+/* a zone clips its overflow, so as a flex item it would shrink and hide its fields: the column scrolls instead */
+.czg-form > *, .czg-evidence > * { flex-shrink: 0; }
+.czg-why-line { display: block; color: var(--ui-text-2); }
+.czg .ui-menu-trigger[aria-invalid="true"] { border-color: var(--ui-danger-text); }
+.czg-more-list { display: flex; flex-direction: column; gap: var(--ui-gap-1); }
+.czg-more-row { display: flex; align-items: baseline; gap: var(--ui-gap-2); }
+.czg-chart > .ui-note { padding: var(--ui-gap-3) 0; }
+/* an earlier answer is dimmed; the banner and the pair switch (the lead) never are */
+.czg-stale > :not([data-czg-lead]) { opacity: 0.45; }
+/* Stacked ([data-czg-stacked]: the form and the evidence do not fit side by
+   side): the banner and the pair switch ([data-czg-lead]) move above the
+   form, the rest of the evidence below it; one scroll for all. */
+.czg[data-czg-stacked] .czg-cols { flex-direction: column; flex-wrap: nowrap; align-items: stretch; }
+.czg[data-czg-stacked] .czg-evidence { display: contents; }
+.czg[data-czg-stacked] [data-czg-lead] { order: -1; }
+.czg[data-czg-stacked] .czg-form { flex: 0 0 auto; max-height: none; overflow: visible; scrollbar-gutter: auto; }
+.czg-chips { margin-left: auto; }
+.czg .ui-segmented-opt { gap: var(--ui-gap-1); }
+.czg-row-acts { display: inline-flex; gap: var(--ui-gap-1); margin-left: var(--ui-gap-2); vertical-align: middle; }
 /* K18 choosing: ARIA states drive the look, so the state a screen reader
    hears is the state a person sees (docs/308 §4b). */
 .ui-select.ui-select[aria-invalid="true"], .ui-input.ui-input[aria-invalid="true"] { border-color: var(--ui-danger-text); background-image: none; }
@@ -1616,6 +1712,7 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 .gate-status-list { margin: var(--ui-gap-2) 0; }
 .gate-status { display: flex; flex-direction: column; }
 .gate-status-list .gate-status { padding: 0 var(--ui-gap-3); }
+.gate-status-list > .ui-zone-body { padding: 0; gap: 0; }
 .gate-status-list .gate-status + .gate-status { border-top: var(--ui-bw) solid var(--ui-border); }
 .gate-status-row { display: flex; flex-wrap: nowrap; align-items: center; gap: var(--ui-gap-1); min-height: var(--ui-icon-btn); }
 .gate-status-row:has(> .gate-status-details[open]) { flex-wrap: wrap; }
@@ -1633,3 +1730,17 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 .gate-delete-offer { display: flex; flex-direction: column; gap: var(--ui-gap-1); padding-bottom: var(--ui-gap-1); }
 .gate-delete-list { margin: 0; padding-left: var(--ui-gap-4); font-size: var(--ui-fs-sm); }
 .gate-delete-actions { justify-content: flex-start; margin-left: 0; }
+/* the pulse class edit screen (pulse-class-edit.js, pulse_class_edit.html): three columns that wrap to a stack */
+.pce { display: flex; flex-direction: column; gap: var(--ui-gap-2); }
+.pce-cols { display: flex; flex-wrap: wrap; gap: var(--ui-gap-4); align-items: flex-start; }
+.pce-form, .pce-code-col, .pce-preview { flex: 1 1 var(--ui-pce-col-min); min-width: 0; display: flex; flex-direction: column; gap: var(--ui-gap-2); margin: 0; }
+.pce-code-col { flex: 3 1 var(--ui-pce-code-min); }
+.pce-preview { flex: 1 1 var(--ui-pce-preview-min); }
+.pce-code { height: var(--ui-pce-code-h); overflow: hidden; border: var(--ui-bw) solid var(--ui-border); }
+.pce-code .cm-editor { height: 100%; }
+.pce-fields { display: flex; flex-direction: column; gap: var(--ui-gap-1); }
+.pce-field-row { display: grid; grid-template-columns: var(--ui-pce-field-cols); gap: var(--ui-gap-1); align-items: center; }
+.pce-formula, .pce-target { width: 100%; font-family: var(--ui-font-mono); }
+.pce-plot { min-height: var(--ui-placeholder-h); }
+.pce-timeline:empty { display: none; }
+.pce-list { margin: 0; padding-left: var(--ui-gap-4); }

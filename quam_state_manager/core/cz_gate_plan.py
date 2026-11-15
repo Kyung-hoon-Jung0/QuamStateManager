@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import math
+import numbers
 import re
 
 import numpy as np
@@ -75,6 +76,11 @@ def number(value):
     except (TypeError, ValueError, OverflowError):
         return None
     return v if math.isfinite(v) else None
+
+
+def stored_number(value):
+    """A stored amplitude: a real number only. A text that reads as one ("0.2") is not."""
+    return None if isinstance(value, str) else number(value)
 
 
 def read(doc, path):
@@ -870,6 +876,16 @@ def _waveform_not_derivable(doc, pulse_path, tree):
     return None
 
 
+def unreadable_amplitude(line):
+    """Plain words for a line whose stored amplitude cannot be read, naming the leaf."""
+    if line.get("waveform_reason"):
+        return (line.get("pulse_path") or "the pulse") + ".waveform_I: " + line["waveform_reason"]
+    leaf = line.get("amplitude_path") or ((line.get("pulse_path") or "the pulse") + ".amplitude")
+    if line.get("amplitude_text"):
+        return f"{leaf} holds text, not a number"
+    return f"{leaf} is missing or not a number"
+
+
 def _waveform_length_note(tree, shape):
     """A note when the stored ``length`` disagrees with the sample count, else None."""
     raw = tree.get("length")
@@ -978,6 +994,20 @@ def _pulse_label(doc, path, pulse):
 #: a gate slot on a pair macro: the pulse the gate hands to a channel by name
 SLOT_PATH = re.compile(r"^(qubit_pairs\.([^.]+)\.macros\.([^.]+))\."
                        r"(flux_pulse_qubit|flux_pulse_target|coupler_flux_pulse)$")
+
+
+def _stated_length_ns(pulse):
+    """The ``length`` a pulse of a class with no transcribed waveform stores, when it is a
+    positive whole number of ns; ``None`` for a transcribed class or any other value."""
+    if not isinstance(pulse, dict):
+        return None
+    from .waveform_synth import LAB_WAVEFORMS
+    if str(pulse.get("__class__", "")).rsplit(".", 1)[-1] in LAB_WAVEFORMS:
+        return None
+    raw = pulse.get("length")
+    if isinstance(raw, (bool, np.bool_)) or not isinstance(raw, (numbers.Integral, np.integer)):
+        return None
+    return int(raw) if raw > 0 else None
 
 
 def _raw_at(doc, path):
@@ -1127,7 +1157,8 @@ def _coupler_line(doc, pair_path, macro_path, notes):
     name = current(doc, cp + ".id") if isinstance(element, dict) else None
     name = name or (cp.split(".")[-1] if cp else "unknown")
     label = _pulse_label(doc, source, pulse)
-    local = number(current(doc, source + ".amplitude")) if isinstance(pulse, dict) else None
+    local_raw = current(doc, source + ".amplitude") if isinstance(pulse, dict) else None
+    local = stored_number(local_raw)
     played = cp + ".operations." + label if isinstance(label, str) and cp else None
     refusal = None
     if not isinstance(element, dict):
@@ -1137,7 +1168,11 @@ def _coupler_line(doc, pair_path, macro_path, notes):
     elif not played or not isinstance(current(doc, played), dict):
         refusal = f"not playable: {label} missing on {name}"
     holder = read(doc, played).get("holder_path") if played and not refusal else played
-    amp = number(current(doc, holder + ".amplitude")) if holder and not refusal else None
+    amp_raw = current(doc, holder + ".amplitude") if holder and not refusal else None
+    amp = stored_number(amp_raw)
+    # a text amplitude is not what QUAM plays: no number, no resonance distance from it
+    amp_text_reason = (f"{holder}.amplitude holds text, not a number"
+                       if isinstance(amp_raw, str) and number(amp_raw) is not None else None)
     line = {"role": "coupler", "name": name, "coupler_path": cp, "pulse_path": holder or source,
             "played_pulse_path": played, "amplitude_v": amp, "lobes": [], "moves": True,
             "refusal": refusal}
@@ -1149,12 +1184,14 @@ def _coupler_line(doc, pair_path, macro_path, notes):
             line["refusal"] = str(exc)
     if local is not None and amp is not None and local != amp:
         notes.append(f"{name}: the macro's copy says {signed_volts(local)}; the coupler plays {signed_volts(amp)}")
+    elif isinstance(local_raw, str):
+        notes.append(f"{name}: the macro's copy holds text ({local_raw!r}), not a number")
     # the refusal reaches the notes once, inside the coupler note the caller builds
     _amplitude_view(doc, line)
     if line["refusal"] or amp is None:
         # an unresolved coupler amplitude reads "unknown", never a dash; the title says why
         line["amp_text"] = "unknown"
-        line["amp_reason"] = line["refusal"] or "pulse amplitude unknown"
+        line["amp_reason"] = line["refusal"] or amp_text_reason or "pulse amplitude unknown"
     line.pop("moves")
     line.pop("amp_sort")
     return line
@@ -1280,8 +1317,8 @@ def operations(doc, conversions=None, unavailable=None):
         if not mapping(pp):
             continue
         rows.pair_names.append(pair_name)
-        _raw_pair = ((doc.get("qubit_pairs") or {}).get(pair_name)
-                     if isinstance(doc, dict) else None)
+        _raw_pairs = doc.get("qubit_pairs") if isinstance(doc, dict) else None
+        _raw_pair = _raw_pairs.get(pair_name) if isinstance(_raw_pairs, dict) else None
         rows.active[pair_name] = pair_operational_gate(
             pair_name, _raw_pair.get("macros") if isinstance(_raw_pair, dict) else None)
         roles = {}
@@ -1369,7 +1406,8 @@ def operations(doc, conversions=None, unavailable=None):
                 pulse_path = path + "." + field if field else None
                 pulse = current(doc, pulse_path) if pulse_path else None
                 missing_pulse = None
-                local_amp = number(current(doc, pulse_path + ".amplitude")) if isinstance(pulse, dict) else None
+                local_raw = current(doc, pulse_path + ".amplitude") if isinstance(pulse, dict) else None
+                local_amp = stored_number(local_raw)
                 # a pulse dict without an id plays from its resolved holder (below), never "None"
                 label = (current(doc, pulse_path + ".id") if isinstance(pulse, dict) else
                          pulse if isinstance(pulse, str) and not pulse.startswith("#") else None)
@@ -1398,7 +1436,10 @@ def operations(doc, conversions=None, unavailable=None):
                 if missing_pulse:
                     amp_path = None
                     notes.append(missing_pulse)
-                amp = None if refusal else number(current(doc, amp_path)) if amp_path else 0.0
+                amp = None if refusal else stored_number(current(doc, amp_path)) if amp_path else 0.0
+                amp_is_text = bool(amp_path and not refusal and amp is None
+                                   and isinstance(current(doc, amp_path), str)
+                                   and number(current(doc, amp_path)) is not None)
                 pulse = current(doc, pulse_path, {}) if pulse_path else {}
                 shape = wave_reason = tree = None
                 if amp_path and amp is None and not refusal:
@@ -1427,11 +1468,20 @@ def operations(doc, conversions=None, unavailable=None):
                         notes.append(f"{info['name']}: the pulse amplitude cannot be read")
                 if local_amp is not None and amp is not None and local_amp != amp:
                     notes.append(f"{info['name']}: the macro's copy says {local_amp:g} V; the qubit plays {amp:g} V")
+                elif isinstance(local_raw, str):
+                    notes.append(f"{info['name']}: the macro's copy holds text ({local_raw!r}), not a number")
                 pt = ({"frequency_hz": None, "reason": refusal} if refusal else
                       conv.point(amp) if conv else {"frequency_hz": None, "reason": "qubit not found"})
+                if amp is None and not refusal and pt.get("reason") == "the operation amplitude is missing":
+                    # f_01 is present: name the leaf that could not be read, never blame f_01
+                    pt["reason"] = unreadable_amplitude({"amplitude_path": amp_path, "pulse_path": pulse_path,
+                                                         "amplitude_text": amp_is_text,
+                                                         "waveform_reason": wave_reason and
+                                                         "not derivable for WaveformPulse: " + wave_reason})
                 lines.append({"role": role, "name": info["name"], "qubit_path": info["path"],
                               "moves": True if routing_reason else bool(field), "refusal": refusal,
                               "pulse_field": field, "pulse_path": pulse_path, "amplitude_path": amp_path,
+                              "amplitude_text": amp_is_text,
                               "played_pulse_path": played_pulse_path,
                               "play_duration_ns": duration_ns if field in ("flux_pulse_qubit", "flux_pulse_high", "flux_pulse_low") else None,
                               "duration_unknown": (raw_duration is not None and duration_ns is None
@@ -1458,9 +1508,16 @@ def operations(doc, conversions=None, unavailable=None):
                     levels = (ln["waveform_lobes"] if ln.get("waveform_lobes") else
                               pulse_lobes(resolved_lab_pulse(doc, ln["pulse_path"]) or {}, ln["amplitude_v"]))
                     ln["lobes"] = [{"name": stage, "amplitude_v": a, "point": conv.point(a)} for stage, a in levels]
-                    if ln.get("waveform_reason"):
+                    if ln.get("waveform_reason") or ln["amplitude_v"] is None:
+                        why = unreadable_amplitude(ln)
                         for lobe in ln["lobes"]:
-                            lobe["point"] = {**lobe["point"], "reason": ln["waveform_reason"]}
+                            own = lobe["point"]["reason"]
+                            if lobe["point"]["frequency_hz"] is None and own == "the operation amplitude is missing":
+                                lobe["point"] = {**lobe["point"], "reason": why}
+                            elif lobe["point"]["frequency_hz"] is None and ln.get("waveform_reason") and why not in (own or ""):
+                                # a different cause (e.g. a missing f_01) is more basic: keep it first
+                                lobe["point"] = {**lobe["point"],
+                                                 "reason": (own + "; " + why) if own else why}
                     ln["moves"] = any(a is None or a != 0 for _, a in levels)
                     bad = next((l for l in ln["lobes"] if l["point"]["frequency_hz"] is None), None)
                     if bad:
@@ -1475,15 +1532,57 @@ def operations(doc, conversions=None, unavailable=None):
                 _amplitude_view(doc, ln)
             two_flux_lengths = None
             if kind == "two-flux" and raw_duration is None:
-                from .waveform_synth import lab_waveform, resolved_lab_pulse
-                samples = [lab_waveform(resolved_lab_pulse(doc, ln["pulse_path"])) for ln in lines]
-                if all(s is not None for s in samples):
-                    duration_ns = max(map(len, samples))
-                    duration_note = f"{duration_ns:g} ns from the played SNZ waveform (flat length, edges and padding)"
-                    line_lengths = {ln["role"]: len(s) for ln, s in zip(lines, samples)}
-                    for ln, s in zip(lines, samples):
-                        ln["played_length_ns"] = len(s)
-                    # D7: the two-flux gate inherits CZGate.inferred_duration, which reads
+                from .waveform_synth import LAB_WAVEFORMS, lab_waveform, resolved_lab_pulse
+                pulses = [resolved_lab_pulse(doc, ln["pulse_path"]) for ln in lines]
+                samples = [lab_waveform(p) for p in pulses]
+                # A pulse class with no transcribed waveform states its played length itself:
+                # its ``length`` goes to the pulse config as it is, in ns at any port rate
+                # [derived from the pulse library's config writer]. A transcribed class whose
+                # samples cannot be built stays unknown: its ``length`` is not what it plays.
+                stated = [None if s is not None else _stated_length_ns(p) for p, s in zip(pulses, samples)]
+                known = [s is not None or n is not None for s, n in zip(samples, stated)]
+                if not all(known):
+                    missing = [ln["name"] for ln, ok in zip(lines, known) if not ok]
+                    notes.append("two-flux length check not made: the played length of "
+                                 + " and ".join(missing) + " could not be derived")
+                # only a line played from samples needs its port rate
+                rate_leaves = {ln["role"]: ln["qubit_path"] + ".z.opx_output.sampling_rate"
+                               for ln, s in zip(lines, samples) if s is not None}
+                rate_state = {}
+                for role, leaf in rate_leaves.items():
+                    t = read(doc, leaf)
+                    raw = t.get("current") if t.get("has_current") else None
+                    if raw is None and t.get("has_current"):
+                        # the resolver gives no value for some stored scalar types; read the leaf itself
+                        stored = _raw_at(doc, t.get("holder_path") or leaf)
+                        raw = None if isinstance(stored, str) and stored.startswith("#") else stored
+                    if raw is None:
+                        rate_state[role] = (1e9, True)
+                    else:
+                        # a stored text is not a rate, whatever float() would make of it
+                        ok = (isinstance(raw, (numbers.Real, np.integer, np.floating))
+                              and not isinstance(raw, (bool, np.bool_)))
+                        rate = number(raw) if ok else None
+                        rate = rate if rate is not None and rate > 0 else None
+                        rate_state[role] = (rate, False)
+                bad_rates = [rate_leaves[r] for r, (v, _d) in rate_state.items() if v is None]
+                if bad_rates:
+                    notes.extend(f"two-flux length check not made: {leaf} is not a positive number"
+                                 for leaf in bad_rates)
+                elif any(d for _v, d in rate_state.values()) and all(known):
+                    notes.append("two-flux lengths at the default 1 GS/s; no sampling_rate stored")
+                if all(known) and not bad_rates:
+                    # samples play at the port's own rate: a 2 GS/s port plays 40 samples in 20 ns
+                    def played_ns(ln, s, n):
+                        return n if s is None else len(s) * 1e9 / rate_state[ln["role"]][0]
+                    line_lengths = {ln["role"]: played_ns(ln, s, n) for ln, s, n in zip(lines, samples, stated)}
+                    duration_ns = max(line_lengths.values())
+                    made_of = ("flat length, edges and padding" if all(n is None for n in stated)
+                               else "the stored pulse length" if all(s is None for s in samples)
+                               else "the played waveform or the stored pulse length")
+                    for ln in lines:
+                        ln["played_length_ns"] = line_lengths[ln["role"]]
+                    # The two-flux gate inherits CZGate.inferred_duration, which reads
                     # the flux_pulse_qubit label (the CONTROL pulse in a two-flux gate) on
                     # the pair's moving qubit: the macro's own duration is the control
                     # pulse's length, never the target's [derived from the two classes]
@@ -1492,13 +1591,14 @@ def operations(doc, conversions=None, unavailable=None):
                                         "macro_duration_ns": macro_duration}
                     if len(set(line_lengths.values())) > 1:
                         names = {ln["role"]: ln["name"] for ln in lines}
-                        mismatch = (f"control {names['control']} {line_lengths['control']} ns vs target "
-                                    f"{names['target']} {line_lengths['target']} ns: the two pulses differ in "
-                                    "length, so their lobes are misaligned")
+                        gap = abs(line_lengths["control"] - line_lengths["target"])
+                        mismatch = (f"control {names['control']} {line_lengths['control']:g} ns vs target "
+                                    f"{names['target']} {line_lengths['target']:g} ns: the two pulses differ in "
+                                    f"length by {gap:g} ns, so their lobes are misaligned")
                         notes.append(mismatch)
                         two_flux_lengths["mismatch"] = mismatch
                     duration_note = (f"{duration_ns:g} ns played span (control {line_lengths['control']:g} ns, "
-                                     f"target {line_lengths['target']:g} ns, flat length, edges and padding); "
+                                     f"target {line_lengths['target']:g} ns, {made_of}); "
                                      + (f"the macro's own duration is {macro_duration:g} ns (the control pulse)"
                                         if macro_duration is not None else
                                         "the macro's own duration reads the control pulse label on the moving "
@@ -1513,7 +1613,7 @@ def operations(doc, conversions=None, unavailable=None):
                 else:
                     why = next((ln["waveform_reason"] for ln in lines if ln.get("waveform_reason")), None)
                     if why:
-                        duration_note = "unknown: " + why
+                        duration_note = "length " + why
             fq = [ln["point"].get("frequency_hz") for ln in lines]
             alphas = [number(roles[k]["qubit"].get("anharmonicity")) for k in ("control", "target")]
             res = [] if any(ln["refusal"] for ln in lines) else resonances(fq[0], fq[1], alphas[0], alphas[1])
@@ -1554,7 +1654,7 @@ def operations(doc, conversions=None, unavailable=None):
             if untrusted_samples:
                 # a sample list holding a non-number is not a length either
                 duration_ns = None
-                duration_note = "not derivable: " + next(
+                duration_note = "length " + next(
                     ln["waveform_reason"] for ln in lines if "waveform_I holds" in ln.get("waveform_reason", ""))
             elif iq_samples and duration_ns is not None:
                 # the I/Q sample count is a true length; only the level is not derivable
@@ -1724,7 +1824,10 @@ def solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversion
               else (f" {whose.rstrip()}" if whose else "") + f": unknown — {result['reason']}")
     result["summary"] = (f"target Δ {aim} (= −α of H per node 30) → required amplitude"
                          + answer
-                         + f" | stored {mv(stored)} | stored minus required {mv(difference)}"
+                         + f" | stored {mv(stored)}"
+                         + (f" ({unreadable_amplitude(mover)})" if mover and stored is None and mover["moves"]
+                            and not mover["refusal"] else "")
+                         + f" | stored minus required {mv(difference)}"
                          + f" ({result.get('tier', tier)})")
     conv = conversions.get(mover["qubit_path"]) if mover else None
     if result.get("ok") and conv is not None:
@@ -1878,15 +1981,15 @@ def _solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversio
                             else point["validity"])
         path = read(doc, ln["amplitude_path"]).get("holder_path")
         stage_refusal = None
-        if not path or number(current(doc, path)) is None:
-            if not ln.get("amplitude_source"):
-                raise ValueError("pulse amplitude cannot be resolved")
-            # a sample-array pulse has no amplitude field: the required amplitude
-            # needs only f_01, alpha and the conversion, so it is still answered;
-            # only the write has nowhere to go
+        if not path or stored_number(current(doc, path)) is None:
+            # the required amplitude needs only f_01, alpha and the conversion, so it
+            # is still answered; only the write has nowhere to go
+            if ln.get("amplitude_source"):
+                stage_refusal = ("this pulse stores samples, not an amplitude: "
+                                 "rescale its waveform to stage the required peak")
+            else:
+                stage_refusal = "nothing to stage: " + unreadable_amplitude(ln)
             path = None
-            stage_refusal = ("this pulse stores samples, not an amplitude: "
-                             "rescale its waveform to stage the required peak")
         port = read(doc, ln["qubit_path"] + ".z.opx_output").get("holder_path") or ""
         bound, label = _sample_bound(doc, "#/" + port.replace(".", "/"))
         # the samples' own peak IS the played amplitude, so its ratio is 1
@@ -1905,7 +2008,11 @@ def _solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversio
         preview = next(p for p in operating_points(preview_row) if p["line"] == ln["role"])
         preview["method"] = selected
         preview["preview"] = True
-        preview.update(amp_text=f"{amplitude:g} V ({'peak of waveform' if stage_refusal else 'stored amplitude'})",
+        amp_label = ("peak of waveform" if ln.get("amplitude_source") else "required, nothing stored: "
+                     + unreadable_amplitude(ln) if not path else None)
+        stored_now = stored_number(current(doc, path)) if path else None
+        preview.update(amp_text=(f"{amplitude:g} V ({amp_label})" if amp_label
+                                 else f"{amplitude:g} V (required; stored amplitude {stored_now:g} V)"),
                        amp_title=path or ln.get("pulse_path"))
         return {"ok": True, "tier": selected, "amplitude_v": amplitude, "frequency_hz": frequency,
                 "operating_point": preview,

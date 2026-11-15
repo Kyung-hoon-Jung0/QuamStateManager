@@ -82,15 +82,16 @@ class TestNotDerivable:
         ln = r["lines"][0]
         full = "not derivable for WaveformPulse: " + why
         assert ln["amplitude_v"] is None
-        assert ln["point"]["reason"] == "first lobe: " + full
+        # the row names the unreadable leaf before the reason
+        assert ln["point"]["reason"] == "first lobe: qubits.q1.z.operations.cz_unipolar_pulse_q2.waveform_I: " + full
         assert full in ln["amp_title"]
         assert "q1: " + full in r["notes"]
         if wf and isinstance(wf, list):
             # a list holding a non-number is no trustworthy length either
             assert r["duration_ns"] is None
-            assert r["duration_note"] == "not derivable: " + full
+            assert r["duration_note"] == "length " + full
         else:
-            assert r["duration_note"] == "unknown: " + full
+            assert r["duration_note"] == "length " + full
         assert not any("operation amplitude is missing" in str(v) for v in (ln["point"]["reason"],))
 
     def test_an_iq_sample_pulse_on_a_flux_line_is_refused_not_read_as_I(self):
@@ -109,7 +110,9 @@ class TestOtherClassesUnchanged:
 
     def test_a_missing_amplitude_keeps_its_old_words(self):
         r = _row({"length": 40, "__class__": "x.SquarePulse"})
-        assert r["lines"][0]["point"]["reason"].endswith(": the operation amplitude is missing")
+        # the missing leaf is named, never blamed on f_01
+        assert r["lines"][0]["point"]["reason"].endswith(
+            ": qubits.q1.z.operations.cz_unipolar_pulse_q2.amplitude is missing or not a number")
         assert "q1: the pulse amplitude cannot be read" in r["notes"]
 
     def test_sign_lobes_helper(self):
@@ -173,3 +176,15 @@ class TestDuration:
         r = _row(dict(WAVE, waveform_Q=[0.0] * 92))
         assert r["duration_ns"] == 92
         assert r["duration_note"].endswith("; level not derivable: waveform_Q is stored (I/Q pulse)")
+
+
+def test_a_non_finite_sample_gives_the_one_prefixed_length_note():
+    r = _row(dict(WAVE, waveform_I=[0.1, float("nan")]))
+    assert r["duration_ns"] is None
+    assert r["duration_note"] == ("length not derivable for WaveformPulse: "
+                                  "waveform_I holds a sample that is not a finite number")
+
+
+def test_an_empty_sample_list_gives_the_one_prefixed_length_note():
+    r = _row(dict(WAVE, waveform_I=[]))
+    assert r["duration_note"] == "length not derivable for WaveformPulse: waveform_I is empty"

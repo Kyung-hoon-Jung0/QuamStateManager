@@ -11,6 +11,7 @@ import math
 import re
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from quam_state_manager.core import cz_gate_plan as C
@@ -375,3 +376,79 @@ def test_c_the_filtered_output_comes_from_the_zline_model(client):
 def test_c_a_port_without_filters_says_so(client):
     d = _data(client, "cz_two")
     assert "no output filters" in d["trajectory"][1]["filtered"]["note"]
+
+
+def test_d7_two_flux_lengths_use_the_port_sampling_rate():
+    """192 samples on a 2 GS/s port play 96 ns, as long as 96 samples at 1 GS/s."""
+    state, wiring = lab_chip(control_flat=188, target_flat=92)
+    state["ports"]["analog_outputs"]["con1"]["5"]["1"]["sampling_rate"] = 2e9
+    t = rows_of(merged(state, wiring))[0]["cz_two"]["two_flux_lengths"]
+    assert (t["control"], t["target"]) == (96, 96) and "mismatch" not in t
+
+
+def test_d7_a_mismatch_states_both_lengths_and_the_gap():
+    state, wiring = lab_chip(control_flat=92, target_flat=92)
+    state["ports"]["analog_outputs"]["con1"]["5"]["1"]["sampling_rate"] = 2e9
+    t = rows_of(merged(state, wiring))[0]["cz_two"]["two_flux_lengths"]
+    assert "control q1 48 ns vs target q2 96 ns" in t["mismatch"] and "by 48 ns" in t["mismatch"]
+
+
+def test_d7_an_underivable_length_says_the_check_was_not_made():
+    state, wiring = lab_chip()
+    state["qubit_pairs"][PAIR]["macros"]["cz_two"]["flux_pulse_target"]["flat_length"] = None
+    row = rows_of(merged(state, wiring))[0]["cz_two"]
+    assert row.get("two_flux_lengths") is None
+    assert any("two-flux length check not made" in n and "q2" in n for n in row["notes"]), row["notes"]
+
+
+def _rate_row(rate, *, absent=False, flats=(92, 92)):
+    state, wiring = lab_chip(control_flat=flats[0], target_flat=flats[1])
+    port = state["ports"]["analog_outputs"]["con1"]["5"]["1"]
+    if absent:
+        port.pop("sampling_rate", None)
+    else:
+        port["sampling_rate"] = rate
+    return rows_of(merged(state, wiring))[0]["cz_two"]
+
+
+@pytest.mark.parametrize("make", [int, float, np.float64], ids=["int", "float", "np_float"])
+def test_d7_a_numeric_rate_of_any_type_is_read(make):
+    t = _rate_row(make(2e9))["two_flux_lengths"]
+    assert (t["control"], t["target"]) == (48, 96)
+    assert "control q1 48 ns vs target q2 96 ns" in t["mismatch"]
+
+
+def test_d7_a_working_reference_rate_resolves():
+    state, wiring = lab_chip(control_flat=92, target_flat=92)
+    state["ports"]["analog_outputs"]["con1"]["5"]["1"]["sampling_rate"] = "#/extra_rate"
+    state["extra_rate"] = 2e9
+    t = rows_of(merged(state, wiring))[0]["cz_two"]["two_flux_lengths"]
+    assert "control q1 48 ns vs target q2 96 ns" in t["mismatch"]
+
+
+def test_d7_an_absent_rate_says_the_default_was_used():
+    row = _rate_row(None, absent=True)
+    assert row["two_flux_lengths"]["control"] == 96
+    assert "two-flux lengths at the default 1 GS/s; no sampling_rate stored" in row["notes"]
+
+
+@pytest.mark.parametrize("bad", [0, -1, "2e9", float("nan"), float("inf"), True, "#./gone"],
+                         ids=["zero", "negative", "text", "nan", "inf", "bool", "dangling"])
+def test_d7_a_present_unreadable_rate_gives_no_lengths(bad):
+    row = _rate_row(bad)
+    assert row.get("two_flux_lengths") is None
+    leaf = "qubits.q1.z.opx_output.sampling_rate"
+    assert f"two-flux length check not made: {leaf} is not a positive number" in row["notes"], row["notes"]
+    assert not any("default 1 GS/s" in n for n in row["notes"])
+
+
+def test_d7_a_numpy_integer_rate_is_read_as_its_number():
+    t = _rate_row(np.int64(2_000_000_000))
+    assert (t["two_flux_lengths"]["control"], t["two_flux_lengths"]["target"]) == (48, 96)
+    assert not any("no sampling_rate stored" in n for n in t["notes"])
+
+
+def test_d7_a_rate_beyond_float_range_is_refused_without_raising():
+    row = _rate_row(10 ** 400)
+    assert row.get("two_flux_lengths") is None
+    assert any("qubits.q1.z.opx_output.sampling_rate is not a positive number" in n for n in row["notes"])

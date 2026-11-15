@@ -113,6 +113,11 @@ def _parts():
                              "body": [{"part": "note", "text": "The pulses it added stay on the chip."}],
                              "foot_actions": [{"label": "Cancel", "cls": "btn-sync outline"},
                                               {"label": "Remove", "cls": "btn-sync danger"}]}),
+        ("Dialog", "Extra large (a form beside a chart)", {
+            "part": "dialog", "size": "xl", "head": {"eyebrow": "New gate", "title": "New CZ gate", "gist": "Pair q1-2"},
+            "body": [{"part": "note", "text": "The form on the left, the evidence on the right."}],
+            "foot_actions": [{"label": "Cancel", "cls": "btn-sync outline"},
+                             {"label": "Check", "cls": "btn-sync primary"}]}),
     ]
     return out
 
@@ -193,23 +198,29 @@ def reading_form(state):
                                 "control": {"part": "input", "num": True, "value": v, "unit": u, "block": True,
                                             "invalid": state == "danger" and v == "3.0"}}
     return [
-        {"part": "panel", "step": 1, "title": "Gate", "body": [
+        {"part": "zone", "step": 1, "title": "Gate", "body": [
             {"part": "field", "label": "Name", "control": {"part": "input", "value": "cz_fast", "block": True}},
             {"part": "field", "label": "Class", "control": {"part": "select", "options": ["CZ gate", "Square pulse"], "value": "CZ gate", "block": True}},
         ]},
-        {"part": "panel", "step": 2, "title": "Pulses", "summary": ["2 lines play together"], "body": [
+        {"part": "zone", "step": 2, "title": "Pulses", "summary": ["2 lines play together"], "body": [
             {"part": "slot", "title": "Qubit flux pulse", "chip": "q1.z", "line": 1, "body": [
                 {"part": "grid2", "items": [num("Length", "100", "ns", "entered"), num("Amplitude", amp, "V", "entered")]}]},
             {"part": "slot", "title": "Coupler pulse", "chip": "coupler_q1_q2", "line": 2, "body": [
                 {"part": "grid2", "items": [num("Length", "60", "ns", "entered"), num("Amplitude", "0.05", "V", "default")]}]},
+            {"part": "panel", "title": "More pairs", "fold": True, "summary": ["only q1-q2"],
+             "body": [{"part": "check", "text": "Also q2-q3"}]},
         ]},
-        {"part": "panel", "step": 3, "title": "More pairs", "fold": True, "summary": ["only q1-q2"],
-         "body": [{"part": "check", "text": "Also q2-q3"}]},
     ]
 
 
+READING_EMPTY = "Press Check: the lab's code builds this gate on a copy of the chip and the result shows here."
+
+
 def reading_evidence(state):
-    """The evidence column: conclusion, key numbers, table, checks, what is written."""
+    """The evidence column: ONE result zone holding conclusion, key numbers, table, checks, what is written.
+    state "before": the zone before a check, quiet but still a visible region."""
+    if state == "before":
+        return [{"part": "zone", "step": 3, "title": "Result", "fill": True, "quiet": READING_EMPTY}]
     ok = state == "ok"
     banner = ({"part": "verdict", "strong": True, "tone": "ok", "key": "Ready to create",
                "why": "Checked on a copy of the chip: it loads, and the gate runs."} if ok else
@@ -240,7 +251,9 @@ def reading_evidence(state):
     wave = {"part": "panel", "title": "Waveform", "hint": "program time, before filters",
             "summary": [{"part": "line", "line": 1, "text": "q1.z"}, {"part": "line", "line": 2, "text": "coupler_q1_q2"}],
             "body": [{"part": "placeholder", "text": "The lane chart renders here (gate timeline component)"}]}
-    return [banner, stats, wave, table, chk, written]
+    return [{"part": "zone", "step": 3, "title": "Result", "fill": True,
+             "summary": [{"text": "checked", "level": "ok"} if ok else {"text": "1 problem", "level": "danger"}],
+             "body": [banner, stats, wave, table, chk, written]}]
 
 
 def _reading():
@@ -354,11 +367,31 @@ def _env_card():
             ]}
 
 
+def zone_samples():
+    """The standalone zones: with a step, without one, and quiet (docs/308 section 4d)."""
+    return [
+        {"part": "zone", "step": 1, "title": "Gate", "summary": ["2 lines"],
+         "body": [{"part": "field", "label": "Name", "control": {"part": "input", "value": "cz_fast", "block": True}}]},
+        {"part": "zone", "title": "Neighbours", "body": [
+            {"part": "panel", "title": "Checks", "summary": [{"text": "6 of 6 passed", "level": "ok"}],
+             "body": ["A panel groups inside a zone and stays lighter than it."]}]},
+        {"part": "zone", "step": 3, "title": "Result", "quiet": READING_EMPTY},
+    ]
+
+
+def _zones():
+    sec = "Zones"
+    z = zone_samples()
+    return [(sec, "Zone with a step and a summary", z[0]), (sec, "Zone without a step, a panel inside", z[1]),
+            (sec, "Zone, quiet (nothing to show yet)", z[2])]
+
+
 def specs():
     """[(section, label, spec)] in page order."""
     out = _parts()
     out += _choosing()
     out += _reading()
+    out += _zones()
     out += [("Worked example: rule review (A1)", "Review dialog", _review_dialog()),
             ("Worked example: apply to other pairs (A2)", "Apply dialog", _apply_dialog()),
             ("Worked example: environment card (E1, E2)", "Card head and verdicts", _env_card())]

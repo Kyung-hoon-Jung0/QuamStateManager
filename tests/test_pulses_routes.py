@@ -1498,20 +1498,6 @@ class TestCzGateFirst:
         assert all(i["new_gates"] == [] for i in info.values())
         assert "__new__:" not in html
 
-    def test_pair_gate_form_gains_verified_variants(self, pairs_client,
-                                                    modern_roster):
-        from quam_state_manager.core import pulse_catalog as pc
-        html = pairs_client.get("/pair/q1-q2/gate/new").data.decode()
-        assert "cz_snz" not in html               # no roster -> legacy list
-        pc.apply_env_overlay(modern_roster)
-        html = pairs_client.get("/pair/q1-q2/gate/new").data.decode()
-        # w9/pulsegate: a verified flux variant still writes its flux pulses
-        # into the gate -- new pulses, built on the Pulses page; the form
-        # says where instead of offering any flux gate
-        assert 'value="cz_snz"' not in html and 'value="cz_bipolar"' not in html
-        assert 'value="cz_flattop_erf"' not in html
-        assert "Gaussian CZ" in html
-
     def test_a_new_gate_is_refused_and_nothing_is_written(self, pairs_client,
                                                           modern_roster):
         from quam_state_manager.core import pulse_catalog as pc
@@ -1540,9 +1526,9 @@ class TestCzGateFirst:
         # capability model — a variant added on one side only would either
         # never be offered or be offered unverifiable.
         from quam_state_manager.core.capabilities import _CZ_VARIANT_CAPS
-        from quam_state_manager.web.routes import (_ENV_GATE_LEAVES,
-                                                   _ENV_GATE_TYPES,
-                                                   _SLOT_LEAVES)
+        from quam_state_manager.core.add_catalog import (
+            ENV_GATE_LEAVES as _ENV_GATE_LEAVES, ENV_GATE_TYPES as _ENV_GATE_TYPES,
+            SLOT_LEAVES as _SLOT_LEAVES)
         assert set(_ENV_GATE_TYPES) == set(_ENV_GATE_LEAVES)
         mapped = {"cz_bipolar": "bipolar", "cz_snz": "SNZ",
                   "cz_flattop_erf": "flattop_erf"}
@@ -1787,8 +1773,7 @@ class TestCreateRefusesAnUnknownTarget:
 class TestTheDetailPutsValuesWhereTheyCanBeRead:
     """docs/190 F18/F20/F53/N10 (stress round 2026-09-17), all measured in real
     Chrome first: a fixed 260px plot left ZERO property rows on screen at
-    1280x800 and 1000x700; the Gaussian CZ form was ~600px of full-width inputs
-    for four 2-digit numbers with its only submit below the fold; and the one
+    1280x800 and 1000x700; and the one
     surface in the app whose editable values had no value-history clock."""
 
     def test_the_plot_height_follows_the_pane(self):
@@ -1814,18 +1799,6 @@ class TestTheDetailPutsValuesWhereTheyCanBeRead:
         assert 'data-dot-path="' in html
         assert "PulsesPage.openFieldHistory(this)" in html
 
-    def test_the_gaussian_cz_form_is_a_row_with_a_reachable_submit(self):
-        # the fixture chip has no cz_flattop pair, so the FORM renders only on a
-        # real chip; pin the shipped template and its rules instead
-        import pathlib
-        html = pathlib.Path("quam_state_manager/web/templates/_pulse_gaussian_cz.html").read_text(encoding="utf-8")
-        assert "gcz-params-row" in html          # four short numbers on one row
-        assert "gcz-about" in html               # the six-line paragraph folds away
-        css = pathlib.Path("quam_state_manager/web/static/style.css").read_text(encoding="utf-8")
-        assert ".gcz-params-row { display: flex;" in css
-        assert "#gcz-root button[type=submit].btn-sm { width: auto; }" in css
-        # R4-TP-2: the head is the shared inspector head, the same as "New pulse"
-        assert "{% include '_inspector_header.html' %}" in html
 
 
 
@@ -2019,15 +1992,28 @@ class TestOneCreateButton:
         assert "+ Gaussian CZ" not in html
 
     def test_every_create_kind_carries_the_same_choice(self, slot_client):
-        for url, kind in (("/pulse/new", "pulse"), ("/pulse/new?kind=copy", "copy"),
-                          ("/pulse/new?kind=gaussian_cz", "gaussian_cz"),
-                          ("/pulse/gaussian-cz", "gaussian_cz")):
+        for url, kind in (("/pulse/new", "pulse"), ("/pulse/new?kind=copy", "copy")):
             html = slot_client.get(url).data.decode()
             assert 'id="pulse-create-choice"' in html, url
-            for k in ("pulse", "copy", "gaussian_cz"):
+            for k in ("pulse", "copy", "cz_gate"):
                 assert f'data-create-kind="{k}"' in html, (url, k)
+            assert 'data-create-kind="gaussian_cz"' not in html, url
+            # the CZ gate choice opens the CZ gate dialog (cz-gate.js, delegated)
+            i = html.index('data-create-kind="cz_gate"')
+            assert "data-czg-open" in html[i:i + 80], url
             lit = html.split('aria-selected="true"')[0].rsplit('data-create-kind="', 1)[1]
             assert lit.startswith(kind), (url, lit[:20])
+
+    def test_the_old_gate_builders_are_gone(self, slot_client):
+        for method, url in (("GET", "/pulse/gaussian-cz"),
+                            ("POST", "/api/pulse/gaussian-cz"),
+                            ("POST", "/api/pulse/gaussian-cz/plan"),
+                            ("POST", "/api/pulse/gaussian-cz/apply-several"),
+                            ("GET", "/pair/q1-q2/gate/new"),
+                            ("GET", "/pair/q1-q2/gate/new/cancel"),
+                            ("POST", "/pair/q1-q2/gate")):
+            r = slot_client.open(url, method=method)
+            assert r.status_code == 404, (method, url, r.status_code)
 
 
 class TestANewClassReprobesTheEnv:

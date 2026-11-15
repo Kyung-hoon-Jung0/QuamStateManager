@@ -1,5 +1,7 @@
 # 308 — The UI kit (stage 0: the hub)
 
+> **Removed (2026-11-15):** the Gaussian CZ builder (`/pulse/gaussian-cz`, `/api/pulse/gaussian-cz*`, the "Gaussian CZ from cz_flattop" kind of + New pulse, the several-pairs dialog) and the pair page's experimental "+ Add gate" form (`/pair/<name>/gate/new`, `POST /pair/<name>/gate`) are gone. A CZ gate is created only in the CZ gate dialog (+ New pulse -> "CZ gate", the gate list on a pair page, or the CZ plan). What follows about them is history.
+
 > **Contract:** new or changed UI uses only the UI kit. A class with no CSS rule, a new visual
 > rule outside `ui-kit.css`, or a raw value in place of a `--ui-*` token fails
 > `tests/test_ui_contract.py`.
@@ -196,6 +198,51 @@ Small caps titles use `font-variant-caps: all-small-caps` (never `text-transform
 `ui-placeholder` marks where a component renders (dashed, quiet text, `--ui-placeholder-h`). The sample page rebuilds a dialog body from these parts only, passed and failed, with a 372 px
 form column and an evidence column.
 
+## 4d. Zones: the level above a panel
+
+Hierarchy, outermost first:
+1. Page or dialog: the ground (`--ui-surface-0`, or `--ui-surface-2` for a result column).
+2. Zone (`ui_zone` / `UI.zone`): a main region the eye must find first. At most three or four per screen
+   (a dialog's form steps and its result). Coloured boundary, tinted head band, bold title, filled step badge.
+3. Panel (`ui_panel` / `UI.panel`): a lighter grouping inside a zone or a page (waveform, checks, a table).
+   Grey border, small-caps quiet title. Never as loud as a zone.
+4. Field: one label and its control.
+
+Use a zone when the region is one of the few things the user scans for on arrival; use a panel for
+everything that groups content inside it. Never nest a zone in a zone.
+
+Parts: `ui-zone`, `ui-zone-head`, `ui-zone-step` (optional), `ui-zone-title`, `ui-zone-sum` (right, quiet),
+`ui-zone-body`; `ui-zone--fill` fills its column's height; `ui-zone--quiet` is a zone with nothing to show yet:
+it keeps its head and shows one centred `ui-zone-empty` line (macro argument `quiet="..."`), so the region stays
+visible before a check. Signature: `ui_zone(title, step=None, summary=None, body=(), fill=False, quiet=None)`.
+
+Tokens (all derived, one formula serves light, dark and qm):
+- `--ui-zone-border`: the accent 30 % over a 40 % text-on-ground grey. A cool boundary, deliberately
+  under the state colours: a red banner inside a zone still dominates it.
+- `--ui-zone-head-bg`: the accent 10 % over `--ui-surface-1`; `--ui-zone-bg`: `--ui-surface-1`.
+- `--ui-zone-title`: `--ui-text`; `--ui-fs-zone`: 14/17 of the base size (one step above the panel's small caps).
+
+Measured (`test_7h`, contrast ratios): zone title on its head 9.65 / 9.97 / 11.85 (light / dark / qm);
+boundary against the ground 2.85 / 3.75 / 3.74, against `--ui-surface-2` 2.57 / 3.32 / 3.34, where the panel
+border was 1.67 / 2.09 / 2.19; head band vs body luminance step 0.137 / 0.0099 / 0.0081.
+
+## 4e. Scroll region: a region that visibly continues
+
+Use `ui-scroll` on any region that scrolls inside a dialog or a pane and can end mid-content (a dialog's
+form or result column, a long list in a side pane). Without it, a zone cut by the scroll edge has no bottom
+border and reads as broken. One class, no JS:
+- a thin scrollbar, always visible while the region can scroll (`scrollbar-width: thin`, thumb
+  `--ui-scroll-thumb`, transparent track, `scrollbar-gutter: stable` so the width does not jump when
+  content starts to overflow); `::-webkit-scrollbar` equivalents at `--ui-scroll-bar-w`;
+- a bottom fade, `::after`, `position: sticky; bottom: 0`, `--ui-scroll-fade-h` tall, painted with
+  `--ui-scroll-fade`: transparent to `--ui-scroll-bg` (`--ui-surface-1`, the dialog and pane ground). The
+  gradient is computed in the token block, so a region on another ground needs its own fade token there.
+  It takes its own space after the last child, so at the scroll end nothing is under it, and it has
+  `pointer-events: none`, so a click on a field under it reaches the field. Over the same ground it is invisible
+  when the content fits.
+Put the class on the element that really scrolls. When a layout moves the scroll to a parent (the CZ gate
+dialog stacked), hide the inner `::after` and drop its gutter, so there is one scrollbar and one fade.
+
 ## 5. Writing rules (UI text, English)
 
 1. Conclusion first, reason next, action last. A sentence <= ~90 characters; two thoughts = two sentences.
@@ -217,6 +264,9 @@ form column and an evidence column.
 `:where()`; `hx-on` or htmx trigger filters (CSP, docs/141, docs/125); changing
 `attributesToSettle`; theme blocks in `ui-kit.css`; inline `style=` colours or sizes; a new
 `<dialog>` shell without `ui-dialog`; `window.confirm` / `alert`; a class with no rule.
+
+Classes are for the kit's look: every class name has a rule in `ui-kit.css` (or `style.css`).
+Script hooks are `data-*` attributes, never classes (check 9b counts class names without a rule per file).
 
 ## 7. The sample page `/ui-kit`
 

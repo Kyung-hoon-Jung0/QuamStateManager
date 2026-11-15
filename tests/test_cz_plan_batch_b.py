@@ -129,7 +129,9 @@ def test_no_coupler_table_identity(tmp_path):
     assert n_words, "the phrase cell is rendered"
     # D6: the two-flux row's Moves cell separates its two movers with " / " (the only
     # difference from the previous pin: "q1</span><span" -> "q1</span> / <span").
-    assert hashlib.sha256(table.encode()).hexdigest() == "092cee50afde2f1d8f24ee7e5cf4945cdd4050ce8fd09592a5ff008fbd8f9ffe"
+    # The two-flux row of two standard pulses now carries its length help note (control
+    # 40 ns vs target 32 ns): that one cell is the only difference from the previous pin.
+    assert hashlib.sha256(table.encode()).hexdigest() == "094355b3d9c6bed5711eaa0d9a80782a69d787cde0dbe58eb6cc92f83938795d"
 
 
 def test_empty_ledger_explains_data_folder(tmp_path):
@@ -232,3 +234,23 @@ def test_coupler_note_once_above_the_table(tmp_path):
 def test_no_coupler_no_note(tmp_path):
     html = _client(tmp_path).get("/cz-plan").get_data(as_text=True)
     assert "czp-coupler-note" not in html
+
+
+def test_a_text_coupler_amplitude_is_not_played():
+    state, _ = state_with_coupler()
+    state["couplers"]["c12"]["operations"]["flux"]["amplitude"] = "0.3"
+    row, _ = selected(state)
+    line = row["coupler"]
+    assert line["amplitude_v"] is None and row["coupler_amplitude_v"] is None
+    assert line["amp_text"] == "unknown"
+    assert line["amp_reason"] == "couplers.c12.operations.flux.amplitude holds text, not a number"
+    assert not any("+300 mV" in n for n in row["notes"])
+
+
+def test_a_text_macro_copy_amplitude_says_text():
+    state, _ = state_with_coupler()
+    state["qubit_pairs"]["q1-2"]["macros"]["cz_unipolar"]["coupler_flux_pulse"]["amplitude"] = "0.25"
+    row, _ = selected(state)
+    assert row["coupler"]["amplitude_v"] == .1
+    assert any("macro's copy holds text ('0.25'), not a number" in n for n in row["notes"]), row["notes"]
+    assert not any("copy says" in n for n in row["notes"])

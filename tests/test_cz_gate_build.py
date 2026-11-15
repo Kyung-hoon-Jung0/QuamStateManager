@@ -7,12 +7,12 @@ import json
 import pytest
 
 from quam_state_manager.core import cz_gate_build as cgb
-from quam_state_manager.core import gaussian_cz
 
 SQUARE = "quam.components.pulses.SquarePulse"
 G_UNI = "quam_builder.common.pulses.GaussianFilteredSquarePulse"
 G_BI = ("quam_builder.architecture.superconducting.components.pulses."
         "GaussianFilteredSymmetricBipolarPulse")
+GAUSS_VARIANTS = (("cz_gaussian_unipolar", G_UNI), ("cz_gaussian_bipolar", G_BI))
 LAB_GATE = "lab_pkg.TwoFluxGate"
 LAB_PULSE = "lab_pkg.StepPulse"
 
@@ -471,38 +471,6 @@ def test_copied_layout_given_values_override_the_model():
     assert res["fields"]["flux_pulse_control"]["amplitude"] == cgb.GIVEN
 
 
-# --- Gaussian regression -----------------------------------------------
-
-def _gauss_chip():
-    s = _chip(2)
-    s["qubit_pairs"]["q1-2"]["coupler"] = {"id": "c12", "operations": {"const": {"amplitude": 0.2}}}
-    s["qubit_pairs"]["q1-2"]["macros"]["cz_flattop"] = {
-        "flux_pulse_qubit": {"amplitude": 0.31, "flat_length": 60},
-        "coupler_flux_pulse": {"amplitude": 0.12}}
-    return s
-
-
-@pytest.mark.parametrize("gname,cls", gaussian_cz.VARIANTS)
-def test_gaussian_regression_matches_the_old_plan(gname, cls):
-    s = _gauss_chip()
-    old = gaussian_cz.plan(s, "q1-2", padding_length=20, qubit_filter_mhz=20,
-                           coupler_filter_mhz=50, suffix_ids=("q1", "q2"))
-    want = [(p, v) for p, v in old["creates"] if f".{gname}" in p or p.endswith(gname)
-            or f"{gname}_" in p.rsplit(".", 1)[-1]]
-    assert len(want) == 3
-    new = cgb.plan(s, "q1-2", gate_name="cz_g_new", gate_class=cgb.CZ_GATE, pulses={
-        "flux_pulse_qubit": {"class": cls, "fields": {
-            "pulse_length": 60, "padding_length": 20, "amplitude": 0.31,
-            "gaussian_filter_frequency_mhz": 20}},
-        "coupler_flux_pulse": {"class": cls, "fields": {
-            "pulse_length": 60, "padding_length": 20, "amplitude": 0.12,
-            "gaussian_filter_frequency_mhz": 50}}})
-    got = _rename(new["creates"], "cz_g_new", gname)
-    assert [p for p, _ in got] == [p for p, _ in want]
-    for (gp, gv), (wp, wv) in zip(got, want):
-        assert gv == wv, gp
-
-
 # --- copied names and ids ------------------------------------------------
 
 def _two_pulse_chip():
@@ -797,13 +765,10 @@ def _gauss_golden_chip():
     return s
 
 
-@pytest.mark.parametrize("gname,cls", gaussian_cz.VARIANTS)
+@pytest.mark.parametrize("gname,cls", GAUSS_VARIANTS)
 def test_gaussian_matches_the_original_builder_literal(gname, cls):
     s = _gauss_golden_chip()
     want = _gauss_golden(gname, cls)
-    old = gaussian_cz.plan(s, "q1-q2", padding_length=20, qubit_filter_mhz=20,
-                           coupler_filter_mhz=50, suffix_ids=("q1", "q2"))
-    assert [c for c in old["creates"] if gname in c[0]] == want
     new = cgb.plan(s, "q1-q2", gate_name=gname, gate_class=cgb.CZ_GATE, pulses={
         "flux_pulse_qubit": {"class": cls, "fields": {
             "pulse_length": 60, "padding_length": 20, "amplitude": 0.31,
@@ -812,15 +777,6 @@ def test_gaussian_matches_the_original_builder_literal(gname, cls):
             "pulse_length": 60, "padding_length": 20, "amplitude": 0.12,
             "gaussian_filter_frequency_mhz": 50}}})
     assert new["creates"] == want
-
-
-def test_gaussian_builder_never_changes_its_input():
-    s = _gauss_golden_chip()
-    before = copy.deepcopy(s)
-    gaussian_cz.plan(s, "q1-q2", suffix_ids=("q1", "q2"))
-    gaussian_cz.plan(s, "q1-q2", own_names=True)
-    gaussian_cz.plan(s, "q1-q2")
-    assert s == before
 
 
 # --- copied layouts: SM refuses where it would have to guess -------------
@@ -1848,3 +1804,63 @@ def test_qubits_without_flux_lines_point_at_the_coupler_only_class():
         err = _plan(s)["error"]
         assert "have no flux line" in err and "coupler-only gate class" in err
         assert "moving_qubit" not in err
+
+
+# ---------------------------------------------------------------- gate settings (macro_fields)
+
+def _lab_with_settings():
+    s = _lab_chip()
+    m = s["qubit_pairs"]["q1-2"]["macros"]["cz_tf"]
+    m["duration_ns"] = 40
+    m["link"] = "#./flux_pulse_control"
+    return s
+
+
+def test_macro_fields_change_a_copied_setting_and_report_given():
+    s = _lab_with_settings()
+    res = cgb.plan(s, "q2-3", gate_name="cz_new", gate_class=LAB_GATE,
+                   macro_fields={"mode": "slow", "duration_ns": 48})
+    macro = dict(res["creates"])["qubit_pairs.q2-3.macros.cz_new"]
+    assert macro["mode"] == "slow" and macro["duration_ns"] == 48
+    assert res["fields"]["macro"]["mode"] == cgb.GIVEN
+    assert res["fields"]["macro"]["duration_ns"] == cgb.GIVEN
+
+
+@pytest.mark.parametrize("key,word", [
+    ("flux_pulse_control", "pulse"), ("phase_shift_control", "not copied"),
+    ("unknown_key", "no setting named unknown_key"), ("link", "reference"),
+    ("__class__", "no setting")])
+def test_macro_fields_refuse_naming_the_key(key, word):
+    res = cgb.plan(_lab_with_settings(), "q2-3", gate_name="cz_new", gate_class=LAB_GATE,
+                   macro_fields={key: 1})
+    assert "error" in res and any(key in r and word in r for r in res["refusals"]), res
+
+
+def test_macro_fields_on_a_known_class_are_refused():
+    res = cgb.plan(_chip(), "q1-2", gate_name="cz_new", gate_class=cgb.CZ_GATE,
+                   pulses=_square(), macro_fields={"mode": "x"})
+    assert "error" in res and any("no gate settings" in r for r in res["refusals"])
+
+
+def test_a_whole_number_for_a_float_field_stays_a_float():
+    s = _lab_chip()
+    res = cgb.plan(s, "q2-3", gate_name="cz_new", gate_class=LAB_GATE,
+                   pulses={"flux_pulse_control": {"fields": {"amplitude": 1, "length": 48}}})
+    pulse = dict(res["creates"])["qubit_pairs.q2-3.macros.cz_new"]["flux_pulse_control"]
+    assert pulse["amplitude"] == 1.0 and isinstance(pulse["amplitude"], float)
+    assert pulse["length"] == 48 and isinstance(pulse["length"], int)
+    s = _lab_with_settings()
+    s["qubit_pairs"]["q1-2"]["macros"]["cz_tf"]["neg_offset_v"] = 0.0
+    res = cgb.plan(s, "q2-3", gate_name="cz_new", gate_class=LAB_GATE, macro_fields={"neg_offset_v": 0.01})
+    assert dict(res["creates"])["qubit_pairs.q2-3.macros.cz_new"]["neg_offset_v"] == 0.01
+    res = cgb.plan(s, "q2-3", gate_name="cz_new", gate_class=LAB_GATE, macro_fields={"neg_offset_v": 2})
+    assert isinstance(dict(res["creates"])["qubit_pairs.q2-3.macros.cz_new"]["neg_offset_v"], float)
+
+
+
+def test_refusals_cap_every_echoed_long_name():
+    long_cls = "lab_pkg." + "X" * 120
+    res = cgb.plan(_chip(), "q1-2", gate_name="cz_new", gate_class=long_cls)
+    assert "error" in res
+    assert all(long_cls not in r for r in res["refusals"])
+    assert any(cgb.cap_name(long_cls) in r for r in res["refusals"]) and len(cgb.cap_name(long_cls)) == cgb.ECHO_CAP

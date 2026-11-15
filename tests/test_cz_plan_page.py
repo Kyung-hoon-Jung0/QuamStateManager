@@ -414,9 +414,9 @@ def test_the_chip_map_route_draws_each_pair_and_names_what_it_cannot(client):
     m = client.get("/cz-plan/map").get_json()
     assert m["ok"] and [q["name"] for q in m["qubits"]] == ["q1", "q2", "q3"]
     shown = {(s["pair"], s["qubit"]) for s in m["segments"]}
-    # q1-2 shows its "cz" (an alias of cz_unipolar); q3 has no quad term -> refused, listed
+    # q1-2 shows the gate its "cz" alias names (cz_unipolar); q3 has no quad term -> refused, listed
     assert ("q1-2", "q1") in shown and ("q1-2", "q2") in shown and ("q3-2", "q2") in shown
-    assert all(s["operation"] == "cz" for s in m["segments"])
+    assert {(s["pair"], s["operation"]) for s in m["segments"]} == {("q1-2", "cz_unipolar"), ("q3-2", "cz")}
     assert any(r["qubit"] == "q3" and "freq_vs_flux_01_quad_term" in r["reason"] for r in m["refused"])
     two = client.get("/cz-plan/map?op=cz_two").get_json()
     assert two["missing"] == ["q3-2"] and {s["operation"] for s in two["segments"]} == {"cz_two"}
@@ -455,3 +455,48 @@ def test_the_count_names_aliases_apart_and_snz_only_when_played(client):
     html = client.get("/cz-plan", headers={"HX-Request": "true"}).get_data(as_text=True)
     assert "(3 operations on 2 pairs, plus 1 alias)" in html
     assert "third SNZ level" not in html
+
+
+# ------------------------------------------------------------------ two-flux lengths of standard pulses
+def _two_flux_row(tmp_path, target_length):
+    """The cz_two row of the fixture chip with the target pulse's ``length`` replaced
+    (``...`` removes the key)."""
+    folder = tmp_path / "chips" / "two"
+    folder.mkdir(parents=True)
+    s, w = _chip()
+    pulse = s["qubits"]["q2"]["z"]["operations"]["cz_flux_t"]
+    if target_length is ...:
+        pulse.pop("length")
+    else:
+        pulse["length"] = target_length
+    (folder / "state.json").write_text(json.dumps(s), encoding="utf-8")
+    (folder / "wiring.json").write_text(json.dumps(w), encoding="utf-8")
+    c = _client(tmp_path, folder=folder)
+    return c.get("/cz-plan/data?op=qubit_pairs.q1-2.macros.cz_two").get_json()["row"]
+
+
+def test_two_flux_standard_pulses_state_their_own_length(tmp_path):
+    r = _two_flux_row(tmp_path, 32)
+    t = r["two_flux_lengths"]
+    assert (t["control"], t["target"]) == (40, 32)
+    assert "control q1 40 ns vs target q2 32 ns" in t["mismatch"] and t["mismatch"] in r["notes"]
+    assert r["duration_ns"] == 40
+    assert not any("could not be derived" in n for n in r["notes"]), r["notes"]
+    assert not any("default 1 GS/s" in n for n in r["notes"]), r["notes"]
+
+
+def test_two_flux_equal_standard_lengths_carry_no_mismatch(tmp_path):
+    r = _two_flux_row(tmp_path, 40)
+    t = r["two_flux_lengths"]
+    assert (t["control"], t["target"]) == (40, 40)
+    assert not t.get("mismatch")
+    assert not any("misaligned" in n or "could not be derived" in n for n in r["notes"]), r["notes"]
+
+
+@pytest.mark.parametrize("bad", [..., "32", True, 32.0, 0, -4])
+def test_two_flux_standard_pulse_without_a_usable_length_is_not_checked(tmp_path, bad):
+    r = _two_flux_row(tmp_path, bad)
+    hits = [n for n in r["notes"] if "two-flux length check not made: the played length of" in n]
+    assert len(hits) == 1 and hits[0].endswith("could not be derived"), r["notes"]
+    assert "q2" in hits[0] and "q1" not in hits[0], hits[0]
+    assert not (r.get("two_flux_lengths") or {}).get("mismatch")

@@ -34,13 +34,31 @@ def cas_equal(a: Any, b: Any) -> bool:
     with a relative tolerance; bools are NOT numbers here (True == 1 would
     make a boolean flip invisible); everything else is plain equality.
 
-    Lifted verbatim from ``autofit/writer._values_equal`` (docs/56 §8), which
-    now delegates here so the robot path and the user path can never drift.
+    Started as ``autofit/writer._values_equal`` (docs/56 §8), which now
+    delegates here so the robot path and the user path can never drift; a
+    bool now equals only a bool of the same value.
     """
-    if isinstance(a, (int, float)) and isinstance(b, (int, float)) \
-            and not isinstance(a, bool) and not isinstance(b, bool):
+    if isinstance(a, bool) or isinstance(b, bool):
+        return type(a) is type(b) and a == b
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
         return math.isclose(float(a), float(b), rel_tol=CAS_REL_TOL, abs_tol=0.0)
     return a == b
+
+
+def journal_equal(a: Any, b: Any) -> bool:
+    """Is the live value still the journal's recorded value?
+
+    Finite scalars compare with :func:`cas_equal` (the one tolerance); NaN
+    equals NaN (the chip's own value, restored); lists and dicts compare
+    element-wise by the same rule.
+    """
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(journal_equal(a[k], b[k]) for k in a)
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        return len(a) == len(b) and all(journal_equal(x, y) for x, y in zip(a, b))
+    if (isinstance(a, float) and isinstance(b, float) and math.isnan(a) and math.isnan(b)):
+        return True
+    return cas_equal(a, b)
 
 
 def resolve_edit_path(store: Any, dot_path: str) -> str:

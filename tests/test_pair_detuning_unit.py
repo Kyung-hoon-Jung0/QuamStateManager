@@ -115,3 +115,37 @@ def test_report_and_topology_read_pair_flux_not_macro_frequency(tmp_path, value,
     assert "<th>Detuning</th>" in report
     assert display.removesuffix(" V") in report
     assert "123456789" not in report
+
+
+@pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
+def test_a_non_finite_pair_detuning_is_not_a_value_and_has_no_unit(value):
+    from quam_state_manager.core import units
+    assert units.stored_value_unit("pair_detuning", value) == ""
+    assert units.pair_detuning_display(value) == "not a finite number"
+    assert units.pair_detuning_cell(value) == ("not a finite number", False)
+    assert units.qty_filter(value, "pair_detuning") == "not a finite number"
+    assert units.qty_filter(value, "pair_detuning", "unit") == ""
+
+
+def test_finite_pair_detuning_output_is_unchanged_by_the_non_finite_rule():
+    from quam_state_manager.core import units
+    assert units.pair_detuning_cell(0.1) == ("0.1000", False)
+    assert units.pair_detuning_cell(3e8) == ("300.000 MHz", True)
+    assert units.pair_detuning_cell(509.3) == ("509.3 (unit not stated)", True)
+    assert units.stored_value_unit("pair_detuning", 0.1) == "V"
+
+
+@pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")])
+def test_a_non_finite_pair_detuning_is_not_a_value_and_has_no_unit(bad):
+    from quam_state_manager.core import units
+    assert units.stored_value_unit("pair_detuning", bad) == ""
+    assert units.pair_detuning_cell(bad) == ("not a finite number", False)
+    assert units.pair_detuning_display(bad) == "not a finite number"
+    assert units.qty_filter(bad, "pair_detuning", "unit") == ""
+
+
+def test_finite_pair_detuning_output_is_unchanged():
+    from quam_state_manager.core import units
+    assert units.pair_detuning_cell(509.3) == ("509.3 (unit not stated)", True)
+    assert units.pair_detuning_cell(3e8) == ("300.000 MHz", True)
+    assert units.stored_value_unit("pair_detuning", 0.1) == "V"

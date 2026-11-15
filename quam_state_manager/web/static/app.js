@@ -477,27 +477,6 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
             evt.detail.isError = false;
         }
     }
-    // the Gaussian CZ form answers a refusal (400) or a Replace offer
-    // / another pair's op (409) with its own status body; without this the
-    // panel kept the previous pair's green "Created ..." line.
-    if (t.id === 'gcz-result' && (status === 400 || status === 409)) {
-        evt.detail.shouldSwap = true;
-        evt.detail.isError = false;
-    }
-});
-
-/* a new Gaussian CZ request clears the previous answer first, so a
-   success line never stands beside a request it does not describe. */
-document.addEventListener('htmx:beforeRequest', function (evt) {
-    var elt = evt.detail && evt.detail.elt;
-    if (!elt || elt.id !== 'gcz-form') return;
-    var slot = document.getElementById('gcz-result');
-    if (slot) slot.innerHTML = '';
-    // The Replace button adds overwrite=1 for ONE request; the parameters are
-    // already collected here, so drop it before a later submit (another pair)
-    // could carry it and replace without being asked.
-    Array.prototype.slice.call(elt.querySelectorAll('input[name="overwrite"]'))
-        .forEach(function (i) { i.parentNode.removeChild(i); });
 });
 
 /* v1.5.1 (SA-F2): a live write that failed answers 409 + X-SM-Error-Code
@@ -531,8 +510,6 @@ document.addEventListener('htmx:responseError', function(evt) {
     var _tabChipEarly = (xhr && xhr.getResponseHeader) ? xhr.getResponseHeader("X-SM-Chip-Mismatch") : null;
     if (!_tabChipEarly && t && t.classList && t.classList.contains('config-status-host')) return;
     if (!_tabChipEarly && t && t.id === 'state-history-detail') return;
-    if (!_tabChipEarly && t && t.id === 'gcz-result' && xhr
-        && (xhr.status === 400 || xhr.status === 409)) return;
     // docs/190 F06: a refused Ctrl+Z (the log moved under another window)
     // refreshes this window's tray so the next press declares what it sees.
     if (xhr && xhr.status === 409 && xhr.getResponseHeader
@@ -1845,8 +1822,7 @@ document.addEventListener('keydown', function(evt) {
         if (btn) { evt.preventDefault(); btn.click(); return; }
     }
     // 4. the inspector itself
-    if (!(pane.querySelector('#pulse-detail-root') || pane.querySelector('#pulse-create-root')
-          || pane.querySelector('#gcz-root'))) return;
+    if (!(pane.querySelector('#pulse-detail-root') || pane.querySelector('#pulse-create-root'))) return;
     if (window.closeInspector) { window.closeInspector(); evt.preventDefault(); }
 });
 
@@ -9412,6 +9388,8 @@ window.Bundles = (function () {
         [/^\/wiring(\/|$|\?)/, ["chipstatus", "components"]],
         [/^\/trends?(\/|$|\?)/, ["chipstatus", "datasets"]],
         [/^\/(qubits|pairs|resonators|flux|couplers|qdac)(\/|$|\?)/, ["components"]],
+        // the CZ gate dialog opens from the Pulses, CZ gate plan, Pairs and Qubits pages
+        [/^\/(pulses|cz-plan|qubits|pairs)(\/|$|\?)/, ["czgate"]],
         // (the /qubit/<id> and /pair/<id> inspector partials reference no lazy global -- 4l-review audit)
         // FB-10 C: the inspector's "Remove..." panel is driven by diagram-add.js
         [/^\/diagram-remove(\/|$|\?)/, ["components"]],

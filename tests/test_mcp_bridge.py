@@ -116,6 +116,14 @@ class TestSeenGate:
         j = [c for c in link.calls if c[1] == "/api/agent/journal"][-1][2]
         assert "staged `a` 0 -> 1" in j["text"] and j["reason"] == "rabi says so" and j["paths"] == ["a"]
 
+    @pytest.mark.parametrize("value", [float("nan"), [1.0, float("inf")], "[NaN]"])
+    def test_state_edit_never_sends_a_non_finite_number(self, link, value):
+        """NaN / Infinity is not JSON: refused, and nothing reaches /field/edit."""
+        link.answers[("POST", "/field/edit")] = (200, {"ok": True})
+        with pytest.raises(mcp.ToolError, match="not a finite number"):
+            mcp.t_state_edit({"path": "a", "value": value, "reason": "fit"})
+        assert not [c for c in link.calls if c[1] == "/field/edit"]
+
     def test_an_apply_that_did_not_clear_the_tray_is_not_reported_as_applied(self, link):
         """The window answers a conflict FRAGMENT with 200; the bridge believes
         only the chip's own pending count."""

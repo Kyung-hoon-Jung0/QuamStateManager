@@ -269,6 +269,23 @@ def t_state_search(a: dict) -> Any:
     return _ok(*_sm().get("/api/search", {"q": a["query"], "limit": int(a.get("limit") or 30)}))
 
 
+def _refuse_nonfinite(path: str, value: Any) -> None:
+    """NaN / Infinity is not JSON: refused before it is sent, as text too
+    ("[NaN]" would parse into a list holding NaN). The one check is
+    ``type_policy.nonfinite_where``."""
+    from quam_state_manager.core.type_policy import nonfinite_where
+    probe = value
+    if isinstance(value, str):
+        try:
+            probe = json.loads(value)
+        except ValueError:
+            probe = None
+    hit = nonfinite_where(probe)
+    if hit is not None:
+        raise ToolError(f"the value proposed for '{path}{hit}' is not a finite number (NaN or Infinity); "
+                        "nothing was staged")
+
+
 def t_state_edit(a: dict) -> Any:
     """Stage one edit through /field/edit -- the same door as a cell edit.
     A 409 is an OFFER (type fix, port identity) that the agent answers by
@@ -280,6 +297,7 @@ def t_state_edit(a: dict) -> Any:
     if not chip.get("loaded"):
         raise ToolError("no chip is loaded in SM")
     value = a["value"]
+    _refuse_nonfinite(a["path"], value)
     if not isinstance(value, str):
         value = json.dumps(value)
     form = {"dot_path": a["path"], "value": value, "expect_chip": chip.get("chip_token") or None,

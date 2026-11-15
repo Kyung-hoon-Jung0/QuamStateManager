@@ -664,7 +664,7 @@ class TestWholesale:
         hm = env["app"].config["history_manager"]
         ctx = _ctx(env)
         with ctx["store"]._lock:
-            ctx["modifier"].create_subtree("qubits.qA1.T2echo", float("nan"))
+            ctx["modifier"].create_subtree("qubits.qA1.T2echo", float("nan"), restore=True)
         _apply(c)
         hm.check_and_snapshot(ctx["path"], "manual", force=True)          # snapshot with the NaN
         ts = self._snapshot_ts(env)
@@ -1332,10 +1332,10 @@ class TestFinalReviewWalk:
         NaN step counted phantom drift and stayed staged with a false 'the value
         had moved' toast. The drift check now uses the NaN-aware ``_differs``."""
         c = env["client"]
-        # inject NaN the way a wholesale/autofit write does (coerce=False, no
-        # finite gate) so the journal unit's recorded `new` is NaN
+        # plant the NaN as the chip's own value, restored (a new NaN is refused
+        # at the write door), so the journal unit's recorded `new` is NaN
         _ctx(env)["modifier"].set_value("qubits.qA1.z.joint_offset",
-                                        float("nan"), coerce=False)
+                                        float("nan"), coerce=False, restore=True)
         c.post("/state/apply-to-live")
         import math
         assert math.isnan(_live_off(env))
