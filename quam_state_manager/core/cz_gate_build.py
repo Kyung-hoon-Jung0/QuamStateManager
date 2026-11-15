@@ -179,16 +179,19 @@ def desc_problem(gate_class: Any, gate_desc: Any) -> str | None:
     return None
 
 
-def _skeleton_problem(macro: Any, slots: Any) -> str | None:
+def _skeleton_problem(macro: Any, slots: Any, gate_class: Any) -> str | None:
     """Why the macro a handed-in skeleton returned cannot hold a gate, or
-    None. A usable one is a dict whose ``__class__`` is a non-empty string
-    and that holds every slot field of *slots*, each still empty (None)."""
+    None. A usable one is a dict whose ``__class__`` is the asked
+    *gate_class* (so the gate written is the gate asked for) and that holds
+    every slot field of *slots*, each still empty (None)."""
     if not isinstance(macro, dict):
         return BAD_DESCRIPTION
     cls = macro.get("__class__")
     if not isinstance(cls, str):
         return BAD_DESCRIPTION
-    if not cls:
+    if not cls.strip():
+        return BAD_DESCRIPTION
+    if cls != gate_class:
         return BAD_DESCRIPTION
     for s in slots:
         if s.field not in macro:
@@ -1024,7 +1027,7 @@ def _plan_known(merged, pair_id, p, gate_name, gate_class, pulses, lines,
     desc = _desc(gate_class, gate_desc)
     macro = desc["skeleton"]()
     if gate_class not in GATE_CLASSES:
-        bad = _skeleton_problem(macro, desc["slots"])
+        bad = _skeleton_problem(macro, desc["slots"], gate_class)
         if bad:
             return _refuse([bad])
     slots = {s.field: s for s in desc["slots"]}

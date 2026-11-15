@@ -2243,6 +2243,10 @@ def _bad_skeletons():
         "fields but an empty class": {**full, "__class__": ""},
         "fields but a class that is a number": {**full, "__class__": 5},
         "fields but a class that is None": {**full, "__class__": None},
+        "fields but a class of blanks": {**full, "__class__": " "},
+        "fields but another unlisted class": {**full, "__class__": "lab_pkg.Other.Other"},
+        "fields but a table class": {**full, "__class__": cgb.CZ_GATE},
+        "fields but the asked class with a blank": {**full, "__class__": DESCRIBED_GATE + " "},
         "a field missing": {"control_flux_pulse": None, "duration": None,
                             "__class__": DESCRIBED_GATE},
         "a field already holds a pulse": {
@@ -2275,8 +2279,8 @@ def test_what_the_skeleton_returns_is_checked_before_a_gate_is_planned():
         assert "creates" in res, label
 
 
-def test_the_planned_gate_keeps_the_class_the_skeleton_returned():
-    for cls in (DESCRIBED_GATE, "lab_pkg.Other.Other"):
+def test_the_planned_gate_has_the_asked_class():
+    for cls in (DESCRIBED_GATE,):
         desc = _described()
         made = {**desc["skeleton"](), "__class__": cls}
         desc["skeleton"] = lambda made=made: dict(made)
