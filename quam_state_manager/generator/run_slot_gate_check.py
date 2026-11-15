@@ -71,9 +71,11 @@ def check(request):
                 return super().frame_rotation_2pi(phase)
 
         def qubit(name, unit=0.1):
-            z = RecordingChannel(id=name + "_z", operations={
-                "spectator_unit": SquarePulse(length=16, amplitude=unit),
-                name + "_op": SquarePulse(length=16, amplitude=0.1)})
+            operations = {name + "_op": SquarePulse(length=16, amplitude=0.1)}
+            unit_op = module.__dict__.get("SPECTATOR_UNIT_OP")
+            if unit_op:
+                operations[unit_op] = SquarePulse(length=16, amplitude=unit)
+            z = RecordingChannel(id=name + "_z", operations=operations)
             xy = RecordingChannel(id=name + "_xy")
             return SimpleNamespace(z=z, xy=xy, channels={"z": z, "xy": xy})
 

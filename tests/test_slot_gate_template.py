@@ -6,7 +6,6 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -192,51 +191,90 @@ def test_duplicate_slots_before_normalizing():
         T.render(spec)
 
 
-def spectator():
-    return SimpleNamespace(z=SimpleNamespace(operations={
-        "spectator_unit": SimpleNamespace(amplitude=0.1)}))
+def rows(length=16, level=0.15, ref="#/qubits/q1", **kw):
+    args = dict(qubits={"s": ref}, levels={"s": level}, lengths={"s": length},
+                control="#/qubits/q2", target="q3", unit_amplitudes={"s": 0.1})
+    args.update(kw)
+    return args
+
+
+def test_plain_data_counter_example():
+    assert T.spectator_rows_problem({"s": "#/qubits/q1"}, {"s": 0.1}, {"s": 16}, control="#/qubits/q2",
+                                    target="q3", unit_amplitudes={"s": 0.2}) is None
 
 
 @pytest.mark.parametrize("length", [16, 52, 52.0])
 def test_valid_spectator_rows(length):
-    qubit = spectator()
-    lengths = {"spectator": length}
-    assert T.spectator_rows_problem({"spectator": qubit}, {"spectator": 0.15}, lengths,
-                                    control=spectator(), target=spectator()) is None
-    assert lengths["spectator"] is length
+    args = rows(length)
+    assert T.spectator_rows_problem(**args) is None
+    assert args["lengths"]["s"] is length
     assert T.spectator_rows_problem({}, {}, {}) is None
-    # A different pair's control is allowed.
-    assert T.spectator_rows_problem({"other_control": qubit}, {"other_control": 0},
-                                    {"other_control": length}) is None
+    assert T.spectator_rows_problem(**rows(length, ref="q1")) is None
 
 
-@pytest.mark.parametrize("length", [18, 52.9, "20", True, float("nan"), float("inf"), 12])
+@pytest.mark.parametrize("length", [0, -4, 8, 12, 18, 52.9, "20", True, float("nan"), float("inf")])
 def test_invalid_spectator_row_length(length):
-    problem = T.spectator_rows_problem({"spectator": spectator()}, {"spectator": 0}, {"spectator": length})
-    assert "spectator" in problem and str(length) in problem
-    if length == 12:
-        assert "16" in problem
+    problem = T.spectator_rows_problem(**rows(length))
+    assert "'s'" in problem and repr(length) in problem and str(T.MIN_LENGTH_NS) in problem
+
+
+def test_min_length_matches_shared_rule():
+    from quam_state_manager.core.cz_gate_build import length_rule
+    assert length_rule({"length": T.MIN_LENGTH_NS}) is None
+    assert length_rule({"length": T.MIN_LENGTH_NS - 4}) is not None
+    assert all(length_rule({"length": n}) is None for n in range(T.MIN_LENGTH_NS, 200, 4))
 
 
 @pytest.mark.parametrize("key", ["qubits", "levels", "lengths"])
 def test_spectator_row_key_sets(key):
-    rows = dict(qubits={"spectator": spectator()}, levels={"spectator": 0}, lengths={"spectator": 16})
-    rows[key] = {"extra": next(iter(rows[key].values()))}
-    problem = T.spectator_rows_problem(**rows)
-    assert "keys differ" in problem and "extra" in problem and "spectator" in problem
+    args = rows()
+    args[key] = {"extra": next(iter(args[key].values()))}
+    problem = T.spectator_rows_problem(**args)
+    assert "keys differ" in problem and "extra" in problem and "'s'" in problem
 
 
 @pytest.mark.parametrize("role", ["control", "target"])
-def test_spectator_row_own_qubit(role):
-    qubit = spectator()
-    assert "spectator" in T.spectator_rows_problem({"spectator": qubit}, {"spectator": 0},
-                                                   {"spectator": 16}, **{role: qubit})
+@pytest.mark.parametrize("own", ["#/qubits/q1", "q1"])
+@pytest.mark.parametrize("ref", ["#/qubits/q1", "q1"])
+def test_spectator_row_own_qubit(role, own, ref):
+    problem = T.spectator_rows_problem(**rows(ref=ref, **{role: own}))
+    assert problem and "control or target" in problem
+
+
+@pytest.mark.parametrize("units", [{}, {"s": None}, None])
+def test_spectator_row_unit_missing(units):
+    problem = T.spectator_rows_problem(**rows(unit_amplitudes=units))
+    assert problem and "missing" in problem and T.SPECTATOR_UNIT_OP in problem and "'s'" in problem
+
+
+@pytest.mark.parametrize("change", [dict(qubits=[("s", "q1")]), dict(ref=5), dict(levels=None),
+    dict(lengths="x"), dict(control=7), dict(target=["q1"]), dict(unit_amplitudes=[0.1]),
+    dict(ref=None), dict(qubits={("a",): "q1"}, levels={("a",): 0}, lengths={("a",): 16}),
+    dict(unit_amplitudes={"s": "0.1"}), dict(level=[1])])
+def test_spectator_rows_never_raise(change):
+    ref = change.pop("ref", "#/qubits/q1")
+    level = change.pop("level", 0.15)
+    problem = T.spectator_rows_problem(**rows(ref=ref, level=level, **change))
+    assert isinstance(problem, str) and problem and "could not be read" not in problem
+    for key, value in change.items():
+        if key in ("qubits", "levels", "lengths", "unit_amplitudes") and not isinstance(value, dict):
+            assert key.replace("_", " ") in problem
 
 
 @pytest.mark.parametrize("level", [0.2, True, float("nan")])
 def test_spectator_row_level(level):
-    problem = T.spectator_rows_problem({"spectator": spectator()}, {"spectator": level}, {"spectator": 16})
-    assert "spectator" in problem and "level" in problem
+    problem = T.spectator_rows_problem(**rows(level=level))
+    assert "'s'" in problem and "level" in problem
+
+
+def test_unit_op_one_constant():
+    source = T.render(T.SlotSpec("ExampleGate", T.SLOTS, True))
+    constant, = [n.value.value for n in ast.parse(source).body
+                 if isinstance(n, ast.Assign) and any(getattr(t, "id", None) == "SPECTATOR_UNIT_OP" for t in n.targets)]
+    assert constant == T.SPECTATOR_UNIT_OP
+    module = (Path(T.__file__)).read_text(encoding="utf-8")
+    assert module.count(repr(T.SPECTATOR_UNIT_OP)) + module.count(f'"{T.SPECTATOR_UNIT_OP}"') == 1
+    assert f"or value < {T.MIN_LENGTH_NS}:" in source
 
 
 @lab
@@ -262,7 +300,7 @@ def test_lab_inline_slot_policy(tmp_path, slot):
 
 
 @lab
-@pytest.mark.parametrize("length", [16, 52, 18, 52.9, "20", True, float("nan")])
+@pytest.mark.parametrize("length", [16, 52, 0, -4, 8, 12, 18, 52.9, "20", True, float("nan")])
 def test_lab_spectator_length_guard(tmp_path, length):
     result = run_check(tmp_path, T.render(T.SlotSpec("ExampleGate", T.SLOTS, True)),
                        spectators={"spectator": [0.05, length, 0.1]})

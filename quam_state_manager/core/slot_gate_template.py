@@ -31,9 +31,17 @@ PRESETS = {
 #: docs/docs/docs/Guides/error.md line 174, starting with %, not published).
 AMP_SCALE_LIMIT = 2.0
 
+#: Shortest pulse length in ns; equal to the edge the shared ``length_rule`` enforces (pinned by a test).
+MIN_LENGTH_NS = 16
+#: Qubit z operation that spectator levels scale; one name for the pure check and the class.
+SPECTATOR_UNIT_OP = "spectator_unit"
+
 KEYS_PROBLEM = "Spectator keys differ: qubits={qubits}, levels={levels}, lengths={lengths}."
 OWN_PROBLEM = "Spectator {name!r} is the pair control or target qubit."
-LENGTH_PROBLEM = "Spectator {name!r} length {value!r} must be a finite whole multiple of 4 ns."
+LENGTH_PROBLEM = ("Spectator {name!r} length {value!r} must be a finite whole multiple of 4 ns, at least "
+                  + str(MIN_LENGTH_NS) + " ns.")
+UNIT_PROBLEM = "Spectator {name!r}: the unit operation " + repr(SPECTATOR_UNIT_OP) + " is missing on that qubit."
+TYPE_PROBLEM = "Spectator {what} must be {kind}; received {value!r}."
 SLOT_PROBLEM = "The {slot} slot accepts {kinds}; received {value!r}."
 
 
@@ -112,24 +120,59 @@ def spectator_length_problem(length_ns) -> str | None:
     return length_rule({"length": length_ns})
 
 
-def spectator_rows_problem(qubits, levels, lengths, control=None, target=None):
-    """Return the first invalid spectator row, without changing its values."""
-    if set(qubits) != set(levels) or set(qubits) != set(lengths):
-        return KEYS_PROBLEM.format(qubits=sorted(qubits), levels=sorted(levels), lengths=sorted(lengths))
-    for name, qubit in qubits.items():
-        if qubit is control or qubit is target:
-            return OWN_PROBLEM.format(name=name)
-        value = lengths[name]
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or value % 4:
-            return LENGTH_PROBLEM.format(name=name, value=value)
-        problem = spectator_length_problem(value)
-        if problem:
-            return f"Spectator {name!r}: {problem.split('. ')[0].rstrip('.')}."
-        unit = qubit.z.operations["spectator_unit"].amplitude
-        problem = level_scale_problem(levels[name], unit)
-        if problem:
-            return f"Spectator {name!r} level {levels[name]!r}: {problem}"
-    return None
+def qubit_name(ref):
+    """Turn a reference string such as "#/qubits/<name>" or a bare name into the name; None if not a string."""
+    if not isinstance(ref, str) or not ref.strip():
+        return None
+    return ref.strip().rstrip("/").rsplit("/", 1)[-1]
+
+
+def spectator_rows_problem(qubits, levels, lengths, control=None, target=None, unit_amplitudes=None):
+    """Check plain spectator rows as the state holds them; return None or one sentence, never raise.
+
+    qubits maps key -> reference string or qubit name; levels and lengths map key -> number;
+    control and target are reference strings or names; unit_amplitudes maps key -> the unit
+    operation amplitude (None or a missing key means the unit operation is missing).
+    """
+    try:
+        for what, value in (("qubits", qubits), ("levels", levels), ("lengths", lengths)):
+            if not isinstance(value, dict):
+                return TYPE_PROBLEM.format(what=what, kind="a mapping", value=value)
+        if unit_amplitudes is None:
+            unit_amplitudes = {}
+        if not isinstance(unit_amplitudes, dict):
+            return TYPE_PROBLEM.format(what="unit amplitudes", kind="a mapping", value=unit_amplitudes)
+        if set(qubits) != set(levels) or set(qubits) != set(lengths):
+            return KEYS_PROBLEM.format(qubits=sorted(map(str, qubits)), levels=sorted(map(str, levels)),
+                                       lengths=sorted(map(str, lengths)))
+        own = set()
+        for role, ref in (("control", control), ("target", target)):
+            if ref is None:
+                continue
+            if qubit_name(ref) is None:
+                return TYPE_PROBLEM.format(what=role, kind="a reference string or name", value=ref)
+            own.add(qubit_name(ref))
+        for name, ref in qubits.items():
+            qname = qubit_name(ref)
+            if qname is None:
+                return TYPE_PROBLEM.format(what=f"{name!r} qubit", kind="a reference string or name", value=ref)
+            if qname in own:
+                return OWN_PROBLEM.format(name=name)
+            value = lengths[name]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value % 4:
+                return LENGTH_PROBLEM.format(name=name, value=value)
+            problem = spectator_length_problem(value)
+            if problem or value < MIN_LENGTH_NS:
+                return LENGTH_PROBLEM.format(name=name, value=value)
+            unit = unit_amplitudes.get(name)
+            if unit is None:
+                return UNIT_PROBLEM.format(name=name)
+            problem = level_scale_problem(levels[name], unit)
+            if problem:
+                return f"Spectator {name!r} level {levels[name]!r}: {problem}"
+        return None
+    except Exception as exc:  # never raise on any input shape
+        return f"Spectator rows could not be read: {type(exc).__name__}."
 
 
 def _channel(slot):
@@ -180,7 +223,8 @@ def _region(spec):
                   "            if qubit is pair.qubit_control or qubit is pair.qubit_target:",
                   f"                raise ValueError({OWN_PROBLEM!r}.format(name=name))",
                   "            value = lengths[name]",
-                  "            if isinstance(value, bool) or not isinstance(value, (int, float)) or value % 4:",
+                  "            if isinstance(value, bool) or not isinstance(value, (int, float)) or value % 4"
+                  f" or value < {MIN_LENGTH_NS}:",
                   f"                raise ValueError({LENGTH_PROBLEM!r}.format(name=name, value=value))"]
     lines += ["        align(*channels)"]
     for s in slots:
@@ -214,7 +258,7 @@ def render(spec: SlotSpec) -> str:
             "from qm.qua import align, amp, play\nfrom quam.core import quam_dataclass\n"
             "from quam.components.macro import QubitPairMacro\n"
             "from quam.components.pulses import Pulse\n\n"
-            + ('SPECTATOR_UNIT_OP = "spectator_unit"\n\n' if spec.spectators else "")
+            + (f'SPECTATOR_UNIT_OP = "{SPECTATOR_UNIT_OP}"\n\n' if spec.spectators else "")
             + f"@quam_dataclass\nclass {spec.class_name}(QubitPairMacro):\n"
             + REGION_BEGIN + "\n" + _region(spec) + REGION_END + "\n")
 
