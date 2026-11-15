@@ -364,13 +364,15 @@ def test_a_forged_seen_that_lacks_a_row_writes_nothing(approval_case):
     assert response.status_code == 409, response.get_json()
     body = response.get_json()
     assert body["unseen"] == ["other"]
-    assert body["error"] == ("1 value(s) of this approval were not on the summary (other); nothing was written. "
+    assert body["error"] == ("1 value of this approval was not on the summary (other); nothing was written. "
                              "Review it in the agent panel")
     assert (folder / "state.json").read_bytes() == before
     assert client.get("/api/agent/chip").get_json()["pending"] == 0
     assert approvals.get(str(inst), chip, record["id"])["status"] == "pending"
     for seen in ([], [{"path": "value", "seen_now": 10}, {"path": "other"}]):     # a bare path shows nothing
         assert _summary_press(approval_case, {"seen": seen}).status_code == 409
+    body = _summary_press(approval_case, {"seen": []}).get_json()
+    assert body["error"].startswith("2 values of this approval were not on the summary (value, other); "), body
     assert (folder / "state.json").read_bytes() == before
 
 
@@ -648,8 +650,7 @@ def test_a_created_key_another_window_changed_since_stays_whole(tmp_path, monkey
                             {"path": "fresh.x", "new": 1, "seen_unknown": True}])
     assert response.status_code == 409, response.get_json()      # never a 500
     error = response.get_json()["error"]
-    assert "1 value(s) of this approval could not be taken back" in error and "(fresh)" in error
-    assert "a human decides in the window" in error
+    _assert_kept_text(error, 1)
     # the count is the tray after the take-back: the created row that stayed + the other window's
     assert "the tray holds 2 staged edits;" in error, error
     assert (case[2] / "state.json").read_bytes() == before
@@ -696,53 +697,73 @@ def test_a_created_scalar_another_window_set_since_stays_whole(tmp_path, monkeyp
     response = press(case, [{"path": "fresh", "new": 1, "seen_unknown": True}])
     assert response.status_code == 409, response.get_json()
     error = response.get_json()["error"]
-    assert "1 value(s) of this approval could not be taken back" in error and "(fresh)" in error
+    assert "1 value of this approval could not be taken back" in error and "(fresh)" in error
     assert "the tray holds 2 staged edits;" in error, error
     assert (case[2] / "state.json").read_bytes() == before
     with case[0].app_context():
         ctx = _ctx(case)
         store = ctx["store"]
         # the create row stays whole, never read as a plain set "None -> 7"
-        assert [(e.dot_path, e.old_value, e.new_value, e.created) for e in store.change_log] ==             [("fresh", None, 1, True), ("fresh", 1, 7, False)]
+        log = [(e.dot_path, e.old_value, e.new_value, e.created) for e in store.change_log]
+        assert log == [("fresh", None, 1, True), ("fresh", 1, 7, False)]
         assert store.get_value("fresh") == 7
         ctx["modifier"].undo()
         ctx["modifier"].undo()                  # back to no key at all, never "fresh": null
         assert "fresh" not in store.merged and not store.change_log
 
 
-def _created_key_case(tmp_path):
+_CREATED = ["fresh", "spare"]
+
+
+def _created_key_case(tmp_path, count=1):
     return _case(tmp_path, {"value": 10, "third": 5},
-                 [{"path": "fresh.x", "old": None, "new": 1, "created": True}])
+                 [{"path": f"{k}.x", "old": None, "new": 1, "created": True} for k in _CREATED[:count]])
 
 
-def _other_sets_fresh_x(case):
+def _other_sets_fresh_x(case, count=1):
     with case[0].app_context():
-        _ctx(case)["modifier"].set_value("fresh.x", 7)
+        for k in _CREATED[:count]:
+            _ctx(case)["modifier"].set_value(f"{k}.x", 7)
 
 
-def test_a_stale_live_refusal_names_the_rows_that_stayed(tmp_path, monkeypatch):
-    case = _created_key_case(tmp_path)
+def _created_press(case, count=1):
+    return press(case, [{"path": f"{k}.x", "new": 1, "seen_unknown": True} for k in _CREATED[:count]])
+
+
+def _assert_kept_text(error, count):
+    if count == 1:
+        want = ("; 1 value of this approval could not be taken back because another window changed it since "
+                "(fresh); a human decides in the window")
+    else:
+        want = ("; 2 values of this approval could not be taken back because another window changed them since "
+                "(fresh, spare); a human decides in the window")
+    assert want in error, error
+
+
+@pytest.mark.parametrize("count", [1, 2])
+def test_a_stale_live_refusal_names_the_rows_that_stayed(tmp_path, monkeypatch, count):
+    case = _created_key_case(tmp_path, count)
     from quam_state_manager.core import working_copy
     once = []
 
     def moved(wc):                              # another window's edit, and the live files moved
         if not once:
             once.append(1)
-            _other_sets_fresh_x(case)
+            _other_sets_fresh_x(case, count)
             return True
         return False
     monkeypatch.setattr(working_copy, "live_diverged_now", moved)
     before = (case[2] / "state.json").read_bytes()
-    response = press(case, [{"path": "fresh.x", "new": 1, "seen_unknown": True}])
+    response = _created_press(case, count)
     error = response.get_json()["stage"]["error"] if response.status_code == 200 else response.get_json()["error"]
     assert error.startswith("stale_live:"), response.get_json()
-    assert "1 value(s) of this approval could not be taken back" in error and "(fresh)" in error, error
-    assert "a human decides in the window" in error
+    _assert_kept_text(error, count)
     assert (case[2] / "state.json").read_bytes() == before
 
 
-def test_a_door_refusal_names_the_rows_that_stayed(tmp_path, monkeypatch):
-    case = _created_key_case(tmp_path)
+@pytest.mark.parametrize("count", [1, 2])
+def test_a_door_refusal_names_the_rows_that_stayed(tmp_path, monkeypatch, count):
+    case = _created_key_case(tmp_path, count)
     from quam_state_manager.web import agent_api
     real = agent_api._pre_door_state
     once = []
@@ -750,14 +771,46 @@ def test_a_door_refusal_names_the_rows_that_stayed(tmp_path, monkeypatch):
     def lands(r, ctx):                          # another window's edit, after the in-lock check
         if not once:
             once.append(1)
-            _other_sets_fresh_x(case)
+            _other_sets_fresh_x(case, count)
         return real(r, ctx)
     monkeypatch.setattr(agent_api, "_pre_door_state", lands)
     before = (case[2] / "state.json").read_bytes()
-    response = press(case, [{"path": "fresh.x", "new": 1, "seen_unknown": True}])
+    response = _created_press(case, count)
     assert once, "the edit never landed before the door"
     error = response.get_json()["stage"]["error"] if response.status_code == 200 else response.get_json()["error"]
     assert not error.startswith("another edit reached the tray"), error      # the door refused, not the check
-    assert "1 value(s) of this approval could not be taken back" in error and "(fresh)" in error, error
-    assert "a human decides in the window" in error
+    _assert_kept_text(error, count)
     assert (case[2] / "state.json").read_bytes() == before
+
+
+def test_the_other_window_check_names_two_rows_that_stayed(tmp_path, monkeypatch):
+    case = _created_key_case(tmp_path, 2)
+    _land_after_staging(monkeypatch, lambda: _other_sets_fresh_x(case, 2))
+    before = (case[2] / "state.json").read_bytes()
+    response = _created_press(case, 2)
+    assert response.status_code == 409, response.get_json()
+    error = response.get_json()["error"]
+    _assert_kept_text(error, 2)
+    assert "the tray holds 4 staged edits; apply or discard them" in error, error
+    assert (case[2] / "state.json").read_bytes() == before
+
+
+def _literal_text(node):
+    import ast
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return "".join(v.value for v in node.values if isinstance(v, ast.Constant) and isinstance(v.value, str))
+
+
+def test_no_approval_refusal_text_says_s_in_brackets():
+    # the refusal texts count "1 value" / "N values", like the tray count; never "value(s)"
+    import ast
+    from pathlib import Path
+    from quam_state_manager.web import agent_api
+    tree = ast.parse(Path(agent_api.__file__).read_text(encoding="utf-8"))
+    marks = ("of this approval", "the tray holds")
+    texts = [_literal_text(n) for n in ast.walk(tree)
+             if isinstance(n, ast.JoinedStr) or (isinstance(n, ast.Constant) and isinstance(n.value, str))]
+    hits = [t for t in texts if any(m in t for m in marks)]
+    assert len(hits) >= 3, hits                 # the tray count, the kept-row suffix, the summary refusal
+    assert not [t for t in hits if "(s)" in t], hits

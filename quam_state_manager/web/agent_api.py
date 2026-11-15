@@ -254,6 +254,11 @@ def _seen_equal(now: Any, seen: Any, equal) -> bool:
     return equal(now, seen)
 
 
+def _count_of(n: int, noun: str) -> str:
+    """'1 value' / 'N values': the one plural style of the approval refusals and the tray count."""
+    return f"{n} {noun}{'' if n == 1 else 's'}"
+
+
 def _err(msg: str, code: int = 400, **extra):
     return jsonify(ok=False, error=msg, **extra), code
 
@@ -2134,8 +2139,8 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
         with store._lock:
             n = len(store.change_log)
         return {"group_id": gid, "staged": 0, "applied": False, "unstaged": [],
-                "error": f"{lead}the tray holds {n} staged edit{'' if n == 1 else 's'}; apply or discard "
-                         "them in the window first, then approve"}
+                "error": f"{lead}the tray holds {_count_of(n, 'staged edit')}; apply or discard "
+                         f"{'it' if n == 1 else 'them'} in the window first, then approve"}
     staged, unstaged = [], []
     # Q-4 (agents ver180): a path the person listed as never-touch is never staged for an agent
     try:
@@ -2280,8 +2285,9 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
         kept = _take_back_own(store, mod, gid)
         if not kept:
             return ""
-        return (f"; {len(kept)} value(s) of this approval could not be taken back because another window "
-                f"changed them since ({', '.join(kept[:6])}); a human decides in the window")
+        return (f"; {_count_of(len(kept), 'value')} of this approval could not be taken back because another "
+                f"window changed {'it' if len(kept) == 1 else 'them'} since ({', '.join(kept[:6])}); "
+                "a human decides in the window")
     # The door SAVES the log into the working copy before it writes the chip and
     # only then notices a moved chip (docs/65's re-apply stash) -- a refusal there
     # would leave the agent's values half-way, in SM but not on the chip. Ask first.
@@ -3095,7 +3101,8 @@ def approvals_decide(aid: str, verb: str):
                 shown_by = "the summary"
                 unseen = [str(w.get("path")) for w in writes if not _shown(seen.get(str(w.get("path"))))]
                 if unseen:
-                    return _err(f"{len(unseen)} value(s) of this approval were not on the summary "
+                    return _err(f"{_count_of(len(unseen), 'value')} of this approval "
+                                f"{'was' if len(unseen) == 1 else 'were'} not on the summary "
                                 f"({', '.join(unseen[:3])}{' and more' if len(unseen) > 3 else ''}); "
                                 "nothing was written. Review it in the agent panel", 409,
                                 approval=approvals.summary(cur), unseen=unseen[:50])
@@ -3113,8 +3120,8 @@ def approvals_decide(aid: str, verb: str):
                 writes = cur["writes"]
             res = _stage_writes(current_app._get_current_object(), str(r._active_path()),
                                 writes if writes is not None else (cur.get("writes") or []),
-                                f"approved:{aid}", cur.get("actor") or "by_agent", cur.get("plan_id"), True, presser=actor,
-                                shown_by=shown_by)
+                                f"approved:{aid}", cur.get("actor") or "by_agent", cur.get("plan_id"), True,
+                                presser=actor, shown_by=shown_by)
             out["stage"] = res
             if not res.get("applied"):
                 return jsonify(ok=False, error=res.get("error") or "not applied", stage=res,
