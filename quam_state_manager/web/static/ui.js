@@ -321,6 +321,7 @@
             r.appendChild(el("span", "ui-option-title", it.title));
             var d = it.disabled && it.reason ? it.reason : it.desc;
             if (d) r.appendChild(el("span", "ui-option-desc", d));
+            if (it.note) { var nt = el("span", "ui-option-desc", it.note); nt.setAttribute("data-ui-option-note", ""); r.appendChild(nt); }
             list.appendChild(r);
         });
         root.appendChild(list);

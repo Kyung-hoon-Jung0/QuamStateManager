@@ -221,6 +221,29 @@
         var f = (S.data.fit || {})[pair];
         return (f && f[c['class']]) || '';
     }
+    /* The one sentence for a class made by an older version; the option's note
+       and the closed picker both show it. */
+    var OLDER_WORDS = 'Made by an older version; make it again to update.';
+    /* The closed picker repeats the words while the selected class is an older
+       one; the kit pick handler rewrites only the title and leaves this span, so this runs after
+       every pick and every refill. */
+    function markClassTrigger() {
+        var t = $('czg-class');
+        if (!t) return;
+        var old = t.querySelector('[data-czg-older-render-trigger]');
+        if (old) old.parentNode.removeChild(old);
+        var v = t.querySelector('.ui-menu-value');
+        var sel = (S.data.classes || []).filter(function (c) { return c['class'] === S.klass; })[0];
+        var lab = (t.getAttribute('aria-labelledby') || '').split(/\s+/).filter(function (x) { return x && x !== 'czg-class-older'; });
+        if (sel && sel.older_render && v) {
+            var m = el('span', 'ui-text-quiet', OLDER_WORDS);
+            m.id = 'czg-class-older';
+            m.setAttribute('data-czg-older-render-trigger', '');
+            t.appendChild(m);
+            lab.push('czg-class-older');
+        }
+        t.setAttribute('aria-labelledby', lab.join(' '));
+    }
     /* The selected class is the first one that can run on the pair; a class
        picked by hand stays while it can run there. Returns true when the
        selection changed. */
@@ -243,8 +266,12 @@
             value: S.klass, placeholder: 'Pick a gate class',
             items: all.map(function (c) {
                 var why = classWhy(c, pair);
-                return { value: c['class'], title: c.label, disabled: !!why, reason: why };
+                return { value: c['class'], title: c.label, disabled: !!why, reason: why, note: c.older_render ? OLDER_WORDS : '' };
             }) });
+        Array.prototype.forEach.call($('czg-class-host').querySelectorAll('[data-ui-option-note]'), function (n) {
+            n.setAttribute('data-czg-older-render', '');
+        });
+        markClassTrigger();
         renderClassWhy([]);
         return S.klass !== before;
     }
@@ -1142,6 +1169,7 @@
     /* ---- the plan -------------------------------------------------------- */
     function inputsChanged() {
         S.seq++;
+        renderNotes([]);
         simReset();
         if (S.check) {
             var ev = $('czg-evidence');
@@ -1184,7 +1212,23 @@
             alertBox(callout('danger', 'The plan could not be made', 'The app did not answer (' + e + '). Try again.'), 'plan-error');
         });
     }
+    /* Pair notes stay outside folds and never affect the verdict. */
+    function renderNotes(pairs) {
+        var host = clear($('czg-notes'));
+        if (!host) return;
+        pairs.forEach(function (p) {
+            (p.notes || []).forEach(function (note) {
+                var line = el('p', 'ui-text-quiet');
+                line.setAttribute('data-czg-note-pair', p.pair);
+                line.appendChild(document.createTextNode(p.pair + ': '));
+                line.appendChild(el('span', null, note));
+                host.appendChild(line);
+            });
+        });
+        host.hidden = !host.childNodes.length;
+    }
     function renderPlan() {
+        renderNotes((S.plan && S.plan.pairs) || []);
         var fp = firstPlan();
         if (S.alertKind === 'plan-error') alertBox(null);
         var why = clear($('czg-name-why'));
@@ -1579,6 +1623,7 @@
     }
     function renderCheck() {
         var c = S.check;
+        renderNotes(c.pairs || []);
         var ev = $('czg-evidence');
         if (ev) ev.classList.remove('czg-stale');
         var pairs = c.pairs || [];
@@ -1993,6 +2038,10 @@
         var cancel = $('czg-cancel');
         if (cancel) cancel.hidden = true;
         say(SYNC_WORDS[word]);
+        renderNotes((j.created || []).map(function (c) {
+            var checked = ((S.check && S.check.pairs) || []).filter(function (p) { return p.pair === c.pair; })[0];
+            return { pair: c.pair, notes: c.notes || (checked && checked.notes) || [] };
+        }));
         renderWrites();
         refresh();
         if (word === 'writing') watchSync(S, skip, sync, true, 40);
@@ -2230,7 +2279,7 @@
         var v = ev.detail && ev.detail.value;
         if (t.querySelector('#czg-class')) {
             if (v === S.klass) return;
-            S.klass = v; S.klassByHand = true; S.classNote = ''; renderClassWhy([]);
+            S.klass = v; S.klassByHand = true; S.classNote = ''; renderClassWhy([]); markClassTrigger();
             var hadTicks = anyTicked();
             shareUnits(function () {
                 S.entered = {}; S.raw = {}; S.cls = {}; S.placed = {}; S.invalid = {}; S.spectOn = {};
