@@ -667,7 +667,11 @@ def test_not_configured_and_no_env(app, monkeypatch):
     assert r.get_json()["ok"] is False
     assert "Port test run targets" in r.get_json()["line"]
     monkeypatch.setattr(czr, "_env_python", lambda: None)
-    assert app.c.post(START, json=_body()).get_json()["state"] == "no_env"
+    r = app.c.post(START, json=_body())
+    assert r.status_code == 200 and r.get_json()["state"] == "no_env"
+    assert r.get_json()["ok"] is False
+    assert r.get_json()["line"] == sim.answer("no_env")["line"]
+    assert app.c.post(START, data="[1]", content_type="application/json").status_code == 400
     assert not app.procs
 
 

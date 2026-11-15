@@ -75,6 +75,13 @@ const lastRoot = () => [...doc.querySelectorAll("[data-gate-timeline]")].pop();
 const facts = (fig, key) => fig.layout.annotations.find((a) => a.meta && a.meta.role === 'lane-facts' && a.meta.lane === key);
 const segText = (fig, key) => fig.layout.annotations.filter((a) => a.meta && a.meta.role === 'segment-text' && a.meta.lane === key);
 
+// The retired tick clause must not return (even behind an always-true branch).
+const fitRule = src.slice(src.indexOf('function startsAtFits('), src.indexOf('function onRelayout('));
+ok(!/tickvals|ticktext/.test(fitRule) && /Tick labels live in the left gutter/.test(fitRule),
+   'tick exclusion is removed with its gutter reason beside the shared fit rule');
+ok((src.match(/startsAtFits\(/g) || []).length === 3,
+   'one starts-at helper is called by first render and relayout');
+
 const shaped = seg('cz_x_pulse_q1_q2', [63, 64, 65, 66, 115], [0.0, 0.05, 0.1, 0.05, 0.0]);
 const DATA = {
     lanes: [
@@ -197,7 +204,7 @@ ok([...Array(116).keys()].every((t) => hov.x.includes(t)), 'hover grid has every
     ok(shown(roomy), '"starts at" present once the idle stretch holds the words plus 12 px');
 }
 
-// A compact spectator must leave space for its title and its own tick labels.
+// A compact spectator must leave space for its own title (ticks are in the gutter).
 {
     const draw = (group, width) => {
         Object.defineProperty(host2, 'clientWidth', { configurable: true, value: width });
@@ -209,7 +216,7 @@ ok([...Array(116).keys()].every((t) => hov.x.includes(t)), 'hover grid has every
     ok(wide.layout.annotations.some(a => a.meta && a.meta.role === 'starts-at'), 'roomy gate keeps its starts-at label');
     ok(draw('spectator', 900).layout.annotations.some(a => a.meta && a.meta.role === 'starts-at'), 'wide spectator keeps starts-at when title is horizontally clear');
     const compact = draw('spectator', 450);
-    ok(!compact.layout.annotations.some(a => a.meta && a.meta.role === 'starts-at'), 'compact title and tick clearance hides starts-at even when words fit');
+    ok(!compact.layout.annotations.some(a => a.meta && a.meta.role === 'starts-at'), 'compact title clearance hides starts-at even when words fit');
     const shown = width => draw('spectator', width).layout.annotations.some(a => a.meta && a.meta.role === 'starts-at');
     let lo = 450, hi = 900;
     while (hi - lo > 1) { const mid = Math.floor((lo + hi) / 2); if (shown(mid)) hi = mid; else lo = mid; }
@@ -219,6 +226,62 @@ ok([...Array(116).keys()].every((t) => hov.x.includes(t)), 'hover grid has every
     const text = segText(narrow, 'late')[0];
     ok(text.meta.name.includes('\u2026') && text.hovertext === 'a_very_long_pulse_operation_name', 'short pulse title exposes the full name on hover');
     delete host2.clientWidth;
+}
+
+// Both layout paths use the same fit rule; hidden candidates return when room returns.
+{
+    const hasStart = f => f.layout.annotations.some(a => a.meta && a.meta.role === 'starts-at');
+    for (const group of ['spectator', 'gate']) {
+        Object.defineProperty(host2, 'clientWidth', { configurable: true, value: 450 });
+        const hh = GT.render(host2, { lanes: [lane('late', group,
+            [seg('a_very_long_pulse_operation_name', [161, 261], [0.05, 0.05])])], notes: [] }, { foldSpectators: false });
+        const f = hh.figure(), plot = last().el;
+        const resize = width => {
+            plot._fullLayout = { xaxis: { range: f.span.slice(), _length: width - f.layout.margin.l - f.layout.margin.r } };
+            hh.relayout({ width });
+        };
+        ok(hasStart(f) === (group === 'gate'), group + ': initial compact width');
+        resize(450);
+        ok(hasStart(f) === (group === 'gate'), group + ': relayout compact title overlap respects vertical clearance');
+        resize(900);
+        ok(hasStart(f), group + ': resize makes room and restores the label');
+        resize(450);
+        ok(hasStart(f) === (group === 'gate'), group + ': narrowing hides only the compact lane label');
+        plot._fullLayout = { xaxis: { range: [155, 275], _length: 250 } };
+        hh.relayout({ 'xaxis.range': [155, 275] });
+        ok(!hasStart(f), group + ': pan leaves too little idle space');
+        resize(900);
+        ok(hasStart(f), group + ': pan back restores the label');
+        hh.destroy();
+    }
+    delete host2.clientWidth;
+}
+
+// Only the other lane's title crosses the idle label's horizontal box.
+{
+    const hh = GT.render(host2, { lanes: [
+        lane('other', 'gate', [seg('a_very_long_pulse_operation_name', [0, 1000], [0.05, 0.05])]),
+        lane('late', 'spectator', [seg('p', [400, 500], [0.05, 0.05])])
+    ], notes: [] }, { foldSpectators: false });
+    const f = hh.figure();
+    const check = label => {
+        const a = f.layout.annotations.find(a => a.meta && a.meta.role === 'starts-at' && a.meta.lane === 'late');
+        ok(!!a, label + ': another lane cannot hide starts-at');
+        const right = (400 - f.span[0]) * f.widthPx / (f.span[1] - f.span[0]) - 4;
+        const left = right - 'starts at 400 ns'.length * 5.8;
+        const overlaps = t => {
+            const x = (t.x - f.span[0]) * f.widthPx / (f.span[1] - f.span[0]);
+            const width = Math.max(t.meta.name.length, t.meta.shown2.length) * 5.8;
+            const tl = t.xanchor === 'right' ? x - width : x;
+            return right > tl && left < tl + width;
+        };
+        ok(segText(f, 'other').some(overlaps) && !segText(f, 'late').some(overlaps), label + ': only other title overlaps horizontally');
+    };
+    check('first render');
+    last().el._fullLayout = { xaxis: { range: f.span.slice(), _length: f.widthPx } };
+    hh.relayout({ 'xaxis.range': f.span.slice() });
+    check('relayout');
+    hh.destroy();
 }
 
 // scales fit the data, not the limits

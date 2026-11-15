@@ -243,6 +243,12 @@ async function openAndCheck(two) {
     await until(() => line() === REFUSAL);
     ok(line() === REFUSAL && simBtn().textContent === 'Simulate' && !simBtn().disabled,
        '200 refusal keeps its honest line and offers Simulate again');
+    const NO_ENV = 'Not simulated: no Python environment is selected.';
+    M.simQueue = { start: [[200, { ok: false, state: 'no_env', line: NO_ENV }]] };
+    simBtn().click();
+    await until(() => line() === NO_ENV);
+    ok(line() === NO_ENV && simBtn().textContent === 'Simulate' && !simBtn().disabled,
+       'no environment is a handled refusal with an honest line and retry');
     const BUSY = 'A simulation is already running in this window. Stop it first.';
     M.simQueue = { start: [[409, { ok: true, state: 'busy', line: BUSY }]],
                    stop: [[200, { ok: true, state: 'stopped', line: 'Not simulated: stopped.' }]] };

@@ -55,7 +55,7 @@ def cz_gate_simulate_start():
     python = cz._env_python()
     target, label, limit_s = _target()
     if not python:
-        return jsonify(ok=False, **sim.answer("no_env")), 400
+        return jsonify(ok=False, **sim.answer("no_env")), 200
     if target is None:
         # An expected refusal is a handled answer; API callers still get ok=False.
         return jsonify(ok=False, **sim.answer("not_configured")), 200
