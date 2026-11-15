@@ -83,7 +83,7 @@ quam_config refuse its own file, nor make gates using the class wait again.
 - A gate with SM-made classes is created only when the lab check loaded the chip and ran the gate (`load_config` and
   `ops` passed): "not checked" refuses it, whatever its class (`cz_gate_create.may_create(..., sm_classes=True)`).
 - The status line compares each record with the bytes of the published file (path from the publication record):
-  "class file present" (a detail), "class file missing: quam_config/<file>.py", "class file changed since the gate
+  "class file present" (a detail), "class file missing: quam_config/<file>.py" (several missing files: all named, in record order, joined with ", quam_config/"), "class file changed since the gate
   was checked", or "not a class SM made" (a detail). Scaling: "amplitude scaling: checked" / "not proportional" /
   "not known" (a detail) from the recorded `proportional`.
 - For as long as a gate records a file, its line shows "this chip now needs quam_config/<file>.py; every computer

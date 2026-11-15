@@ -607,3 +607,33 @@ def test_recheck_refreshes_the_hash_of_every_class_file(made_two, monkeypatch):
     assert "gate-status-recheck" not in _status_html(made_two)
     assert made_two.c.post("/undo").status_code == 200
     assert GS.sm_class_files(_macro_of(made_two)) == old
+
+
+def test_every_missing_file_is_named_and_every_changed_file_listed(made_two):
+    a, b = made_two.folder / f"{CLASS}.py", made_two.folder / f"{CLASS2}.py"
+    a.write_bytes(a.read_bytes() + b"\n# edited\n")
+    b.write_bytes(b.read_bytes() + b"\n# edited\n")
+    html = _status_html(made_two)
+    assert f"{CLASS}.py, {CLASS2}.py. Re-check" in html
+    a.unlink()
+    b.unlink()
+    html = _status_html(made_two)
+    assert f"class file missing: quam_config/{CLASS}.py, quam_config/{CLASS2}.py" in html
+
+
+def test_recheck_refuses_when_one_of_two_classes_is_not_published_any_more(made_two, monkeypatch):
+    from quam_state_manager.core import config_generator
+    monkeypatch.setattr(config_generator, "get_selected_env", lambda inst: "C:/fake/python.exe")
+    old = GS.sm_class_files(_macro_of(made_two))
+    n = len(made_two.store.change_log)
+    rec = next(p for p in Path(made_two.app.instance_path).rglob(W.PUBLISHED_FILE)
+               if p.parent.name == CLASS2)
+    rec.write_text("{}", encoding="utf-8")
+    calls = []
+    monkeypatch.setattr(gate_check, "check_gates",
+                        lambda store, py, gates, creates=(), **kw: calls.append(gates)
+                        or _gate_check(store))
+    r = made_two.c.post("/api/pulse/cz-gate/recheck", json={"pair": PAIR, "gate": GATE})
+    assert r.status_code == 409 and "not saved to quam_config any more" in r.get_json()["error"]
+    assert calls == [] and GS.sm_class_files(_macro_of(made_two)) == old
+    assert len(made_two.store.change_log) == n

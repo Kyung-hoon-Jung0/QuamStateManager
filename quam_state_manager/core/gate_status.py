@@ -82,10 +82,15 @@ def _class_files(files: list[dict], where) -> dict:
     gone = [f for f, st in states if st == "missing"]
     moved = [f for f, st in states if st == "changed"]
     if gone:
-        name = gone[0]["file"]
-        return _item("class", FILE_MISSING.format(file=name), "warn",
-                     f"The gate uses {gone[0].get('qclass') or name}, and its file is not in "
-                     "the folder it was saved to.")
+        if len(gone) == 1:
+            name = gone[0]["file"]
+            return _item("class", FILE_MISSING.format(file=name), "warn",
+                         f"The gate uses {gone[0].get('qclass') or name}, and its file is not in "
+                         "the folder it was saved to.")
+        names = [f["file"] for f in gone]
+        return _item("class", FILE_MISSING.format(file=", quam_config/".join(names)), "warn",
+                     "The gate uses " + ", ".join(f.get("qclass") or f["file"] for f in gone)
+                     + ", and their files are not in the folder they were saved to.")
     if moved:
         return _item("class", FILE_CHANGED, "warn",
                      "The file differs from the one the gate was checked with: "
