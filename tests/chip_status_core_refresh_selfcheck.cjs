@@ -132,8 +132,8 @@ function slotHtml(win) { const s = win.document.querySelector('[data-core-rec-sl
   ok(structural(win) === 'none found' && slotHtml(win) === '' && !/warn/.test(banner(win)), 'R4 stage: slot, tile and banner clear on the event');
   win.__after = [CORE_LINE];
   fire(true);
-  await until(() => structural(win) === '0 err 00b7 1 warn');
-  ok(structural(win) === '0 err 00b7 1 warn' && /warn/.test(banner(win)) && slotHtml(win).indexOf('data-core-rec-open') >= 0,
+  await until(() => structural(win) === '0 err \u00b7 1 warn');
+  ok(structural(win) === '0 err \u00b7 1 warn' && /warn/.test(banner(win)) && slotHtml(win).indexOf('data-core-rec-open') >= 0,
     'R4 Ctrl+Z: finding, button, tile and banner come back');
   win.__after = [];
   fire(false);
