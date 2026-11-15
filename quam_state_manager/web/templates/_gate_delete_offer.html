@@ -6,7 +6,7 @@
 {% if not parts.ok %}
     {{ ui.ui_callout('danger', 'Cannot delete ' ~ gate, parts.refusals | join(' ')) }}
     <div class="ui-actions gate-delete-actions">
-        <button type="button" class="btn-sm outline secondary gate-delete-cancel"
+        <button type="button" class="btn-sm outline secondary gate-delete-cancel" hx-sync="this:drop"
                 hx-get="/pulse/cz-gate/offer-close" hx-target="closest .gate-status-slot"
                 hx-swap="innerHTML" title="Close this message (Esc)">Close</button>
     </div>
@@ -23,11 +23,11 @@
     {{ ui.ui_callout('warn', gate ~ ' is the active CZ gate', 'After this, pair ' ~ pair ~ ' has no active CZ gate.') }}
     {% endif %}
     <div class="ui-actions gate-delete-actions">
-        <button type="button" class="btn-sm danger gate-delete-confirm"
+        <button type="button" class="btn-sm danger gate-delete-confirm" hx-sync="this:drop"
                 hx-post="/api/pulse/delete-together"
                 hx-vals='{{ {"pair": pair, "gate": gate, "confirm_active": ("1" if parts.active else ""), "scope": ("list" if in_list else "")} | tojson }}'
                 hx-target="closest .gate-status-slot" hx-swap="innerHTML">{{ 'Delete the active gate' if parts.active else 'Delete gate' }}</button>
-        <button type="button" class="btn-sm outline secondary gate-delete-cancel"
+        <button type="button" class="btn-sm outline secondary gate-delete-cancel" hx-sync="this:drop"
                 hx-get="/pulse/cz-gate/offer-close" hx-target="closest .gate-status-slot"
                 hx-swap="innerHTML" title="Close this offer; nothing is deleted (Esc)">Cancel</button>
     </div>

@@ -8,21 +8,29 @@
    write from elsewhere on the page (the pulse detail's Re-check or delete answers `pulses-changed`), an undo or redo
    (`cellsReverted`) or a sync pull (`stateRestored`) re-fetches the list; static/gate-status.js skips the
    `pulses-changed` of the list's own answer (it already re-rendered the list) and, while a delete offer is
-   open, holds the refresh until the offer closes (`gate-list-refresh`). #}
+   open, holds the refresh until the offer closes (`gate-list-refresh`). The zone's refresh is its own request slot
+   (an `hx-sync` of its own, so it does not inherit the inspector pane's `this:replace`, which aborted a press;
+   `this:drop`, since gate-status.js already refuses a trigger while the zone's refresh is out and owes it a re-run).
+   One press at a time per pair; after a press the zone is refreshed only when that is owed (gate-status.js).
+   `data-gate-zone-slot` holds the press messages a refresh carries over from a row that is gone.
+   `data-press-answer` marks what only a press answer renders (`gate_lines.notice`, set by list_answer
+   for a delete press; a row's `note`); the Re-check notice and a row's `notices` are chip state that
+   every refresh renders again, so they carry no mark and are never carried. #}
 {% import "_ui.html" as ui %}
 {% if gate_lines and gate_lines.pair %}
 <section class="ui-zone gate-status-list{% if not gate_lines.count %} ui-zone--quiet{% endif %}" aria-label="CZ gates" data-gate-pair="{{ gate_lines.pair }}"
          hx-get="/pulse/cz-gate/list?pair={{ gate_lines.pair | urlencode }}"
     hx-trigger="pulses-changed from:body, cellsReverted from:document, stateRestored from:document, gate-list-refresh"
-         hx-target="this" hx-swap="outerHTML">
+         hx-target="this" hx-swap="outerHTML" hx-sync="this:drop">
     <div class="ui-zone-head">
         <h3 class="ui-zone-title">CZ gates</h3>
         <button type="button" class="btn-sm outline" data-czg-open data-czg-pair="{{ gate_lines.pair }}" title="Create a new CZ gate on this pair">+ Gate</button>
         <span class="ui-zone-sum"><span class="ui-count">{{ gate_lines.count }}</span>{% if gate_lines.no_active %}<span class="ui-text-warn" title="The pair's cz alias is not set">no active gate</span>{% endif %}</span>
     </div>
     <div class="ui-zone-body">
+        <div data-gate-zone-slot role="status" aria-live="polite"></div>
         {% with recheck_notice=gate_lines.recheck_notice %}{% include '_gate_recheck_notice.html' %}{% endwith %}
-        {% if gate_lines.notice %}<div class="gate-status-notice" role="status">{{ ui.ui_callout(gate_lines.notice.tone, gate_lines.notice.title, gate_lines.notice.text) }}</div>{% endif %}
+        {% if gate_lines.notice %}<div class="gate-status-notice" role="status" data-press-answer>{{ ui.ui_callout(gate_lines.notice.tone, gate_lines.notice.title, gate_lines.notice.text) }}</div>{% endif %}
         {% if not gate_lines.count %}<p class="ui-zone-empty">No CZ gate on this pair yet. Press + Gate to create one.</p>{% endif %}
         {% set in_list = True %}
         {% for line in gate_lines.lines %}{% include '_gate_status.html' %}{% endfor %}

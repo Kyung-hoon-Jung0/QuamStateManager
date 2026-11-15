@@ -628,3 +628,118 @@ def test_zone_refreshes_on_undo_and_on_a_sync_pull(rig):
     assert {t.strip() for t in trig.split(",")} == {
         "pulses-changed from:body", "cellsReverted from:document", "stateRestored from:document",
         "gate-list-refresh"}
+
+
+def test_the_gate_zone_is_its_own_request_slot_not_the_inspector_panes(rig):
+    """The pair detail sits in #inspector-pane (hx-sync="this:replace"). Without a
+    sync of its own, a row press and the zone's refresh shared that slot and the
+    later one aborted the earlier, which htmx logs to the console."""
+    zone = rig.get("/pair/q1-q2", headers=HX).get_data(as_text=True)
+    head = zone.split('<section class="ui-zone gate-status-list')[1].split(">")[0]
+    sync = head.split('hx-sync="')[1].split('"')[0] if 'hx-sync="' in head else ""
+    assert sync.split(":")[0] == "this", head
+
+
+def _zone_of(body):
+    start = body.index('<section class="ui-zone gate-status-list')
+    return body[start:body.index("</section>", start) + len("</section>")]
+
+
+def test_a_press_and_the_zone_refresh_both_reach_the_server_under_real_htmx(rig, tmp_path, monkeypatch):
+    """Behaviour under the bundled htmx (tests/gate_zone_sync_selfcheck.cjs) with the real
+    server answers: one press at a time, one refresh after each press, no press lost, no abort."""
+    import os
+    import shutil
+    import subprocess
+    from pathlib import Path
+    node = shutil.which("node")
+    if not node or not os.environ.get("NODE_PATH"):
+        pytest.skip("node + jsdom (NODE_PATH) needed")
+    zone = _zone_of(rig.get("/pair/q1-q2", headers=HX).get_data(as_text=True))
+    r = rig.post("/api/pulse/cz-gate/make-active", headers=HX,
+                 data={"pair": "q1-q2", "gate": "cz_sq", "scope": "list"})
+    assert r.status_code == 200
+    activate = {"body": r.get_data(as_text=True), "headers": dict(r.headers)}
+    assert rig.post("/undo").status_code == 200
+
+    def ans(r):
+        assert r.status_code == 200
+        return {"body": r.get_data(as_text=True), "headers": dict(r.headers)}
+    ma = {"pair": "q1-q2", "scope": "list"}
+    refuse = ans(rig.post("/api/pulse/cz-gate/make-active", headers=HX, data={**ma, "gate": "cz_two"}))
+    assert "already the active CZ gate" in refuse["body"]
+
+    def no_record(*a, **k):
+        raise OSError("disk full")
+    keep = log.record_check
+    monkeypatch.setattr(log, "record_check", no_record)
+    warn = ans(rig.post("/api/pulse/cz-gate/make-active", headers=HX, data={**ma, "gate": "cz_sq"}))
+    assert "check record could not be saved" in warn["body"]
+    monkeypatch.setattr(log, "record_check", keep)
+    assert rig.post("/undo").status_code == 200
+    delrefuse = ans(_del_list(rig, "cz_two"))
+    assert "is the active CZ gate of pair" in delrefuse["body"]
+    offer = ans(rig.get("/pulse/cz-gate/delete-offer?pair=q1-q2&gate=cz_two&scope=list", headers=HX))
+    assert "gate-delete-confirm" in offer["body"]
+    slotfail = ans(rig.post("/api/pulse/delete-together", headers=HX, data={"pair": "q1-q2", "gate": "cz_two"}))
+    assert "ui-fail-row" in slotfail["body"]
+    full = ans(rig.get("/pulse/cz-gate/list?pair=q1-q2", headers=HX))
+    with monkeypatch.context() as m:
+        _state_notices(m)
+        noticed = ans(rig.get("/pulse/cz-gate/list?pair=q1-q2", headers=HX))
+    deleted = ans(_del_list(rig, "cz_sq"))       # another window deletes cz_sq
+    assert "cz_sq deleted" in deleted["body"]
+    listed = rig.get("/pulse/cz-gate/list?pair=q1-q2", headers=HX)
+    gone = rig.get("/pulse/cz-gate/delete-offer?pair=q1-q2&gate=cz_sq&scope=list", headers=HX)
+    assert "This gate is gone." in gone.get_data(as_text=True)
+    fixture = {"zone": zone, "activate": activate,
+               "list": {"body": listed.get_data(as_text=True), "headers": dict(listed.headers)},
+               "gone": {"body": gone.get_data(as_text=True), "headers": dict(gone.headers)},
+               "refuse": refuse, "warn": warn, "delrefuse": delrefuse, "offer": offer,
+               "slotfail": slotfail, "full": full, "noticed": noticed, "deleted": deleted}
+    path = tmp_path / "gate_zone_sync.json"
+    path.write_text(json.dumps(fixture), encoding="utf-8")
+    p = subprocess.run([node, str(Path(__file__).parent / "gate_zone_sync_selfcheck.cjs"), str(path)],
+                       capture_output=True, text=True, timeout=120)
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "ALL OK" in p.stdout
+
+
+def _state_notices(m):
+    """Every render of the zone shows the chip-state notices: the Re-check notice and a
+    row's class-file line."""
+    from quam_state_manager.web import gate_status_routes as gsr
+    m.setattr(gsr, "recheck_notice", lambda store, ctx: {
+        "tone": "warn", "title": "Gates wait for Re-check", "text": "The class file changed.",
+        "gates": ["cz_sq"]})
+    keep = gsr.gate_line
+
+    def line(*a, **k):
+        out = keep(*a, **k)
+        out["notices"] = [{"key": "needs", "text": "needs the class file"}]
+        return out
+    m.setattr(gsr, "gate_line", line)
+
+
+def test_only_press_answers_carry_the_press_answer_mark(rig, monkeypatch):
+    """A plain zone render (also with every chip-state notice) has no data-press-answer;
+    each press answer of the zone has it on its message, and only there."""
+    with monkeypatch.context() as m:
+        _state_notices(m)
+        plain = rig.get("/pulse/cz-gate/list?pair=q1-q2", headers=HX).get_data(as_text=True)
+        assert "data-recheck-notice" in plain and 'data-status-key="needs"' in plain
+        assert "data-press-answer" not in plain
+        pair_page = _zone_of(rig.get("/pair/q1-q2", headers=HX).get_data(as_text=True))
+        assert "data-press-answer" not in pair_page
+    ma = {"pair": "q1-q2", "scope": "list"}
+
+    def marked(body, says):
+        assert body.count("data-press-answer") == 1, body
+        part = body.split("data-press-answer", 1)[1]
+        assert says in part.split('class="gate-status"', 1)[0], part[:400]
+    marked(rig.post("/api/pulse/cz-gate/make-active", headers=HX,
+                    data={**ma, "gate": "cz_two"}).get_data(as_text=True), "already the active CZ gate")
+    marked(_del_list(rig, "cz_two").get_data(as_text=True), "is the active CZ gate of pair")
+    marked(_del_list(rig, "cz_sq").get_data(as_text=True), "cz_sq deleted")
+    marked(rig.get("/pulse/cz-gate/delete-offer?pair=q1-q2&gate=cz_sq&scope=list",
+                   headers=HX).get_data(as_text=True), "This gate is gone.")
