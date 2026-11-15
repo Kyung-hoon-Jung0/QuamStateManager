@@ -27,6 +27,12 @@
 <p class="muted pulse-open-missing">The address names a pulse this chip does not
    have: <code>{{ open_pulse_missing }}</code></p>
 {% endif %}
+{# The chip-level Re-check notice (_gate_recheck_notice.html): the slot is empty, so it shows
+   nothing, while no gate waits. A gate write answers `pulses-changed`; an undo, a redo or a
+   sync pull fires the same events the pair's gate list refreshes on. #}
+<div id="gate-recheck-slot" hx-get="/pulse/cz-gate/recheck-notice"
+     hx-trigger="pulses-changed from:body, cellsReverted from:document, stateRestored from:document"
+     hx-swap="innerHTML">{% include '_gate_recheck_notice.html' %}</div>
 <div class="table-header-row ui-head ui-head--data ui-pulses-head">
     <h2 class="ui-head-title">Pulses <small class="muted ui-count" id="pulses-total">({{ total }})</small></h2>
     <div class="table-filter">

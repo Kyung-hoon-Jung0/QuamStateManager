@@ -107,6 +107,20 @@ quam_config refuse its own file, nor make gates using the class wait again.
   hashes are taken the same way as at create (before the check, read again after it); a class that is no longer
   published, or a file that changed during the check, refuses without writing.
 
+## The chip-level Re-check notice
+
+- `gate_status.gates_to_recheck(merged, where)` lists every gate of the chip, over all pairs, whose line says "class
+  file changed since the gate was checked" (read through `class_file_states`, so a missing file, a bad record or a
+  gate with no SM records is never listed): `[{pair, gate, files}]`, files = the changed ones.
+- While that list is non-empty, a warn callout (`_gate_recheck_notice.html`, `ui_callout` only) sits at the top of
+  every pair's gate list and above the table on the Pulses page: "N gates wait for Re-check", each
+  "pair / gate (file)", and "Other chips that use this file were not checked." With an empty list nothing is
+  rendered (the Pulses slot `#gate-recheck-slot` stays empty). It only informs; it never refuses a press.
+- Refresh: the gate list re-renders it on every answer of its own (Re-check, Make active, delete in the list) and on
+  `cellsReverted` / `stateRestored` (undo, redo, pull). The Pulses slot re-fetches
+  `GET /pulse/cz-gate/recheck-notice` on `pulses-changed` (every gate write answers it) and on the same two events.
+  No poll.
+
 ## The live-write check
 
 `working_copy.apply_to_live` is the one place a live write checks class files (`core/class_file_check.py`), so every
