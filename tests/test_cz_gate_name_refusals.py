@@ -21,7 +21,7 @@ import pytest
 
 from quam_state_manager.core import cz_gate_build as cgb
 from tests.test_cz_gate_build import _chip, _plan
-from tests.test_cz_gate_routes import PLAN, _body, chip  # noqa: F401
+from tests.test_cz_gate_routes import CHECK, PLAN, _body, chip  # noqa: F401
 
 ROOT = Path(__file__).resolve().parent.parent
 VECTORS = json.loads((Path(__file__).parent / "fixtures" / "refusal_display_vectors.json")
@@ -123,3 +123,39 @@ def test_a_door_shows_the_typed_name_and_marks_the_row(chip, url, headers):  # n
     assert row["refusals"] == [want] and row["name_refusals"] == [want], row
     ok = chip.c.post(url, json=_body(), headers=headers).get_json()["pairs"][0]
     assert ok["ok"] and ok["name_refusals"] == []
+
+
+LONG = "cz_" + "x" * 80
+LONG_REASON = ("The gate name cz_" + "x" * 60 + "\u2026 is not a valid name. Use letters, "
+               "digits and _ only, at most 64 characters.")
+A_CHECK = "/api/agent/cz-gate/check"
+
+
+@pytest.mark.parametrize("url,headers", [(PLAN, {}), (A_PLAN, AGENT), (CHECK, {}), (A_CHECK, AGENT)],
+                         ids=["person plan", "agent plan", "person check", "agent check"])
+def test_a_capped_name_keeps_its_mark_at_every_door(chip, url, headers):  # noqa: F811
+    """A typed name longer than the echo cap changes the refusal's words; the
+    capped sentence is still the one marked as a name refusal."""
+    row = chip.c.post(url, json=_body(name=LONG), headers=headers).get_json()["pairs"][0]
+    assert row["refusals"] == [LONG_REASON], row
+    assert row["name_refusals"] == [LONG_REASON], row
+    assert LONG not in json.dumps(row["refusals"]) and LONG not in json.dumps(row["name_refusals"])
+
+
+def test_the_person_doors_release_the_name_record(chip, monkeypatch):  # noqa: F811
+    """The record lives only while a person's plan or check runs, also when the
+    door raises: a pooled server thread never keeps it."""
+    from quam_state_manager.web import cz_gate_routes as czr
+    assert cgb._NAMED.get() is None
+    for url in (PLAN, CHECK):
+        assert chip.c.post(url, json=_body(name="bad")).status_code == 200
+        assert cgb._NAMED.get() is None, url
+
+    def boom():
+        cgb.name_reason("The gate name 'bad' must start with cz_. Pick a name like cz_square.")
+        raise RuntimeError("door failed")
+
+    monkeypatch.setattr(czr, "plan_answer", boom)
+    with pytest.raises(RuntimeError, match="door failed"):
+        chip.c.post(PLAN, json=_body(name="bad"))
+    assert cgb._NAMED.get() is None
