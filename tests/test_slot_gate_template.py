@@ -54,7 +54,7 @@ def test_presets():
 @pytest.mark.parametrize("change", [lambda s: s.replace(T.REGION_END, ""),
     lambda s: s + T.REGION_BEGIN + "\n", lambda s: s.replace(T.REGION_BEGIN, T.REGION_END),
     lambda s: s.replace("version 1.", "version 7."), lambda s: s.replace("\n", "\r\n"),
-    lambda s: s.replace("duration=self.duration", "duration=4")])
+    lambda s: s.replace("duration=slot_duration", "duration=4")])
 def test_broken_text_is_not_editable(change):
     assert not T.parse(change(T.render(T.SlotSpec("ExampleGate", {"coupler"})))).ok
 
@@ -277,7 +277,7 @@ def test_unit_op_one_constant():
     assert constant == T.SPECTATOR_UNIT_OP
     module = (Path(T.__file__)).read_text(encoding="utf-8")
     assert module.count(repr(T.SPECTATOR_UNIT_OP)) + module.count(f'"{T.SPECTATOR_UNIT_OP}"') == 1
-    assert f"or value < {T.MIN_LENGTH_NS}:" in source
+    assert f"or value > {T.MAX_SPECTATOR_NS} or value % {T.LENGTH_STEP_NS} or value < {T.MIN_LENGTH_NS}:" in source
 
 
 @lab
@@ -426,7 +426,7 @@ def test_length_step_matches_shared_rule():
     assert all(length_rule({"length": low + d}) is not None for d in range(1, step))
     assert str(step) + " ns" in T.LENGTH_PROBLEM
     source = T.render(T.SlotSpec("ExampleGate", T.SLOTS, True))
-    assert f"value % {step} or value < {low}:" in source and f"length_ns // {step})" in source
+    assert f"value > {T.MAX_SPECTATOR_NS} or value % {step} or value < {low}:" in source and f"length_ns // {step})" in source
     assert len(re.findall(r"% \d+", source)) == 1 and len(re.findall(r"// \d+", source)) == 1
     assert T.spectator_rows_problem(**rows(low + step)) is None
     assert T.spectator_rows_problem(**rows(low + step // 2))
@@ -493,22 +493,22 @@ def test_lab_duplicate_spectator_guard(tmp_path):
 
 # Sequence steps placed before and after the gate pulses.
 
-#: sha256 of the rendered source without sequence steps, taken from the template before steps existed.
+#: sha256 of the rendered source without sequence steps, including the duration and spectator length guards.
 NO_STEP_SHA256 = {
-    ('control', False): 'cd2630a2f87e4d445ca7e408205696da0254432d5fa8bf16f664528b393c34a7',
-    ('control', True): '25a708f35d6e487b4171783ce5758581929feec0d9bc6a8c6312e42b605df2aa',
-    ('target', False): '4c42e2f82555d47f31fbb0675cc712fa3f4812f77eb32d3fc23fbd10e9497f60',
-    ('target', True): 'a1d5fe81673d625555c2ecc0aed62f082ac15d317c1c3ea81c4264996f976e06',
-    ('coupler', False): '54e3010f04d1ae5e7625b3a118e0286a3555965f90f43e24b9935e92143956a6',
-    ('coupler', True): '2f43c7ef30aeb5cb88a9b15e77e900363eb019637e3ccb05974b45a6f3d79ab2',
-    ('control+target', False): '1e6580ab0b40b5c7d08e1000612cf249b1a7ab34bcd19457ffcf01b3fe5a0590',
-    ('control+target', True): '3c91b9f729f7aeac074deb8e939281ffa81c90dcb2bb26bac905394dfff4b3a2',
-    ('control+coupler', False): '247f937083947fc57fbf59545d36820a8dbff69391f92c939b4214f3f2f76458',
-    ('control+coupler', True): 'dc85bcd97676d6b10ef8017010d70b03e2c9fc068758ebd4593b8cc65a6cb153',
-    ('target+coupler', False): 'a27da53d5e819b6a822b33efae4585594d2b4b90312d0adf1faf6f701f6cebe2',
-    ('target+coupler', True): 'e76cda2a1e27f736d5830cd7953c933f88aeb938b911cad6d01ece9fa1a2f83c',
-    ('control+target+coupler', False): '72fa3c11549129c385793cfe09f6db63af09705d8ca54cb95815c2e68965730f',
-    ('control+target+coupler', True): 'ec8161612bde80f574debd2a05232e7ef2c4ebff0ac2cbd66861f537500aed70',
+    ('control', False): '42d4f998716d6452915507f7711682fc0f232852aa8d0d554402624b6f51e5bf',
+    ('control', True): '26f075182588be6d6af115ed1319a67585c39ca16a65661b16dfabce6de18fb9',
+    ('target', False): 'f592ee0a8421b734649e806f38ae8955cb7d99fd395ad404701353cb4bd45ba0',
+    ('target', True): '3c60fd3d5405877f427aab8eda2d4e4a7652e08ed4b99690f4ffa23a800c7790',
+    ('coupler', False): '771766861e9f84b6450a073c3f1b257c76cf4e0947fdbc4195f40215b6ebe9c8',
+    ('coupler', True): 'f03ab64f81a7c00e809e19bb0ec8731e0fe9179508e310f5155c0ee3295525ad',
+    ('control+target', False): 'd5c0a60d0fb4d74b728d76c97b8092aee26681d762d467d94217e7a06d863864',
+    ('control+target', True): 'd6756fb5534b8fd952d6d59dce64dd8fcb60db8a5e063a7e4bd75150f8d85141',
+    ('control+coupler', False): '3659cc6280d1bd67598b4935e8f1901994faa87eddb8e89f6908fdcd797259c5',
+    ('control+coupler', True): '92690212982a5dd8cbcc99544b1d967ae0620b13e781527435f2848f13051462',
+    ('target+coupler', False): '96e18e1f203aa24b3eef72caf1474b89542bc55ffe6c679948737de21f3f4ab6',
+    ('target+coupler', True): '7267839ffb4c7db8a194b97a7a132814f6103f68234e833b9bc58f0aa22f2b52',
+    ('control+target+coupler', False): 'bd8169fd77962f687372c4cbb458bd9c65054507bb76cf8eb3e35671ec27562b',
+    ('control+target+coupler', True): '91e3d464b1c5fee8d95de9d223c408e9b69c3166c3309a48f3a572c95da84533',
 }
 
 
@@ -936,7 +936,8 @@ def test_roles_come_from_the_fixed_table():
         assert f"        pair.qubit_{role}.xy.play('x180')\n" in source
 
 
-def _standin_apply(monkeypatch, source, xy_operations=None):
+def _standin_apply(monkeypatch, source, xy_operations=None, *, macro_duration=None,
+                   apply_kwargs=None, slot_durations=None, duration_reads=None):
     """Run the generated apply() on small stand-in objects, without a QM library; return (statements, error)."""
     import dataclasses
     import sys
@@ -962,6 +963,8 @@ def _standin_apply(monkeypatch, source, xy_operations=None):
 
         def play(self, label, **kwargs):
             statements.append(f"play {self.name} {label}")
+            if slot_durations is not None:
+                slot_durations.append(kwargs["duration"])
 
         def frame_rotation_2pi(self, phase):
             statements.append(f"frame_rotation {self.name}")
@@ -981,8 +984,12 @@ def _standin_apply(monkeypatch, source, xy_operations=None):
         def qubit_pair(self):
             return pair
 
+    if duration_reads is not None:
+        reads = iter(duration_reads)
+        Recorder.duration = property(lambda self: next(reads, duration_reads[-1]), lambda self, value: None)
+
     try:
-        Recorder(coupler_flux_pulse="coupler_op").apply()
+        Recorder(coupler_flux_pulse="coupler_op", duration=macro_duration).apply(**(apply_kwargs or {}))
     except ValueError as exc:
         return statements, str(exc)
     return statements, None
@@ -1230,3 +1237,108 @@ def test_standin_every_statement_kind_in_order(monkeypatch, tmp_path):
 def test_lab_every_statement_kind_in_order(tmp_path):
     source = T.render(T.SlotSpec("ExampleGate", {"control", "coupler"}, True, *EVERY_KIND[:2]))
     _every_statement_kind_in_order(run_check(tmp_path, source, **EVERY_KIND_REQUEST))
+
+
+SPECTATOR_CAP = (2 ** 24 - 1) * 4
+LENGTH_CAP_CASES = [16, 52.0, SPECTATOR_CAP, float(SPECTATOR_CAP), SPECTATOR_CAP + 4,
+                    True, float("nan"), float("inf"), 10 ** 400, "16"]
+
+
+def test_spectator_cap_sentence_and_constant():
+    assert T.MAX_SPECTATOR_NS == SPECTATOR_CAP
+    assert T.LENGTH_PROBLEM == ("Spectator {name!r} length {value!r} must be a finite whole multiple of "
+                                "4 ns, at least 16 ns and at most 67108860 ns.")
+    assert T.DURATION_PROBLEM == "Slot duration must be at most 16777215 clock cycles."
+    for sentence in (T.LENGTH_PROBLEM, T.DURATION_PROBLEM):
+        assert sentence.isascii() and sentence.endswith(".")
+        assert all(word not in sentence for word in (" -- ", "->", "CAS", "patch"))
+    source = T.render(T.SlotSpec("ExampleGate", {"coupler"}))
+    assert "lengths[name]" not in source and T.LENGTH_PROBLEM not in source
+
+
+@pytest.mark.parametrize("length", LENGTH_CAP_CASES, ids=lambda value: T._shown(value))
+def test_spectator_cap_server(length):
+    valid = type(length) in (int, float) and length in (16, 52.0, SPECTATOR_CAP)
+    assert (T.spectator_length_problem(length) is None) == valid
+    problem = T.spectator_rows_problem(**rows(length))
+    assert (problem is None) == valid
+    if not valid:
+        assert problem == T.LENGTH_PROBLEM.format(name="s", value=length)
+        assert "at most 67108860 ns." in T.spectator_length_problem(length)
+
+
+@pytest.mark.parametrize("length", LENGTH_CAP_CASES, ids=lambda value: T._shown(value))
+def test_spectator_cap_executed(monkeypatch, tmp_path, length):
+    source = T.render(T.SlotSpec("ExampleGate", T.SLOTS, True))
+    result = _standin_check(monkeypatch, tmp_path, source, spectators={"s": [0.05, length, 0.1]})
+    valid = type(length) in (int, float) and length in (16, 52.0, SPECTATOR_CAP)
+    assert result["ok"] == valid, result
+    if valid:
+        assert result["spectator_plays"][0]["duration"] == length // 4
+    else:
+        assert result["error"] == "ValueError: " + T.LENGTH_PROBLEM.format(name="s", value=length)
+        assert result["slots_played"] == result["spectator_plays"] == result["alignments"] == []
+
+
+class DurationExpression:
+    def __gt__(self, other):
+        raise AssertionError("A duration expression must pass through untouched.")
+
+
+@pytest.mark.parametrize("value", [None, 2 ** 24 - 1, 2 ** 24, 10 ** 400,
+                                   float(2 ** 24), True, DurationExpression()],
+                         ids=lambda value: T._shown(value))
+@pytest.mark.parametrize("where", ["field", "argument", "override"])
+def test_slot_duration_cap_executed(monkeypatch, value, where):
+    source = T.render(T.SlotSpec("ExampleGate", {"coupler"}))
+    durations = []
+    kwargs = {} if where == "field" else {"duration": value}
+    field_value = value if where == "field" else (2 ** 24 if where == "override" else None)
+    effective = field_value if kwargs.get("duration") is None else value
+    statements, error = _standin_apply(monkeypatch, source, macro_duration=field_value,
+                                       apply_kwargs=kwargs, slot_durations=durations)
+    if isinstance(effective, int) and not isinstance(effective, bool) and effective > 2 ** 24 - 1:
+        assert error == "Slot duration must be at most 16777215 clock cycles."
+        assert statements == durations == []
+    else:
+        assert error is None
+        assert len(durations) == 1 and durations[0] is effective
+
+
+@pytest.mark.parametrize("value", [2 ** 24, 2 ** 40])
+@pytest.mark.parametrize("make", [lambda v: __import__("numpy").int64(v), IntSub], ids=["numpy", "intsub"])
+def test_slot_duration_cap_judges_every_whole_number(monkeypatch, make, value):
+    source = T.render(T.SlotSpec("ExampleGate", {"coupler"}))
+    durations = []
+    statements, error = _standin_apply(monkeypatch, source, apply_kwargs={"duration": make(value)},
+                                       slot_durations=durations)
+    assert error == "Slot duration must be at most 16777215 clock cycles."
+    assert statements == durations == []
+
+
+def test_slot_duration_cap_numpy_at_bound_passes(monkeypatch):
+    import numpy
+    source = T.render(T.SlotSpec("ExampleGate", {"coupler"}))
+    durations = []
+    bound = numpy.int64(2 ** 24 - 1)
+    _, error = _standin_apply(monkeypatch, source, apply_kwargs={"duration": bound}, slot_durations=durations)
+    assert error is None and len(durations) == 1 and durations[0] is bound
+
+
+def test_slot_duration_is_read_once_and_played_as_judged(monkeypatch):
+    assert T.render(T.SlotSpec("ExampleGate", T.SLOTS)).count("self.duration") == 1
+    source = T.render(T.SlotSpec("ExampleGate", {"coupler"}))
+    assert source.count("self.duration") == 1 and "\nimport numbers\n" in source and "numpy" not in source
+    durations = []
+    _, error = _standin_apply(monkeypatch, source, duration_reads=[100, 2 ** 24 + 5],
+                              slot_durations=durations)
+    assert error is None and durations == [100] * len(durations) and durations
+    _, error = _standin_apply(monkeypatch, source, duration_reads=[2 ** 24 + 5, 100])
+    assert error == "Slot duration must be at most 16777215 clock cycles."
+
+
+def test_slot_duration_bool_is_not_judged(monkeypatch):
+    source = T.render(T.SlotSpec("ExampleGate", {"coupler"}))
+    durations = []
+    _, error = _standin_apply(monkeypatch, source, apply_kwargs={"duration": True}, slot_durations=durations)
+    assert error is None and durations == [True]
