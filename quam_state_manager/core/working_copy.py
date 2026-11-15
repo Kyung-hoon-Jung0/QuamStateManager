@@ -300,7 +300,11 @@ class WorkingCopy:
     #: working copy kept the written values: UTC ISO time, else None. Persisted, so a restart
     #: still knows that the saved working content may hold values no press owns. Cleared by a
     #: pull (:func:`sync_from_live`), a landed :func:`apply_to_live` and :func:`clear_unverified_write`.
+    #: The time (to the microsecond) is also the mark's id: a person's Apply acknowledges this id.
     unverified_write: str | None = None
+    #: what that write kept: ``[{"path", "old", "kept"}]`` (merged-view dot paths), or None when
+    #: the writer did not name its rows (older meta, a wholesale write). Cleared with the mark.
+    unverified_kept: list | None = None
 
     def meta_path(self) -> Path:
         """Sidecar meta file -- kept *outside* the working folder so the folder
@@ -324,6 +328,7 @@ class WorkingCopy:
             "synced_live_hash": self.synced_live_hash,
             "synced_working_fp": _fp_json(self.synced_working_fp),
             "unverified_write": self.unverified_write,
+            "unverified_kept": self.unverified_kept,
             "updated_utc": datetime.now(timezone.utc).isoformat(),
         }
         safe_io.atomic_write_json(self.meta_path(), meta)
@@ -352,6 +357,7 @@ class WorkingCopy:
             "synced_working_fp": _fp_json(self.synced_working_fp if working_fp == "keep"
                                           else working_fp),
             "unverified_write": self.unverified_write if unverified == "keep" else unverified,
+            "unverified_kept": self.unverified_kept if unverified == "keep" else None,
             "updated_utc": datetime.now(timezone.utc).isoformat(),
         }
         safe_io.atomic_write_json(self.meta_path(), meta)
@@ -512,7 +518,16 @@ def load(instance_path: str | Path, live_folder: str | Path) -> WorkingCopy | No
         synced_working_fp=_fp_load(meta.get("synced_working_fp")),
         unverified_write=(meta.get("unverified_write")
                           if isinstance(meta.get("unverified_write"), str) else None),
+        unverified_kept=_kept_load(meta.get("unverified_kept")),
     )
+
+
+def _kept_load(raw) -> list | None:
+    """The persisted :attr:`WorkingCopy.unverified_kept`: only well-formed rows, else None."""
+    if not isinstance(raw, list):
+        return None
+    rows = [r for r in raw if isinstance(r, dict) and isinstance(r.get("path"), str) and "kept" in r]
+    return rows if len(rows) == len(raw) else None
 
 
 def discard(wc: WorkingCopy) -> None:
@@ -998,6 +1013,7 @@ def sync_from_live(wc: WorkingCopy) -> tuple[dict, dict]:
     wc.synced_live_hash = live_hash
     wc.sync_events += 1
     wc.unverified_write = None      # the working copy now holds what the chip holds
+    wc.unverified_kept = None
     try:
         wc.synced_working_fp = working_fingerprint(wc)
     except OSError:
@@ -1224,6 +1240,7 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
                     wc.sync_events += 1
                     wc.synced_working_fp = fp
                     wc.unverified_write = None
+                    wc.unverified_kept = None
                     adopted = True
             except OSError:
                 adopted = False     # unreadable → fall through and refuse
@@ -1483,14 +1500,25 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
     wc.sync_events += 1
     wc.synced_working_fp = written_fp
     wc.unverified_write = None      # the chip now holds the working content
+    wc.unverified_kept = None
     logger.info("Working copy applied to live: %s", wc.live_folder)
 
 
-def mark_unverified_write(wc: WorkingCopy) -> None:
+def mark_unverified_write(wc: WorkingCopy, kept: list | None = None) -> None:
     """Record that a live write could not be verified while the working copy kept its values
-    (:attr:`WorkingCopy.unverified_write`). Never raises: a failed meta write keeps the mark for
-    this session only, and says so in the log."""
-    wc.unverified_write = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    (:attr:`WorkingCopy.unverified_write`, a new id each time). *kept*: the rows it kept
+    (:attr:`WorkingCopy.unverified_kept`); joined with a mark already held, by path, unless
+    either names none. Never raises: a failed meta write keeps the mark for this session only,
+    and says so in the log."""
+    if wc.unverified_write is None:
+        rows = kept
+    elif kept is None or wc.unverified_kept is None:
+        rows = None
+    else:
+        mine = {r["path"] for r in kept}
+        rows = [r for r in wc.unverified_kept if r["path"] not in mine] + list(kept)
+    wc.unverified_kept = [dict(r) for r in rows] if rows is not None else None
+    wc.unverified_write = datetime.now(timezone.utc).isoformat(timespec="microseconds")
     try:
         wc._write_meta()
     except OSError:
@@ -1504,6 +1532,7 @@ def clear_unverified_write(wc: WorkingCopy) -> None:
     if wc.unverified_write is None:
         return
     wc.unverified_write = None
+    wc.unverified_kept = None
     try:
         wc._write_meta()
     except OSError:

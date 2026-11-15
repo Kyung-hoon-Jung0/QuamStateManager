@@ -1305,6 +1305,10 @@ def _sync_view(ctx=None) -> dict | None:
             # returned the chip to the refused sync point (A -> B -> A)
             or refused.get("ev", 0) != getattr(wc, "sync_events", 0)):
         refused = None
+    if refused is None and getattr(wc, "unverified_write", None):
+        # docs/254: the persisted mark says the same after a restart (or once the press's own
+        # record expired): a write nobody verified is never shown as a plain unapplied edit
+        refused = {"unverified": True, "at": wc.unverified_write, "cause": ""}
     # a refused apply stashes the edits it saved (pending_reapply) and clears
     # the change log -- they are still the user's unapplied edits
     # S10 walk r4 (P2-5): one count of the user's unapplied edits -- the FIELDS
@@ -34315,7 +34319,8 @@ def state_drift():
     _reprobe_readonly(ctx)          # v1.5.1 (U P1-6)
     _sv = _sync_view(ctx)
     sync = ({"state": _sv["state"], "sig": _sv["sig"], "stale": _sv["stale"],
-             "live_n": _sv["live_n"], "unapplied": _sv["unapplied"]}
+             "live_n": _sv["live_n"], "unapplied": _sv["unapplied"],
+             "unverified": bool(_sv.get("refused_unverified"))}
             if _sv else None)
     # QA review of r2-36: the flag this refresh may just have raised rides the
     # poll, so an OPEN page's pill can stop reading "Synced" (app.js re-renders
@@ -35038,6 +35043,11 @@ def state_sync(*, _auto_mode=None, _held_override=None):
         _unseen = _unseen_edit_refusal(ctx)
         if _unseen is not None:
             return jsonify(_unseen), 409
+        # docs/254: asked BEFORE the pull below, which would clear the mark and then replay
+        # the kept values from the reapply stash onto the chip
+        _kept_ref = _unverified_kept_refusal(ctx)
+        if _kept_ref is not None:
+            return jsonify(_kept_ref), 409
 
     # docs/65 state-roundtrip: a SAVED/STAGED working copy (working_dirty — a
     # snapshot, a run's state, a revert, or /save'd edits; content that is NOT
@@ -35638,7 +35648,7 @@ def _crash_token(store) -> str:
 @_journal_press
 def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
                              force=False, patch=None, journal=True, walk=False,
-                             hub: dict | None = None):
+                             hub: dict | None = None, kept_gate: bool = True):
     """Finish a ``mode=apply`` sync: save the re-applied edits to the working
     copy and push them to the live chip. Mirrors ``/state/apply-to-live`` but
     returns JSON so ``doStateSync`` can drive it. On a fresh staleness conflict
@@ -35662,7 +35672,9 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     than this door -- ``kind``/``src``/``undoes``/``units``/``run_uid``/``ref``
     (a Ctrl+Z step names the event it takes back, a redo the undo it takes
     back, a dataset apply its run). The result body carries the event id as
-    ``hub_event`` when the write landed."""
+    ``hub_event`` when the write landed.
+    ``kept_gate=False``: the caller replaced the working content wholesale (the dataset door),
+    so no unverified write's kept value rides on it (docs/254)."""
     store = ctx["store"]
     wc = ctx["working_copy"]
     saver = ctx["saver"]
@@ -35675,6 +35687,9 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     missing = working_copy.missing_live_message(wc) if not force else None
     if missing:
         return jsonify(status="error", conflict="missing_live", message=missing), 409
+    _kept_ref = _unverified_kept_refusal(ctx) if kept_gate else None
+    if _kept_ref is not None:
+        return jsonify(_kept_ref), 409
 
     # Re-stash exactly the edits now in the change log, so save()'s clear can't
     # lose them if the apply below hits a fresh conflict. Pin to the CAPTURED ctx
@@ -36053,19 +36068,21 @@ def _write_outcome(pending) -> str:
     return rec.outcome or "unknown"
 
 
-def _note_unverified_write(ctx, outcome: str) -> None:
+def _note_unverified_write(ctx, outcome: str, kept: list | None = None) -> None:
     """A live write whose outcome (:func:`_write_outcome`) is "unknown" leaves nobody knowing
     what the chip holds while the working copy keeps the written values (the dataset door and an
     approval share this). The context is marked diverged, and the working copy's meta records it
     (``working_copy.mark_unverified_write``), so a restart marks the rebuilt context the same way
     (:func:`_build_quam_context`). An approval (``agent_api._stage_writes``) and an agent's own
     press (:func:`_unverified_write_held`) then refuse until a person takes live or applies; a
-    person's own Apply press is not refused (docs/254)."""
+    person's own Apply press names the kept values first (:func:`_unverified_kept_refusal`).
+    *kept*: the rows the write kept (``{"path", "old", "kept"}``), None when it wrote a whole
+    document (docs/254)."""
     if outcome == "unknown" and ctx is not None:
         ctx["live_diverged"] = True
         wc = ctx.get("working_copy")
         if wc is not None:
-            working_copy.mark_unverified_write(wc)
+            working_copy.mark_unverified_write(wc, kept=kept)
 
 
 def _unverified_write_held(ctx) -> bool:
@@ -36074,6 +36091,66 @@ def _unverified_write_held(ctx) -> bool:
     fact (it survives a restart and a poll that lowers ``live_diverged``)."""
     wc = (ctx or {}).get("working_copy")
     return bool(getattr(wc, "unverified_write", None))
+
+
+UNVERIFIED_KEPT_LEAD = ("These values from an approval that may not have reached the chip will be "
+                        "written too: ")
+UNVERIFIED_KEPT_LEAD_WHOLE = ("These values from an earlier live write that may not have reached the chip "
+                              "will be written too: ")
+
+
+def _unverified_kept_rows(ctx) -> tuple[list, bool]:
+    """What a person's Apply would carry of the held mark's write (docs/254): ``([{"path",
+    "value"}], named)``. *named*: the mark lists its rows, and a row counts while the working
+    copy still holds its kept value (a Ctrl+Z or a later edit took it out). A mark that names
+    none (older meta, a whole-document write) counts every value the working copy holds that
+    live does not, outside the tray's own edits. Live unreadable: no rows (the door's own
+    missing/unreadable refusals speak then)."""
+    from quam_state_manager.core.sync_status import fmt_value
+    wc, store = ctx.get("working_copy"), ctx.get("store")
+    named = getattr(wc, "unverified_kept", None)
+    rows: list = []
+    if named is not None:
+        with store._lock:
+            for k in named:
+                cur = _dot_get(store.merged, k["path"])
+                if cur is not _DOT_MISSING and _differ_mod.compare_equal(cur, k.get("kept"), tolerance=None):
+                    rows.append({"path": k["path"], "value": fmt_value(cur)})
+        return rows, True
+    try:
+        entries = _working_vs_live_entries(ctx, None, None, working_copy.read_live_shared(wc))
+    except (OSError, ValueError, safe_io.LiveFileError):
+        logger.info("unverified-write preflight: live unreadable", exc_info=True)
+        return rows, False
+    with store._lock:
+        mine = {getattr(c, "dot_path", None) for c in store.change_log}
+    for e in entries:
+        if e.dot_path in mine:
+            continue
+        rows.append({"path": e.dot_path,
+                     "value": "(removed)" if e.change_type == "added" else fmt_value(e.old_value)})
+    return rows, False
+
+
+def _unverified_kept_refusal(ctx) -> dict | None:
+    """A person's press that would carry the values an unverified live write kept
+    (:func:`_note_unverified_write`) names them first, like Keep mine names what it replaces
+    (docs/86, docs/254). None: no mark, nothing of it left in the working copy, or the press
+    acknowledges THIS mark (``ack_unverified`` = the mark's id; a mark set after the confirm
+    opened has a new id and is named again)."""
+    wc = (ctx or {}).get("working_copy")
+    mark = getattr(wc, "unverified_write", None)
+    if not mark or request.values.get("ack_unverified") == mark:
+        return None
+    rows, named = _unverified_kept_rows(ctx)
+    if not rows:
+        return None
+    shown = "; ".join(f"{r_['path']} {r_['value']}" for r_ in rows[:6])
+    more = f"; and {len(rows) - 6} more" if len(rows) > 6 else ""
+    lead = UNVERIFIED_KEPT_LEAD if named else UNVERIFIED_KEPT_LEAD_WHOLE
+    return {"ok": False, "status": "unverified_kept", "conflict": "unverified_kept", "token": mark,
+            "paths": [r_["path"] for r_ in rows[:50]], "rows": rows[:50],
+            "message": lead + shown + more + ". Take live instead to see what the chip holds."}
 
 
 def _live_write_failure_text(ctx, exc, what: str = "Apply to live", outcome: str = "",
@@ -36523,6 +36600,11 @@ def state_apply_to_live():
     # files), and the tray keeps showing what SM holds that live does not.
     if not force and _apply_preflight(ctx):
         return _apply_stale_refusal(ctx, store, _auto)
+    # docs/254: a person's press never carries an unverified write's kept values unnamed
+    # (an agent's press was refused above; an approval refuses in agent_api._stage_writes)
+    _kept_ref = _unverified_kept_refusal(ctx)
+    if _kept_ref is not None:
+        return jsonify(_kept_ref), 409
 
     # QA correctness-r2-09: the live chip moved while the Keep-mine confirm was
     # open -- the user consented to replacing the values it named, not these.
@@ -48588,7 +48670,7 @@ def dataset_load_state(uid):
         # apply core — same pre-apply snapshot (arms ↺ Revert last apply),
         # same staleness handling, same bookkeeping as the ⚡ button.
         try:
-            result = _sync_pull_apply_to_live(ctx, None)
+            result = _sync_pull_apply_to_live(ctx, None, kept_gate=False)
             body = (result[0] if isinstance(result, tuple) else result).get_json()
         except Exception as exc:  # noqa: BLE001 -- v1.5.1: named, judged below
             logger.exception("dataset Apply to chip failed")
@@ -48606,7 +48688,7 @@ def dataset_load_state(uid):
             # reversibility via ↺ Revert last apply is what licenses this).
             # The unforced first attempt is what tells us drift existed at all.
             try:
-                result = _sync_pull_apply_to_live(ctx, None, force=True)
+                result = _sync_pull_apply_to_live(ctx, None, force=True, kept_gate=False)
                 body = (result[0] if isinstance(result, tuple) else result).get_json()
             except Exception as exc:  # noqa: BLE001 -- v1.5.1: named, judged below
                 logger.exception("dataset Apply to chip (over drift) failed")

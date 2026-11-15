@@ -1,0 +1,287 @@
+"""docs/254: while an unverified live write's mark is held, a person's press never carries the
+values that write kept to the chip unnamed. Every live-writing door for a person answers 409 with
+the kept paths and values; the person's confirm re-sends with the mark's id, and a mark set after
+the confirm opened is named again. Also: the persisted mark shows on the control after a restart,
+the approval's stale check reads the flag and the mark outside its fail-open probe."""
+import ast
+import json
+from pathlib import Path
+
+import pytest
+
+from tests.test_approval_now_anchor import (UNVERIFIED_HELD, _case, _ctx, _refused_first, _restarted,
+                                            _second_approval, _sync_control_text, press)
+
+LEAD = "These values from an approval that may not have reached the chip will be written too: "
+LEAD_WHOLE = "These values from an earlier live write that may not have reached the chip will be written too: "
+JSON = {"Accept": "application/json"}
+
+
+def _chip(case) -> dict:
+    return json.loads((case[2] / "state.json").read_text(encoding="utf-8"))
+
+
+def _mark(case) -> str | None:
+    with case[0].app_context():
+        return _ctx(case)["working_copy"].unverified_write
+
+
+def _apply(client, **extra):
+    return client.post("/state/apply-to-live", data={"seen_changes": "0", **extra}, headers=JSON)
+
+
+def test_a_persons_apply_names_the_kept_values_and_writes_nothing(tmp_path, monkeypatch):
+    case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False)
+    before = (case[2] / "state.json").read_bytes()
+    r = _apply(case[1])
+    assert r.status_code == 409, r.get_data(as_text=True)
+    body = r.get_json()
+    assert body["status"] == "unverified_kept" and body["conflict"] == "unverified_kept"
+    assert body["paths"] == ["value"] and body["rows"] == [{"path": "value", "value": "30"}]
+    assert body["message"] == LEAD + "value 30. Take live instead to see what the chip holds."
+    assert body["token"] == _mark(case)
+    assert (case[2] / "state.json").read_bytes() == before
+
+
+def test_the_persons_confirm_writes_the_kept_values_and_clears_the_mark(tmp_path, monkeypatch):
+    case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False)
+    token = _apply(case[1]).get_json()["token"]
+    r = _apply(case[1], ack_unverified=token)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert _chip(case) == {"value": 30, "third": 5}
+    assert _mark(case) is None
+    with case[0].app_context():
+        meta = json.loads(Path(_ctx(case)["working_copy"].meta_path()).read_text(encoding="utf-8"))
+    assert meta.get("unverified_write") is None and meta.get("unverified_kept") is None
+
+
+def test_a_mark_set_after_the_confirm_opened_is_named_again(tmp_path, monkeypatch):
+    from quam_state_manager.core import working_copy
+    case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False)
+    before = (case[2] / "state.json").read_bytes()
+    token = _apply(case[1]).get_json()["token"]
+    with case[0].app_context():
+        working_copy.mark_unverified_write(_ctx(case)["working_copy"],
+                                           kept=[{"path": "value", "old": 10, "kept": 30}])
+    r = _apply(case[1], ack_unverified=token)
+    assert r.status_code == 409, r.get_data(as_text=True)
+    assert r.get_json()["token"] != token and r.get_json()["token"] == _mark(case)
+    assert (case[2] / "state.json").read_bytes() == before
+
+
+def test_a_reject_keeps_the_values_and_the_apply_still_names_them(tmp_path, monkeypatch):
+    case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", True)
+    before = (case[2] / "state.json").read_bytes()
+    r = _apply(case[1])
+    assert r.status_code == 409 and r.get_json()["paths"] == ["value"]
+    assert (case[2] / "state.json").read_bytes() == before
+
+
+def test_the_kept_rows_are_saved_beside_the_mark(tmp_path, monkeypatch):
+    from quam_state_manager.core import working_copy
+    case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False)
+    with case[0].app_context():
+        wc = _ctx(case)["working_copy"]
+    meta = json.loads(Path(wc.meta_path()).read_text(encoding="utf-8"))
+    assert meta["unverified_kept"] == [{"path": "value", "old": 10, "kept": 30}]
+    assert working_copy.load(case[3], case[2]).unverified_kept == meta["unverified_kept"]
+
+
+def test_a_mark_without_rows_names_what_the_working_copy_holds_that_live_does_not(tmp_path, monkeypatch):
+    """Meta written before the mark named its rows (or a whole-document write): the preflight lists
+    the working copy against live, outside the tray's own edits."""
+    case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False)
+    with case[0].app_context():
+        mp = Path(_ctx(case)["working_copy"].meta_path())
+    meta = json.loads(mp.read_text(encoding="utf-8"))
+    meta.pop("unverified_kept", None)
+    mp.write_text(json.dumps(meta), encoding="utf-8")
+    _, client = _restarted(case)
+    before = (case[2] / "state.json").read_bytes()
+    r = _apply(client)
+    assert r.status_code == 409, r.get_data(as_text=True)
+    assert r.get_json()["message"] == LEAD_WHOLE + "value 30. Take live instead to see what the chip holds."
+    assert (case[2] / "state.json").read_bytes() == before
+
+
+def test_after_a_restart_the_control_and_the_poll_still_say_not_verified(tmp_path, monkeypatch):
+    case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False)
+    tip = "the write may have reached the live chip; take live to see what it holds."
+    assert "Apply not verified: check the chip" in _sync_control_text(case[1])
+    assert tip in case[1].get("/").get_data(as_text=True)
+    _, client = _restarted(case)
+    assert "Apply not verified: check the chip" in _sync_control_text(client)
+    assert tip in client.get("/").get_data(as_text=True)
+    sync = client.get("/state/drift").get_json()["sync"]
+    assert sync["state"] == "refused" and sync["unverified"] is True
+
+
+def test_an_error_inside_the_hash_probe_still_refuses_while_the_mark_is_held(tmp_path, monkeypatch):
+    from quam_state_manager.core import working_copy
+    case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False)
+    before = (case[2] / "state.json").read_bytes()
+    with case[0].app_context():
+        _ctx(case)["live_diverged"] = False
+
+    def boom(wc):
+        raise RuntimeError("probe failed")
+    monkeypatch.setattr(working_copy, "live_diverged_now", boom)
+    r = _second_approval(case, case[1])
+    assert r.status_code == 409, r.get_json()
+    assert r.get_json()["error"].startswith("stale_live: " + UNVERIFIED_HELD)
+    assert (case[2] / "state.json").read_bytes() == before
+
+
+def test_a_raised_flag_alone_refuses_an_approval(tmp_path, monkeypatch):
+    """No mark and no moved hash: the drift poll's raise-only flag (live moved, then moved back on
+    a dirty context) still holds the approval."""
+    from quam_state_manager.core import working_copy
+    case = _case(tmp_path, {"value": 10, "third": 5}, [{"path": "third", "old": 5, "new": 7}])
+    before = (case[2] / "state.json").read_bytes()
+    with case[0].app_context():
+        ctx = _ctx(case)
+        assert ctx["working_copy"].unverified_write is None
+        ctx["live_diverged"] = True
+    monkeypatch.setattr(working_copy, "live_diverged_now", lambda wc: False)
+    r = press(case, [{"path": "third", "new": 7, "seen_now": 5}])
+    assert r.status_code == 409, r.get_json()
+    assert r.get_json()["error"].startswith("stale_live: " + UNVERIFIED_HELD)
+    assert (case[2] / "state.json").read_bytes() == before
+
+
+def test_a_mark_whose_values_were_taken_out_asks_nothing(tmp_path, monkeypatch):
+    """Ctrl+Z took the kept value out: the preflight has nothing to name, so the Apply goes on."""
+    case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False)
+    assert case[1].post("/undo").status_code == 200
+    r = case[1].post("/state/apply-to-live", data={"seen_changes": "1"}, headers=JSON)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert _chip(case) == {"value": 10, "third": 5}
+
+
+def test_auto_sync_after_an_unverified_write_writes_nothing(tmp_path, monkeypatch):
+    case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False)
+    before = (case[2] / "state.json").read_bytes()
+    client = case[1]
+    client.post("/auto-apply/arm")
+    assert client.post("/field/edit", data={"dot_path": "third", "value": "7"}).status_code == 200
+    r = client.post("/state/apply-to-live", data={"auto_flush": "1"}, headers=JSON)
+    assert r.status_code == 409, r.get_data(as_text=True)
+    assert (case[2] / "state.json").read_bytes() == before
+
+
+def test_a_persons_own_unverified_press_sets_no_mark(tmp_path, monkeypatch):
+    """A person's own Apply whose outcome is unknown keeps its edits as that person's unapplied
+    edits (nothing of an approval rides on them): no mark, so no preflight."""
+    from quam_state_manager.core import working_copy
+    from quam_state_manager.web import routes
+    case = _case(tmp_path, {"value": 10, "third": 5}, [{"path": "value", "old": 10, "new": 30}])
+
+    def raises(*a, **k):
+        raise OSError(5, "read-back failed")
+    monkeypatch.setattr(working_copy, "apply_to_live", raises)
+    monkeypatch.setattr(routes, "_write_outcome", lambda pending: "unknown")
+    assert case[1].post("/field/edit", data={"dot_path": "value", "value": "30"}).status_code == 200
+    r = case[1].post("/state/apply-to-live", data={"seen_changes": "1"}, headers=JSON)
+    assert r.status_code == 409
+    assert (r.get_json() or {}).get("status") != "unverified_kept"
+    assert _mark(case) is None
+
+
+def test_legacy_meta_without_a_sync_point_hash_still_holds_an_approval(tmp_path, monkeypatch):
+    case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False)
+    with case[0].app_context():
+        mp = Path(_ctx(case)["working_copy"].meta_path())
+    meta = json.loads(mp.read_text(encoding="utf-8"))
+    meta.pop("synced_live_hash", None)
+    mp.write_text(json.dumps(meta), encoding="utf-8")
+    before = (case[2] / "state.json").read_bytes()
+    _, client = _restarted(case)
+    r = _second_approval(case, client)
+    assert r.status_code == 409 and r.get_json()["error"].startswith("stale_live: ")
+    assert (case[2] / "state.json").read_bytes() == before
+    assert json.loads(mp.read_text(encoding="utf-8")).get("unverified_write")
+
+
+# Ratchet: every live-writing door for a person --------------------------------------------
+
+_WRITERS = ("apply_to_live", "_sync_pull_apply_to_live", "state_apply_to_live")
+#: every function in the web package that calls a live writer, and why the kept values cannot
+#: ride on it unnamed. A new caller fails this test until it is listed here with its reason.
+_DOORS = {
+    "routes.state_apply_to_live": "gated: _unverified_kept_refusal before the save",
+    "routes._sync_pull_apply_to_live": "gated: _unverified_kept_refusal unless kept_gate=False",
+    "routes.state_sync": "gated before its pull (the pull would clear the mark, then replay)",
+    "routes._flush_walk_step_live": "through _sync_pull_apply_to_live (gated)",
+    "routes.state_take_live_restore": "through state_apply_to_live (gated)",
+    "routes.dataset_load_state": "exempt: the run's state replaces the working content wholesale",
+    "routes.state_history_restore_live": "exempt: writes the chosen version, not the working copy",
+    "agent_api._stage_writes": "an approval: refused while the mark is held (stale_live)",
+}
+
+
+def test_every_live_writing_door_is_listed_with_its_gate():
+    pkg = Path(__file__).resolve().parents[1] / "quam_state_manager" / "web"
+    found = set()
+    for f in sorted(pkg.glob("*.py")):
+        tree = ast.parse(f.read_text(encoding="utf-8"))
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for n in ast.walk(fn):
+                if isinstance(n, ast.Call):
+                    c = n.func
+                    name = c.attr if isinstance(c, ast.Attribute) else getattr(c, "id", None)
+                    if name in _WRITERS:
+                        found.add(f"{f.stem}.{fn.name}")
+    assert found == set(_DOORS), sorted(found ^ set(_DOORS))
+    routes_src = (pkg / "routes.py").read_text(encoding="utf-8")
+    assert routes_src.count("kept_gate=False)") == 2      # the dataset door's two calls, nothing else
+    assert routes_src.count("_kept_ref = _unverified_kept_refusal(ctx)\n") == 2   # apply-to-live, /state/sync
+
+
+def _door_plain(client):
+    return _apply(client)
+
+
+def _door_keep_mine(client):
+    return client.post("/state/apply-to-live?force=1", data={"seen_changes": "0"}, headers=JSON)
+
+
+def _door_review(client):
+    return client.post("/state/apply-to-live", data={"seen_changes": "0"})
+
+
+def _door_auto_flush(client):
+    client.post("/auto-apply/arm")
+    return client.post("/state/apply-to-live", data={"auto_flush": "1"}, headers=JSON)
+
+
+def _door_sync_apply(client):
+    return client.post("/state/sync", data={"mode": "apply", "seen_changes": "0"})
+
+
+def _door_sync_apply_forced(client):
+    return client.post("/state/sync", data={"mode": "apply", "force": "1", "seen_changes": "0"})
+
+
+@pytest.mark.parametrize("door", [_door_plain, _door_keep_mine, _door_review, _door_auto_flush,
+                                  _door_sync_apply, _door_sync_apply_forced],
+                         ids=lambda d: d.__name__[6:])
+def test_no_persons_door_writes_kept_values_without_the_acknowledgement(tmp_path, monkeypatch, door):
+    case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False)
+    before = (case[2] / "state.json").read_bytes()
+    r = door(case[1])
+    assert r.status_code == 409, (r.status_code, r.get_data(as_text=True)[:300])
+    assert (case[2] / "state.json").read_bytes() == before
+    assert _mark(case)
+
+
+def test_the_sync_door_writes_them_with_the_acknowledgement(tmp_path, monkeypatch):
+    case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False)
+    first = case[1].post("/state/sync", data={"mode": "apply", "seen_changes": "0"})
+    body = first.get_json()
+    assert body["status"] == "unverified_kept" and body["paths"] == ["value"]
+    r = case[1].post("/state/sync", data={"mode": "apply", "seen_changes": "0", "ack_unverified": body["token"]})
+    assert r.status_code == 200 and r.get_json()["status"] == "ok", r.get_data(as_text=True)[:300]
+    assert _chip(case) == {"value": 30, "third": 5}
+    assert _mark(case) is None

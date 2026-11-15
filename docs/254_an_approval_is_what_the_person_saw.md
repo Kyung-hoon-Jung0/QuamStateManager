@@ -652,7 +652,8 @@ of Apply keeps the door's text. Pinned per outcome by `test_a_live_write_after_t
 (exact text, tray, working copy, state.json) and `test_the_human_apply_press_text_carries_no_approval_clause`.
 
 Those kept values belong to no approval, so a later push must not carry them to the chip under another name (a Reject of
-the approval does not remove them either). For "unknown", `_stage_writes` calls `routes._note_unverified_write`, the
+the approval does not remove them either: the chip may hold them, so they stay, and a person's Apply names them first,
+see the preflight below). For "unknown", `_stage_writes` calls `routes._note_unverified_write`, the
 same helper the dataset door's Apply to chip uses for that outcome. It sets `ctx["live_diverged"] = True` and records
 the fact beside the working copy: `working_copy.mark_unverified_write` writes `unverified_write` (a UTC time) into the
 working copy's meta file (`<key>.meta.json`, with the sync point). The mark is cleared by a pull (`sync_from_live`: Take
@@ -664,8 +665,25 @@ the live hash, the flag and the mark (`routes._unverified_write_held`), with "st
 live chip matches its last sync (an earlier live write could not be verified); take live first"
 (`routes.UNVERIFIED_HELD_MSG`) when the hash alone has not moved, takes back only its own rows, and writes nothing. An
 agent's own `apply_to_live` (X-SM-Agent, past its apply-mode hold, so in auto mode too) refuses the same way: 409
-`{conflict: "unverified_write", message: UNVERIFIED_HELD_MSG}`. A person's own Apply press is not refused (contract 2
-and docs/311 are unchanged for human presses); it is the way out. The mark, not the flag, is what these refusals need:
+`{conflict: "unverified_write", message: UNVERIFIED_HELD_MSG}`.
+A person's own Apply press is the way out, but it never carries the kept values unnamed:
+`mark_unverified_write` records them in the meta file (`unverified_kept`, rows of path, old value and kept value), and
+`routes._unverified_kept_refusal` answers a press that does not acknowledge the mark with 409
+`{status: "unverified_kept", token: <the mark's id>, rows, message}`, the message "These values from an approval that
+may not have reached the chip will be written too: <path> <value>; ... Take live instead to see what the chip holds."
+(`UNVERIFIED_KEPT_LEAD`). A row counts while the working copy still holds its kept value (a Ctrl+Z that took it out
+drops it; with no rows left the press is not asked). The window shows the rows in the UI-kit confirm (`smConfirm`):
+OK re-sends the same request with `ack_unverified=<token>`, which writes them and clears the mark on landed; Cancel
+writes nothing and the tray shows them. The token is the mark's id (microseconds), so a mark set after the confirm
+opened is named again. The gate sits on every door that writes live for a person: /state/apply-to-live (tray, Review,
+Keep mine, an Auto-Sync flush) after its stale check, /state/sync mode=apply before its pull (the pull would clear the
+mark and the replay would carry the rows), and `_sync_pull_apply_to_live` (the walk); the dataset door passes
+`kept_gate=False` (it replaces the working content wholesale, so nothing kept rides on it), and a history restore
+writes a chosen version. A legacy mark (meta without `unverified_kept`) names the working copy's differences from live
+outside the tray's own edits, led by `UNVERIFIED_KEPT_LEAD_WHOLE` ("These values from an earlier live write ...").
+With no mark held the press text is unchanged (contract 2 and docs/311 are otherwise unchanged). Pinned by
+`tests/test_unverified_kept_preflight.py`, which also walks every caller of the one writer.
+The mark, not the flag, is what these refusals need:
 the window's /state/drift poll keeps the flag on a dirty context (raise-only), and a restart loses the flag but not the
 mark. The dataset door's restart hole closes with the same change: on main, a run's write with outcome "unknown", an SM
 restart, and an approval for another field carried the run's staged state to the chip under the approval
@@ -689,7 +707,9 @@ chip; take live to see what it holds."), and the sync panel's title reads "Your 
 at <time> could not be verified: the live chip may hold the write. Take live to see what it holds." (its summary
 sentence no longer ends "Nothing has been written yet.") A refusal whose write provably did not happen keeps "Apply
 wrote nothing ...". This applies to a person's Apply press as much as to an approval's. Pinned by
-`test_the_window_never_says_an_unverified_write_wrote_nothing` (unknown, landed, failed).
+`test_the_window_never_says_an_unverified_write_wrote_nothing` (unknown, landed, failed). After a restart the
+in-memory refusal is gone, so `_sync_view` reads the persisted mark (`wc.unverified_write`) and shows the same title
+and tooltip; /state/drift reports it as `sync.unverified` true with `sync.state` "refused".
 
 The door's unexpected-error exit (500 after its save) hands a JSON caller `write_outcome` as the sync twin does. The
 outcome is what the door reached: the door records its journal line (`_hub_pending`) in `g._apply_pend`, so a raise

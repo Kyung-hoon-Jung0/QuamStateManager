@@ -2327,19 +2327,23 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
     # The door SAVES the log into the working copy before it writes the chip and
     # only then notices a moved chip (docs/65's re-apply stash) -- a refusal there
     # would leave the agent's values half-way, in SM but not on the chip. Ask first.
+    from quam_state_manager.core import working_copy as wc_mod
+    # the flag and the mark are facts SM holds; only the hash probe below can fail, and only it
+    # fails open (a probe error never lets a held mark through)
+    held = bool(ctx.get("live_diverged")) or r._unverified_write_held(ctx)
+    moved = False
     try:
-        from quam_state_manager.core import working_copy as wc_mod
         moved = wc_mod.live_diverged_now(ctx["working_copy"])
-        if moved or ctx.get("live_diverged") or r._unverified_write_held(ctx):
-            # the flag or the mark alone: an earlier live write nobody could verify
-            # (routes._note_unverified_write) may have left saved values no approval owns; this press
-            # must not carry them to the chip
-            kept = _take_back()
-            out["error"] = ("stale_live: " + ("the live files moved outside SM since the last sync (take live first)"
-                                              if moved else r.UNVERIFIED_HELD_MSG) + kept)
-            return out
     except Exception:  # noqa: BLE001
         logger.debug("live_diverged_now failed", exc_info=True)
+    if moved or held:
+        # the flag or the mark alone: an earlier live write nobody could verify
+        # (routes._note_unverified_write) may have left saved values no approval owns; this press
+        # must not carry them to the chip
+        kept = _take_back()
+        out["error"] = ("stale_live: " + ("the live files moved outside SM since the last sync (take live first)"
+                                          if moved else r.UNVERIFIED_HELD_MSG) + kept)
+        return out
     with store._lock:
         # the count the door is handed is read under the lock, and for a person's press it
         # may count only this approval's own rows: an edit that reached the tray after the
@@ -2418,7 +2422,8 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
                 # nobody confirmed what the chip holds
                 outcome = "unknown"
             if outcome in ("unknown", "landed"):
-                r._note_unverified_write(ctx, outcome)
+                r._note_unverified_write(ctx, outcome, kept=[
+                    {"path": e.dot_path, "old": e.old_value, "kept": e.new_value} for e in staged])
                 out["saved_in_working_copy"] = True
                 out["write_outcome"] = outcome
                 out["error"] = _door_lead_then(out["error"], KEPT_UNVERIFIED)

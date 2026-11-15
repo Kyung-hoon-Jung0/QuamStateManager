@@ -169,6 +169,47 @@ window.SyncPanel.config.armMinMs = 0;   // the double-press guard has its own pi
     window.showToast = _st1a;
     syncCalls.length = 0;
 
+    /* Unverified kept values, docs/254: an earlier unverified write kept values this Apply would carry. The
+       confirm names them (UI kit smConfirm); Cancel re-posts nothing; OK re-posts with the
+       mark's id as ack_unverified. The tray's htmx press meets the same 409 the same way. */
+    const _smc = window.smConfirm;
+    const _kept = { status: 'unverified_kept', token: 'mark-1', paths: ['value'],
+                    rows: [{ path: 'value', value: '30' }],
+                    message: 'These values from an approval that may not have reached the chip will be written '
+                             + 'too: value 30.' };
+    window.smConfirm = function (m) { lastConfirm = String(m); return Promise.resolve(confirmAnswer); };
+    syncCalls.length = 0; lastConfirm = ''; confirmAnswer = false;
+    syncQueue = [_kept];
+    window.doStateSync('apply');
+    await flush(30);
+    ok(/value  30/.test(lastConfirm) && /write them too/.test(lastConfirm),
+       'unverified kept: the confirm names the kept value (got: ' + lastConfirm + ')');
+    ok(syncCalls.length === 1, 'unverified kept + Cancel: no re-post');
+    syncCalls.length = 0; confirmAnswer = true;
+    syncQueue = [_kept, { status: 'ok', mode: 'apply', tray_html: null, replay: null }];
+    window.doStateSync('apply');
+    await flush(40);
+    ok(syncCalls.length === 2 && /ack_unverified=mark-1/.test(syncCalls[1].body)
+       && !/ack_unverified/.test(syncCalls[0].body),
+       'unverified kept + OK: the re-post carries the mark id (got: ' + (syncCalls[1] && syncCalls[1].body) + ')');
+    syncCalls.length = 0;
+    ajaxCalls.length = 0;
+    const _kdet = { xhr: { status: 409, responseText: JSON.stringify(_kept) },
+                    target: document.getElementById('pending-tray') || document.body,
+                    requestConfig: { path: '/state/apply-to-live', parameters: { seen_changes: '0' } },
+                    shouldSwap: true, isError: true };
+    document.dispatchEvent(new window.CustomEvent('htmx:beforeSwap', { detail: _kdet }));
+    ok(_kdet.shouldSwap === false && _kdet.isError === false,
+       'unverified kept (tray press): no swap over the tray, no generic error toast');
+    await flush(30);
+    const _kp = ajaxCalls.filter(function (c) { return c.method === 'POST' && c.url === '/state/apply-to-live'; });
+    ok(_kp.length === 1 && _kp[0].opts.values.ack_unverified === 'mark-1'
+       && _kp[0].opts.values.seen_changes === '0',
+       'unverified kept (tray press) + OK: the same press again with the mark id (got: '
+       + JSON.stringify(_kp.map(function (c) { return c.opts.values; })) + ')');
+    window.smConfirm = _smc;
+    ajaxCalls.length = 0;
+
     /* ── 1b. "Keep mine — overwrite live" (docs/86) ────────────────────
        The third choice. It must be ONE confirm that actually names what it
        destroys, and it must force — an unforced push would land on the
