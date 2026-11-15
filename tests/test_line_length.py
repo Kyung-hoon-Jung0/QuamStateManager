@@ -101,7 +101,7 @@ def test_non_ascii_lines_sees_a_raw_character_and_ignores_an_escape():
 
 @pytest.mark.parametrize("rel", sorted(MAX_NON_ASCII_LINES))
 def test_no_new_non_ascii_line(rel):
-    """Docstrings and docs written for this change spell a non-ASCII character as an escape or a name."""
+    """Each listed file keeps at most its counted non-ASCII lines; write a character as an escape or a name."""
     found = non_ascii_lines((ROOT / rel).read_text(encoding="utf-8"))
     judge(rel, found, MAX_NON_ASCII_LINES[rel], "lines with a non-ASCII character")
 
