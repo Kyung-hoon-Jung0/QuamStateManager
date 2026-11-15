@@ -17,6 +17,14 @@ from __future__ import annotations
 
 from quam_state_manager.generator._script_common import tof_on_grid
 
+
+def _grid(value):
+    """``tof_on_grid`` for a stored value; ``(True, value, "")`` when the rule cannot place it."""
+    try:
+        return tof_on_grid(value)
+    except ValueError:
+        return True, value, ""
+
 # MW-FEM output latency per band relative to an LF-FEM output; the same
 # table as ``generator/run_build.py`` ``_BAND_TO_DELAY_NS``. Where these
 # numbers come from is not recorded in this repository; the docs
@@ -187,18 +195,18 @@ def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=(),
             if not (_num(s) and s >= 0 and _num(rr.get("time_of_flight"))):
                 continue
             same = qid in before and same_number(before[qid][0], s)
-            typed_off_grid = qid in typed and not tof_on_grid(rr["time_of_flight"])[0]
+            typed_off_grid = qid in typed and not _grid(rr["time_of_flight"])[0]
             if s == 0 and not typed_off_grid and not (tof_moved is not None and (
                     qid in moved_set or (qid in before and not same))):
                 continue   # no delay, and none moved away: nothing to measure again
             entry = {"qubit": qid, "shift": s, "value": rr["time_of_flight"]}
             if typed_off_grid:
-                _, nearest, reason = tof_on_grid(entry["value"])
+                _, nearest, reason = _grid(entry["value"])
                 entry["grid_note"] = (f"time of flight {entry['value']:g} ns -> {nearest:g} ns: "
                                       f"{reason}. Kept as you set it.")
             if qid in moved_set and _num(old_tof.get(qid)) and qid in before:
                 raw = old_tof[qid] + s - before[qid][0]
-                ok, nearest, reason = tof_on_grid(raw)
+                ok, nearest, reason = _grid(raw)
                 entry["sum"] = raw
                 if not ok and nearest == entry["value"]:
                     entry["grid_note"] = f"time of flight {raw:g} ns -> {nearest:g} ns: {reason}"

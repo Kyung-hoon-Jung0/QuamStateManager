@@ -143,3 +143,8 @@ def test_a_value_the_rule_cannot_place_is_left_alone():
     m.qubits["q1"].resonator.time_of_flight = -4
     mod._align_output_timing(m)
     assert m.qubits["q1"].resonator.time_of_flight == -4
+
+
+def test_review_survives_a_stored_value_the_rule_cannot_place():
+    state, wiring = _chip(ro_band=3, tof=-4)
+    assert output_timing.summary(state, wiring, tof_typed={"q1", "q2"}) is not None
