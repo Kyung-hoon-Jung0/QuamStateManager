@@ -188,3 +188,37 @@ def test_the_agent_undo_keeps_quiet_while_a_gate_still_uses_the_class(env):  # n
     d = env["client"].post("/api/agent/undo-mine", json={}, headers=AGENT).get_json()
     assert d["ok"] and d["reverted"] == ["gate_two"]
     assert d["notice"] == ""
+
+
+def test_a_grouped_journal_step_undo_names_the_file_whatever_its_place(env):  # noqa: F811
+    inst, scope, target = _publish(env)
+    c = env["client"]
+    assert c.post("/settings/undo-live", data={"enabled": "1"}).get_json()["enabled"] is True
+    m = _modifier(env)
+    m.create_subtree("gate_a", {"amplitude": 0.1}, group_id="g-step")
+    m.create_subtree("gate_one", {"__class__": QCLASS, "amplitude": 0.1}, group_id="g-step")
+    m.create_subtree("gate_z", {"amplitude": 0.3}, group_id="g-step")
+    assert c.post("/state/apply-to-live").status_code == 200
+    with env["app"].app_context():
+        assert not routes_mod._active_ctx()["store"].change_log
+    r = c.post("/undo")
+    assert r.status_code == 200
+    t = json.loads(r.headers["HX-Trigger"])["cellsReverted"]
+    assert t["live"] is True
+    assert NOTE in t["message"]
+    assert target.is_file()
+    assert Q.unused_files(inst, scope, _merged(env)) == [CLS]
+
+
+def test_a_grouped_agent_undo_names_the_file_whatever_its_place(env):  # noqa: F811
+    inst, scope, target = _publish(env)
+    m = _modifier(env)
+    for key, body in (("gate_a", {"amplitude": 0.1}),
+                      ("gate_one", {"__class__": QCLASS, "amplitude": 0.1}),
+                      ("gate_z", {"amplitude": 0.3})):
+        m.create_subtree(key, body, group_id="g-agent-many").actor = "by_claude"
+    d = env["client"].post("/api/agent/undo-mine", json={}, headers=AGENT).get_json()
+    assert d["ok"] and sorted(d["reverted"]) == ["gate_a", "gate_one", "gate_z"]
+    assert d["notice"] == NOTE
+    assert target.is_file()
+    assert Q.unused_files(inst, scope, _merged(env)) == [CLS]
