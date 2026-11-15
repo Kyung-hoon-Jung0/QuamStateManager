@@ -2186,7 +2186,23 @@ window.PulsesPage = (function () {
     // events bubble to document anyway.
     // Opt the pulses table into the shared drag-resizable columns (B-columns).
     // Idempotent and cheap — safe to call after any swap that (re)renders it.
+    /* The chip layout above the pulse list starts folded, so the list is the
+       first thing on screen. A person's own choice wins: "open" keeps it
+       open, "0" keeps it closed. No entry, or the "1" every page view used to
+       write (component-map.js: it chose nothing), folds it. Once per element;
+       the <summary> still opens it by mouse or keyboard, and that toggle is
+       the one component-map.js remembers. */
+    function foldPulsesMap() {
+        var map = document.getElementById('component-map');
+        if (!map || map._pulsesFolded || map.getAttribute('data-open-key') !== 'quam_pulses_map_open') return;
+        map._pulsesFolded = true;
+        var chosen = null;
+        try { chosen = window.localStorage.getItem('quam_pulses_map_open'); } catch (e) { chosen = null; }
+        if (chosen === null || chosen === '1') map.removeAttribute('open');
+    }
+
     function enhancePulsesTable(root) {
+        foldPulsesMap();
         // w9/pulsesall: a virtual "All" table renders its first rows BEFORE
         // the column widths are frozen below (they are measured off them)
         if (window.PulsesVT) {
@@ -2321,6 +2337,7 @@ window.PulsesPage = (function () {
     return {
         // docs/190 F29/F40: the chip-wide candidate list for the overlay picker
         _allPaths: null,
+        foldPulsesMap: foldPulsesMap,
         initDetail: initDetail,
         initCreate: initCreate,
         renderPulsePlot: renderPulsePlot,
