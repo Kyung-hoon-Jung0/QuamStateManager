@@ -182,6 +182,25 @@ def test_cross_keeps_a_crossed_dangling_or_looping_path_a_dead_end():
     assert resolve_field_target(m, "q.leaf", cross=True)["resolvable"] is False
 
 
+def test_cross_stops_a_cycle_at_the_cycle_not_at_the_pointer_limit():
+    # the cycle and the limit give the same result keys; the chain length tells them apart
+    m = _crossed()
+    m["b"]["x"] = "#/a/ref/x"        # b.x crosses a.ref back to itself
+    r = resolve_field_target(m, "q.leaf", cross=True)
+    assert r["resolvable"] is False
+    assert [h["from_path"] for h in r["chain"]] == ["q.leaf", "a.ref", "b.x"]
+    plain = {"a": "#/b", "b": "#/a", "q": {"leaf": "#/a"}}
+    r = resolve_field_target(plain, "q.leaf", cross=True)
+    assert r["resolvable"] is False and len(r["chain"]) == 3
+
+
+def test_cross_forgets_a_finished_crossing():
+    # a.ref is met first with y/x still to walk, later with y only: not a cycle
+    m = {"a": {"ref": "#/b"}, "b": {"y": {"x": "#/a/ref/y"}}, "q": {"leaf": "#/a/ref/y/x"}}
+    r = resolve_field_target(m, "q.leaf", cross=True)
+    assert r["resolvable"] is True and r["resolved_path"] == "b.y"
+    assert [h["from_path"] for h in r["chain"]] == ["q.leaf", "a.ref", "b.y.x", "a.ref"]
+
 def _chain(hops: int) -> dict:
     """q.leaf -> h0 -> ... -> h{hops-2} -> number: exactly *hops* pointers followed."""
     m = {"h": {f"h{i}": f"#/h/h{i + 1}" for i in range(hops - 1)}, "q": {"leaf": "#/h/h0"}}

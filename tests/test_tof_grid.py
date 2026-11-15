@@ -697,6 +697,37 @@ def test_a_true_cycle_through_a_crossed_pointer_is_refused():
     state["qubits"]["q2"]["resonator"]["time_of_flight"] = "#/shared/a/ref/x"
     (ref,) = regenerate.mw_band_shift_plan(state, wiring)["tof_unplaced"]
     assert ref["note"] == NOT_A_NUMBER.format("shared/a/ref/x", "")
+    # the note is the same as the pointer limit's: the walk must stop AT the cycle,
+    # after 3 pointers (leaf, a.ref, b.x), not run on to the limit
+    assert _cross_chain(state) == [
+        "qubits/q2/resonator/time_of_flight", "shared/a/ref", "shared/b/x"]
+
+
+def test_a_plain_cycle_stops_at_the_cycle_in_cross_mode():
+    state, wiring = _chip(ro_band=3, tof=28)
+    state["shared"] = {"a": "#/shared/b", "b": "#/shared/a"}
+    state["qubits"]["q2"]["resonator"]["time_of_flight"] = "#/shared/a"
+    assert _cross_chain(state) == ["qubits/q2/resonator/time_of_flight", "shared/a", "shared/b"]
+
+
+def test_a_finished_crossing_does_not_refuse_a_later_crossing_of_the_same_pointer():
+    # a.ref is crossed toward y/x, then again (from b.y.x) toward y alone: two
+    # different walks, so the second one goes on and lands on b.y, an object
+    state, wiring = _chip(ro_band=3, tof=28)
+    state["shared"] = {"a": {"ref": "#/shared/b"}, "b": {"y": {"x": "#/shared/a/ref/y"}}}
+    state["qubits"]["q2"]["resonator"]["time_of_flight"] = "#/shared/a/ref/y/x"
+    assert _cross_chain(state) == [
+        "qubits/q2/resonator/time_of_flight", "shared/a/ref", "shared/b/y/x", "shared/a/ref"]
+    (ref,) = regenerate.mw_band_shift_plan(state, wiring)["tof_unplaced"]
+    assert ref["note"] == NOT_A_NUMBER.format("shared/b/y", " (it holds an object)")
+
+
+def _cross_chain(state: dict) -> list[str]:
+    """Where each pointer of the q2 time of flight walk (cross mode) was met."""
+    from quam_state_manager.core import pointer_path
+    ft = pointer_path.resolve_field_target(
+        state, ["qubits", "q2", "resonator", "time_of_flight"], cross=True)
+    return [hop["from_path"].replace(".", "/") for hop in ft["chain"]]
 
 
 def _crossed_runs(total: int, crossings: int) -> tuple[dict, str]:
