@@ -3845,14 +3845,28 @@ def _journal_window_id() -> str | None:
 
 
 def _unit_needs_ask(unit: dict) -> bool:
-    """People ask for foreign units; agents keep the age-based rule."""
-    window_id = _journal_window_id()
-    if window_id or not request.headers.get("X-SM-Agent"):
-        return not window_id or (unit.get("meta") or {}).get("window_id") != window_id
+    """T1-F2 / R2 MINOR 4: a Ctrl+Z writing this unit's inverse on the live
+    chip asks first -- the unit was recorded before this SM process started,
+    or more than ``_UNIT_ASK_AFTER_S`` ago. The rule holds for every caller,
+    the pressing window's own steps included (docs/160)."""
     if _unit_from_previous_session(unit):
         return True
     ts = _unit_ts(unit)
     return ts is not None and time.time() - ts > _UNIT_ASK_AFTER_S
+
+
+def _unit_from_other_window(unit: dict) -> bool:
+    """docs/160: a person asks before walking a step another window made; a
+    missing stamp (or a request with no window id) counts as another window."""
+    window_id = _journal_window_id()
+    return not window_id or (unit.get("meta") or {}).get("window_id") != window_id
+
+
+def _unit_age_question(unit: dict) -> str:
+    """The age sentence of the Ctrl+Z question (one wording for both asks)."""
+    return (f"It undoes an edit {_unit_age(unit) or 'of unknown age'}"
+            + (", made in an earlier SM session." if _unit_from_previous_session(unit)
+               else "."))
 
 
 def _journal_window_ask(unit: dict, direction: str):
@@ -3860,7 +3874,7 @@ def _journal_window_ask(unit: dict, direction: str):
     # callers.py: this advisory label preserves the agent path, not proof of
     # personhood or authority. Existing agent ownership guards still apply.
     if (request.headers.get("X-SM-Agent")
-            or not _unit_needs_ask(unit)
+            or not _unit_from_other_window(unit)
             or (_journal_window_id() and request.values.get("ack_prev_window") == "1")):
         return None
     entries = unit.get("entries") or []
@@ -3883,9 +3897,14 @@ def _journal_window_ask(unit: dict, direction: str):
               else "stages only; the chip stays unchanged")
     verb = "Undo" if direction == "/undo" else "Redo"
     resp = make_response(_tray_html(), 200 if _journal_window_id() else 409)
+    message = f"{verb} another window's change: {what}; Ctrl+Z {effect}."
+    # One question names every reason: the yes (ack_prev_window) also covers
+    # the age ask the live flush would raise for an old or earlier-session step.
+    if direction == "/undo" and _undo_live_enabled() and _unit_needs_ask(unit):
+        message += " " + _unit_age_question(unit)
     resp.headers["HX-Trigger"] = json.dumps({"undoAskPrevSession": {
         "unit_id": str(unit.get("id") or ""), "direction": direction,
-        "message": f"{verb} another window's change: {what}; Ctrl+Z {effect}."}})
+        "message": message}})
     return resp
 
 
@@ -31356,10 +31375,7 @@ def _undo_journal_step(ctx, n_req: int = 1):
         resp.headers["HX-Trigger"] = json.dumps({"undoAskPrevSession": {
             "unit_id": str(unit.get("id") or ""),
             "age": _age,
-            "message": (f"This Ctrl+Z writes the live chip: {_what}. It undoes an edit "
-                        f"{_unit_age(unit) or 'of unknown age'}"
-                        + (", made in an earlier SM session." if _unit_from_previous_session(unit)
-                           else "."))}})
+            "message": f"This Ctrl+Z writes the live chip: {_what}. " + _unit_age_question(unit)}})
         return resp
     if flush.get("rolled_back"):
         # the chip refused (it moved) and the step was undone again: NOTHING
@@ -31676,8 +31692,10 @@ def _undo_live_flush(ctx, store, modifier, unit: dict, staged: list, *,
     # R2 MINOR 4: also an edit older than 8 h of THIS session; and the yes is
     # the presser's WINDOW's (it sends ack_prev_window once it said yes), not
     # the chip context's -- a yes in one window was a yes in every window.
-    if (not _journal_window_id()
-            and _unit_needs_ask(unit)
+    # The rule applies to the pressing window's own steps too; another
+    # window's step was asked before any mutation, and that question named
+    # the age as well, so its yes (ack_prev_window) counts here.
+    if (_unit_needs_ask(unit)
             and request.values.get("ack_prev_window", "") != "1"
             and request.values.get("ack_prev_session", "") != str(unit.get("id") or "")):
         _rollback_walk_step(ctx, store, modifier, staged)

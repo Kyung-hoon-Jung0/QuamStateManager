@@ -5,10 +5,13 @@ undid a 2-day-old edit, and with "Ctrl+Z writes live: ON" one keypress would
 have written that inverse to the live chip; the toast never said how old the
 edit was, and it covered the Undo / Redo panel's button.
 
-Now: every journal-walk toast names the edit's age; a step from another
-document asks once first (nothing staged
-or written while it asks; the answer travels as ``ack_prev_window``, and
-after one yes the document is not asked again); the page side
+Now: every journal-walk toast names the edit's age; a step that would write
+the live chip with an EARLIER session's edit, or one older than 8 h, asks once
+first, in the pressing window too; a step from another document asks once
+whatever the setting (nothing staged or written while either asks; one
+question names every reason; the answer travels as ``ack_prev_session`` /
+``ack_prev_window``, and after one yes the document is not asked again); the
+page side
 (tests/v151_undo_prev_session_selfcheck.cjs) asks, shows the age in the
 panel and lifts the toasts above it (the style rule pinned here).
 """
@@ -95,7 +98,9 @@ def test_an_earlier_sessions_edit_is_not_written_live_without_a_yes(env, monkeyp
     t = _trig(r)
     assert "undoAskPrevSession" in t, t
     q = t["undoAskPrevSession"]
+    # one question names both reasons: another window, and the age
     assert "another window" in q["message"], q
+    assert "2 days ago" in q["message"] and "earlier SM session" in q["message"], q
     assert "qubits.qA1.z.joint_offset" in q["message"]
     assert q["unit_id"] == str(ctx["undo_units"][cursor - 1]["id"])
     # nothing happened anywhere while the question is open
@@ -151,12 +156,34 @@ def test_an_edit_older_than_8_hours_of_this_session_is_asked(env, monkeypatch):
     for u in _ctx(env)["undo_units"]:
         u["ts"] = then
         (u.setdefault("meta", {}))["at"] = then
-        u["meta"].pop("window_id", None)
+    assert _ctx(env)["undo_units"][-1]["meta"]["window_id"] == "window-a"   # the same window
     monkeypatch.setattr(routes, "_PROCESS_STARTED_AT", then - 60)    # the same session
     t = _trig(c.post("/undo"))
     assert "undoAskPrevSession" in t, t
     q = t["undoAskPrevSession"]
-    assert "another window" in q["message"], q
+    assert "9 h ago" in q["message"] and "earlier SM session" not in q["message"], q
+    assert "another window" not in q["message"], q
+    assert _live(env) == 0.10 and not _ctx(env)["store"].change_log
+    # nothing is written until the yes
+    cr = _trig(c.post("/undo", data={"ack_prev_session": q["unit_id"]}))["cellsReverted"]
+    assert cr["live"] is True and _live(env) == 0.08, cr
+
+
+def test_the_same_windows_edit_from_an_earlier_session_is_asked(env, monkeypatch):
+    """A web tab that survived a server restart keeps its window id; its own
+    earlier-session step still asks before Ctrl+Z writes the chip."""
+    c = env["client"]
+    _edit_apply(c, 0.10)
+    then = time.time() - 600
+    for u in _ctx(env)["undo_units"]:
+        u["ts"] = then
+        (u.setdefault("meta", {}))["at"] = then
+    assert _ctx(env)["undo_units"][-1]["meta"]["window_id"] == "window-a"
+    monkeypatch.setattr(routes, "_PROCESS_STARTED_AT", time.time())    # restarted since
+    t = _trig(c.post("/undo"))
+    assert "undoAskPrevSession" in t, t
+    q = t["undoAskPrevSession"]
+    assert "earlier SM session" in q["message"] and "another window" not in q["message"], q
     assert _live(env) == 0.10
 
 

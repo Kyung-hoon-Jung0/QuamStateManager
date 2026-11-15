@@ -487,12 +487,22 @@ the chip (ON) or stages only (OFF). No changes nothing; Yes repeats the
 request with `ack_prev_window=1`. Consent lives only in document memory,
 covers later undo and redo steps, and resets on reload. A reload creates
 a new window id and asks again, including for that document's earlier edits.
-Same-window steps need no new question. A person without a window header
+Same-window steps need no window question. A person without a window header
 gets 409 with the question before any write; consent requires a window id.
-An agent never sees this question: an agent /undo with an empty tray (or a
+
+The age rule is kept for every person, the pressing window's own steps
+included: with "Ctrl+Z writes live" ON, an /undo whose step comes from an
+earlier SM session or is older than 8 h (`_unit_needs_ask`) asks before the
+live write, exactly as before (nothing staged or written until Yes; OFF
+stages without asking). The two rules combine: either one asks, and one
+question names every reason. A same-window step asks only the age question
+(at the live flush); another window's step asks before any mutation, and
+when the age rule also applies that question adds the age sentence, so its
+Yes (`ack_prev_window=1`) also covers the flush. Redo asks only the window
+question, as before.
+An agent never sees either question: an agent /undo with an empty tray (or a
 staged journal step on top) and every agent /redo are refused with 409 by
-the agent ownership guard before any journal step, so the age rule never
-runs for them. The helper keeps that age rule only as a backstop for a
-direct call. Agent undo-mine and robot policy are unchanged.
+the agent ownership guard before any journal step. Agent undo-mine and robot
+policy are unchanged.
 The unseen-edit gate precedes the question; the live door and grouped
 rollback still run after consent, including the class-file-left notice.
