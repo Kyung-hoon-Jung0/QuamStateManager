@@ -1,10 +1,19 @@
 {# The one status line of a CZ gate (web/gate_status_routes.py, core/gate_status.py).
    `line`: {pair, gate, items, pills, active, present, edit_paths, notices, recheck,
    note, note_tone}. `notices`: the class files the chip needs, shown under the row
-   for as long as the gate records them.
+   for as long as the gate records them (state: every render has them). `note` is set only by a
+   press answer (web/gate_status_routes.py), so it is marked `data-press-answer`: the one mark
+   static/gate-status.js carries across a zone refresh.
    One row: the gate's name, the pills that say something, the actions, and a
    "details" disclosure listing every item with its explanation. Which items
-   are pills is decided by core/gate_status (item.pill), not here. #}
+   are pills is decided by core/gate_status (item.pill), not here.
+   Request slots: Edit values is a navigation of the inspector pane and sits in the pane's slot,
+   so a pane load and an Edit never both paint: a navigation pressed later queues behind it, and an
+   Edit pressed later replaces a navigation still out (a queued Edit would be dropped by htmx once
+   the navigation swaps its button out of the page);
+   every other press is its own slot (`this:drop` only stops a double press), so a refresh of
+   the gate zone never drops or aborts it; static/gate-status.js allows one press at a time per
+   pair and refreshes the zone after it only when that is owed. #}
 {% import "_ui.html" as ui %}
 <div class="gate-status" data-gate-pair="{{ line.pair }}" data-gate="{{ line.gate }}">
     <div class="gate-status-row">
@@ -21,24 +30,24 @@
             {% if line.edit_paths %}
             <button type="button" class="btn-sm outline secondary gate-status-edit"
                     hx-get="/pulse/detail?{% for p in line.edit_paths %}paths={{ p | urlencode }}{% if not loop.last %}&amp;{% endif %}{% endfor %}"
-                    hx-target="#inspector-pane" hx-swap="innerHTML"
+                    hx-target="#inspector-pane" hx-swap="innerHTML" hx-sync="#inspector-pane:replace"
                     title="Open this gate's pulses to edit their values">Edit values</button>
             {% endif %}
             {% if line.recheck %}
-            <button type="button" class="btn-sm outline secondary gate-status-recheck"
+            <button type="button" class="btn-sm outline secondary gate-status-recheck" hx-sync="this:drop"
                     hx-post="/api/pulse/cz-gate/recheck"
                     hx-vals='{{ ({"pair": line.pair, "gate": line.gate, "scope": "list"} if in_list else {"pair": line.pair, "gate": line.gate}) | tojson }}'
                     hx-target="{{ 'closest .gate-status-list' if in_list else 'closest .gate-status' }}" hx-swap="outerHTML"
                     title="Check the gate with the class file as it is now, then record the new file (one Ctrl+Z)">Re-check</button>
             {% endif %}
             {% if not line.active %}
-            <button type="button" class="btn-sm outline secondary gate-status-activate"
+            <button type="button" class="btn-sm outline secondary gate-status-activate" hx-sync="this:drop"
                     hx-post="/api/pulse/cz-gate/make-active"
                     hx-vals='{{ ({"pair": line.pair, "gate": line.gate, "scope": "list"} if in_list else {"pair": line.pair, "gate": line.gate}) | tojson }}'
                     hx-target="{{ 'closest .gate-status-list' if in_list else 'closest .gate-status' }}" hx-swap="outerHTML"
                     title="Check the gate with the lab's code, then point the pair's cz at it (one Ctrl+Z)">Make active</button>
             {% endif %}
-            <button type="button" class="btn-sm outline secondary gate-status-delete"
+            <button type="button" class="btn-sm outline secondary gate-status-delete" hx-sync="this:drop"
                     hx-get="/pulse/cz-gate/delete-offer?pair={{ line.pair | urlencode }}&amp;gate={{ line.gate | urlencode }}{% if in_list %}&amp;scope=list{% endif %}"
                     hx-target="next .gate-status-slot" hx-swap="innerHTML"
                     title="Show what goes with this gate before deleting">Delete</button>
@@ -46,6 +55,6 @@
         {% endif %}
     </div>
     {% for it in line.notices or [] %}<div class="ui-text-quiet" data-status-key="needs">{{ it.text }}</div>{% endfor %}
-    {% if line.note %}{% if line.note_tone == 'danger' %}{% with message=line.note %}{% include '_gate_fail.html' %}{% endwith %}{% else %}{{ ui.ui_callout(line.note_tone, 'Note', line.note) }}{% endif %}{% endif %}
+    {% if line.note %}<div data-press-answer>{% if line.note_tone == 'danger' %}{% with message=line.note %}{% include '_gate_fail.html' %}{% endwith %}{% else %}{{ ui.ui_callout(line.note_tone, 'Note', line.note) }}{% endif %}</div>{% endif %}
     <div class="gate-status-slot" role="status" aria-live="polite"></div>
 </div>

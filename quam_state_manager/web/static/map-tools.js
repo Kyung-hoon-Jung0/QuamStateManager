@@ -38,6 +38,15 @@
      *  node saved a value (applied or proposed) for each parameter a click sets, and SM's
      *  reading of the figure lands on that saved value. */
     var VERIFY_HINT = 'A click is verified once the node of this run saved a value for each parameter the click sets and the reading SM takes from the figure matches that value.';
+    /** A map whose kind records no click contract: no click sets a parameter, so nothing can verify one. */
+    var NO_CONTRACT_HINT = 'No click contract is recorded for this kind of map, so nothing can verify a click on it: a click here sets no parameter whose saved value could be checked.';
+    /** After the display-only reason of a map with no contract. The server sends that reason as free
+     *  text only (core/interactive_plots/learn_click.py:269, :273, :369-371; registry.py:349;
+     *  web/map_analysis.py:429, :522), so the client cannot tell a reason a later run could clear
+     *  (this run wrote no state) from one no run can (defaulted fields feeding a marker, the raw map,
+     *  a kind with no contract by design): this sentence promises nothing beyond this run, which is
+     *  true for every one of them. */
+    var REASON_VERIFY_HINT = 'No click on this map is verified on this run.';
     /** What the node saved does not cover every parameter a click sets. */
     var PARTIAL_HINT = 'The node of this run saved a value for only some of the parameters the click sets, so the click is not verified. ' + VERIFY_HINT;
     /** The one verification status of a figure's click contract, with the reason behind it:
@@ -72,7 +81,12 @@
      *  of a verification it cannot reach. */
     function verifyHint(payload) {
         var reason = judge(payload).reason;
-        if (reason === 'none') return payload.display_only_reason ? String(payload.display_only_reason) : 'No click contract was recorded for this map.';
+        if (reason === 'none') {
+            var why = String(payload.display_only_reason || '').trim();
+            if (!why) return NO_CONTRACT_HINT;
+            why = why.charAt(0).toUpperCase() + why.slice(1);
+            return (/[.!?]$/.test(why) ? why : why + '.') + ' ' + REASON_VERIFY_HINT;
+        }
         if (reason === 'partial') return PARTIAL_HINT;
         if (reason === 'evidence') return VERIFY_HINT;
         return '';
@@ -122,7 +136,7 @@
         var hint = null, hintText = verifyHint(payload);
         if (hintText) {
             // say why it is not verified, from the same reason verification() uses
-            hint = document.createElement('span'); hint.className = 'muted'; hint.setAttribute('data-verify-hint', '');
+            hint = document.createElement('span'); hint.className = 'muted ui-inline-hint'; hint.setAttribute('data-verify-hint', '');
             hint.textContent = hintText;
         }
         header.appendChild(contractChip);

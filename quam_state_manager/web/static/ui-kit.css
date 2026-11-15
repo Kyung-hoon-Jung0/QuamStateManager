@@ -868,6 +868,8 @@
     padding: 0.25rem 0.5rem; font-size: var(--ui-ds-fs-unit); border-radius: var(--ui-r-sm);
     border: var(--ui-bw) solid var(--ui-ds-hint-border); background: var(--ui-ds-hint-bg); }
 .ui-xhint .dxh-text { flex: 1; }
+/* a sentence that follows a chip or label on the same line: a visible gap at every width */
+.ui-inline-hint { display: inline-block; margin-left: var(--ui-gap-2); }
 .ui-xhint button { padding: 0.05rem 0.5rem; font-size: var(--ui-ds-fs-btn); width: auto; margin: 0; }
 .ui-figs .diff-fig-name { grid-column: 1 / -1; padding-top: 0.5rem; white-space: normal; overflow-wrap: anywhere; }
 .ui-figs .compare-figure-run-label { white-space: normal; }
