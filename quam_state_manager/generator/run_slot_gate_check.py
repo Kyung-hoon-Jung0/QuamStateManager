@@ -4,10 +4,14 @@ Standard library only at import time. --in and --out name JSON files.
 Input: file (absolute path), class_name, spectators (name: [V, ns, unit V]).
 Optional probes: inline_slots, probe_slot_values, spectator_keys (dict name:
 key list), spectator_own (spectator name: control or target), spectator_same
-(spectator name: another spectator name whose qubit it reuses), apply_kwargs.
+(spectator name: another spectator name whose qubit it reuses), apply_kwargs,
+xy_operations (control or target: list of xy operation names to provide).
 Output: status describes the script; ok describes the class. imports holds
 ok/error, slots_declared and slots_played are lists, spectator_plays holds
-name/scale/duration records. Errors include the line in the user's file.
+name/scale/duration records; statements lists every QUA statement apply
+emitted, in order ("align", "wait <cycles>", "play <element> <label>",
+"frame_rotation <element>"; a scaled spectator play has the label
+"spectator"). Errors include the line in the user's file.
 No chip file is loaded. Real QUAM channels and a property-override subclass
 exercise apply inside a real QUA program; QUA spectator calls are delegated.
 """
@@ -50,7 +54,8 @@ def _load(path, class_name):
 def check(request):
     result = {"status": "ok", "ok": False, "imports": {"ok": False, "error": None},
               "slots_declared": [], "slots_played": [], "spectator_plays": [],
-              "error": None, "line": None, "slot_plays": [], "rotations": [], "alignments": []}
+              "error": None, "line": None, "slot_plays": [], "rotations": [], "alignments": [],
+              "statements": []}
     path = request["file"]
     try:
         module, cls = _load(path, request["class_name"])
@@ -62,12 +67,15 @@ def check(request):
 
         class RecordingChannel(Channel):
             def play(self, label, **kwargs):
-                slot = self.name.removesuffix("_z")
-                result["slots_played"].append(slot)
-                result["slot_plays"].append(dict(slot=slot, label=label, **kwargs))
+                result["statements"].append(f"play {self.name} {label}")
+                if not self.name.endswith("_xy"):
+                    slot = self.name.removesuffix("_z")
+                    result["slots_played"].append(slot)
+                    result["slot_plays"].append(dict(slot=slot, label=label, **kwargs))
                 return super().play(label, **kwargs)
 
             def frame_rotation_2pi(self, phase):
+                result["statements"].append(f"frame_rotation {self.name}")
                 result["rotations"].append([self.name, phase])
                 return super().frame_rotation_2pi(phase)
 
@@ -77,7 +85,9 @@ def check(request):
             if unit_op:
                 operations[unit_op] = SquarePulse(length=16, amplitude=unit)
             z = RecordingChannel(id=name + "_z", operations=operations)
-            xy = RecordingChannel(id=name + "_xy")
+            xy = RecordingChannel(id=name + "_xy", operations={
+                op: SquarePulse(length=16, amplitude=0.1)
+                for op in request.get("xy_operations", {}).get(name, [])})
             return SimpleNamespace(z=z, xy=xy, channels={"z": z, "xy": xy})
 
         pair = SimpleNamespace(qubit_control=qubit("control"),
@@ -140,16 +150,26 @@ def check(request):
             return real_amp(scale)
 
         def record_play(pulse, element, **kwargs):
+            result["statements"].append(f"play {element} spectator")
             result["spectator_plays"].append({"name": element.removesuffix("_z"),
                                                "scale": scales.pop(0),
                                                "duration": kwargs.get("duration")})
             return real_play(pulse, element, **kwargs)
 
         def record_align(*channels):
+            result["statements"].append("align")
             result["alignments"].append(list(channels))
             return real_align(*channels)
 
         module.amp, module.play, module.align = record_amp, record_play, record_align
+        if hasattr(module, "wait"):
+            real_wait = module.wait
+
+            def record_wait(duration, *elements):
+                result["statements"].append(f"wait {duration}")
+                return real_wait(duration, *elements)
+
+            module.wait = record_wait
         with program():
             result["program_build_started"] = True
             gate.apply(**request.get("apply_kwargs", {}))
