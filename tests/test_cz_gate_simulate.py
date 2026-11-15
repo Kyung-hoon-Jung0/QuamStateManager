@@ -718,3 +718,26 @@ def test_a_number_whose_float_conversion_fails_drops_its_entry():
         bad = dict(base, port=2)
         bad[field] = val
         assert [p["port"] for p in sim._shape_ports([bad, base])] == [1]
+
+
+def test_a_whole_number_whose_int_conversion_fails_drops_its_entry():
+    class NoInt(float):
+        def __int__(self):
+            raise TypeError("no int")
+    base = {"controller": "con1", "fem": 1, "port": 1, "volts": [0.1]}
+    for field in ("fem", "port"):
+        bad = dict(base, port=2)
+        bad[field] = NoInt(2.0)
+        assert [p["port"] for p in sim._shape_ports([bad, base])] == [1]
+
+
+def test_the_two_flags_are_set_only_by_a_stored_true():
+    class NoBool:
+        def __bool__(self):
+            raise TypeError("no bool")
+    base = {"controller": "con1", "fem": 1, "port": 1, "volts": [0.1]}
+    for val in (NoBool(), [1, 2], 1, "yes", None, False):
+        [p] = sim._shape_ports([dict(base, decimated=val, cut_at_end=val)])
+        assert p["decimated"] is False and p["cut_at_end"] is False
+    [p] = sim._shape_ports([dict(base, decimated=True, cut_at_end=True)])
+    assert p["decimated"] is True and p["cut_at_end"] is True

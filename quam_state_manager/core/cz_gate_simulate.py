@@ -120,12 +120,16 @@ def _real(x: Any) -> bool:
 
 def _whole(x: Any) -> bool:
     """A real number with an integral value that is not a bool (2 and 2.0 pass, 1.9 does not)."""
-    return _real(x) and float(x) == int(x)
+    try:
+        return _real(x) and float(x) == int(x)
+    except (OverflowError, ValueError, TypeError):
+        return False
 
 
 def _shape_ports(ports: Any) -> list:
     """Each port as the contract states it; a malformed entry is dropped,
-    never padded. ``t0_ns`` and ``elements`` default only when missing or None."""
+    never padded. ``t0_ns`` and ``elements`` default only when missing or None;
+    ``decimated`` and ``cut_at_end`` are set only by a stored ``true``."""
     out = []
     for p in ports if isinstance(ports, list) else []:
         if not isinstance(p, dict):
@@ -159,8 +163,8 @@ def _shape_ports(ports: Any) -> list:
                     "elements": elements,
                     "kind": p.get("kind"), "t0_ns": t0,
                     "dt_ns": dt, "time_step_unknown": dt is None, "volts": volts,
-                    "decimated": bool(p.get("decimated")),
-                    "cut_at_end": bool(p.get("cut_at_end"))})
+                    "decimated": p.get("decimated") is True,
+                    "cut_at_end": p.get("cut_at_end") is True})
     return out
 
 
