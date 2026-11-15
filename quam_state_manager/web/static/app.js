@@ -11368,7 +11368,8 @@ window.filterDetailPanel = function(inputEl) {
         for (var s = 0; s < sections.length; s++) {
             var section = sections[s];
             var sumEl = section.querySelector("summary");
-            var sectionName = (sumEl ? sumEl.textContent : "").toLowerCase();
+            var titleEl = sumEl && sumEl.querySelector(".ui-zone-title");
+            var sectionName = (titleEl ? titleEl.textContent : (sumEl ? sumEl.textContent : "")).toLowerCase();
             var rows = section.querySelectorAll(".prop-table tbody > tr");
             var sectionVisible = 0;
 
@@ -23953,6 +23954,11 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     // ── Capture section collapse state for all inspector types ──
     // Read the type off the header class (datasets no longer carry a badge —
     // their run-id replaced it, so badge-class sniffing would miss them).
+    var active = document.activeElement;
+    if (active && pane.contains(active) && active.closest('.pair-detail')
+        && active.matches('form.inline-edit input[name="value"]')
+        && !window.InlineCommit._pending()) window.InlineCommit.remember(active, active);
+
     var header = pane.querySelector('.inspector-header');
     if (header) {
         var type = null;
@@ -23969,7 +23975,7 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
             _inspectorSticky.sections = Object.assign({}, keepSec);
             pane.querySelectorAll('details.detail-section').forEach(function(d) {
                 var summary = d.querySelector('summary');
-                if (summary) _inspectorSticky.sections[summary.textContent.trim()] = d.open;
+                if (summary) _inspectorSticky.sections[d.getAttribute('data-detail-zone') || summary.textContent.trim()] = d.open;
             });
         }
     }
@@ -24045,16 +24051,19 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     else if (badge.classList.contains('inspector-badge-pair')) type = 'pair';
     if (!type || type !== _inspectorSticky.type) return;
 
-    // Restore <details> open/closed state by matching summary text
+    // Stable gate keys survive edits; other folds keep their section-name keys.
     var sections = _inspectorSticky.sections;
     if (Object.keys(sections).length > 0) {
         pane.querySelectorAll('details.detail-section').forEach(function(d) {
             var summary = d.querySelector('summary');
             if (!summary) return;
-            var name = summary.textContent.trim();
-            if (name in sections) d.open = sections[name];
+            var name = d.getAttribute('data-detail-zone') || summary.textContent.trim();
+            if (name in sections && !d.hasAttribute('data-detail-warning')) d.open = sections[name];
         });
     }
+
+    // Folds must be restored before focus, in the same swap tick.
+    window.InlineCommit.restore(false);
 
     // Restore scroll position
     if (_inspectorSticky.scrollTop) {

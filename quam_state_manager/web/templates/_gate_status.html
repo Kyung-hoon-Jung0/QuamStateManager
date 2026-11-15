@@ -16,13 +16,14 @@
    pair and refreshes the zone after it only when that is owed. #}
 {% import "_ui.html" as ui %}
 <div class="gate-status" data-gate-pair="{{ line.pair }}" data-gate="{{ line.gate }}">
-    <div class="gate-status-row">
+    <div class="ui-item">
+    <div class="gate-status-row ui-item-head">
         <code class="ui-chip">{{ line.gate }}</code>
-        <span class="gate-status-items">{% for it in line.pills %}<span class="ui-pill ui-pill--{{ it.tone }}" data-status-key="{{ it.key }}"{% if it.why %} title="{{ it.why }}"{% endif %}>{{ it.text }}</span>{% endfor %}</span>
+        <span class="gate-status-items">{% for it in line['items'] if (it.pill and (not in_list or it.text not in ['on the chip', 'checked'])) or it.tone in ['warn', 'danger'] %}<span class="ui-pill ui-pill--{{ it.tone }}" data-status-key="{{ it.key }}"{% if it.why %} title="{{ it.why }}"{% endif %}>{{ it.text }}</span>{% endfor %}</span>
         <details class="ui-disclosure gate-status-details">
             <summary class="ui-disclosure-summary">details</summary>
             <dl class="ui-text-quiet gate-status-details-list">
-                {% for it in line.details or line['items'] %}<dt data-status-key="{{ it.key }}">{{ it.text }}</dt><dd>{{ it.why }}</dd>{% endfor %}
+                {% for it in line.details or line['items'] %}<dt data-status-key="{{ it.key }}">{% if it.tone in ['warn', 'danger'] %}{{ it.key | capitalize }}{% else %}{{ ui.ui_badge(it.text, it.tone) if it.key == 'active' and it.tone == 'accent' else ui.ui_pill(it.text, it.tone) }}{% endif %}</dt><dd>{{ it.why }}</dd>{% endfor %}
             </dl>
         </details>
         {% if line.present %}
@@ -54,7 +55,8 @@
         </span>
         {% endif %}
     </div>
-    {% for it in line.notices or [] %}<div class="ui-text-quiet" data-status-key="needs">{{ it.text }}</div>{% endfor %}
+    </div>
+    {% for it in line.notices or [] if it.text not in (line['items'] | selectattr('tone', 'in', ['warn', 'danger']) | map(attribute='text') | list) %}<div class="ui-text-quiet" data-status-key="needs">{{ it.text }}</div>{% endfor %}
     {% if line.note %}<div data-press-answer>{% if line.note_tone == 'danger' %}{% with message=line.note %}{% include '_gate_fail.html' %}{% endwith %}{% else %}{{ ui.ui_callout(line.note_tone, 'Note', line.note) }}{% endif %}</div>{% endif %}
     <div class="gate-status-slot" role="status" aria-live="polite"></div>
 </div>
