@@ -150,10 +150,54 @@ def test_compact_table_bounds_and_long_segments():
     assert str(app.jinja_env.filters["path_breaks"](value)) == '<span class="ui-dot-name">module.<wbr>' + "LongSegment" * 20 + '</span>'
 
 
+_HIDING = re.compile(
+    r"(display\s*:\s*none|visibility\s*:\s*(hidden|collapse)"
+    r"|(^|;)\s*(max-)?(width|height)\s*:\s*0(px|ch|em|rem|%)?\s*(;|$|!)"
+    r"|(^|;)\s*clip(-path)?\s*:\s*(?!auto|none)|(^|;)\s*opacity\s*:\s*0\s*(;|$|!)"
+    r"|(^|;)\s*font-size\s*:\s*0(px)?\s*(;|$|!))")
+
+
+def _hiding_selectors(css):
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    found = []
+    for selectors, declarations in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
+        if _HIDING.search(declarations.strip()):
+            found.extend(" ".join(s.split()) for s in selectors.split(",") if s.strip())
+    return found
+
+
+def _cells():
+    tpl = (ROOT / "templates/_diff_workbench.html").read_text(encoding="utf-8")
+    table = tpl.split("data-run-diff>", 1)[1].split("</table>", 1)[0]
+    cells = set(re.findall(r'<td class="(diff-list-[a-z]+)', table))
+    assert {"diff-list-a", "diff-list-b", "diff-list-delta"} <= cells
+    return cells
+
+
 def test_phone_only_hides_header_and_arrow():
+    """No rule, in or out of a media query, under any selector prefix, hides
+    the A, B or delta cell (or the whole table); only the header row and the
+    arrow column are hidden, and only under the phone class."""
     kit = (ROOT / "static/ui-kit.css").read_text(encoding="utf-8")
-    hidden = []
-    for selectors, declarations in re.findall(r"([^{}]+)\{([^{}]*)\}", kit):
-        if re.search(r"display\s*:\s*none\b", declarations):
-            hidden.extend(s.strip() for s in selectors.split(",") if s.strip().startswith(".ui-run-diff-phone"))
-    assert hidden == [".ui-run-diff-phone thead", ".ui-run-diff-phone .diff-list-arrow"]
+    keep = {"diff-list-a", "diff-list-b", "diff-list-delta"}
+    allowed = {".ui-run-diff-phone thead", ".ui-run-diff-phone .diff-list-arrow"}
+    mine = [s for s in _hiding_selectors(kit)
+            if re.search(r"ui-run-diff(?![-\w])", s) or any(c in s for c in keep)
+            or re.search(r"ui-run-diff-(phone|compact)", s)]
+    assert sorted(set(mine) - allowed) == [], mine
+    assert allowed <= set(mine)
+    assert _cells() >= keep
+
+
+def test_hiding_scan_catches_the_holes():
+    bad = ["@media (max-width: 480px) { .diff-list-delta { display: none; } }",
+           ".diff-list-b { visibility: hidden; }",
+           ".ui-run-diff .diff-list-a { width: 0; }",
+           ".ui-run-diff-compact .diff-list-delta { display:none }"]
+    for css in bad:
+        assert _hiding_selectors(css), css
+    good = ["/* .diff-list-delta { display: none; } */",
+            ".diff-list-delta { display: block; }", ".diff-list-a { display: grid; }",
+            ".diff-list-a { width: 20ch; }"]
+    for css in good:
+        assert _hiding_selectors(css) == [], css
