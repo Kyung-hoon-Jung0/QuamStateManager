@@ -93,7 +93,14 @@ before closing the handle; the thread lock is released even if cleanup fails. Dr
 at most 30 seconds by default, then answer that the lab environment is busy; no lab job starts on that path.
 
 Code: `core/lab_worker.py` `machine_lock`; the bounded wait is `core/lab_waveform.py` `_wait_machine_lock`
-(`GATE_CHECK_LOCK_WAIT_S` for gate checks, answer `LAB_BUSY`). Pins: `tests/test_lab_lock_release.py`.
+(`GATE_CHECK_LOCK_WAIT_S` for gate checks, answer `LAB_BUSY`).
+Pins (release on a failed OS unlock): `tests/test_lab_lock_release.py` (every test in it).
+Pins (failed attempt, init, busy answer):
+`tests/test_lab_worker.py::test_machine_lock_never_reads_a_locked_byte_and_cleans_failed_init`,
+`tests/test_lab_worker.py::test_machine_lock_holder_checker_recovers_and_does_not_hold_thread_lock`,
+`tests/test_lab_worker.py::test_waveform_jobs_answer_busy_within_deadline`,
+`tests/test_lab_worker.py::test_idle_expiry_and_global_machine_lock`.
+Pins (gate check waits for a slow replay): `tests/test_machine_lock_wait.py`.
 
 ## 4. Found by the independent verification and fixed
 

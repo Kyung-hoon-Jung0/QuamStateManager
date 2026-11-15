@@ -87,7 +87,7 @@
   {
    "case": "two sentences joined by a space",
    "pair": "q1-2",
-   "text": "Two pulses of the gate would both be written as p. Pick another model gate. name: The new gate would replace the pair's cz alias. Pick another gate name.",
+   "text": "Two pulses would both be p. Pick another gate. name: It would replace the cz alias. Pick another name.",
    "name": false
   }
  ]

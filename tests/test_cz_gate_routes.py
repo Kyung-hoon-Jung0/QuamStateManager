@@ -759,6 +759,48 @@ def test_every_kit_timing_tile_follows_the_dialog_rule():
                                                               "Check the port delays." % t["value"]])
 
 
+def _cell_number(cell, unit):
+    text = cell["text"] if isinstance(cell, dict) else cell
+    assert text.endswith(" " + unit), text
+    return float(text[:-len(unit) - 1])
+
+
+def test_the_kit_example_lanes_match_its_table_form_and_words():
+    """The example's lanes (spans, levels) are the numbers its form, table,
+    banners and checks show: an edit to one copy alone turns this red."""
+    from quam_state_manager.web import ui_kit_fixtures as kit
+    spans = {k: (a, b) for k, a, b in kit.EXAMPLE_SPANS}
+    for state in ("ok", "danger"):
+        level = dict(kit.EXAMPLE_PEAKS, **(kit.EXAMPLE_OVER if state == "danger" else {}))
+        pulses = next(z for z in kit.reading_form(state) if z.get("title") == "Pulses")
+        slots = {s["line"]: s for s in pulses["body"] if s.get("part") == "slot"}
+        assert sorted(s["chip"] for s in slots.values()) == sorted(spans)
+        for s in slots.values():
+            fields = {f["label"]: f["control"]["value"] for f in s["body"][0]["items"]}
+            a, b = spans[s["chip"]]
+            assert float(fields["Length"]) == b - a, s["chip"]
+            assert float(fields["Amplitude"]) == level[s["chip"]], s["chip"]
+        body = kit.reading_evidence(state)[0]["body"]
+        table = next(p for p in body if p.get("title") == "Entered and actual")["body"][0]
+        assert table["columns"] == ["Pulse", "Length", "Max level", "Starts at"]
+        assert len(table["rows"]) == len(spans)
+        for name, length, peak, start in table["rows"]:
+            line = slots[name["line"]]["chip"]
+            a, b = spans[line]
+            assert (_cell_number(length, "ns"), _cell_number(start, "ns")) == (b - a, a), line
+            assert _cell_number(peak, "V") == level[line], line
+    specs = json.dumps(kit.specs())
+    danger = kit.reading_evidence("danger")[0]["body"]
+    for k, v in kit.EXAMPLE_OVER.items():
+        said = "%s would play %g V;" % (k, v)
+        assert said in next(b for b in danger if b.get("part") == "verdict")["why"]
+        assert said in specs
+        assert "%g V on %s is above" % (v, k) in specs
+        assert "on %s: %g V is above" % (k, v) in json.dumps(danger)
+    (qa, _qb), (_ca, cb) = spans["q1.z"], spans["coupler_q1_q2"]
+    assert "The qubit pulse starts %d ns after the coupler pulse ends." % (qa - cb) in specs
+
+
 def _rule(css, sel):
     m = re.search(r"(?<![\w.#-])" + re.escape(sel) + r"\s*\{([^}]*)\}", css)
     assert m, sel
