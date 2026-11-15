@@ -3862,6 +3862,24 @@ def _unit_from_other_window(unit: dict) -> bool:
     return not window_id or (unit.get("meta") or {}).get("window_id") != window_id
 
 
+def _unit_age_acked(unit: dict) -> bool:
+    """The presser's yes to the age reason: this step's own yes
+    (``ack_prev_session``) or the tab's standing yes to old edits
+    (``ack_old_edits``, kept as on main: per tab and chip folder). A yes to
+    the window reason is never a yes to the age reason."""
+    uid = str(unit.get("id") or "")
+    return (request.values.get("ack_old_edits", "") == "1"
+            or (bool(uid) and request.values.get("ack_prev_session", "") == uid))
+
+
+def _unit_window_acked(unit: dict) -> bool:
+    """The presser's yes to the window reason, for this one step only: the
+    page sends the unit id it was asked about, once (docs/160)."""
+    uid = str(unit.get("id") or "")
+    return (bool(_journal_window_id()) and bool(uid)
+            and request.values.get("ack_prev_window", "") == uid)
+
+
 def _unit_age_question(unit: dict) -> str:
     """The age sentence of the Ctrl+Z question (one wording for both asks)."""
     return (f"It undoes an edit {_unit_age(unit) or 'of unknown age'}"
@@ -3875,7 +3893,7 @@ def _journal_window_ask(unit: dict, direction: str):
     # personhood or authority. Existing agent ownership guards still apply.
     if (request.headers.get("X-SM-Agent")
             or not _unit_from_other_window(unit)
-            or (_journal_window_id() and request.values.get("ack_prev_window") == "1")):
+            or _unit_window_acked(unit)):
         return None
     entries = unit.get("entries") or []
     if not entries:
@@ -3898,13 +3916,16 @@ def _journal_window_ask(unit: dict, direction: str):
     verb = "Undo" if direction == "/undo" else "Redo"
     resp = make_response(_tray_html(), 200 if _journal_window_id() else 409)
     message = f"{verb} another window's change: {what}; Ctrl+Z {effect}."
-    # One question names every reason: the yes (ack_prev_window) also covers
-    # the age ask the live flush would raise for an old or earlier-session step.
-    if direction == "/undo" and _undo_live_enabled() and _unit_needs_ask(unit):
+    reasons = ["other_window"]
+    # One question names every reason, in the text and in ``reasons``: the
+    # page answers a Yes with the ack of each named reason, for this step.
+    if (direction == "/undo" and _undo_live_enabled() and _unit_needs_ask(unit)
+            and not _unit_age_acked(unit)):
         message += " " + _unit_age_question(unit)
+        reasons.append("age")
     resp.headers["HX-Trigger"] = json.dumps({"undoAskPrevSession": {
         "unit_id": str(unit.get("id") or ""), "direction": direction,
-        "message": message}})
+        "reasons": reasons, "message": message}})
     return resp
 
 
@@ -31374,7 +31395,7 @@ def _undo_journal_step(ctx, n_req: int = 1):
         resp = make_response(_tray_html())
         resp.headers["HX-Trigger"] = json.dumps({"undoAskPrevSession": {
             "unit_id": str(unit.get("id") or ""),
-            "age": _age,
+            "age": _age, "direction": "/undo", "reasons": ["age"],
             "message": f"This Ctrl+Z writes the live chip: {_what}. " + _unit_age_question(unit)}})
         return resp
     if flush.get("rolled_back"):
@@ -31690,14 +31711,12 @@ def _undo_live_flush(ctx, store, modifier, unit: dict, staged: list, *,
     # on reopening wrote a days-old edit's inverse to the chip. Nothing is
     # staged or written while the question is open; the cursor stays.
     # R2 MINOR 4: also an edit older than 8 h of THIS session; and the yes is
-    # the presser's WINDOW's (it sends ack_prev_window once it said yes), not
+    # the presser's tab's (it sends ack_old_edits once it said yes), not
     # the chip context's -- a yes in one window was a yes in every window.
-    # The rule applies to the pressing window's own steps too; another
-    # window's step was asked before any mutation, and that question named
-    # the age as well, so its yes (ack_prev_window) counts here.
-    if (_unit_needs_ask(unit)
-            and request.values.get("ack_prev_window", "") != "1"
-            and request.values.get("ack_prev_session", "") != str(unit.get("id") or "")):
+    # The rule applies to the pressing window's own steps too. Only a yes to
+    # the age reason counts here (_unit_age_acked); a yes to another
+    # window's step is not one.
+    if _unit_needs_ask(unit) and not _unit_age_acked(unit):
         _rollback_walk_step(ctx, store, modifier, staged)
         ctx["undo_cursor"] = cursor_before
         _redo_mark(ctx, store)

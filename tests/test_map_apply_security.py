@@ -139,7 +139,9 @@ def test_map_details_survive_restart_ledger_history_and_undo(map_chip):
     with chip.app.test_request_context():
         shown = routes._vh_present(point, [], {})
     assert '"code_fingerprint"' in shown["title"] and '"caps_applied"' in shown["title"]
-    assert chip.c.post("/undo", data={"ack_prev_window": "1"}).status_code == 200
+    # The Yes names the step it was asked about.
+    step = str(chip.journal()[0][-1]["id"])
+    assert chip.c.post("/undo", data={"ack_prev_window": step}).status_code == 200
     assert chip.live_state() == before and chip.log() == []
     # The historical record remains, marked undone; no pending origin remains.
     answer = value_history.read(directory, {"v": value_history.target(chip.ctx["store"].merged, PATH)})

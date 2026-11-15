@@ -97,7 +97,7 @@ async function testUndoAskPrevSession() {
     window.showToast = (m) => { toasts.push(String(m)); };
 
     const DETAIL = {
-        unit_id: 'u-test',
+        unit_id: 'u-test', reasons: ['age'],
         message: 'This Ctrl+Z writes the live chip: qubits.q1.T1 → 2.',
     };
     document.dispatchEvent(new window.CustomEvent('undoAskPrevSession', { detail: DETAIL }));

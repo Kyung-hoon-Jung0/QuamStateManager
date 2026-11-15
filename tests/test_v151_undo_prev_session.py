@@ -9,9 +9,11 @@ Now: every journal-walk toast names the edit's age; a step that would write
 the live chip with an EARLIER session's edit, or one older than 8 h, asks once
 first, in the pressing window too; a step from another document asks once
 whatever the setting (nothing staged or written while either asks; one
-question names every reason; the answer travels as ``ack_prev_session`` /
-``ack_prev_window``, and after one yes the document is not asked again); the
-page side
+question names every reason, in its text and in ``reasons``; each reason has
+its own yes: ``ack_prev_window`` for another window's step, that step only;
+``ack_prev_session`` for this step's age, and ``ack_old_edits`` once the tab
+said yes to an old edit, after which that tab is not asked about age again);
+the page side
 (tests/v151_undo_prev_session_selfcheck.cjs) asks, shows the age in the
 panel and lifts the toasts above it (the style rule pinned here).
 """
@@ -103,13 +105,14 @@ def test_an_earlier_sessions_edit_is_not_written_live_without_a_yes(env, monkeyp
     assert "2 days ago" in q["message"] and "earlier SM session" in q["message"], q
     assert "qubits.qA1.z.joint_offset" in q["message"]
     assert q["unit_id"] == str(ctx["undo_units"][cursor - 1]["id"])
+    assert q["reasons"] == ["other_window", "age"], q
     # nothing happened anywhere while the question is open
     assert _live(env) == 0.10
     assert not ctx["store"].change_log and ctx["undo_cursor"] == cursor
     assert "cellsReverted" not in t
 
     # the yes for THIS unit writes it, and the toast says how old it was
-    r = c.post("/undo", data={"ack_prev_session": q["unit_id"], "ack_prev_window": "1"})
+    r = c.post("/undo", data={"ack_prev_session": q["unit_id"], "ack_prev_window": q["unit_id"]})
     cr = _trig(r)["cellsReverted"]
     assert cr["live"] is True and _live(env) == 0.08, cr
     assert "(edit from 2 days ago)" in cr["message"], cr["message"]
@@ -125,26 +128,60 @@ def test_a_yes_for_another_unit_is_not_a_yes(env, monkeypatch):
     assert _live(env) == 0.10
 
 
+def _age_own_units(env, monkeypatch, seconds=TWO_DAYS):
+    """The journal of a tab that survived a restart: its own units, recorded
+    before this process started, ``seconds`` ago."""
+    then = time.time() - seconds
+    for u in _ctx(env)["undo_units"]:
+        u["ts"] = then
+        (u.setdefault("meta", {}))["at"] = then
+    monkeypatch.setattr(routes, "_PROCESS_STARTED_AT", time.time())
+
+
 def test_asked_once_per_window(env, monkeypatch):
-    """R2 MINOR 4: the yes belongs to the window that gave it (the page
-    sends ack_prev_window once it said yes); it was kept per chip context,
+    """R2 MINOR 4: the yes to an old edit belongs to the tab that gave it (the
+    page sends ack_old_edits once it said yes); it was kept per chip context,
     so one window's yes covered every window on that chip."""
     c = env["client"]
     _edit_apply(c, 0.10)
     _edit_apply(c, 5.1e9, "qubits.qA1.f_01")
     _edit_apply(c, 0.12)
-    _age_units(env, monkeypatch)
+    _age_own_units(env, monkeypatch)
     q = _trig(c.post("/undo"))["undoAskPrevSession"]
+    assert q["reasons"] == ["age"] and "another window" not in q["message"], q
     assert _trig(c.post("/undo", data={"ack_prev_session": q["unit_id"],
-                                       "ack_prev_window": "1"}))["cellsReverted"]["live"] is True
+                                       "ack_old_edits": "1"}))["cellsReverted"]["live"] is True
     assert _live(env) == 0.10
-    # another window (it never said yes) is asked about the next one
+    _age_own_units(env, monkeypatch)       # the walk reloads the journal from disk
+    # a tab that never said yes is asked about the next one; a window yes is no age yes
     t = _trig(c.post("/undo"))
     assert "undoAskPrevSession" in t and _live(env, "f_01") == 5.1e9, t
-    # the window that said yes is not asked again
-    t = _trig(c.post("/undo", data={"ack_prev_window": "1"}))
+    t = _trig(c.post("/undo", data={"ack_prev_window": t["undoAskPrevSession"]["unit_id"]}))
+    assert "undoAskPrevSession" in t and _live(env, "f_01") == 5.1e9, t
+    # the tab that said yes is not asked again
+    t = _trig(c.post("/undo", data={"ack_old_edits": "1"}))
     assert "undoAskPrevSession" not in t and t["cellsReverted"]["live"] is True, t
     assert _live(env, "f_01") == 5.0e9
+
+
+def test_a_yes_naming_both_reasons_covers_that_step_only(env, monkeypatch):
+    """Another window's old step: one question names both reasons; its Yes
+    (both acks for that unit) writes that step, and the next one asks again."""
+    c = env["client"]
+    _edit_apply(c, 0.10)
+    _edit_apply(c, 0.12)
+    _age_units(env, monkeypatch)
+    q = _trig(c.post("/undo"))["undoAskPrevSession"]
+    assert q["reasons"] == ["other_window", "age"], q
+    yes = {"ack_prev_session": q["unit_id"], "ack_prev_window": q["unit_id"]}
+    assert _trig(c.post("/undo", data=yes))["cellsReverted"]["live"] is True
+    assert _live(env) == 0.10
+    _age_units(env, monkeypatch)           # the walk reloads the journal from disk
+    for stale in ({}, yes):
+        t = _trig(c.post("/undo", data=stale))
+        assert t["undoAskPrevSession"]["reasons"] == ["other_window", "age"], t
+        assert t["undoAskPrevSession"]["unit_id"] != q["unit_id"]
+        assert _live(env) == 0.10
 
 
 def test_an_edit_older_than_8_hours_of_this_session_is_asked(env, monkeypatch):
@@ -162,7 +199,7 @@ def test_an_edit_older_than_8_hours_of_this_session_is_asked(env, monkeypatch):
     assert "undoAskPrevSession" in t, t
     q = t["undoAskPrevSession"]
     assert "9 h ago" in q["message"] and "earlier SM session" not in q["message"], q
-    assert "another window" not in q["message"], q
+    assert "another window" not in q["message"] and q["reasons"] == ["age"], q
     assert _live(env) == 0.10 and not _ctx(env)["store"].change_log
     # nothing is written until the yes
     cr = _trig(c.post("/undo", data={"ack_prev_session": q["unit_id"]}))["cellsReverted"]
@@ -214,8 +251,10 @@ def test_with_ctrl_z_writing_live_off_foreign_step_asks_and_the_age_is_said(env,
     assert c.post("/settings/undo-live", data={"enabled": "0"}).get_json()["enabled"] is False
     _edit_apply(c, 0.10)
     _age_units(env, monkeypatch)
-    assert "undoAskPrevSession" in _trig(c.post("/undo"))
-    t = _trig(c.post("/undo", data={"ack_prev_window": "1"}))
+    q = _trig(c.post("/undo"))["undoAskPrevSession"]
+    # with live OFF the window question names no age: nothing reaches the chip
+    assert q["reasons"] == ["other_window"] and "It undoes an edit" not in q["message"], q
+    t = _trig(c.post("/undo", data={"ack_prev_window": q["unit_id"]}))
     cr = t["cellsReverted"]
     assert cr["live"] is False and "(edit from 2 days ago)" in cr["message"], cr
     assert _live(env) == 0.10                # staged only, as before

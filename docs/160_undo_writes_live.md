@@ -484,9 +484,10 @@ every other window does (the person consciously took those rows, as with
 Approve). A missing stamp is another window. Before undo or redo mutates that step,
 the existing kit confirmation names the change and whether Ctrl+Z writes
 the chip (ON) or stages only (OFF). No changes nothing; Yes repeats the
-request with `ack_prev_window=1`. Consent lives only in document memory,
-covers later undo and redo steps, and resets on reload. A reload creates
-a new window id and asks again, including for that document's earlier edits.
+request with `ack_prev_window=<unit id>`. That consent covers only the step
+it was asked about: the next step from another window asks again (the server
+accepts the ack only for the unit it names). A reload creates a new window
+id and asks again, including for that document's earlier edits.
 Same-window steps need no window question. A person without a window header
 gets 409 with the question before any write; consent requires a window id.
 
@@ -495,11 +496,22 @@ included: with "Ctrl+Z writes live" ON, an /undo whose step comes from an
 earlier SM session or is older than 8 h (`_unit_needs_ask`) asks before the
 live write, exactly as before (nothing staged or written until Yes; OFF
 stages without asking). The two rules combine: either one asks, and one
-question names every reason. A same-window step asks only the age question
-(at the live flush); another window's step asks before any mutation, and
-when the age rule also applies that question adds the age sentence, so its
-Yes (`ack_prev_window=1`) also covers the flush. Redo asks only the window
-question, as before.
+question names every reason, in its text and in the machine field `reasons`
+(`["other_window"]`, `["age"]` or `["other_window", "age"]`). A same-window
+step asks only the age question (at the live flush); another window's step
+asks before any mutation, and when the age rule also applies (and the tab has
+not already said yes to old edits) that question adds the age sentence.
+Each reason has its own consent, never borrowed across reasons. The page's
+Yes sends the ack of each reason the question named: `ack_prev_window=<unit
+id>` for the window reason, `ack_prev_session=<unit id>` for the age reason.
+A Yes to the age question alone is also the tab's standing yes to old edits
+(`ack_old_edits=1` on every later /undo, kept in sessionStorage per chip
+folder, the same lifetime the age yes always had). A Yes to a question naming
+both reasons covers both for that step only. So a Yes to an age question
+never lets another window's step through without its question, and a Yes to
+a window question never silences an age question.
+Redo asks only the window question; redo never had the age question (before
+window confirmation, redo asked nothing), and a redo question never names an age.
 An agent never sees either question: an agent /undo with an empty tray (or a
 staged journal step on top) and every agent /redo are refused with 409 by
 the agent ownership guard before any journal step. Agent undo-mine and robot

@@ -57,14 +57,18 @@ def test_other_window_no_is_inert_yes_is_once_and_client_owned(env, on):
     # No sends nothing. A later unacknowledged request still asks, with no writes.
     assert "undoAskPrevSession" in _trig(c.post("/undo", headers=B))
     assert snapshot(env) == before
-    yes = {"ack_prev_window": "1"}
-    assert "cellsReverted" in _trig(c.post("/undo", headers=B, data=yes))
+    assert q["reasons"] == ["other_window"]
+    assert "cellsReverted" in _trig(c.post("/undo", headers=B, data={"ack_prev_window": q["unit_id"]}))
     assert _work_off(env) == 0.1
     after_yes = snapshot(env)
-    # The server never remembers Yes, including for the same window id.
-    assert "undoAskPrevSession" in _trig(c.post("/undo", headers=B))
+    # The server never remembers Yes, including for the same window id, and a
+    # Yes covers only the step it was asked about.
+    q2 = _trig(c.post("/undo", headers=B))["undoAskPrevSession"]
+    assert q2["unit_id"] != q["unit_id"]
+    assert "undoAskPrevSession" in _trig(c.post("/undo", headers=B, data={"ack_prev_window": q["unit_id"]}))
+    assert "undoAskPrevSession" in _trig(c.post("/undo", headers=B, data={"ack_prev_window": "1"}))
     assert snapshot(env) == after_yes
-    assert "cellsReverted" in _trig(c.post("/undo", headers=B, data=yes))
+    assert "cellsReverted" in _trig(c.post("/undo", headers=B, data={"ack_prev_window": q2["unit_id"]}))
     assert _work_off(env) == 0.08
     assert _live_off(env) == (0.08 if on else 0.12)
 
@@ -89,7 +93,7 @@ def test_redo_first_foreign_step_asks_before_any_mutation(env, on):
     q = _trig(c.post("/redo", headers=B))["undoAskPrevSession"]
     assert q["direction"] == "/redo"
     assert snapshot(env) == before
-    assert "cellsReverted" in _trig(c.post("/redo", headers=B, data={"ack_prev_window": "1"}))
+    assert "cellsReverted" in _trig(c.post("/redo", headers=B, data={"ack_prev_window": q["unit_id"]}))
     assert _work_off(env) == 0.1
 
 
@@ -108,7 +112,7 @@ def test_group_asks_once_then_rolls_back_on_live_refusal(env):
     state["qubits"]["qA1"]["f_01"] = 7e9
     live.write_text(json.dumps(state))
     before = snapshot(env)
-    t = _trig(c.post("/undo", headers=B, data={"ack_prev_window": "1"}))
+    t = _trig(c.post("/undo", headers=B, data={"ack_prev_window": q["unit_id"]}))
     assert t["cellsReverted"]["live"] is False
     assert snapshot(env) == before
 
@@ -119,8 +123,8 @@ def test_group_yes_reverts_every_entry(env):
     m.set_value("qubits.qA1.z.joint_offset", 0.1, group_id="together")
     m.set_value("qubits.qA1.f_01", 6e9, group_id="together")
     c.post("/state/apply-to-live", headers=A)
-    assert "undoAskPrevSession" in _trig(c.post("/undo", headers=B))
-    t = _trig(c.post("/undo", headers=B, data={"ack_prev_window": "1"}))
+    q = _trig(c.post("/undo", headers=B))["undoAskPrevSession"]
+    t = _trig(c.post("/undo", headers=B, data={"ack_prev_window": q["unit_id"]}))
     assert t["cellsReverted"]["live"] is True
     assert _work_off(env) == 0.08
     assert _ctx(env)["store"].merged["qubits"]["qA1"]["f_01"] == 5e9
@@ -146,10 +150,10 @@ def test_gate_delete_other_window_then_class_file_notice(env):
     q = _trig(c.post("/undo", headers=B))["undoAskPrevSession"]
     assert "gate_one restored" in q["message"]
     assert snapshot(env) == before
-    yes = {"ack_prev_window": "1"}
-    assert _trig(c.post("/undo", headers=B, data=yes))["cellsReverted"]["live"] is True
+    assert _trig(c.post("/undo", headers=B, data={"ack_prev_window": q["unit_id"]}))["cellsReverted"]["live"] is True
     assert "gate_one" in _ctx(env)["store"].merged
-    t = _trig(c.post("/undo", headers=B, data=yes))
+    q = _trig(c.post("/undo", headers=B))["undoAskPrevSession"]
+    t = _trig(c.post("/undo", headers=B, data={"ack_prev_window": q["unit_id"]}))
     assert t["cellsReverted"]["live"] is True
     assert NOTE in t["cellsReverted"]["message"] and target.is_file()
     assert "gate_one" not in _ctx(env)["store"].merged
@@ -185,11 +189,12 @@ def test_wholesale_capture_records_window_and_asks(env):
 
 @pytest.mark.parametrize("direction", ["/undo", "/redo"])
 @pytest.mark.parametrize("on", [True, False])
-@pytest.mark.parametrize("consent", ["", "1"])
+@pytest.mark.parametrize("consent", [False, True])
 def test_headerless_person_asks_before_any_mutation(env, direction, on, consent):
     _set_setting(env, on)
     capture(env, 0.1)
     c = env["client"]
+    consent = str(_ctx(env)["undo_units"][-1]["id"]) if consent else ""
     if direction == "/redo":
         assert "cellsReverted" in _trig(c.post("/undo", headers=A))
     before = snapshot(env)
@@ -248,9 +253,10 @@ def test_mixed_window_group_asks_each_creator_before_reverting_whole_unit(env, w
     assert len(unit["entries"]) == 2
     assert unit["meta"]["window_id"] is None
     before = snapshot(env)
-    assert "2 changes" in _trig(c.post("/undo", headers=window))["undoAskPrevSession"]["message"]
+    q = _trig(c.post("/undo", headers=window))["undoAskPrevSession"]
+    assert "2 changes" in q["message"]
     assert snapshot(env) == before
-    t = _trig(c.post("/undo", headers=window, data={"ack_prev_window": "1"}))
+    t = _trig(c.post("/undo", headers=window, data={"ack_prev_window": q["unit_id"]}))
     assert t["cellsReverted"]["live"] is True
     assert _work_off(env) == _live_off(env) == 0.08
     assert ctx["store"].merged["qubits"]["qA1"]["f_01"] == 5e9
@@ -266,3 +272,93 @@ def test_headerless_person_can_undo_and_redo_an_unapplied_edit(env):
     assert "cellsReverted" in _trig(c.post("/redo"))
     assert _work_off(env) == 0.1
     assert _live_off(env) == 0.08
+
+
+def _apply_from(env, headers, value):
+    c = env["client"]
+    r = c.post("/field/edit-batch", headers=headers, json={"updates": [
+        {"dot_path": "qubits.qA1.z.joint_offset", "value": str(value)}], "expect_chip": ""})
+    assert r.get_json()["ok"]
+    assert c.post("/state/apply-to-live", headers=headers).status_code == 200
+    return _ctx(env)["undo_units"][-1]
+
+
+def _age(unit, monkeypatch, seconds=9 * 3600):
+    """Age one unit within this SM session (the 8 h rule, not the restart rule)."""
+    import time
+    from quam_state_manager.web import routes
+    then = time.time() - seconds
+    unit["ts"] = then
+    unit.setdefault("meta", {})["at"] = then
+    monkeypatch.setattr(routes, "_PROCESS_STARTED_AT", then - 60)
+
+
+def test_a_yes_to_an_old_edit_is_not_a_yes_to_another_windows_step(env, monkeypatch):
+    """Yes to the age question about one's own old edit, then the next Ctrl+Z
+    reaches another window's step: the window question is asked, nothing is
+    written before its Yes."""
+    _set_setting(env, True)
+    u1 = _apply_from(env, B, 0.1)
+    u2 = _apply_from(env, A, 0.12)
+    _age(u2, monkeypatch)
+    c = env["client"]
+    q = _trig(c.post("/undo", headers=A))["undoAskPrevSession"]
+    assert q["reasons"] == ["age"] and q["unit_id"] == str(u2["id"])
+    assert "another window" not in q["message"] and "9 h ago" in q["message"]
+    assert _live_off(env) == 0.12
+    # the page's Yes to the age question: this step's yes plus the tab's standing yes
+    age_yes = {"ack_prev_session": q["unit_id"], "ack_old_edits": "1"}
+    assert _trig(c.post("/undo", headers=A, data=age_yes))["cellsReverted"]["live"] is True
+    assert _live_off(env) == 0.1
+    before = snapshot(env)
+    q = _trig(c.post("/undo", headers=A, data={"ack_old_edits": "1"}))["undoAskPrevSession"]
+    assert q["reasons"] == ["other_window"] and q["unit_id"] == str(u1["id"])
+    assert "another window" in q["message"]
+    assert snapshot(env) == before and _live_off(env) == 0.1
+    t = _trig(c.post("/undo", headers=A, data={"ack_old_edits": "1", "ack_prev_window": q["unit_id"]}))
+    assert t["cellsReverted"]["live"] is True and _live_off(env) == 0.08
+
+
+def test_a_yes_to_another_windows_step_is_not_a_yes_to_an_old_edit(env, monkeypatch):
+    """Yes to the window question, then the next Ctrl+Z reaches one's own old
+    edit: the age question is asked, nothing is written before its Yes."""
+    _set_setting(env, True)
+    u1 = _apply_from(env, A, 0.1)
+    _apply_from(env, B, 0.12)
+    _age(next(u for u in _ctx(env)["undo_units"] if u["id"] == u1["id"]), monkeypatch)
+    c = env["client"]
+    q = _trig(c.post("/undo", headers=A))["undoAskPrevSession"]
+    assert q["reasons"] == ["other_window"] and "It undoes an edit" not in q["message"]
+    assert _trig(c.post("/undo", headers=A, data={"ack_prev_window": q["unit_id"]}))["cellsReverted"]["live"] is True
+    assert _live_off(env) == 0.1
+    # the walk reloads the journal from its sidecar: the 9 h age is set again
+    _age(next(u for u in _ctx(env)["undo_units"] if u["id"] == u1["id"]), monkeypatch)
+    before = snapshot(env)
+    # even a window yes naming this very step is not a yes to its age
+    q = _trig(c.post("/undo", headers=A, data={"ack_prev_window": str(u1["id"])}))["undoAskPrevSession"]
+    assert q["reasons"] == ["age"] and q["unit_id"] == str(u1["id"])
+    assert "9 h ago" in q["message"] and "another window" not in q["message"]
+    assert snapshot(env) == before and _live_off(env) == 0.1
+    t = _trig(c.post("/undo", headers=A, data={"ack_prev_session": q["unit_id"]}))
+    assert t["cellsReverted"]["live"] is True and _live_off(env) == 0.08
+
+
+@pytest.mark.parametrize("direction", ["/undo", "/redo"])
+def test_the_age_sentence_needs_an_undo_that_writes_the_chip(env, monkeypatch, direction):
+    """Another window's old step: the window question names the age only for
+    an /undo with Ctrl+Z writing live ON; with OFF, and on redo, it does not
+    (redo never had the age question; a redo never reads "It undoes an edit")."""
+    c = env["client"]
+    _set_setting(env, True)
+    u1 = _apply_from(env, B, 0.1)
+    if direction == "/redo":
+        assert "cellsReverted" in _trig(c.post("/undo", headers=B))
+    _age(u1, monkeypatch)
+    for on in (True, False):
+        _set_setting(env, on)
+        before = snapshot(env)
+        q = _trig(c.post(direction, headers=A))["undoAskPrevSession"]
+        assert snapshot(env) == before
+        with_age = direction == "/undo" and on
+        assert q["reasons"] == (["other_window", "age"] if with_age else ["other_window"]), q
+        assert ("It undoes an edit" in q["message"]) is with_age, q["message"]
