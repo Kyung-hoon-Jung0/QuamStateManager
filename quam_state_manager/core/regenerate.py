@@ -484,23 +484,30 @@ def _num(v) -> bool:
 
 
 def _stored_tof(doc: dict, rr: dict, path: str):
-    """A resonator's stored time of flight as ``(value, None)``, or
-    ``(stored, why_not)`` with the clause naming why no number can be placed.
-    A QUAM pointer is resolved first (the store's resolver); only a value that
-    is still not a finite number is named."""
+    """A resonator's stored time of flight as ``(value, None, None)``, or
+    ``(stored, why_not, target)`` when no number is placed at this leaf.
+    ``why_not`` is the clause naming why; ``target`` is set only for a QUAM
+    pointer that resolves to a finite number: SM never replaces a pointer with
+    a literal (it may be shared by several elements), so that value is not
+    moved and its target is named instead."""
     import math
 
     if "time_of_flight" not in rr:
-        return None, "no time of flight is stored"
+        return None, "no time of flight is stored", None
     stored = rr["time_of_flight"]
     value = stored
+    holder = tuple(path.split("/"))
     if pointer_resolver.is_pointer(value):
-        value = pointer_resolver.resolve_pointer(doc, value, tuple(path.split("/")))
+        value = pointer_resolver.resolve_pointer(doc, value, holder)
     if not _num(value):
-        return stored, f"the stored value {stored!r} is not a number SM can place"
+        return stored, f"the stored value {stored!r} is not a number SM can place", None
     if not math.isfinite(value):
-        return stored, f"the stored value is {value:g}, not a finite number"
-    return value, None
+        return stored, f"the stored value is {value:g}, not a finite number", None
+    if pointer_resolver.is_pointer(stored):
+        parts = pointer_resolver.target_path(doc, stored, holder)
+        target = "/".join(parts) if parts else stored
+        return stored, "it is a reference", target
+    return value, None, None
 
 
 def _node(doc: dict, path: str):
@@ -537,7 +544,9 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
     grid rule cannot place (missing, not a number after its pointer is
     resolved, not finite, or negative after the shift) is not written; it
     goes to ``tof_unplaced`` with the reason, and the rest of the shift is
-    still offered."""
+    still offered. A stored QUAM pointer is never replaced by a literal, even
+    one that resolves to a number: it goes to ``tof_unplaced`` with a sentence
+    naming its target."""
     try:
         mw = output_timing.mw_outputs_in_use(state, wiring)
         bands = {p.get("band") for _, p in mw}
@@ -577,14 +586,21 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
             r = shift.get(ro_path, 0)
             if r:
                 path = f"qubits/{qid}/resonator/time_of_flight"
-                old, why_not = _stored_tof(doc, rr, path)
+                old, why_not, target = _stored_tof(doc, rr, path)
                 raw = old + r if why_not is None else None
                 if why_not is None:
                     try:
                         ok, nearest, reason = output_timing.tof_on_grid(raw)
                     except ValueError as exc:
                         why_not = (f"{old:g} + {r:g} ns gives {raw:g} ns, and {exc}")
-                if why_not is not None:
+                if target is not None:
+                    # a pointer is never replaced by a literal: the link stays
+                    plan["tof_unplaced"].append({
+                        "qubit": qid, "path": path, "old": old, "sum": None,
+                        "target": target,
+                        "note": (f"Time of flight of {qid} is a reference to {target}; it is "
+                                 f"not moved. Move it at {target} if that is meant.")})
+                elif why_not is not None:
                     # one stored value the rule cannot place: the other lines
                     # are still offered, this one is named and not written
                     plan["tof_unplaced"].append({

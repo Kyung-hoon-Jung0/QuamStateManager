@@ -260,14 +260,37 @@ def test_a_stored_value_that_is_not_a_number_is_named(tmp_path, bad, clause):
         assert written["time_of_flight"] == bad
 
 
-def test_a_stored_pointer_to_a_number_is_resolved_and_moved():
+REF_NOTE = ("Time of flight of q2 is a reference to shared/time_of_flight; it is not moved. "
+            "Move it at shared/time_of_flight if that is meant.")
+
+
+def test_a_stored_pointer_to_a_number_is_not_moved_and_names_its_target(tmp_path):
+    state, wiring = _chip(ro_band=3, tof=28)
+    state["shared"] = {"time_of_flight": 26}
+    pointer = "#/shared/time_of_flight"
+    state["qubits"]["q2"]["resonator"]["time_of_flight"] = pointer
+    plan = regenerate.mw_band_shift_plan(state, wiring)
+    assert [t["qubit"] for t in plan["tof"]] == ["q1"]
+    (miss,) = plan["tof_unplaced"]
+    assert miss["qubit"] == "q2" and miss["old"] == pointer
+    assert miss["target"] == "shared/time_of_flight" and miss["note"] == REF_NOTE
+    assert REF_NOTE in regenerate.mw_band_shift_offer_text(plan)
+    _write(tmp_path, state, wiring)
+    regenerate.apply_mw_band_shift(tmp_path)
+    written = json.loads((tmp_path / "state.json").read_text())
+    assert written["qubits"]["q2"]["resonator"]["time_of_flight"] == pointer
+    assert written["shared"] == {"time_of_flight": 26}
+    assert written["qubits"]["q1"]["resonator"]["time_of_flight"] == 48
+
+
+def test_a_relative_pointer_names_its_absolute_target():
     state, wiring = _chip(ro_band=3, tof=28)
     state["qubits"]["q1"]["resonator"]["time_of_flight"] = 26
-    state["qubits"]["q2"]["resonator"]["time_of_flight"] = "#/qubits/q1/resonator/time_of_flight"
+    state["qubits"]["q2"]["resonator"]["time_of_flight"] = "#../../q1/resonator/time_of_flight"
     plan = regenerate.mw_band_shift_plan(state, wiring)
-    assert plan["tof_unplaced"] == []
-    q2 = next(t for t in plan["tof"] if t["qubit"] == "q2")
-    assert q2["old"] == 26 and q2["sum"] == 46 and q2["new"] == 48 and q2["grid_note"] == ROUNDED_46
+    (miss,) = plan["tof_unplaced"]
+    assert miss["target"] == "qubits/q1/resonator/time_of_flight"
+    assert "a reference to qubits/q1/resonator/time_of_flight;" in miss["note"]
 
 
 def test_the_unplaced_sentence_appears_once_in_the_question():

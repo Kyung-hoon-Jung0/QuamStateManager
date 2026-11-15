@@ -699,8 +699,13 @@ same rule applies to every readout, provisionally untested on LF-FEM and OPX+.
   most 2 ns from rounding to the grid, and more when the sum is below the 28 ns floor (a sum of 10
   is written as 28: 18 ns after). Either way the time of flight is measured again.
 - The Re-generate band shift plan writes `new` = the nearest allowed value and keeps `sum` = the raw
-  sum. A stored value that is a QUAM pointer is resolved first; one that resolves to a number is
-  moved and written as that number on the resonator. A stored value the rule cannot place is not
+  sum. SM never replaces a QUAM pointer with a literal at the resonator leaf: a pointer may be shared
+  by several elements, and overwriting it would cut the link silently. A stored pointer that resolves
+  to a finite number is therefore not moved; it is listed in `tof_unplaced` (with its `target`) as
+  "Time of flight of q2 is a reference to <target>; it is not moved. Move it at <target> if that is
+  meant.". Apply leaves the pointer string at that leaf; the target moves only as its own element's
+  line (a resonator time of flight on a shifted output), never on behalf of the pointer. A pointer that does not resolve to
+  a number is named like any other value the rule cannot place. A stored value the rule cannot place is not
   written: it is listed in `tof_unplaced` with a sentence naming why (no time of flight stored, a
   value that is still not a number, a value that is not finite, or a sum that is negative), and the
   rest of the shift is still offered. The Re-generate question names those qubits in one clause; the
