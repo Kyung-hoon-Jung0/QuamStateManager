@@ -20,6 +20,7 @@ from typing import Any
 
 from quam_state_manager.core import cz_gate_build as cgb
 from quam_state_manager.core import slot_gate_template as sgt
+from quam_state_manager.core.spec_constraints import LENGTH_FLOOR_ANY_QOP_NS
 
 SPECTATOR_QUBITS = "spectator_qubits"
 SPECTATOR_LEVELS = "spectator_levels"
@@ -342,7 +343,8 @@ def _plan_spectators(merged, pair_id, rows, macro, planned_units):
         if created:
             if _through_list(merged, ln["segs"]):
                 return [], {}, [LIST_PROBLEM.format(name=q)]
-            built = cgb._fields_for(UNIT_CLASS, {"length": sgt.MIN_LENGTH_NS,
+            # the unit pulse is stretched from QUA; the shared floor plays on every QOP
+            built = cgb._fields_for(UNIT_CLASS, {"length": LENGTH_FLOOR_ANY_QOP_NS,
                                                  "amplitude": new_units[identity]}, None)
             if isinstance(built, str):
                 return [], {}, [built]

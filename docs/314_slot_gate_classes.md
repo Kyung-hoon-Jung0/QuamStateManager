@@ -7,27 +7,27 @@ it from the New CZ gate dialog (`web/static/cz-gate.js`, `newCreate`), keeps it 
 checks and creates gates of it through the CZ gate doors. Files: `core/slot_gate_template.py` (text, rules),
 `core/slot_gate_plan.py` (plan pieces), `core/gate_check.py` (the spectator check), `web/cz_gate_routes.py` (doors).
 A gate class of this kind is never a row of `cz_gate_build.GATE_CLASSES`. Its descriptor, the row the gate planner needs
-for a class (slots, fields, lines), is built per class by `slot_desc` (slot_gate_plan.py:72).
+for a class (slots, fields, lines), is built per class by `slot_desc` (slot_gate_plan.py:73).
 
 ## 1. What a slot class is
 
-- **Slots and presets.** `SLOTS` (slot_gate_template.py:22) names the three slots; `PRESETS` (slot_gate_template.py:23) maps each preset
+- **Slots and presets.** `SLOTS` (slot_gate_template.py:23) names the three slots; `PRESETS` (slot_gate_template.py:24) maps each preset
   name to the slot set it ticks. The dialog route renders `_cz_gate_dialog.html`; its template data carries
   `slot_presets` (rows `{key, label, slots}`, `_slot_presets`, cz_gate_routes.py:202) and `slot_names` (`cz_gate_dialog`,
-  cz_gate_routes.py:919-940). A spec is `SlotSpec` (slot_gate_template.py:105): class name, slots, a spectators flag and
-  optional `before` / `after` sequence steps (`STEP_KINDS`, slot_gate_template.py:75; checked by `sequence_steps_problem`, slot_gate_template.py:176). The
+  cz_gate_routes.py:919-940). A spec is `SlotSpec` (slot_gate_template.py:108): class name, slots, a spectators flag and
+  optional `before` / `after` sequence steps (`STEP_KINDS`, slot_gate_template.py:78; checked by `sequence_steps_problem`, slot_gate_template.py:179). The
   make door takes no steps (section 7); it keeps the steps of an existing older draft (section 2).
-- **Slot fields.** Each slot gives the macro one field `<slot>_flux_pulse` (`_region`, slot_gate_template.py:416; `slot_field`,
-  slot_gate_plan.py:68). A class with spectators adds `spectator_qubits`, `spectator_levels`, `spectator_lengths`
-  (`_region`, slot_gate_template.py:420; `SPECTATOR_FIELDS`, slot_gate_plan.py:27). The apply body plays each slot on its own channel
-  (`_channel`, slot_gate_template.py:397; the play loop, slot_gate_template.py:494).
-- **Template region marks.** The header is `HEADER_MARK` plus ", version N." (`_render`, slot_gate_template.py:537). The generated body
-  sits between `REGION_BEGIN` and `REGION_END` (slot_gate_template.py:20, slot_gate_template.py:21); the comment lines inside carry the spec: `# slots` and
-  `# spectators`, plus `# before` and `# after` only when the class has sequence steps (`_region`, slot_gate_template.py:404-407; read back
-  by `parse`, slot_gate_template.py:567-573).
+- **Slot fields.** Each slot gives the macro one field `<slot>_flux_pulse` (`_region`, slot_gate_template.py:419; `slot_field`,
+  slot_gate_plan.py:69). A class with spectators adds `spectator_qubits`, `spectator_levels`, `spectator_lengths`
+  (`_region`, slot_gate_template.py:423; `SPECTATOR_FIELDS`, slot_gate_plan.py:28). The apply body plays each slot on its own channel
+  (`_channel`, slot_gate_template.py:400; the play loop, slot_gate_template.py:497).
+- **Template region marks.** The header is `HEADER_MARK` plus ", version N." (`_render`, slot_gate_template.py:540). The generated body
+  sits between `REGION_BEGIN` and `REGION_END` (slot_gate_template.py:21, slot_gate_template.py:22); the comment lines inside carry the spec: `# slots` and
+  `# spectators`, plus `# before` and `# after` only when the class has sequence steps (`_region`, slot_gate_template.py:407-410; read back
+  by `parse`, slot_gate_template.py:570-576).
 - **Text only.** Module docstring, slot_gate_template.py:1: SM never imports, compiles or runs a class file. `parse`
-  (slot_gate_template.py:549) reads the spec from the comment lines with `ast.literal_eval` (slot_gate_template.py:567) and accepts the text only when
-  `_render` of that spec equals it byte for byte (slot_gate_template.py:576). The lab environment alone runs the class, in the save
+  (slot_gate_template.py:552) reads the spec from the comment lines with `ast.literal_eval` (slot_gate_template.py:570) and accepts the text only when
+  `_render` of that spec equals it byte for byte (slot_gate_template.py:579). The lab environment alone runs the class, in the save
   door's check (`check_slot`, core/quam_config_save.py:252; every declared slot must be played once, pinned by
   tests/test_slot_gate_save.py `test_worker_slot_check_needs_each_declared_slot_played_once`).
 - **Save.** A draft whose first line is the slot header is a gate class, not a pulse: `_slot_header`
@@ -38,15 +38,15 @@ for a class (slots, fields, lines), is built per class by `slot_desc` (slot_gate
 
 ## 2. Template versions
 
-- **Current and readable.** `TEMPLATE_VERSION` is the render SM writes (slot_gate_template.py:16, `render`, slot_gate_template.py:517).
-  `READ_VERSIONS` (slot_gate_template.py:18) lists every version `parse` reads; the header version must be in it (slot_gate_template.py:556-559) and
-  `Parsed.version` says which (slot_gate_template.py:578). `render_v1` (slot_gate_template.py:522) is the frozen older render, used only to recognise an older
-  text, never written. The only difference of the older render is what control and target accept (`_region`, slot_gate_template.py:407
-  and slot_gate_template.py:445-446; `V1_SLOT_KINDS`, slot_gate_template.py:71; `older_render_refuses_pulse`, slot_gate_template.py:527: true only for version 1 with a control or
+- **Current and readable.** `TEMPLATE_VERSION` is the render SM writes (slot_gate_template.py:17, `render`, slot_gate_template.py:520).
+  `READ_VERSIONS` (slot_gate_template.py:19) lists every version `parse` reads; the header version must be in it (slot_gate_template.py:559-562) and
+  `Parsed.version` says which (slot_gate_template.py:581). `render_v1` (slot_gate_template.py:525) is the frozen older render, used only to recognise an older
+  text, never written. The only difference of the older render is what control and target accept (`_region`, slot_gate_template.py:410
+  and slot_gate_template.py:448-449; `V1_SLOT_KINDS`, slot_gate_template.py:74; `older_render_refuses_pulse`, slot_gate_template.py:530: true only for version 1 with a control or
   target slot). A coupler-only class of the older render gets no note (tests/test_cz_gate_slot_routes.py
   `test_a_gate_on_an_older_coupler_only_lab_file_says_nothing`).
 - **How an older draft is shown.** `slot_drafts(..., versions=True)` lists every draft the parser reads with its
-  version (slot_gate_plan.py:383); `SlotClass.version` keeps it (cz_gate_routes.py:157) and the class entry carries
+  version (slot_gate_plan.py:385); `SlotClass.version` keeps it (cz_gate_routes.py:157) and the class entry carries
   `older_render: sc.version != sgt.TEMPLATE_VERSION` (cz_gate_routes.py:193). When a gate is planned, `older_render_note` (cz_gate_routes.py:502)
   reads the saved lab file: if it is a version-1 render with a control or target slot, the plan answer carries a note
   (`res["notes"]`, cz_gate_routes.py:406-409): `OLDER_RENDER_NOTE` (cz_gate_routes.py:494) while the draft is still the older render, and
@@ -72,50 +72,50 @@ for a class (slots, fields, lines), is built per class by `slot_desc` (slot_gate
 
 ## 3. What a slot accepts
 
-- **One table.** `SLOT_KINDS` (slot_gate_template.py:64) says in words what each slot accepts; `SLOT_PROBLEM` (slot_gate_template.py:60)
+- **One table.** `SLOT_KINDS` (slot_gate_template.py:67) says in words what each slot accepts; `SLOT_PROBLEM` (slot_gate_template.py:63)
   is the one refusal sentence, formatted with slot, kinds and value. The generated class and the pure check
-  `slot_value_problem` (slot_gate_template.py:383) read the same table (pinned by `test_kinds_text_is_one_table` and
+  `slot_value_problem` (slot_gate_template.py:386) read the same table (pinned by `test_kinds_text_is_one_table` and
   `test_generated_slot_value_rule_matches_the_pure_check`, tests/test_slot_gate_template.py).
-- **Kinds per slot.** A string (an operation name) passes on every slot (`slot_value_problem`, slot_gate_template.py:390). The coupler
-  slot also takes an inline `Pulse` (slot_gate_template.py:392; generated check, slot_gate_template.py:444). Control and target take a `Pulse` only when it is
+- **Kinds per slot.** A string (an operation name) passes on every slot (`slot_value_problem`, slot_gate_template.py:393). The coupler
+  slot also takes an inline `Pulse` (slot_gate_template.py:395; generated check, slot_gate_template.py:447). Control and target take a `Pulse` only when it is
   an operation of that slot's own z channel.
 - **Own flux line, decided by identity.** `slot_value_problem` accepts a control or target `Pulse` only when it is
-  one of the operations of the slot's own channel, compared with `is` (slot_gate_template.py:392); the generated class does the same
-  against `pair.qubit_control.z.operations` / `pair.qubit_target.z.operations` (`_channel`, slot_gate_template.py:397; check, slot_gate_template.py:448-449).
+  one of the operations of the slot's own channel, compared with `is` (slot_gate_template.py:395); the generated class does the same
+  against `pair.qubit_control.z.operations` / `pair.qubit_target.z.operations` (`_channel`, slot_gate_template.py:400; check, slot_gate_template.py:451-452).
   A stored reference to another line's operation is therefore refused; the lab test plays a control reference to the
   target line's operation and expects the slot sentence (tests/test_slot_gate_save.py
   `test_lab_gate_with_slot_pointers_plays_on_a_built_chip`). The plan builds each pulse on the slot's own line: the
-  descriptor's slot rows carry line `control` / `target` / `coupler` (`slot_desc`, slot_gate_plan.py:94) and
+  descriptor's slot rows carry line `control` / `target` / `coupler` (`slot_desc`, slot_gate_plan.py:95) and
   `cz_gate_build._plan_known` creates the operation on that line (cz_gate_build.py:1090-1131).
-- **Older render.** Version 1 refused any `Pulse` on control and target (`V1_SLOT_KINDS` comment, slot_gate_template.py:69-70; generated
-  guard, slot_gate_template.py:445-446).
-- **Refusal sentences by name** (slot_gate_template.py): `SLOT_PROBLEM` (slot_gate_template.py:60), `KEYS_PROBLEM` (slot_gate_template.py:48),
-  `OWN_PROBLEM` (slot_gate_template.py:49), `LENGTH_PROBLEM` (slot_gate_template.py:50), `UNIT_PROBLEM` (slot_gate_template.py:52), `UNIT_VALUE_PROBLEM` (slot_gate_template.py:53), `LEVEL_PROBLEM`
-  (slot_gate_template.py:55), `DUPLICATE_PROBLEM` (slot_gate_template.py:57), `TYPE_PROBLEM` (slot_gate_template.py:58), `DURATION_PROBLEM` (slot_gate_template.py:59). Step sentences: `STEPS_PROBLEM`
-  (slot_gate_template.py:84) to `XY_MISSING_PROBLEM` (slot_gate_template.py:95). Name sentences of the make door: `NAME_NOT_TEXT` to `NAME_IN_USE`
-  (cz_gate_routes.py:1212-1217; `STEPS_NOT_TAKEN`, cz_gate_routes.py:1219). `validate` (slot_gate_template.py:136) adds "Select at least one slot." and the duplicate / subset
-  sentence (slot_gate_template.py:143, slot_gate_template.py:145). tests/test_slot_gate_template.py `test_spectator_cap_sentence_and_constant` pins the
+- **Older render.** Version 1 refused any `Pulse` on control and target (`V1_SLOT_KINDS` comment, slot_gate_template.py:72-73; generated
+  guard, slot_gate_template.py:448-449).
+- **Refusal sentences by name** (slot_gate_template.py): `SLOT_PROBLEM` (slot_gate_template.py:63), `KEYS_PROBLEM` (slot_gate_template.py:51),
+  `OWN_PROBLEM` (slot_gate_template.py:52), `LENGTH_PROBLEM` (slot_gate_template.py:53), `UNIT_PROBLEM` (slot_gate_template.py:55), `UNIT_VALUE_PROBLEM` (slot_gate_template.py:56), `LEVEL_PROBLEM`
+  (slot_gate_template.py:58), `DUPLICATE_PROBLEM` (slot_gate_template.py:60), `TYPE_PROBLEM` (slot_gate_template.py:61), `DURATION_PROBLEM` (slot_gate_template.py:62). Step sentences: `STEPS_PROBLEM`
+  (slot_gate_template.py:87) to `XY_MISSING_PROBLEM` (slot_gate_template.py:98). Name sentences of the make door: `NAME_NOT_TEXT` to `NAME_IN_USE`
+  (cz_gate_routes.py:1212-1217; `STEPS_NOT_TAKEN`, cz_gate_routes.py:1219). `validate` (slot_gate_template.py:139) adds "Select at least one slot." and the duplicate / subset
+  sentence (slot_gate_template.py:146, slot_gate_template.py:148). tests/test_slot_gate_template.py `test_spectator_cap_sentence_and_constant` pins the
   wording of `LENGTH_PROBLEM` and `DURATION_PROBLEM` and that both are ASCII.
 
 ## 4. Spectators
 
-- **Rows.** Each row is `{qubit, length, level, unit?}` (`plan_spectators` docstring, slot_gate_plan.py:252). The
+- **Rows.** Each row is `{qubit, length, level, unit?}` (`plan_spectators` docstring, slot_gate_plan.py:253). The
   plan stores them in the three macro dicts keyed by the real qubit name: `qubits` holds `#/qubits/<name>`,
-  `levels` and `lengths` the numbers (slot_gate_plan.py:313-315, slot_gate_plan.py:354-356). Lengths are stored as whole numbers (`_whole`, slot_gate_plan.py:157).
-  The route plan row also carries `reachable` and `unit_created` (slot_gate_plan.py:350-353).
+  `levels` and `lengths` the numbers (slot_gate_plan.py:314-316, slot_gate_plan.py:356-358). Lengths are stored as whole numbers (`_whole`, slot_gate_plan.py:158).
+  The route plan row also carries `reachable` and `unit_created` (slot_gate_plan.py:352-355).
 - **Own qubits and duplicates.** A spectator row naming the pair's control or target qubit, or an alias of it, is
-  refused with `OWN_PROBLEM`, judged by landed identity (`_identity_problem`, slot_gate_plan.py:199, called by
-  `rows_problem`, slot_gate_plan.py:224; the generated class checks it too, slot_gate_template.py:458). Two rows naming one qubit are
-  refused with `DUPLICATE_PROBLEM` (slot_gate_plan.py:211, slot_gate_plan.py:310; generated check, slot_gate_template.py:461).
-- **The unit operation.** A spectator plays `SPECTATOR_UNIT_OP` (slot_gate_template.py:46) scaled by
-  `level / unit` on the qubit's z line (generated play, slot_gate_template.py:499-505). The unit operation belongs to the qubit, not to
-  the gate: an existing one is reused read only (`_plan_spectators`, slot_gate_plan.py:317-321); a missing one is
-  created with the given unit amplitude as a pulse of `UNIT_CLASS` (slot_gate_plan.py:30) and the shortest length `MIN_LENGTH_NS`
-  (slot_gate_plan.py:345-349). Two names of one qubit are one qubit (`real_qubit`, slot_gate_plan.py:168; `qubit_identity`, slot_gate_plan.py:188; a duplicate is
-  refused, slot_gate_plan.py:309-310). A unit that differs from the stored one, or from one another gate of the request plans, is
-  refused (`UNIT_GIVEN_PROBLEM` slot_gate_plan.py:32, `UNIT_PLANNED_PROBLEM` slot_gate_plan.py:35); equality is exact, with no tolerance
-  (`_same_number`, slot_gate_plan.py:162). A stored unit operation with no readable amplitude is refused with
-  `UNIT_NO_AMPLITUDE_PROBLEM` (slot_gate_plan.py:39, returned slot_gate_plan.py:241).
+  refused with `OWN_PROBLEM`, judged by landed identity (`_identity_problem`, slot_gate_plan.py:200, called by
+  `rows_problem`, slot_gate_plan.py:225; the generated class checks it too, slot_gate_template.py:461). Two rows naming one qubit are
+  refused with `DUPLICATE_PROBLEM` (slot_gate_plan.py:212, slot_gate_plan.py:311; generated check, slot_gate_template.py:464).
+- **The unit operation.** A spectator plays `SPECTATOR_UNIT_OP` (slot_gate_template.py:49) scaled by
+  `level / unit` on the qubit's z line (generated play, slot_gate_template.py:502-508). The unit operation belongs to the qubit, not to
+  the gate: an existing one is reused read only (`_plan_spectators`, slot_gate_plan.py:318-322); a missing one is
+  created with the given unit amplitude as a pulse of `UNIT_CLASS` (slot_gate_plan.py:31) and the length
+  `LENGTH_FLOOR_ANY_QOP_NS` (16 ns, which plays on every QOP; slot_gate_plan.py:347-351). Two names of one qubit are one qubit (`real_qubit`, slot_gate_plan.py:169; `qubit_identity`, slot_gate_plan.py:189; a duplicate is
+  refused, slot_gate_plan.py:310-311). A unit that differs from the stored one, or from one another gate of the request plans, is
+  refused (`UNIT_GIVEN_PROBLEM` slot_gate_plan.py:33, `UNIT_PLANNED_PROBLEM` slot_gate_plan.py:36); equality is exact, with no tolerance
+  (`_same_number`, slot_gate_plan.py:163). A stored unit operation with no readable amplitude is refused with
+  `UNIT_NO_AMPLITUDE_PROBLEM` (slot_gate_plan.py:40, returned slot_gate_plan.py:242).
 - **Created once per request.** `_plan_all` keeps one `planned_units` map for the request so a qubit gets one create
   (cz_gate_routes.py:343, cz_gate_routes.py:381-383); a refused gate removes the units it added (cz_gate_routes.py:399-401). `assign_units` (cz_gate_routes.py:420) then
   gives each new unit to exactly one written gate: the first allowed gate, in request order, whose rows use it; the
@@ -126,30 +126,37 @@ for a class (slots, fields, lines), is built per class by `slot_desc` (slot_gate
 - **`not_calibrated`.** Every planned slot row carries `not_calibrated` set to `cgb.NOT_CALIBRATED`
   (cz_gate_routes.py:481-482; text at cz_gate_build.py:1164). The dialog shows it once, after a check
   (cz-gate.js:586-594). Pin: `test_every_planned_slot_row_carries_the_not_calibrated_line`.
-- **Amp scale limit.** The rule is `|level / unit|` strictly below `AMP_SCALE_LIMIT` (slot_gate_template.py:34,
-  `level_scale_problem`, slot_gate_template.py:283); both numbers must be finite, the unit nonzero, bool refused (slot_gate_template.py:286-292). A negative
-  unit counts by magnitude; `reachable_level` (slot_gate_template.py:302) is the excluded boundary in V. Its source is the comment at
-  slot_gate_template.py:29-33: the open range confirmed for `amp()`, and a documentation-source line about the fixed-point overflow that
+- **Amp scale limit.** The rule is `|level / unit|` strictly below `AMP_SCALE_LIMIT` (slot_gate_template.py:35,
+  `level_scale_problem`, slot_gate_template.py:286); both numbers must be finite, the unit nonzero, bool refused (slot_gate_template.py:289-295). A negative
+  unit counts by magnitude; `reachable_level` (slot_gate_template.py:305) is the excluded boundary in V. Its source is the comment at
+  slot_gate_template.py:30-34: the open range confirmed for `amp()`, and a documentation-source line about the fixed-point overflow that
   is not published. The limit has one owner: the plan and the check never restate it, they call
   `spectator_rows_problem` (slot_gate_plan.py:7-11; pinned by `test_limit_has_one_owner_and_no_bare_ratio_limit` and
   `test_scale_limit_assigned_in_one_file_and_no_bare_two_in_the_plan`). A level of 0 is accepted on purpose
-  (slot_gate_plan.py:267-269).
-- **Length rules and caps.** A length must be finite, a whole multiple of `LENGTH_STEP_NS` (slot_gate_template.py:39), at least
-  `MIN_LENGTH_NS` (slot_gate_template.py:37) and at most `MAX_SPECTATOR_NS` (slot_gate_template.py:42, whose comment quotes its documentation source);
-  `spectator_length_problem` (slot_gate_template.py:307) adds the shared `length_rule`, and `MIN_LENGTH_NS` / `LENGTH_STEP_NS` are pinned
-  equal to that rule (`test_min_length_matches_shared_rule`, `test_length_step_matches_shared_rule`). The slot
-  duration (clock cycles) is capped by `DURATION_PROBLEM`, checked in the generated apply (slot_gate_template.py:487-490). A wait step is
-  capped by `MAX_WAIT_NS` (slot_gate_template.py:44, `WAIT_PROBLEM`, slot_gate_template.py:89). The generated class checks the same length, unit and level
-  rules before it plays anything (slot_gate_template.py:451-486).
+  (slot_gate_plan.py:268-270).
+- **Length rules and caps.** A length must be finite, a whole multiple of `LENGTH_STEP_NS` (slot_gate_template.py:42), at least
+  `MIN_LENGTH_NS` (slot_gate_template.py:40) and at most `MAX_SPECTATOR_NS` (slot_gate_template.py:45, whose comment quotes its documentation source);
+  `spectator_length_problem` (slot_gate_template.py:310) adds the shared `length_rule`, and `MIN_LENGTH_NS` / `LENGTH_STEP_NS` are pinned
+  equal to that rule (`test_min_length_matches_shared_rule`, `test_length_step_matches_shared_rule`).
+  The length floor has one owner, `spec_constraints.length_floor_ns(state, from_qua)` (spec_constraints.py:152),
+  after docs Guides/timing_in_qua.md:14-16: a chip that declares a QOP before 3.3 gets 16 ns; QOP 3.3 or later
+  gets 4 ns for a length set in the configuration and 8 ns for one set from QUA; a chip with no version gets the
+  3.3 floor plus the note `LENGTH_FLOOR_NOTE` when a value under 16 ns is accepted. The CZ gate builder's
+  `length_rule` (cz_gate_build.py:363) and the gate check's `length` result use the chip's floor. The slot
+  template keeps `MIN_LENGTH_NS` at `LENGTH_FLOOR_ANY_QOP_NS` (16 ns): its generated class is chip-independent
+  text that sets spectator lengths and waits from QUA, and a lower floor there is a new render version. The slot
+  duration (clock cycles) is capped by `DURATION_PROBLEM`, checked in the generated apply (slot_gate_template.py:490-493). A wait step is
+  capped by `MAX_WAIT_NS` (slot_gate_template.py:47, `WAIT_PROBLEM`, slot_gate_template.py:92). The generated class checks the same length, unit and level
+  rules before it plays anything (slot_gate_template.py:454-489).
 - **List-path and dotted-name refusals.** A qubit or line path part with a dot is refused (`DOT_PROBLEM`,
-  slot_gate_plan.py:45; check slot_gate_plan.py:306-307), because the create path is a dotted string. A new unit operation on a line
-  reached through a list is refused (`LIST_PROBLEM`, slot_gate_plan.py:47; `_through_list`, slot_gate_plan.py:51; check slot_gate_plan.py:343-344), because the create
+  slot_gate_plan.py:46; check slot_gate_plan.py:307-308), because the create path is a dotted string. A new unit operation on a line
+  reached through a list is refused (`LIST_PROBLEM`, slot_gate_plan.py:48; `_through_list`, slot_gate_plan.py:52; check slot_gate_plan.py:344-345), because the create
   door steps through dicts only. An existing unit operation on such a line is read and needs no create
   (`test_a_unit_that_exists_on_a_line_inside_a_list_is_read_and_needs_no_create`).
-- **Other row refusals.** `rows_problem` (slot_gate_plan.py:216) adds to the template sentence: a qubit that is not on the chip or has
-  no flux line gets that reason instead of `UNIT_PROBLEM` (slot_gate_plan.py:233-239), and a length no float can hold is
-  refused (slot_gate_plan.py:229-231). `ROW_PROBLEM` (slot_gate_plan.py:42) and `UNREADABLE_PROBLEM` (slot_gate_plan.py:43) cover rows of another shape; data never
-  raises (slot_gate_plan.py:243-244, slot_gate_plan.py:277-278).
+- **Other row refusals.** `rows_problem` (slot_gate_plan.py:217) adds to the template sentence: a qubit that is not on the chip or has
+  no flux line gets that reason instead of `UNIT_PROBLEM` (slot_gate_plan.py:234-240), and a length no float can hold is
+  refused (slot_gate_plan.py:230-232). `ROW_PROBLEM` (slot_gate_plan.py:43) and `UNREADABLE_PROBLEM` (slot_gate_plan.py:44) cover rows of another shape; data never
+  raises (slot_gate_plan.py:244-245, slot_gate_plan.py:278-279).
 - **What the dialog shows.** The spectator panel lists the pair's candidates with length, level and unit cells
   (`fillSpect`, cz-gate.js:500). `_spectator_offer` (cz_gate_routes.py:263) says offered with `method: "unit"` when the
   class has spectators, else the descriptor sentence of `spectator_refusal` (cz_gate_build.py:1181). `_unit_candidates`
@@ -210,7 +217,7 @@ rows (module docstring, gate_check.py:19-24). Three facts:
   read by the check, and a create the door refuses must not make a level pass (docstring, gate_check.py:821-825; pins:
   `test_unit_created_in_the_same_write_is_read_by_the_check`, `test_the_overlay_leaves_out_every_create_the_door_refuses`,
   `test_the_overlay_and_the_door_leave_the_same_chip`).
-- **Same rule as the plan.** `_spectator_scale_check` (gate_check.py:344) calls `macro_spectator_problem` (slot_gate_plan.py:361)
+- **Same rule as the plan.** `_spectator_scale_check` (gate_check.py:344) calls `macro_spectator_problem` (slot_gate_plan.py:363)
   on the stored macro, which reads every qubit through `real_qubit` and the unit amplitudes of the merged state, then
   `rows_problem`. The failure message is that sentence; a pass reads "Every spectator level is within the range its
   unit operation reaches." (gate_check.py:359); a gate without spectator rows gets a `note` with `NO_SPECTATOR_ROWS` (gate_check.py:341, gate_check.py:356)
@@ -229,13 +236,13 @@ rows (module docstring, gate_check.py:19-24). Three facts:
   they are (`_older_match` docstring, cz_gate_routes.py:1234-1236). A stepped current-render class in use cannot be made again
   (`NAME_IN_USE`; pin `test_a_stepped_current_render_in_use_is_still_refused`).
 - A new unit operation cannot be added on a flux line inside a list, and no name with a dot can be written (section 4).
-- A unit amplitude is compared exactly; `0.1 + 0.2` is not the stored `0.3` (slot_gate_plan.py:162-165).
+- A unit amplitude is compared exactly; `0.1 + 0.2` is not the stored `0.3` (slot_gate_plan.py:163-166).
 - A qubit entry that is an alias is followed to the real qubit; if the chain cannot be followed the written name is
-  kept (`real_qubit`, slot_gate_plan.py:168-186).
+  kept (`real_qubit`, slot_gate_plan.py:169-187).
 - A slot class cannot be combined with a gate class that has no extras slot (`EXTRAS_SLOT_REFUSAL`, section 5).
 - The older render refuses a stored control or target pulse until the class is made again and saved
   (`OLDER_RENDER_NOTE`, section 2).
-- The scale limit's source is a confirmed open range plus an unpublished documentation line (slot_gate_template.py:29-33).
+- The scale limit's source is a confirmed open range plus an unpublished documentation line (slot_gate_template.py:30-34).
 
 ## 8. Tests
 

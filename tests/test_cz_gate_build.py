@@ -289,8 +289,8 @@ def test_no_create_touches_the_alias_or_an_existing_path():
 
 # --- explicit length rule ----------------------------------------------
 
-@pytest.mark.parametrize("length,ok", [(16, True), (20, True), (12, False), (18, False)])
-def test_explicit_length_multiple_of_four_and_at_least_sixteen(length, ok):
+@pytest.mark.parametrize("length,ok", [(16, True), (20, True), (12, True), (18, False), (0, False)])
+def test_explicit_length_multiple_of_four_and_at_least_the_floor(length, ok):
     res = _plan(_chip(), pulses=_square(length=length))
     assert ("creates" in res) is ok
     if not ok:
@@ -664,7 +664,7 @@ def test_copied_name_matches_whole_ids_longest_first():
 
 
 @pytest.mark.parametrize("length,ok,written", [
-    (16, True, 16), (20, True, 20), (52.0, True, 52), (12, False, None),
+    (16, True, 16), (20, True, 20), (52.0, True, 52), (12, True, 12),
     (18, False, None), (52.5, False, None), ("52", False, None)])
 def test_length_must_be_a_whole_number_of_ns(length, ok, written):
     res = _plan(_chip(), pulses=_square(length=length))

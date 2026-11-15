@@ -9,8 +9,11 @@ lab side is ``generator/run_pulse_waveform.py``'s gate-check item, run by
 - ``ops``: the gate's ``apply()`` runs, it plays at least one pulse, and every
   operation it plays is in the config;
 - ``length``: every played pulse length is a whole number of ns, a multiple of
-  4 ns and at least 16 ns; a play-time ``duration=`` is at least 4 clock
-  cycles (a short ``wait`` is a note);
+  4 ns and at least the chip's floor (:func:`spec_constraints.length_floor_ns`:
+  16 ns on a chip that declares a QOP before 3.3, else 4 ns); a play-time
+  ``duration=`` is at least the floor set from QUA (4 clock cycles before QOP
+  3.3, else 2), and a short ``wait`` is a note. A chip that declares no QOP
+  version gets a note for a length or wait under 16 ns;
 - ``preview``: the preview samples equal the config's samples;
 - ``timeline``: the static timeline (:mod:`core.static_timeline`); ``pass``
   means "drawn", not "compared with a measurement";
@@ -85,6 +88,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from quam_state_manager.core import chip_copy, static_timeline
+from quam_state_manager.core.spec_constraints import LENGTH_FLOOR_ANY_QOP_NS, length_floor_ns
 from quam_state_manager.core.flux_dc import element_dc_levels
 # the one source of the output-port sample ranges (direct and amplified LF
 # ports are in volts, MW ports are normalised)
@@ -109,9 +113,10 @@ LAB_CHECKS = tuple(c for c in CHECKS if c != OWN_CHECK)
 #: rounding of a JSON round trip.
 PREVIEW_TOL = 1e-6
 
-#: the length rule for every played pulse (ns)
+#: the length rule for every played pulse (ns); the floor is the chip's
+#: (:func:`spec_constraints.length_floor_ns`), this one plays on every QOP
 LENGTH_STEP_NS = 4
-LENGTH_MIN_NS = 16
+LENGTH_MIN_NS = LENGTH_FLOOR_ANY_QOP_NS
 
 #: the program clock the preview is drawn at (samples per second)
 _BASE_RATE = 1e9
@@ -120,6 +125,9 @@ _IQ_NOTE = (" Only the I waveform and its port are checked; the Q waveform of an
             "IQ or microwave element is not.")
 _WAIT_NOTE = ("QUA documents a minimum wait of 4 clock cycles (16 ns); check that this "
               "runs on your controller version")
+#: docs Guides/timing_in_qua.md:14: since QOP 3.3 a wait set from QUA is at least 8 ns
+_WAIT_NOTE_QOP33 = ("QUA documents a minimum wait of 2 clock cycles (8 ns) on QOP 3.3 or "
+                    "later; check that this runs on your controller version")
 
 
 def _r(status: str, message: str, **extra) -> dict:
@@ -360,13 +368,14 @@ def _spectator_scale_check(key, after_merged) -> dict:
 
 
 def _one_gate(key, data, after, after_err, preview, merged=None, after_merged=None):
-    checks, tl = _one_gate_lab(key, data, after, after_err, preview, merged)
+    checks, tl = _one_gate_lab(key, data, after, after_err, preview, merged,
+                               after_merged if after_merged is not None else merged)
     checks[OWN_CHECK] = _spectator_scale_check(
         key, after_merged if after_merged is not None else merged)
     return checks, tl
 
 
-def _one_gate_lab(key, data, after, after_err, preview, merged=None):
+def _one_gate_lab(key, data, after, after_err, preview, merged=None, chip=None):
     name = key[1]
     try:
         checks: dict[str, dict] = {}
@@ -403,7 +412,7 @@ def _one_gate_lab(key, data, after, after_err, preview, merged=None):
             checks["ops"] = _guard(_ops_check, name, ops, int(g.get("unresolved_plays") or 0),
                                    no_cfg)
         found = [o for o in ops if isinstance(o, dict) and o.get("found")]
-        checks["length"] = _guard(_length_check, found, no_cfg, g.get("script"))
+        checks["length"] = _guard(_length_check, found, no_cfg, g.get("script"), chip)
         required = [tuple(x) for x in (preview.get(REQUIRED) or ())]
         preview = {k: v for k, v in preview.items() if k != REQUIRED}
         checks["preview"] = _guard(_preview_check, found, preview, no_cfg)
@@ -417,6 +426,7 @@ def _one_gate_lab(key, data, after, after_err, preview, merged=None):
         tl = None
         if g.get("script") and not no_cfg:
             tl = static_timeline.static_timeline(g["script"], found)
+            tl["length_floor_ns"] = length_floor_ns(chip)[0]
             if tl["cannot_draw"]:
                 why = tl["cannot_draw"]
                 if why.startswith("cannot draw: "):
@@ -485,38 +495,53 @@ def _whole(v):
     return None
 
 
-def _length_check(found: list, no_cfg: bool, script=None) -> dict:
+def _length_check(found: list, no_cfg: bool, script=None, chip=None) -> dict:
     if no_cfg:
         return _r("skipped", "Not checked: the config was not built.")
+    floor, floor_note = length_floor_ns(chip)
+    cycles = length_floor_ns(chip, from_qua=True)[0] // LENGTH_STEP_NS
+    any_qop = LENGTH_FLOOR_ANY_QOP_NS // LENGTH_STEP_NS
     bad, notes, stored = [], [], []
-    for kind, stmt in static_timeline.short_timing(script):
+    for kind, stmt in static_timeline.short_timing(script, cycles):
         if kind == "play":
             bad.append(f"The statement {stmt} plays for less than "
-                       f"{static_timeline.MIN_CYCLES} clock cycles "
-                       f"({static_timeline.MIN_CYCLES * LENGTH_STEP_NS} ns) or not a "
+                       f"{cycles} clock cycles "
+                       f"({cycles * LENGTH_STEP_NS} ns) or not a "
                        "whole number of cycles")
         else:
             notes.append(f"The statement {stmt} waits less than "
-                         f"{static_timeline.MIN_CYCLES} clock cycles")
+                         f"{cycles} clock cycles")
+    # a duration or wait the floor accepts that would not play before QOP 3.3
+    under = floor_note is not None and cycles < any_qop and (
+        len(static_timeline.short_timing(script, any_qop))
+        > len(static_timeline.short_timing(script, cycles)))
     for o in found:
         n, w = o.get("length"), _whole(o.get("length"))
         where = f"{o['operation']} on {o['element']}"
         if w is None:
             bad.append(f"A pulse length must be a whole number of ns: {where} is {n!r} ns")
-        elif w % LENGTH_STEP_NS or w < LENGTH_MIN_NS:
+        elif w % LENGTH_STEP_NS or w < floor:
             bad.append(f"A pulse length must be a multiple of {LENGTH_STEP_NS} ns and at "
-                       f"least {LENGTH_MIN_NS} ns: {where} is {w} ns")
-        elif not isinstance(n, int):
-            stored.append(f"The length of {where} is stored as {n!r}")
+                       f"least {floor} ns: {where} is {w} ns")
+        else:
+            under = under or (floor_note is not None and w < LENGTH_FLOOR_ANY_QOP_NS)
+            if not isinstance(n, int):
+                stored.append(f"The length of {where} is stored as {n!r}")
     if bad:
         return _r("fail", _sentences(bad))
-    if not found and not notes:
+    if not found and not notes and not under:
         return _r("skipped", "No played operation to check.")
     extra = (" " + _sentences(stored)) if stored else ""
+    tail = (" " + floor_note) if under else ""
     if notes:
-        return _r("note", _sentences(notes) + " " + _WAIT_NOTE + "." + extra)
+        wait_note = _WAIT_NOTE if cycles == any_qop else _WAIT_NOTE_QOP33
+        return _r("note", _sentences(notes) + " " + wait_note + "." + extra + tail)
+    if under:
+        what = (f"All {len(found)} pulse lengths are multiples of {LENGTH_STEP_NS} ns "
+                f"and at least {floor} ns." if found else "")
+        return _r("note", (what + extra + tail).strip())
     return _r("pass", f"All {len(found)} pulse lengths are multiples of {LENGTH_STEP_NS} ns "
-                      f"and at least {LENGTH_MIN_NS} ns." + extra)
+                      f"and at least {floor} ns." + extra)
 
 
 def _sentences(parts) -> str:

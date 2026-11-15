@@ -265,10 +265,10 @@ def _play(call, kw, stmt, table, clocks) -> TimelineRow:
 MIN_CYCLES = 4
 
 
-def short_timing(script) -> list[tuple[str, str]]:
+def short_timing(script, min_cycles: int = MIN_CYCLES) -> list[tuple[str, str]]:
     """``[(kind, statement)]`` for each ``play(..., duration=n)`` (kind
     ``"play"``) and ``wait(n, ...)`` (kind ``"wait"``) whose literal *n* is
-    not a positive whole number of at least :data:`MIN_CYCLES` clock cycles.
+    not a positive whole number of at least *min_cycles* clock cycles.
     A real-time (non-literal) *n* is not judged here. Never raises: an
     unreadable script gives an empty list."""
     try:
@@ -290,7 +290,7 @@ def short_timing(script) -> list[tuple[str, str]]:
             except Exception:  # noqa: BLE001 -- a real-time value
                 continue
             w = _whole(n)
-            if w is None or w < MIN_CYCLES:
+            if w is None or w < min_cycles:
                 out.append((node.func.id, (ast.get_source_segment(src, node) or "").strip()))
         return out
     except Exception:  # noqa: BLE001

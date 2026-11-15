@@ -76,6 +76,8 @@ def _msg(res, check, key=GATE):
 
 
 PREVIEW = {GATE: {("q1.z", "cz_pulse"): _wave(0.2)}}
+#: a chip that declares a QOP before 3.3 (16 ns floor from the configuration and from QUA)
+OLD_QOP_CHIP = {"extras": {"qop_version": "3.2.1"}}
 
 
 def test_all_pass_and_json_safe():
@@ -166,7 +168,8 @@ def test_another_broken_gate_of_the_chip_does_not_fail_this_one():
                                            (12, "fail"), (16.0, "pass"), (96.0, "pass"),
                                            (16.5, "fail"), ("16", "fail")])
 def test_length_rule(length, status):
-    res = gate_check.evaluate([GATE], _ran(cfg=_cfg(length=length)))
+    # a chip that declares a QOP before 3.3 keeps the 16 ns floor (the floor tests: test_gate_length_floor.py)
+    res = gate_check.evaluate([GATE], _ran(cfg=_cfg(length=length)), merged=OLD_QOP_CHIP)
     assert _checks(res)["length"] == status
     if status == "fail":
         assert "cz_pulse" in _msg(res, "length") and "q1.z" in _msg(res, "length")
@@ -454,7 +457,7 @@ def test_array_valued_config_value_only_spoils_that_operation():
 ])
 def test_play_time_duration_minimum(stmt, status):
     script = SCRIPT.replace('play("cz_pulse", "q1.z")', stmt + '\n    play("cz_pulse", "q1.z")')
-    res = gate_check.evaluate([GATE], _ran(script=script))
+    res = gate_check.evaluate([GATE], _ran(script=script), merged=OLD_QOP_CHIP)
     assert _checks(res)["length"] == status
     if status in ("fail", "note"):
         assert stmt in _msg(res, "length")

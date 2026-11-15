@@ -32,6 +32,7 @@ from quam_state_manager.core.add_names import (
 from quam_state_manager.core.pointer_path import resolve_field_target
 from quam_state_manager.core.pointer_resolver import (
     _SENTINEL, _get, _walk_relative, target_path)
+from quam_state_manager.core.spec_constraints import LENGTH_FLOOR_ANY_QOP_NS, length_floor_ns
 
 CZ_GATE = ("quam_builder.architecture.superconducting.custom_gates."
            "flux_tunable_transmon_pair.two_qubit_gates.CZGate")
@@ -359,12 +360,14 @@ def operation_length(macro_pulse: dict, macro_ref: str) -> Any:
     return macro_ref + "/length"
 
 
-def length_rule(pulse: dict) -> str | None:
+def length_rule(pulse: dict, floor_ns: int = LENGTH_FLOOR_ANY_QOP_NS) -> str | None:
     """An explicit pulse ``length`` is a whole number of ns (an int, or a
     float with an integral value, which the plan writes as an int), a
-    multiple of 4 ns and at least 16 ns. A string that is not a reference is
-    refused. A reference (an inferred length) is not computed here: the
-    lab-side check owns the real length."""
+    multiple of 4 ns and at least *floor_ns* (the chip's floor from
+    :func:`spec_constraints.length_floor_ns`; 16 ns, which plays on every QOP,
+    when not given). A string that is not a reference is refused. A
+    reference (an inferred length) is not computed here: the lab-side check
+    owns the real length."""
     length = pulse.get("length")
     if length is None or (isinstance(length, str) and length.startswith("#")):
         return None
@@ -377,9 +380,9 @@ def length_rule(pulse: dict) -> str | None:
                     "Change the length.")
         pulse["length"] = int(length)
         length = int(length)
-    if length < 16 or length % 4:
+    if length < floor_ns or length % 4:
         return (f"The pulse length {length} ns must be a multiple of 4 ns and "
-                "at least 16 ns. Change the length.")
+                f"at least {floor_ns} ns. Change the length.")
     return None
 
 
@@ -1169,7 +1172,7 @@ def _plan_known(merged, pair_id, p, gate_name, gate_class, pulses, lines,
             continue
         pulse, prov = built
         provenance[s.field] = prov
-        r = length_rule(pulse)
+        r = length_rule(pulse, length_floor_ns(merged)[0])
         if r:
             reasons.append(f"{s.field}.length: {r}")
         try:
@@ -1427,7 +1430,7 @@ def _spectator_problem(merged, pair_id, spec, control, target, seen) -> tuple[An
         return None, (f"For the spectator {q}: the length {length!r} must be a number "
                       "of ns. Type a whole number such as 48.")
     probe = {"length": length}
-    r = length_rule(probe)
+    r = length_rule(probe, length_floor_ns(merged)[0])
     if r:
         return None, f"For the spectator {q}: {r[0].lower()}{r[1:]}"
     level = spec.get("level")
@@ -2083,7 +2086,7 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
             continue
         pulse, prov = built
         provenance[f] = prov
-        r = length_rule(pulse)
+        r = length_rule(pulse, length_floor_ns(merged)[0])
         if r:
             reasons.append(f"{f}.length: {r}")
         if isinstance(model.get(f), dict):
