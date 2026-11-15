@@ -95,6 +95,25 @@ def _keep_source_cores(spec: dict) -> None:
     opts["pin_cores"] = False
 
 
+#: Why a Re-generate never shares cores, in one sentence: the merge keeps
+#: every element's source core (``regen_merge.drop_new_core_keys`` and the
+#: carried ``core`` values), so a shared-core request cannot reach the result.
+KEPT_CORES_NOTE = ("Cores are as on the source chip: a Re-generate keeps each element's "
+                   "core from the source, so Share one core per qubit was not applied.")
+
+
+def kept_cores_note(spec: Any) -> str | None:
+    """The one sentence a Re-generate result shows when the spec asked for
+    shared cores (``populate.options.pin_cores`` not exactly False, the build's
+    own reading), else None."""
+    if not isinstance(spec, dict):
+        return None
+    opts = (spec.get("populate") or {}).get("options") if isinstance(spec.get("populate"), dict) else None
+    if not isinstance(opts, dict) or opts.get("pin_cores") is not False:
+        return KEPT_CORES_NOTE
+    return None
+
+
 def _build_spec(spec):
     """The spec the fresh build runs on: ``spec`` with
     ``populate.options.tof_follows_source`` set. The merge then carries the
@@ -403,14 +422,24 @@ def coupler_delay_mismatches(state: dict, wiring: dict,
     return out
 
 
-def coupler_delay_offer_text(items: list[dict]) -> str:
-    """The one review line for :func:`coupler_delay_mismatches`."""
+def coupler_delay_question(items: list[dict]) -> dict:
+    """The review question for :func:`coupler_delay_mismatches`, as
+    ``{"kind", "question", "why"}``: the question alone and one short
+    explanation line, so the review shows it apart from any other question."""
     zs = sorted({i["z_delay"] for i in items})
     n = " / ".join(f"{z:g}" for z in zs)
     count = len(items)
     ports = "A coupler flux port holds" if count == 1 else f"{count} coupler flux ports hold"
-    return (f"{ports} delay 0 while the moving qubit's flux port has {n} ns. Set "
-            f"{'it' if count == 1 else 'them'} to the flux port delay?")
+    return {"kind": "coupler_delay",
+            "question": (f"Set {'the coupler flux port' if count == 1 else 'these coupler flux ports'} "
+                         "to the flux port delay?"),
+            "why": f"{ports} delay 0 while the moving qubit's flux port has {n} ns."}
+
+
+def coupler_delay_offer_text(items: list[dict]) -> str:
+    """The one review line for :func:`coupler_delay_mismatches`."""
+    q = coupler_delay_question(items)
+    return f"{q['why']} {q['question']}"
 
 
 def set_coupler_delays(folder: Path | str, spec: dict | None = None) -> list[dict]:
@@ -542,6 +571,18 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
         return plan if plan["ports"] else None
     except (AttributeError, TypeError, ValueError, KeyError):
         return None
+
+
+def mw_band_shift_question(plan: dict) -> dict:
+    """The review question for :func:`mw_band_shift_plan`, as
+    ``{"kind", "question", "why"}``; the per-qubit consequences are the
+    review's own lines under it."""
+    why = "Band 1/3 MW outputs leave 20 ns before band 2 ones."
+    if plan.get("tof"):
+        why += (" Re-check the time of flight of " +
+                ", ".join(t["qubit"] for t in plan["tof"]) + ".")
+    return {"kind": "mw_shift", "question": "Shift the band 1/3 MW outputs by 20 ns?",
+            "why": why}
 
 
 def mw_band_shift_offer_text(plan: dict) -> str:

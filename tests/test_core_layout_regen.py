@@ -162,6 +162,7 @@ def test_regenerate_result_carries_the_core_warning(tmp_path, monkeypatch):
     # one implementation: the same summary a Generate result / Load check computes
     root = dict(built[0])
     root.update(built[1])
+    cl = {k: v for k, v in cl.items() if k != "kept_note"}   # the Re-generate sentence, pinned in test_regen_result_looks
     assert cl == json.loads(json.dumps(core_layout.review_summary(root)))
     assert "10 / 8 cores on con1 FEM 1 (MW-FEM)" in json.dumps(cl["findings"])
 
@@ -243,6 +244,7 @@ def test_regenerate_result_reads_the_wiring(tmp_path, monkeypatch):
     res = client.post("/regenerate/build", json=body).get_json()
     assert res.get("ok") is True, res
     cl = res["core_layout"]
+    cl = {k: v for k, v in cl.items() if k != "kept_note"}   # the Re-generate sentence, pinned in test_regen_result_looks
     assert cl == json.loads(json.dumps(core_layout.review_summary(merge_state_wiring(*built))))
     assert "10 / 8 cores on con1 FEM 1 (MW-FEM)" in json.dumps(cl["findings"])
 

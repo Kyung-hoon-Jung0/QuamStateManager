@@ -50774,13 +50774,18 @@ def regenerate_build():
                 ask = {"ok": False, "needs_confirm": True,
                        "confirm_kind": "coupler_delay" if _mismatch else "mw_shift"}
                 texts = []
+                questions = []
                 if _mismatch:
                     ask["coupler_delay"] = _mismatch
                     texts.append(regenerate.coupler_delay_offer_text(_mismatch))
+                    questions.append(regenerate.coupler_delay_question(_mismatch))
                 if _shift:
                     ask["mw_shift"] = _shift
                     texts.append(regenerate.mw_band_shift_offer_text(_shift))
+                    questions.append(regenerate.mw_band_shift_question(_shift))
                 ask["error"] = " ".join(texts)
+                # each question shown apart, with its own answer buttons
+                ask["questions"] = questions
                 return jsonify(ask)
 
         live_note = _regen_source_live_note(src_p)   # judged as the source is read
@@ -50824,6 +50829,7 @@ def regenerate_build():
             _plan = None
             if mw_shift_ack == "shift":
                 try:
+                    from quam_state_manager.core import value_delta
                     _plan = regenerate.apply_mw_band_shift(output_path)
                     if not _plan:
                         note = ((note + " ") if note else "") + (
@@ -50835,10 +50841,10 @@ def regenerate_build():
                             "MW outputs shifted: " +
                             "; ".join(f"{i['port_label']} {i['new']:g} ns" for i in _plan["ports"]) +
                             (". Flux ports: " + "; ".join(
-                                f"{i['port_label']} {i['old']:g} -> {i['new']:g} ns"
+                                f"{i['port_label']} {value_delta.describe_moved(i.get('old'), i.get('new'), 'ns')}"
                                 for i in _plan["flux"]) if _plan["flux"] else "") +
                             (". Time of flight: " + "; ".join(
-                                f"{i['qubit']} {i['old']:g} -> {i['new']:g} ns"
+                                f"{i['qubit']} {value_delta.describe_moved(i.get('old'), i.get('new'), 'ns')}"
                                 for i in _plan["tof"]) if _plan["tof"] else "") + ".")
                 except Exception as exc:   # noqa: BLE001 (reported, not raised)
                     note = ((note + " ") if note else "") + (
@@ -50859,6 +50865,13 @@ def regenerate_build():
                     outcome, *safe_io.read_state_wiring(Path(output_path)))
             except (OSError, ValueError) as exc:
                 logger.warning("core layout summary skipped: %s", exc)
+            # A ticked share option never reaches a rebuilt chip: say why.
+            _kept = regenerate.kept_cores_note(spec)
+            if _kept:
+                if isinstance(outcome.get("core_layout"), dict):
+                    outcome["core_layout"]["kept_note"] = _kept
+                else:
+                    note = ((note + " ") if note else "") + _kept
             try:
                 from quam_state_manager.core import output_timing
                 output_timing.annotate(
