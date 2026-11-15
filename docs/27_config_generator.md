@@ -711,7 +711,8 @@ same rule applies to every readout, provisionally untested on LF-FEM and OPX+.
   cached). A cycle is the same pointer met again at the same leaf with the same path still to walk:
   crossing `a.ref` once toward `x` and once toward `y` is not one (`b.x = "#/a/ref/y"` reads `b.y`).
   A list is indexed as quam reads one (`str.isdigit()`, then `int()`): `#/a/0`, `#/a/12`, `#/a/007` (item 7)
-  and a non-ASCII decimal digit such as `١` (item 1) index `a`; `#/a/²` (isdigit, not int-able),
+  and a non-ASCII decimal digit such as U+0661 ARABIC-INDIC DIGIT ONE (item 1) index `a`; the key U+00B2
+  SUPERSCRIPT TWO (isdigit, not int-able),
   `#/a/-1`, `#/a/+1`, `#/a/ 1` and `#/a/0_1` name nothing, so such a pointer stays raw and is not resolvable.
   A leaf is named by its real keys joined with "/", the form a QUAM pointer to it takes, so a key
   holding a "." keeps it (`#/shared/tof.base` is named `shared/tof.base`). It is named by the leaf
