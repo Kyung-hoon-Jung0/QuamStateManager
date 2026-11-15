@@ -1,4 +1,4 @@
-/* v1.5.1 P2 layout pins: the SHIPPED stylesheets (pico.min.css + style.css)
+/* v1.5.1 P2 layout pins: the SHIPPED stylesheets (pico.min.css + style.css + ui-kit.css, in page order)
  * applied by jsdom's cascade to REAL markup the Flask test client rendered.
  *
  * jsdom does no layout, so a pin here reads the COMPUTED declarations that
@@ -20,7 +20,7 @@ try { ({ JSDOM } = require('jsdom')); } catch (e) {
 }
 const FX = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const STATIC = path.join(__dirname, '..', 'quam_state_manager', 'web', 'static');
-const CSS = ['pico.min.css', 'style.css'].map((f) => fs.readFileSync(path.join(STATIC, f), 'utf8'));
+const CSS = ['pico.min.css', 'style.css', 'ui-kit.css'].map((f) => fs.readFileSync(path.join(STATIC, f), 'utf8'));
 
 let fails = 0, n = 0;
 function ok(c, m) { n++; if (!c) { console.error('FAIL: ' + m); fails++; } else { console.log('ok - ' + m); } }

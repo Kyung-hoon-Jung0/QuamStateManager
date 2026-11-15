@@ -1797,3 +1797,14 @@ dialog.ui-dialog:not(.gen-rule-dlg)::backdrop { background: var(--ui-backdrop); 
 .pce-plot { min-height: var(--ui-placeholder-h); }
 .pce-timeline:empty { display: none; }
 .pce-list { margin: 0; padding-left: var(--ui-gap-4); }
+/* top bar below its two-row floor (a phone-width window): the tray cluster is wider
+   than the window, so its pills wrap, the status control wraps its action under the
+   state words and the words wrap inside it; the page never scrolls sideways and every
+   word of the state stays on screen. Rows above the floor keep the one-row bar. */
+.topbar.tb-fit-11 #topbar-tray-slot { flex-shrink: 1; min-width: 0; max-width: 100%; }
+.topbar.tb-fit-11 #pending-tray { flex-wrap: wrap; row-gap: var(--ui-gap-1); max-width: 100%; }
+.topbar.tb-fit-11 #pending-tray > * { flex: 0 1 auto; min-width: 0; max-width: 100%; }
+.topbar.tb-fit-11 .sync-control { flex-wrap: wrap; border-radius: var(--ui-r-sm); }
+.topbar.tb-fit-11 .sync-control .state-status-badge.sync-control-main { flex: 1 1 auto; min-width: 0; text-align: left; }
+.topbar.tb-fit-11 .sync-control-text { min-width: 0; white-space: normal; }
+.topbar.tb-fit-11 #pending-tray .sync-control-act { flex: 1 1 auto; }
