@@ -226,6 +226,8 @@ async function main() {
   ok(sel.options[0].value === '' && /Automatic/.test(sel.options[0].textContent),
     'R4: Automatic is the first option and carries no value');
   ok(sel.value === '', 'R4: and is what an untouched spec shows');
+  ok(box.querySelector('#gen-quam-class-value').hidden,
+    'short Automatic option keeps its original single-line presentation');
   ok(!('quam_class' in G.state.spec),
     "R4: rendering the picker puts NOTHING on the spec (today's behaviour)");
   ok(sel.options.length === 1 + ROOTS.length, 'R4: every importable root is offered');
@@ -253,6 +255,16 @@ async function main() {
      uo.indexOf(']') < 0,
     'R4: the rendered Union option names both classes, no stray bracket — ' + uo);
 
+  sel.value = sel.options[3].value;
+  sel.dispatchEvent(new win.Event('change'));
+  await settle();
+  sel = box.querySelector('#gen-quam-class');
+  const selectedLine = box.querySelector('#gen-quam-class-value');
+  ok(selectedLine && !selectedLine.hidden && selectedLine.textContent === sel.options[sel.selectedIndex].textContent,
+    'long root option is readable in full beside the constrained select');
+  ok(sel.getAttribute('aria-describedby') === selectedLine.id && sel.title === selectedLine.textContent,
+    'selected root description is associated with its control');
+
   // A person picks one: the key reaches the spec and the review re-runs.
   sel.value = 'quam_config.my_quam.Quam';
   sel.dispatchEvent(new win.Event('change'));
@@ -268,6 +280,14 @@ async function main() {
   sel.dispatchEvent(new win.Event('change'));
   ok(!('quam_class' in G.state.spec),
     'R4: Automatic deletes the key — an empty string is not the same spec');
+
+  G.state.spec.quam_class = 'missing.Root';
+  T.renderCapabilityReport(box);
+  await settle();
+  ok(box.querySelector('#gen-quam-class-value').textContent.includes('missing.Root') &&
+     !box.querySelector('#gen-quam-class-value').hidden,
+    'a stale root selection is named honestly without crashing the picker');
+  delete G.state.spec.quam_class;
 
   // No roots reported (an unprobed env) ⇒ no picker at all, never an empty one.
   CAP_BODY = capBody({ roots: [] });

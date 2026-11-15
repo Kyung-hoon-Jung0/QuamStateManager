@@ -225,5 +225,17 @@ function check(value, message) { checks++; assert.ok(value, message); }
     input('smooth', true); await wait(20);
     check(c('warning').textContent === '', 'ticking Smooth with the default strength raises no bias-limit warning');
     tile._mapTools.destroy();
+    for (const payload of [
+        {data: [{type: 'heatmap'}]},
+        {data: [{type: 'heatmap'}], display_only_reason: 'Recorded axes are missing.'},
+        {data: [{type: 'heatmap'}], clickable: {targets: []}},
+        {data: [{type: 'heatmap'}], clickable: {verification_note: 'No saved values.'}}
+    ]) {
+        w.MapTools.mount(tile, plot, payload);
+        const chip = Array.from(tile.querySelectorAll('.map-tools-chip')).find(el => el.textContent === 'not verified on this run');
+        check(chip && chip.title === w.MapTools.verifyHint(payload) && chip.title.length > 0,
+            'unverified title comes from the verification decision, including absent evidence');
+    }
+    check(w.MapTools.verifyHint({}).includes('No click contract'), 'missing contract is named honestly');
     console.log(checks + ' assertions passed'); dom.window.close();
 })().catch(error => { console.error(error); dom.window.close(); process.exitCode = 1; });

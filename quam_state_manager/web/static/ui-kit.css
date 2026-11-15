@@ -1284,6 +1284,26 @@
 .ui-kit-reading-ev { display: flex; flex-direction: column; gap: var(--ui-gap-3); padding: var(--ui-gap-2); background: var(--ui-surface-2); min-width: 0; }
 .ui-grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--ui-gap-2); }
 
+/* Generate controls can shrink with their pane; selected long root labels stay readable. */
+.ui-generate .gen-header-actions { flex-wrap: wrap; min-width: 0; max-width: 100%; }
+.ui-root-select.ui-select { min-width: 0; max-width: 100%; width: 100%; }
+.ui-root-value { display: block; overflow-wrap: anywhere; font-size: var(--ui-fs-sm); }
+.ui-root-value:empty { display: none; }
+/* Joint breaks win over the value cell's emergency wrap for unstructured tokens. */
+.ui-dot-name { word-break: normal; overflow-wrap: normal; white-space: normal; }
+.ui-generate #gen-env-list .gen-env-row { flex-wrap: wrap; min-width: 0; }
+.ui-generate #gen-env-list .gen-env-name,
+.ui-generate #gen-env-list .gen-env-status { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.ui-generate #gen-env-list .gen-env-path { flex: 1 1 20ch; overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
+.ui-run-diff.ui-run-diff-compact { table-layout: fixed; width: 100%; }
+.ui-run-diff-compact .diff-list-path, .ui-run-diff-compact .diff-list-a, .ui-run-diff-compact .diff-list-b { min-width: 0; }
+.ui-run-diff-phone, .ui-run-diff-phone tbody, .ui-run-diff-phone tr, .ui-run-diff-phone td { display: block; width: 100%; box-sizing: border-box; }
+.ui-run-diff-phone thead, .ui-run-diff-phone .diff-list-arrow { display: none; }
+.ui-run-diff-phone .diff-list-a::before { content: "A: "; }
+.ui-run-diff-phone .diff-list-b::before { content: "B: "; }
+.ui-run-diff-phone .diff-list-delta::before { content: "Delta: "; }
+.ui-run-diff-phone .diff-list-delta { white-space: normal; }
+
 /* ===== stage 1: existing button classes and focus (docs/308, D-27..D-30, D-52) =====
  * The only rules in this file that target classes outside .ui-*. Allowed
  * selectors (tests/test_ui_contract.py): button.btn-sm, [role=button].btn-sm,

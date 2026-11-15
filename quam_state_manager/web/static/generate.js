@@ -11368,6 +11368,7 @@
       + " the stock class carries only what quam-builder declares.";
     var sel = document.createElement("select");
     sel.id = "gen-quam-class";
+    sel.className = "ui-select ui-root-select";
     var auto = document.createElement("option");
     auto.value = "";
     auto.textContent = "Automatic"
@@ -11397,6 +11398,17 @@
     });
     lab.appendChild(sel);
     wrap.appendChild(lab);
+    var chosen = document.createElement("span");
+    chosen.className = "ui-root-value";
+    chosen.id = "gen-quam-class-value";
+    var selected = sel.options[sel.selectedIndex];
+    chosen.textContent = selected ? selected.textContent :
+      "Selected root class is unavailable: " + state.spec.quam_class;
+    chosen.hidden = !!selected && chosen.textContent.length <= 60;
+    sel.setAttribute("aria-describedby", chosen.id);
+    sel.title = chosen.textContent;
+    if (chosen.hidden) chosen.textContent = "";
+    wrap.appendChild(chosen);
     box.appendChild(wrap);
     if (state.chipArch === "fixed_tunable_coupler_lab") {
       var why = document.createElement("p");

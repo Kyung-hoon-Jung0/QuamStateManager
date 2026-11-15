@@ -1,9 +1,9 @@
-"""The run diff list stays readable at narrow widths: the table scrolls inside
-its own box, dotted names and paths break only at "." and "/", a number never
-splits, and the class row says it has no numeric delta.
+"""The run diff stacks its cells on phones and prefers dot and slash breaks.
 
-jsdom has no layout, so this pins the CSS contract and the markup that give
-the behaviour; the real-width check is a headless Chrome screenshot round."""
+Numbers stay whole, unstructured tokens retain an emergency wrap, and the
+class row says it has no numeric delta. CSS pins complement the jsdom resize
+selfcheck; actual rendering is left to the next Chrome round.
+"""
 import json
 import re
 from pathlib import Path
@@ -43,8 +43,8 @@ def _row(body, key):
     return hit[0]
 
 
-def test_the_table_scrolls_inside_its_own_box(body):
-    assert re.search(r'<div class="ui-xscroll">\s*<table class="diff-wb-list">', body)
+def test_the_existing_scroll_shell_contains_the_responsive_table(body):
+    assert re.search(r'<div class="ui-xscroll">\s*<table class="diff-wb-list ui-run-diff" data-run-diff>', body)
 
 
 def test_dotted_names_break_only_at_their_dots(body):
@@ -79,8 +79,8 @@ def test_path_breaks_filter_keeps_numbers_whole():
     assert str(f("1.5e-3")) == '<span class="ui-cell-nowrap">1.5e-3</span>'
     assert str(f("-0.25")) == '<span class="ui-cell-nowrap">-0.25</span>'
     assert "<wbr>" not in str(f("123,456,789,012"))
-    assert str(f("a/b.c")) == "a/<wbr>b.<wbr>c"
-    assert str(f("<x>.y")) == "&lt;x&gt;.<wbr>y"
+    assert str(f("a/b.c")) == '<span class="ui-dot-name">a/<wbr>b.<wbr>c</span>'
+    assert str(f("<x>.y")) == '<span class="ui-dot-name">&lt;x&gt;.<wbr>y</span>'
 
 
 def _rule(css, sel):
@@ -118,3 +118,19 @@ def test_a_long_token_and_numbers_in_the_value_cells(tmp_path):
     assert '<code class="ui-cell-nowrap">123,456,789,012</code>' in row
     assert '<code class="ui-cell-nowrap">1</code>' in row
     assert "<code>ab</code>" in _row(body, ">label<")
+
+
+def test_joint_wrapper_and_phone_stack(body):
+    app = create_app(testing=True)
+    f = app.jinja_env.filters["path_breaks"]
+    assert str(f("UndottedClass")) == "UndottedClass"
+    assert str(f("quam.components.SquarePulse")) == '<span class="ui-dot-name">quam.<wbr>components.<wbr>SquarePulse</span>'
+    kit = (ROOT / "static/ui-kit.css").read_text(encoding="utf-8")
+    joint = _rule(kit, ".ui-dot-name")
+    assert "word-break: normal" in joint and "overflow-wrap: normal" in joint
+    phone = kit
+    assert "display: block" in _rule(phone, ".ui-run-diff-phone, .ui-run-diff-phone tbody, .ui-run-diff-phone tr, .ui-run-diff-phone td")
+    assert "min-width: 0" in _rule(kit, ".ui-run-diff-compact .diff-list-path, .ui-run-diff-compact .diff-list-a, .ui-run-diff-compact .diff-list-b")
+    for name in ("a", "b", "delta"):
+        assert "content:" in _rule(phone, f".ui-run-diff-phone .diff-list-{name}::before")
+    assert 'diff-wb-list ui-run-diff' in body

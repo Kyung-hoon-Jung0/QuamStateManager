@@ -14,7 +14,7 @@ def test_map_tools_native_controls_preview_replay_and_lifecycle():
     # its review: no stale Apply across a Readout switch, at most 16 panels per request -> 44;
     # per-panel answers, Apply on Map 2, mixed panel types, a restored side view -> 48.
     # 2026-11-04 polish: a default at the bias limit stays at or below it, no first-click warning -> 50.
-    assert "50 assertions passed" in result.stdout
+    assert "55 assertions passed" in result.stdout
 
 
 def test_map_tools_selects_show_their_whole_label():

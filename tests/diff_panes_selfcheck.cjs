@@ -97,7 +97,7 @@ ok(/[?&]base=2(&|$)/.test(window.location.search), 'the URL is replaced with bas
 
 // htmx:configRequest rewrite -- only for requests from INSIDE the workbench
 function configRequest(elt, p) {
-  const ev = new window.CustomEvent('htmx:configRequest', { bubbles: true, detail: { path: p, elt: elt, parameters: {}, verb: 'get' } });
+  const ev = new window.CustomEvent('htmx:configRequest', { bubbles: true, detail: { path: p, elt: elt, parameters: {}, headers: {}, verb: 'get' } });
   elt.dispatchEvent(ev);
   return ev.detail.path;
 }
@@ -300,7 +300,7 @@ ok(Array.from(root.querySelectorAll('tr.dp-dir td.dp-cell')).every((td) => !td.c
 
   // the query rides every /diff request the workbench issues
   type('q1 name');
-  const ev = new window.CustomEvent('htmx:configRequest', { bubbles: true, detail: { path: '/diff?a=x&b=y&tab=node&base=0', elt: tab, parameters: {}, verb: 'get' } });
+  const ev = new window.CustomEvent('htmx:configRequest', { bubbles: true, detail: { path: '/diff?a=x&b=y&tab=node&base=0', elt: tab, parameters: {}, headers: {}, verb: 'get' } });
   tab.dispatchEvent(ev);
   ok(ev.detail.parameters.q === 'q1 name' && ev.detail.path.indexOf('q=') < 0, 'the query travels as a PARAMETER (exactly once), the path keeps only base');
   type('');
@@ -349,6 +349,19 @@ d.dispatchEvent(new window.CustomEvent('htmx:afterSwap', { bubbles: true }));
 d.querySelectorAll('.dp-pane-title')[2].click();
 ok(heads() === '001', 'after a swap event one click still means one switch (no double handlers)');
 
-console.log(fails ? ('FAILED: ' + fails) : 'ALL OK (73 assertions)');
+const narrowList = d.createElement('table');
+narrowList.setAttribute('data-run-diff', '');
+d.body.appendChild(narrowList);
+for (const width of [400, 700, 1440]) {
+  window.innerWidth = width;
+  window.dispatchEvent(new window.Event('resize'));
+  ok(narrowList.classList.contains('ui-run-diff-phone') === (width <= 480), 'phone stack follows width ' + width);
+  ok(narrowList.classList.contains('ui-run-diff-compact') === (width <= 700), 'compact cells follow width ' + width);
+}
+window.innerWidth = 400;
+d.dispatchEvent(new window.CustomEvent('htmx:afterSwap'));
+ok(narrowList.classList.contains('ui-run-diff-phone'), 'swapped list gets the current width');
+
+console.log(fails ? ('FAILED: ' + fails) : 'ALL OK (80 assertions)');
 process.exit(fails ? 1 : 0);
 })();

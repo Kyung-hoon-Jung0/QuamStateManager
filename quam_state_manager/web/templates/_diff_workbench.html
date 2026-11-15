@@ -234,7 +234,7 @@
       <div id="diff-list" class="diff-list-wrap" data-more="{{ more }}">
       <div class="diff-panes-tools">{% include '_diff_search.html' %}</div>
       <div class="ui-xscroll">
-      <table class="diff-wb-list">
+      <table class="diff-wb-list ui-run-diff" data-run-diff>
         <thead><tr><th>Parameter</th><th>A</th><th></th><th>B</th><th>Δ</th>{% if _take_from %}<th></th>{% endif %}</tr></thead>
         <tbody>
         {% for r in rows %}
