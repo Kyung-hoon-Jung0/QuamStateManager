@@ -640,6 +640,29 @@ def test_the_gate_zone_is_its_own_request_slot_not_the_inspector_panes(rig):
     assert sync.split(":")[0] == "this", head
 
 
+def test_every_press_button_of_a_gate_row_is_its_own_request_slot():
+    """A press button without a sync of its own inherits the inspector pane's
+    replace slot: a zone refresh arriving with the press then aborts the press and the
+    user has to press again. Edit values is the one navigation and stays in the pane's slot."""
+    import re
+    from pathlib import Path
+    root = Path(__file__).parent.parent / "quam_state_manager/web/templates"
+    seen = []
+    for name in ("_gate_status.html", "_gate_delete_offer.html"):
+        text = (root / name).read_text(encoding="utf-8")
+        for tag in re.findall(r"<button\s[^>]*>", text, flags=re.S):
+            cls = re.search(r'class="([^"]*)"', tag).group(1)
+            seen.append(cls)
+            sync = re.search(r'hx-sync="([^"]*)"', tag)
+            if "gate-status-edit" in cls.split():
+                assert sync is None or not sync.group(1).startswith("this:"), tag
+            else:
+                assert sync is not None and sync.group(1) == "this:drop", (name, tag)
+    for want in ("gate-status-recheck", "gate-status-activate", "gate-status-delete",
+                 "gate-delete-confirm", "gate-delete-cancel", "gate-status-edit"):
+        assert any(want in c.split() for c in seen), want
+
+
 def _zone_of(body):
     start = body.index('<section class="ui-zone gate-status-list')
     return body[start:body.index("</section>", start) + len("</section>")]
