@@ -392,7 +392,7 @@
             S.statusLine = r.status;
             setStatus(r.status);
             showLines(q(S.root, "[data-pce-config-result]"), ["Saved to " + r.target, r.dependency,
-                r.restart, r.warning, r.proportional_warning, r.record_error, r.backup ? "Backup of the replaced file: " + r.backup : ""]);
+                r.restart, r.warning, r.chip_warning, r.proportional_warning, r.record_error, r.backup ? "Backup of the replaced file: " + r.backup : ""]);
         }).catch(function (err) {
             mine.busy = false;
             if (S === mine) show(q(S.root, "[data-pce-error]"), String(err));

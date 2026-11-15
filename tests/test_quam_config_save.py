@@ -34,6 +34,8 @@ def setup(tmp_path, monkeypatch):
         calls.append((copy.deepcopy(req), kwargs))
         if req["action"] == "discover":
             return {"ok": True, "folder": str(folder.resolve()), "site_packages": []}
+        if req["action"] == "load":
+            return {"ok": True, "chip_loaded": True}
         data = base64.b64decode(req["source"])
         if req.get("chip"):
             assert Path(req["chip"]).is_dir()
@@ -77,7 +79,8 @@ def test_existing_name_is_refused_unchanged(setup):
     target = folder / "FlatPulse.py"
     target.write_bytes(b"# existing module\n")
     before = D.sha256_bytes(target.read_bytes())
-    with pytest.raises(D.DraftError, match="already exists"):
+    with pytest.raises(D.DraftError, match="lab class file the environment already imports. "
+                                           "Pick another class name"):
         save(confirmed_folder=str(folder.resolve()))
     assert D.sha256_bytes(target.read_bytes()) == before
     assert not any(c[0]["action"] == "check" for c in calls)
@@ -279,3 +282,206 @@ def test_a_hand_edited_class_that_does_not_scale_is_saved_with_a_warning(setup):
                           confirmed_folder=str(folder), history_folder=instance / "history")
     assert result["ok"] and result["proportional_warning"] == Q.PROPORTIONAL_WARNING
     assert (folder / "FlatPulse.py").read_bytes() == edited.encode()
+
+
+def test_save_to_file_elsewhere_keeps_the_publication(setup, tmp_path, monkeypatch):
+    instance, folder, source, calls, runner, save = setup
+    monkeypatch.setattr(D, "import_check", lambda *a, **k: None)
+    save(confirmed_folder=str(folder))
+    published = folder / "FlatPulse.py"
+    copy_path = tmp_path / "elsewhere" / "FlatPulse.py"
+    copy_path.parent.mkdir()
+    assert W.save_to_target(instance, "scope", CLASS, str(copy_path))["ok"]
+    creates = [("gate", {"__class__": "Gate", "pulse": {"__class__": QCLASS}})]
+    assert Q.class_refusal(instance, "scope", creates) is None
+    with pytest.raises(D.DraftError, match="Save to quam_config"):
+        W.save_to_target(instance, "scope", CLASS, str(published))
+    assert published.read_bytes() == source
+    changed = source.replace(b"0.1", b"0.3")
+    D.save_draft(instance, "scope", CLASS, changed)
+    result = save(confirmed_folder=str(folder))
+    assert result["ok"] and published.read_bytes() == changed
+    assert Path(result["backup"]).read_bytes() == source
+    assert Q.class_refusal(instance, "scope", creates) is None
+
+
+def test_save_to_file_refuses_the_published_file_in_any_folder(setup, monkeypatch):
+    instance, folder, source, calls, runner, save = setup
+    monkeypatch.setattr(D, "import_check", lambda *a, **k: None)
+    other = folder.parent / "plain"
+    other.mkdir()
+    assert save(folder=str(other), confirmed_folder=str(other))["ok"]
+    with pytest.raises(D.DraftError, match="Save to quam_config"):
+        W.save_to_target(instance, "scope", CLASS, str(other / "FlatPulse.py"))
+
+
+def test_save_to_file_refuses_a_quam_config_folder_without_init(setup, tmp_path, monkeypatch):
+    instance, folder, source, calls, runner, save = setup
+    monkeypatch.setattr(D, "import_check", lambda *a, **k: None)
+    namespace = tmp_path / "ns" / "quam_config"
+    namespace.mkdir(parents=True)
+    with pytest.raises(D.DraftError, match="quam_config folder"):
+        W.save_to_target(instance, "scope", CLASS, str(namespace / "FlatPulse.py"))
+    assert list(namespace.iterdir()) == []
+
+
+def _chip_runner(runner, *, old=None, draft=None):
+    """*old* / *draft*: the load error of the chip copy with that file, or None."""
+    def run(py, req, **kwargs):
+        if req["action"] == "load":
+            return {"ok": old is None, "chip_loaded": old is None, "error": old}
+        result = runner(py, req, **kwargs)
+        if req["action"] == "check" and req.get("chip") and draft:
+            result.update(ok=False, chip_loaded=False, chip_error=draft,
+                          error="The chip copy does not load with the draft class: " + draft)
+        return result
+    return run
+
+
+def _history_dir(instance):
+    return Path(instance) / "history"
+
+
+def _in_use(setup):
+    instance, folder, source, calls, runner, save = setup
+    save(confirmed_folder=str(folder))
+    changed = source.replace(b"0.1", b"0.4")
+    D.save_draft(instance, "scope", CLASS, changed)
+    return _store(), changed
+
+
+def _save_used(setup, store, run):
+    instance, folder = setup[0], setup[1]
+    return Q.save_class("python", instance, "scope", CLASS, runner=run, store=store,
+                        confirmed_folder=str(folder), history_folder=_history_dir(instance))
+
+
+def test_a_chip_that_loads_with_the_old_file_refuses_a_breaking_draft(setup):
+    instance, folder, source, calls, runner, save = setup
+    store, changed = _in_use(setup)
+    run = _chip_runner(runner, draft="AttributeError: Unexpected attribute width")
+    with pytest.raises(D.DraftError, match="Unexpected attribute"):
+        _save_used(setup, store, run)
+    assert (folder / "FlatPulse.py").read_bytes() == source
+
+
+def test_a_chip_broken_before_the_change_saves_with_the_old_load_error(setup):
+    instance, folder, source, calls, runner, save = setup
+    store, changed = _in_use(setup)
+    order = []
+    missing = "ImportError: no module quam_config.Missing"
+    inner = _chip_runner(runner, old=missing, draft=missing)
+    def run(py, req, **kwargs):
+        order.append(req["action"])
+        if req["action"] == "load":
+            assert "source" not in req and req["chip"]
+            assert (Path(req["copy_root"]) / "quam_config" / "FlatPulse.py").read_bytes() == source
+        return inner(py, req, **kwargs)
+    result = _save_used(setup, store, run)
+    assert order == ["discover", "load", "check"]
+    assert result["ok"] and (folder / "FlatPulse.py").read_bytes() == changed
+    assert "could not judge" in result["chip_warning"]
+    assert "quam_config.Missing" in result["chip_warning"]
+    row = json.loads((_history_dir(instance) / Q.HISTORY_FILE).read_text().splitlines()[-1])
+    assert row["warning"] == result["chip_warning"]
+
+
+def test_a_repair_of_a_broken_chip_is_saved(setup):
+    instance, folder, source, calls, runner, save = setup
+    store, changed = _in_use(setup)
+    run = _chip_runner(runner, old="AttributeError: Unexpected attribute width")
+    result = _save_used(setup, store, run)
+    assert result["ok"] and (folder / "FlatPulse.py").read_bytes() == changed
+    assert "loads with this draft" in result["chip_warning"]
+
+
+def test_a_draft_that_fails_to_import_is_refused_even_on_a_broken_chip(setup):
+    instance, folder, source, calls, runner, save = setup
+    store, changed = _in_use(setup)
+    broken = _chip_runner(runner, old="ImportError: other class")
+    def run(py, req, **kwargs):
+        result = broken(py, req, **kwargs)
+        if req["action"] == "check":
+            result.update(ok=False, error="SyntaxError: bad draft")
+        return result
+    with pytest.raises(D.DraftError, match="SyntaxError"):
+        _save_used(setup, store, run)
+    assert (folder / "FlatPulse.py").read_bytes() == source
+
+
+def test_a_used_class_needs_the_chip_loaded_with_the_draft(setup):
+    instance, folder, source, calls, runner, save = setup
+    store, changed = _in_use(setup)
+    def run(py, req, **kwargs):
+        result = runner(py, req, **kwargs)
+        if req["action"] == "check":
+            result.pop("chip_loaded", None)
+        return result
+    with pytest.raises(D.DraftError, match="not loaded with the draft"):
+        _save_used(setup, store, run)
+    assert (folder / "FlatPulse.py").read_bytes() == source
+
+
+def test_a_class_file_changed_during_the_check_is_not_overwritten(setup):
+    instance, folder, source, calls, runner, save = setup
+    store, changed = _in_use(setup)
+    def run(py, req, **kwargs):
+        if req["action"] == "check":
+            (folder / "FlatPulse.py").write_bytes(source + b"# lab edit\n")
+        return runner(py, req, **kwargs)
+    with pytest.raises(D.DraftError, match="changed during the check"):
+        _save_used(setup, store, run)
+    assert (folder / "FlatPulse.py").read_bytes() == source + b"# lab edit\n"
+
+
+def test_live_active_needs_the_active_pointer(setup):
+    store = _store()
+    live = copy.deepcopy(store.merged)
+    live["qubit_pairs"]["pair"]["macros"]["cz_other"] = {"__class__": "Gate"}
+    live["qubit_pairs"]["pair"]["macros"]["cz"] = "#./cz_other"
+    gates = Q.affected_gates(store.merged, QCLASS, live)
+    assert gates == [{"pair": "pair", "gate": "cz_flat", "live_active": False}]
+
+
+def test_a_draft_named_like_a_lab_class_does_not_block_its_gates(setup):
+    instance, folder, source, calls, runner, save = setup
+    creates = [("gate", {"__class__": "Gate", "pulse": {"__class__": QCLASS}})]
+    lab = folder / "FlatPulse.py"
+    lab.write_bytes(b"class FlatPulse: pass\n")
+    assert Q.class_refusal(instance, "scope", creates, lab_folder=folder) is None
+    assert Q.class_refusal(instance, "scope", classes=[QCLASS], lab_folder=folder) is None
+    assert "Save FlatPulse" in Q.class_refusal(instance, "scope", creates)
+    lab.write_bytes(source)
+    assert "Save FlatPulse" in Q.class_refusal(instance, "scope", creates, lab_folder=folder)
+    assert Q.lab_package("python") == folder
+
+
+def test_the_saved_module_is_registered_only_when_the_environment_imports_it(setup):
+    from quam_state_manager.core import state_env_schema
+    instance, folder, source, calls, runner, save = setup
+    other = folder.parent / "plain"
+    other.mkdir()
+    result = save(folder=str(other), confirmed_folder=str(other))
+    assert result["registered"] is None
+    assert state_env_schema.load_pulse_modules(instance) == []
+    result = save(confirmed_folder=str(folder))
+    assert result["registered"] == "quam_config.FlatPulse"
+    assert state_env_schema.load_pulse_modules(instance) == ["quam_config.FlatPulse"]
+
+
+def test_typing_the_environment_folder_still_compares_with_sm_lab_folder(setup, monkeypatch):
+    instance, folder, source, calls, runner, save = setup
+    monkeypatch.setattr(config_generator, "get_lab_code_dir", lambda *a: str(folder.parent / "other"))
+    with pytest.raises(D.DraftError, match="but SM checks"):
+        save(folder=str(folder), confirmed_folder=str(folder))
+    assert not (folder / "FlatPulse.py").exists()
+
+
+def test_an_sm_file_this_draft_did_not_publish_is_refused_unchanged(setup):
+    instance, folder, source, calls, runner, save = setup
+    target = folder / "FlatPulse.py"
+    other = source + b"# from another computer\n"
+    target.write_bytes(other)
+    with pytest.raises(D.DraftError, match="already exists"):
+        save(confirmed_folder=str(folder))
+    assert target.read_bytes() == other

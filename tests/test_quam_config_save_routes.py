@@ -31,6 +31,8 @@ def env(monkeypatch):
         def runner(python, req, **kwargs):
             if req["action"] == "discover":
                 return {"ok": True, "folder": str(folder.resolve()), "site_packages": []}
+            if req["action"] == "load":
+                return {"ok": True, "chip_loaded": True}
             checks.append(req)
             data = base64.b64decode(req["source"])
             return {"ok": True, "sha256": D.sha256_bytes(data), "chip_loaded": bool(req.get("chip")),
@@ -113,3 +115,11 @@ def test_save_to_file_records_a_history_line_and_cannot_bypass_the_checked_door(
     r = env.c.post("/pulse-class/save-file", json={"cls": CLASS, "target": str(published)})
     assert r.status_code == 400 and "Save to quam_config" in r.get_json()["error"]
     assert published.read_bytes() == before
+
+
+def test_a_lab_class_named_like_a_draft_is_not_refused_by_plan(env):
+    (env.folder / f"{CLASS}.py").write_text("class FlatPulse: pass\n", encoding="utf-8")
+    j = env.c.post(PLAN, json=_sm_class_body()).get_json()
+    assert f"Save {CLASS}" not in " ".join(j["pairs"][0].get("refusals") or [])
+    r = _save(env)
+    assert r.status_code == 400 and "Pick another class name" in r.get_json()["error"]

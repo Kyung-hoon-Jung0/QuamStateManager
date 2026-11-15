@@ -234,11 +234,7 @@ def pulse_class_save_config():
             confirmed_folder=data.get("confirmed_folder"), folder=data.get("folder") or None,
             store=r._store(), live=live,
             history_folder=_history_folder(), actor=_actor())
-        if result.get("ok"):
-            from quam_state_manager.core import state_env_schema
-            modules = state_env_schema.load_pulse_modules(_inst())
-            module = "quam_config." + str(data["cls"])
-            state_env_schema.save_pulse_modules(_inst(), list(dict.fromkeys([*modules, module])))
+        if result.get("registered"):
             r._reprobe_if_new_classes(r._store())
         return jsonify(result), 200 if result.get("ok") else 409
     except (D.DraftError, OSError, ValueError) as exc:

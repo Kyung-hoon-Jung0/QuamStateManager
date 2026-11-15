@@ -57,7 +57,7 @@ def destination(python, *, folder=None, runner=None):
     target = target.resolve()
     result = {"folder": str(target), "env_folder": str(natural), "lab_folder": str(lab),
               "importable": target == natural, "notice": EXECUTION_NOTICE}
-    if not folder and lab != natural:
+    if target == natural and lab != natural:
         raise D.DraftError(f"The environment imports {natural}, but SM checks {lab}. "
                            "Set SM's lab code folder to the environment's folder before saving.")
     if any(Path(p).resolve() == target or Path(p).resolve() in target.parents
@@ -107,13 +107,15 @@ def affected_gates(merged, qclass, live=None):
     return result
 
 
-def record_write(history_folder, *, actor, path, sha256, gates):
+def record_write(history_folder, *, actor, path, sha256, gates, warning=None):
     """One JSON line per write in the chip's history folder."""
     folder = Path(history_folder)
     folder.mkdir(parents=True, exist_ok=True)
     path_log = folder / HISTORY_FILE
     entry = {"time": datetime.now(timezone.utc).isoformat(), "actor": actor,
              "path": str(path), "sha256": sha256, "gates": gates}
+    if warning:
+        entry["warning"] = warning
     with safe_io.path_lock(path_log):
         old = path_log.read_bytes() if path_log.exists() else b""
         safe_io.atomic_write_bytes(path_log, old + json.dumps(entry).encode("utf-8") + b"\n")
@@ -151,9 +153,11 @@ def save_class(python, instance, scope, class_name, *, confirmed_folder=None, fo
         raise D.DraftError("The draft needs its SM header and template version before saving.")
     with safe_io.path_lock(target):
         old = target.read_bytes() if target.exists() else None
-        receipt = W._target_record(instance, scope, class_name)
-        if old is not None and not (receipt.get("path") == str(target)
-                                    and old.startswith(T.HEADER_MARK.encode())):
+        receipt = W.published_record(instance, scope, class_name)
+        if old is not None and not old.startswith(T.HEADER_MARK.encode()):
+            raise D.DraftError(f"{target} is a lab class file the environment already imports. "
+                               "Pick another class name for this draft.")
+        if old is not None and receipt.get("path") != str(target):
             raise D.DraftError(f"A file already exists at {target}. Choose a new class name.")
         run = runner or _run
         backup = None
@@ -167,20 +171,37 @@ def save_class(python, instance, scope, class_name, *, confirmed_folder=None, fo
                     merged = merge_state_wiring(merged, json.loads(
                         (copies.before / "wiring.json").read_text(encoding="utf-8")))
                     gates = affected_gates(merged, qclass, live)
+                used = bool(copies) and _uses(merged, qclass, merged)
+                chip = {"chip": str(copies.before) if used else None,
+                        "root_class": copies.root_class if copies else None}
+                old_error = None
                 with tempfile.TemporaryDirectory(prefix="sm_class_package_") as work:
                     package = Path(work) / "quam_config"
                     shutil.copytree(target.parent, package, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
                     if not (package / "__init__.py").exists():
                         (package / "__init__.py").write_text("", encoding="utf-8")
+                    if used and old is not None:
+                        # The chip with the file as it is now: a chip that does not
+                        # load even before the change cannot judge the draft.
+                        before = run(python, {"action": "load", "copy_root": work, **chip})
+                        if not before.get("chip_loaded"):
+                            old_error = before.get("error") or "the chip copy did not load"
                     check = run(python, {"action": "check", "source": base64.b64encode(data).decode("ascii"),
                                         "class_name": class_name, "filename": target.name,
-                                        "copy_root": work,
-                                        "chip": str(copies.before) if copies and _uses(merged, qclass, merged) else None,
-                                        "root_class": copies.root_class if copies else None})
-                if not check.get("ok") or check.get("sha256") != sha:
-                    raise D.DraftError(check.get("error") or "The lab checked different source bytes.")
-                if _uses(merged, qclass, merged) and not check.get("chip_loaded"):
+                                        "copy_root": work, **chip})
+                if not check.get("ok") and not (check.get("chip_error") and old_error):
+                    raise D.DraftError(check.get("error") or "The lab check failed.")
+                if check.get("sha256") != sha:
+                    raise D.DraftError("The lab checked different source bytes.")
+                if used and not check.get("chip_loaded") and not old_error:
                     raise D.DraftError("The chip copy was not loaded with the draft class.")
+                chip_warning = None
+                if old_error:
+                    chip_warning = (("The chip copy does not load with the old class file either, so "
+                                     "this check could not judge the draft against this chip. "
+                                     if not check.get("chip_loaded") else
+                                     "The chip copy did not load with the old class file; it loads "
+                                     "with this draft. ") + f"Old file load error: {old_error}")
                 proportional = (check.get("proportional") or {}).get("proportional")
                 if proportional is False and T.parse(text).editable:
                     raise D.DraftError("The template waveform must be proportional to amplitude.")
@@ -202,29 +223,59 @@ def save_class(python, instance, scope, class_name, *, confirmed_folder=None, fo
                 chip_copy.remove_chip_copies(copies)
         record_error = None
         try:
-            record_write(history_folder, actor=actor, path=target, sha256=sha, gates=gates)
+            record_write(history_folder, actor=actor, path=target, sha256=sha, gates=gates,
+                         warning=chip_warning)
         except Exception as exc:
             record_error = f"The class file was saved, but its history line failed: {exc}"
+        receipt = {"path": str(target), "sha": sha, "importable": dest["importable"],
+                   "qclass": qclass, "proportional": check.get("proportional")}
         try:
-            safe_io.atomic_write_json(draft.parent / W.TARGET_FILE,
-                                      {"path": str(target), "sha": sha, "importable": dest["importable"],
-                                       "qclass": qclass, "proportional": check.get("proportional")})
+            safe_io.atomic_write_json(draft.parent / W.PUBLISHED_FILE, receipt)
+            safe_io.atomic_write_json(draft.parent / W.TARGET_FILE, receipt)
         except OSError as exc:
             record_error = (record_error or "") + f" The saved file receipt failed: {exc}"
+        registered = None
+        if dest["importable"]:
+            try:
+                registered = _register_module(instance, class_name)
+            except OSError as exc:
+                record_error = (record_error or "") + f" The class list for the probe failed: {exc}"
         return {"ok": True, "target": str(target), "sha256": sha, "gates": gates,
                 "backup": str(backup) if backup else None, "record_error": record_error,
                 "status": D.STATE_LINES[D.STATE_SAME].format(path=target),
                 "restart": RESTART_EDIT if old is not None else RESTART_NEW,
                 "notice": EXECUTION_NOTICE, "warning": dest.get("warning"),
                 "dependency": f"This chip now needs quam_config/{target.name}; every computer that opens this state needs the same file.",
-                "proportional": check.get("proportional"),
+                "proportional": check.get("proportional"), "chip_warning": chip_warning,
+                "registered": registered,
                 "proportional_warning": PROPORTIONAL_WARNING if proportional is False else None}
 
 
-def class_refusal(instance, scope, creates=(), classes=()):
+def _register_module(instance, class_name):
+    """Add the saved module to the modules the environment probe imports."""
+    from quam_state_manager.core import state_env_schema
+    module = "quam_config." + class_name
+    modules = state_env_schema.load_pulse_modules(instance)
+    state_env_schema.save_pulse_modules(instance, list(dict.fromkeys([*modules, module])))
+    return module
+
+
+def lab_package(python):
+    """SM's quam_config folder for *python*, or None when none is set."""
+    configured = config_generator.get_lab_code_dir(python)
+    if not configured:
+        return None
+    lab = Path(configured)
+    return lab if lab.name == "quam_config" else lab / "quam_config"
+
+
+def class_refusal(instance, scope, creates=(), classes=(), lab_folder=None):
     """Why a gate cannot be created yet: it uses (in *creates*, or by name in
     *classes*) an SM class whose file is not saved to quam_config. None when
-    nothing stands in the way. Independent of the lab check's fallback."""
+    nothing stands in the way. Independent of the lab check's fallback.
+
+    A draft that was never published and shares its name with a lab class
+    file in *lab_folder* (no SM header) does not stand for that class."""
     classes = {c for c in classes if isinstance(c, str)}
     root = Path(instance) / D.DRAFTS_DIR / D._scope_key(scope)
     if not root.is_dir():
@@ -235,10 +286,21 @@ def class_refusal(instance, scope, creates=(), classes=()):
         qclass = f"quam_config.{folder.name}.{folder.name}"
         if qclass not in classes and not any(_uses(value, qclass, {}) for _, value in creates):
             continue
-        receipt = W._target_record(instance, scope, folder.name)
+        receipt = W.published_record(instance, scope, folder.name)
         target = receipt.get("path")
+        if not target and lab_folder and _lab_made(Path(lab_folder) / f"{folder.name}.py"):
+            continue
         if not target or not Path(target).is_file():
             return f"Save {folder.name} to quam_config before creating a gate that uses it."
         if receipt.get("importable") is not True:
             return "The selected environment does not import this class file. Save it to its quam_config folder first."
     return None
+
+
+def _lab_made(path):
+    """True for an existing class file without the SM header."""
+    try:
+        with open(path, "rb") as fh:
+            return not fh.read(len(T.HEADER_MARK)).startswith(T.HEADER_MARK.encode())
+    except OSError:
+        return False
