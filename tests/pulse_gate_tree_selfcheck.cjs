@@ -35,7 +35,14 @@ const APP_JS = fs.readFileSync(
 
 let fails = 0;
 function ok(c, m) { if (c) console.log('ok - ' + m); else { console.error('FAIL: ' + m); fails++; } }
-function tick(ms) { return new Promise(function (r) { setTimeout(r, ms || 10); }); }
+function tick(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+async function until(cond, name, capMs = 5000) {
+  const deadline = performance.now() + capMs;
+  while (!cond()) {
+    if (performance.now() >= deadline) throw new Error('Timed out waiting for ' + name);
+    await tick(10);
+  }
+}
 
 const SQ = 'quam.components.pulses.SquarePulse';
 const DATA = {
@@ -187,7 +194,7 @@ const quiet = function (url) {
     a.node.addEventListener('click', function () { bubbled++; });
     const ev = new win.MouseEvent('click', { bubbles: true, cancelable: true });
     link.dispatchEvent(ev);
-    await tick(20);
+    await until(() => navs.length > 0, 'G3: pulse navigation');
     const asked = win._fetchCalls.filter(function (x) { return x.url.indexOf('/pulses/goto?') === 0; });
     ok(asked.length === 1 && asked[0].url === '/pulses/goto?path=qubits.q1.xy.operations.x180&json=1',
        'G3: the server is asked where the pulse lives');
@@ -196,6 +203,7 @@ const quiet = function (url) {
     ok(ev.defaultPrevented && bubbled === 0, 'G3: ...not a page load, and the row does not also react');
     const ev2 = new win.MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true });
     link.dispatchEvent(ev2);
+    // Observe a negative: Ctrl+click must not start another in-app navigation.
     await tick(10);
     ok(navs.length === 1 && !ev2.defaultPrevented, 'G3: Ctrl+click keeps the browser\'s own way (a new tab)');
   }
@@ -207,9 +215,12 @@ const quiet = function (url) {
     }, PAYLOAD);
     const node = hover(win, onPath);
     node.querySelector(':scope > .tree-row .tree-act-del').click();
-    await tick(20);
+    await until(() => node.querySelector('.tree-del-confirm') &&
+      node.querySelector(':scope > .tree-row .tree-row-actions .tree-act-btn'),
+      'delete confirmation for ' + onPath);
     node.querySelectorAll(':scope > .tree-row .tree-row-actions .tree-act-btn')[0].click();
-    await tick(30);
+    await until(() => node.querySelector(':scope > .tree-row > .tree-edit-err'),
+      'G4: delete refusal for ' + onPath);
     return node.querySelector(':scope > .tree-row > .tree-edit-err');
   }
   {
@@ -248,7 +259,8 @@ const quiet = function (url) {
     const panel = node.querySelector(':scope > .tree-crud-panel');
     panel.querySelector('.tree-crud-key').value = 'k';
     panel.querySelector('.tree-crud-ok').click();
-    await tick(30);
+    await until(() => panel.querySelector('.tree-crud-err a.tree-pulses-link'),
+      'G5: add-key refusal link');
     const l = panel.querySelector('.tree-crud-err a.tree-pulses-link');
     ok(!!l && l.getAttribute('href') === '/pulses/goto?path=a', 'G5: the add-key panel shows the link');
   }
@@ -263,7 +275,8 @@ const quiet = function (url) {
     const ta = node.querySelector('.tree-json-textarea');
     ta.value = '{"x180": {}}';
     node.querySelector('.tree-json-editor-bar button').click();
-    await tick(30);
+    await until(() => !node.querySelector('.tree-json-err').hidden,
+      'G5: JSON editor refusal');
     const err = node.querySelector('.tree-json-err');
     ok(!err.hidden && /remove x90/.test(err.textContent) && !!err.querySelector('a.tree-pulses-link'),
        'G5: the JSON editor shows the refusal and the link');
@@ -282,7 +295,8 @@ const quiet = function (url) {
     node.appendChild(row2);
     win._ldReviewButtons(row2, { dot_path: 'qubits.q1.f_01', value: 5 }, node);
     row2.querySelector('.tree-accept-btn').click();
-    await tick(20);
+    await until(() => win._fetchCalls.filter(x => x.url === '/field/edit-batch').length >= 2,
+      'G6: both live-diff edit requests');
     const posts = win._fetchCalls.filter(function (x) { return x.url === '/field/edit-batch'; })
       .map(function (x) { return JSON.parse(x.opts.body); });
     ok(posts.length === 2 && posts.every(function (b) { return b.source === 'live'; }),
@@ -293,10 +307,14 @@ const quiet = function (url) {
     inp.setAttribute('data-dot-path', 'qubits.q1.xy.operations.alias'); inp.value = '#./x180';
     const btn = d.createElement('button'); wrap.appendChild(inp); wrap.appendChild(btn);
     d.body.appendChild(wrap);
+    const reviewStart = win._fetchCalls.length;
     win.reviewAccept(btn);
-    await tick(20);
-    const last = win._fetchCalls[win._fetchCalls.length - 1];
-    ok(last.url === '/field/edit-batch' && JSON.parse(last.opts.body).source === 'live',
+    // Background requests can follow this edit under load; inspect this action's batch.
+    const reviewPosts = () => win._fetchCalls.slice(reviewStart)
+      .filter(x => x.url === '/field/edit-batch');
+    await until(() => reviewPosts().length > 0, 'G6: sync review edit request');
+    const last = reviewPosts()[0];
+    ok(reviewPosts().length === 1 && last.url === '/field/edit-batch' && JSON.parse(last.opts.body).source === 'live',
        'G6: the sync review ✓ says it is taking live');
   }
   {
@@ -322,7 +340,9 @@ const quiet = function (url) {
     ok(win._pulseGateFill() === null, 'G7: asked once, not per call');
     answer({ ok: true, status: 200, json: function () {
       return Promise.resolve(Object.assign({}, PAYLOAD)); } });
-    await pr;
+    let filled = false;
+    pr.then(() => { filled = true; });
+    await until(() => filled, 'G7: cold pulse rows response');
     const a = acts(win, SP);
     ok(!a.del && !a.add && !!a.note, 'G7: once they arrive, the row built too early is rebuilt: no ✕, the note');
     ok(win._treePulseGate.rows_known === true, 'G7: the payload now knows its rows');
@@ -335,7 +355,9 @@ const quiet = function (url) {
     win2._treePulseGate = Object.assign({}, COLD, { rows: [] });
     const built = acts(win2, SP);                  // the new page built this row's actions
     answer({ ok: true, status: 200, json: function () { return Promise.resolve(Object.assign({}, PAYLOAD)); } });
-    await pr2;
+    let replaced = false;
+    pr2.then(() => { replaced = true; });
+    await until(() => replaced, 'G7: replaced page response');
     ok(win2._treePulseGate.rows_known === false, 'G7: an answer for a replaced page is dropped');
     ok(built.del && !!built.node.querySelector(':scope > .tree-row > .tree-row-actions'),
        'G7: ...and touches none of the new page\'s rows');
@@ -358,9 +380,12 @@ const quiet = function (url) {
     }, PAYLOAD);
     const node = hover(win, 'qubits.q1.xy');
     node.querySelector(':scope > .tree-row .tree-act-del').click();
-    await tick(20);
+    await until(() => node.querySelector('.tree-del-confirm') &&
+      node.querySelector(':scope > .tree-row .tree-row-actions .tree-act-btn'),
+      'G8: delete confirmation');
     node.querySelectorAll(':scope > .tree-row .tree-row-actions .tree-act-btn')[0].click();
-    await tick(30);
+    await until(() => node.querySelector(':scope > .tree-row > .tree-edit-err'),
+      'G8: by-name delete refusal');
     const chip = node.querySelector(':scope > .tree-row > .tree-edit-err');
     const force = chip && chip.querySelector('button[data-force-delete]');
     ok(!!chip && chip.textContent.indexOf('plays by name') >= 0, 'G8: the by-name refusal text is shown');
@@ -368,7 +393,8 @@ const quiet = function (url) {
        "G8: ...with one confirm control built from the UI kit's button");
     ok(posts.length === 1 && posts[0] === null, 'G8: the first delete is not forced');
     if (force) force.click();
-    await tick(30);
+    await until(() => !win.document.querySelector('.tree-node[data-path="qubits.q1.xy"]'),
+      'G8: forced deletion removes the node');
     ok(posts.length === 2 && posts[1] === '1', 'G8: the confirm re-posts the delete with force=1');
     ok(!win.document.querySelector('.tree-node[data-path="qubits.q1.xy"]'), 'G8: ...and the forced delete lands');
   }
