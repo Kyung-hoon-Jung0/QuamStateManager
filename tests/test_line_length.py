@@ -88,7 +88,7 @@ MAX_NON_ASCII_LINES = {
     "quam_state_manager/core/script_emitter.py": 67,
     "quam_state_manager/generator/_script_common.py": 1,
     "quam_state_manager/generator/run_build.py": 183,
-    "quam_state_manager/web/routes.py": 1804,
+    "quam_state_manager/web/routes.py": 1803,
     "quam_state_manager/web/static/generate.js": 928,
     "tests/generate_output_timing_selfcheck.cjs": 1,
     "tests/test_line_length.py": 0,
@@ -122,8 +122,14 @@ def _git(*args: str) -> str:
 
 
 def added_lines(diff: str) -> list[str]:
-    """The '+' lines of a zero-context diff, without the '+++' file header."""
-    return [ln[1:] for ln in diff.splitlines() if ln.startswith("+") and not ln.startswith("+++")]
+    """The '+' lines of a zero-context diff; the file header (everything before the first '@@') is dropped."""
+    out, in_hunk = [], False
+    for ln in diff.splitlines():
+        if ln.startswith("@@"):
+            in_hunk = True
+        elif in_hunk and ln.startswith("+"):
+            out.append(ln[1:])
+    return out
 
 
 def bad_new_lines(lines: list[str]) -> list[str]:
@@ -131,16 +137,21 @@ def bad_new_lines(lines: list[str]) -> list[str]:
 
 
 def test_added_lines_and_bad_new_lines_see_what_they_should():
-    diff = chr(10).join(["--- a/f", "+++ b/f", "@@ -1 +1,2 @@", "-old", "+ok", "+" + "x" * (LIMIT + 1), " context"])
-    assert added_lines(diff) == ["ok", "x" * (LIMIT + 1)]
+    diff = chr(10).join(["--- a/f", "+++ b/f", "@@ -1 +1,3 @@", "-old", "+ok", "+" + "x" * (LIMIT + 1),
+                         "+++ x", " context"])
+    assert added_lines(diff) == ["ok", "x" * (LIMIT + 1), "++ x"]
     assert bad_new_lines(added_lines(diff)) == ["x" * (LIMIT + 1)]
     assert bad_new_lines(["fine", "bad " + chr(0x661)]) == ["bad " + chr(0x661)]
 
 
 def test_new_text_is_ascii_and_within_120_characters():
-    """Files outside the two tables: added files whole, modified files only their added lines."""
-    names = _git("diff", "--name-only", "--diff-filter=AM", "main...HEAD").split()
-    added = set(_git("diff", "--name-only", "--diff-filter=A", "main...HEAD").split())
+    """Branch-time check (main...HEAD, from the merge-base): added files whole, modified files only their
+    added lines, for files outside the two tables. A renamed file counts as added. Skipped when nothing differs."""
+    flags = ["-c", "core.quotePath=false", "diff", "--no-renames", "-z", "--name-only"]
+    names = [n for n in _git(*flags, "--diff-filter=AM", "main...HEAD").split("\0") if n]
+    if not names:
+        pytest.skip("no file differs from main (on main or right after a merge): nothing to check")
+    added = {n for n in _git(*flags, "--diff-filter=A", "main...HEAD").split("\0") if n}
     tabled = set(MAX_LONG_LINES) | set(MAX_NON_ASCII_LINES)
     bad = {}
     for rel in names:
@@ -151,7 +162,8 @@ def test_new_text_is_ascii_and_within_120_characters():
             if rel in added:
                 lines = path.read_text(encoding="utf-8").splitlines()
             else:
-                lines = added_lines(_git("diff", "-U0", "main...HEAD", "--", rel))
+                lines = added_lines(_git("-c", "core.quotePath=false", "diff", "--no-renames", "-U0",
+                                         "main...HEAD", "--", rel))
         except UnicodeDecodeError:
             continue  # a binary file
         found = bad_new_lines(lines)
