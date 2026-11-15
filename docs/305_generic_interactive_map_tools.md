@@ -363,8 +363,5 @@ Final-review evidence and unresolved suspicions are recorded outside the
 repository in the release QA notes. See also [plot provenance](306_plot_provenance.md)
 and [the original reproduction path](46_interactive_replot.md).
 
-The waveform lock is machine-wide across environments and SM processes. Each failed OS-lock attempt closes
-its handle and releases the thread RLock before retrying. File initialisation happens only after acquiring the
-OS lock, using the file size rather than reading the locked byte. If initialisation fails, the OS lock is
-explicitly released before closing the handle; the thread lock is released even if cleanup fails. Draw, warm-config
-and gate checks wait at most 30 seconds by default, then answer that the lab environment is busy; no lab job starts on that path.
+The lab waveform lock (one per machine; bounded wait, then a busy answer) is described in
+[docs/218 section 3](218_lab_pulse_classes_and_new_pulse.md#machine-wide-lab-lock).

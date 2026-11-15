@@ -85,5 +85,7 @@
         }, { once: true });
     });
 
-    window.GateStatus = { busy: function () { return activating.size > 0; }, closeOffer: closeOffer, offerOpen: offerOpen };
+    window.GateStatus = {
+        busy: function () { return activating.size > 0; }, closeOffer: closeOffer, offerOpen: offerOpen
+    };
 })();

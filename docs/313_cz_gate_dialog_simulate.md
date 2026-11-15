@@ -14,9 +14,10 @@ Code: `quam_state_manager/web/static/cz-gate.js` (section "simulate"); server: `
   "Show simulated output" switch appears. One common start latency is estimated from the half-height leading
   edges of the config and simulated output, relative to their pre-pulse baselines (zero for config pulse
   samples, the first voltage for simulated output). The sharpest edge supplies the estimate; all driven lanes
-  must agree within one sample. The same shift is applied to every port and stated in the note, preserving port-delay differences.
-  Missing output, unknown time steps, cut or decimated output, disagreeing edges, or a negative latency keep the raw
-  simulator time axis, with simulator start at 0 ns stated in the note. The simulation window margin is unchanged. A `time_step_unknown` port is never drawn. `time_step_note`, `cut_note`,
+  must agree within one sample. The same shift is applied to every port and stated in the note, preserving
+  port-delay differences. Missing output, unknown time steps, cut or decimated output, disagreeing edges, or a
+  negative latency keep the raw simulator time axis, with simulator start at 0 ns stated in the note. The
+  simulation window margin is unchanged. A `time_step_unknown` port is never drawn. `time_step_note`, `cut_note`,
   `note` and `cannot_draw` are shown verbatim; an unmatched port and a lane without a port each get one line.
 - Any form edit, pair change, new check or close drops the run: polling stops, a running run is stopped, traces,
   line and notes are cleared. A failed fetch or a non-JSON answer shows `Not simulated: the app did not answer.`

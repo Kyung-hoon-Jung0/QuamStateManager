@@ -84,6 +84,17 @@ Doors (fix 3 report): refuse — `/field/edit`, `/field/edit-batch`, `/pulse/edi
 `_replay_updates`, extras writes, type-fix, diagnostics fix, quam_builder gate writes,
 duplicate/copy/rename/delete (rename/delete reopened in Round 3).
 
+### Machine-wide lab lock
+
+The waveform lock is machine-wide across environments and SM processes. Each failed OS-lock attempt closes its
+handle and releases the thread RLock before retrying. File initialisation happens only after acquiring the OS lock,
+using the file size rather than reading the locked byte. If initialisation fails, the OS lock is explicitly released
+before closing the handle; the thread lock is released even if cleanup fails. Draw, warm-config and gate checks wait
+at most 30 seconds by default, then answer that the lab environment is busy; no lab job starts on that path.
+
+Code: `core/lab_worker.py` `machine_lock`; the bounded wait is `core/lab_waveform.py` `_wait_machine_lock`
+(`GATE_CHECK_LOCK_WAIT_S` for gate checks, answer `LAB_BUSY`). Pins: `tests/test_lab_lock_release.py`.
+
 ## 4. Found by the independent verification and fixed
 
 **w7/adaptive.** Verifier at `3326bf5`: P2 module named during a running probe stuck "not read yet"; P2

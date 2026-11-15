@@ -200,17 +200,35 @@ def line_count_words(n):
 
 #: the example gate's lines as its table shows them: (line, starts at, ends at), ns
 EXAMPLE_SPANS = (("q1.z", 161, 261), ("coupler_q1_q2", 0, 60))
+#: the example's largest level per line, V, as its table shows them (state "ok"; "danger" plays 3 V on q1.z)
+EXAMPLE_PEAKS = {"q1.z": 0.1, "coupler_q1_q2": 0.05}
+EXAMPLE_OVER = {"q1.z": 3.0}
 
 
-def timing_tile(spans):
-    """The Timing tile of *spans* as the gate dialog shows it: value, note and
-    tone come from ``gate_timeline_view.tiles`` (the dialog's rule), and only
-    the warn and danger tones are kept, as cz-gate.js ``renderTiles`` does."""
+def example_lanes(over=False):
+    """The example gate's lines in the shape ``gate_timeline_view.tiles`` reads:
+    its spans and largest levels; with *over*, q1.z plays over its port's range."""
+    peaks = dict(EXAMPLE_PEAKS, **(EXAMPLE_OVER if over else {}))
+    return [{"key": k, "group": "gate",
+             "segments": [{"start_ns": a, "end_ns": b, "peak_v": peaks[k], "min_v": 0.0,
+                           "flags": ["over_range"] if over and k in EXAMPLE_OVER else []}]}
+            for k, a, b in EXAMPLE_SPANS]
+
+
+def dialog_tiles(lanes):
+    """The Key numbers tiles of *lanes* as the gate dialog shows them: label,
+    value, unit, note and tone come from ``gate_timeline_view.tiles`` (the
+    dialog's rule), and only the warn and danger tones are kept, as cz-gate.js
+    ``renderTiles`` does."""
     from quam_state_manager.core.gate_timeline_view import tiles
-    lanes = [{"key": k, "group": "gate", "segments": [{"start_ns": a, "end_ns": b}]} for k, a, b in spans]
-    t = next(t for t in tiles({"lanes": lanes}) if t["key"] == "timing")
-    return {"label": t["label"], "value": t["value"], "unit": t["unit"], "note": t["note"],
-            "tone": t["tone"] if t["tone"] in ("warn", "danger") else None}
+    return [{"label": t["label"], "value": t["value"], "unit": t["unit"] or None, "note": t["note"],
+             "tone": t["tone"] if t["tone"] in ("warn", "danger") else None}
+            for t in tiles({"lanes": lanes})]
+
+
+def timing_tile(lanes):
+    """The Timing tile of *lanes* as the gate dialog shows it (see :func:`dialog_tiles`)."""
+    return next(t for t in dialog_tiles(lanes) if t["label"] == "Timing")
 
 
 def gap_note(tile):
@@ -256,13 +274,9 @@ def reading_evidence(state):
                "why": "Checked on a copy of the chip: it loads, and the gate runs."} if ok else
               {"part": "verdict", "strong": True, "tone": "danger", "key": "Cannot be created yet",
                "why": "q1.z would play 3 V; the port limit is 2.5 V. Lower the amplitude and check again."})
-    timing = timing_tile(EXAMPLE_SPANS)
-    gap = gap_note(timing)
-    stats = {"part": "stats", "label": "Key numbers", "tiles": [
-        {"label": "Lines", "value": "2"},
-        {"label": "Gate length", "value": "261", "unit": "ns"},
-        {"label": "Highest level", "value": "0.1" if ok else "3", "unit": "V on q1.z", "tone": None if ok else "danger"},
-        timing]}
+    lanes = example_lanes(over=not ok)
+    gap = gap_note(timing_tile(lanes))
+    stats = {"part": "stats", "label": "Key numbers", "tiles": dialog_tiles(lanes)}
     rows = [[{"text": "cz_fast_pulse_q1_q2", "line": 1}, "100 ns", "0.1 V" if ok else {"text": "3 V", "tone": "danger", "note": "limit 2.5 V"},
              {"text": "161 ns", "tone": "warn", "note": "port delay"}],
             [{"text": "cz_fast_coupler_pulse_q1_q2", "line": 2}, "60 ns", "0.05 V", "0 ns"]]
@@ -298,10 +312,8 @@ def _reading():
                            ("note", "Not checked on hardware", "Only the samples written to the config are compared.")):
         out.append((sec, "Banner " + tone, {"part": "verdict", "strong": True, "tone": tone, "key": key, "why": why}))
     out += [
-        (sec, "Stats, one abnormal tile", {"part": "stats", "label": "Key numbers", "tiles": [
-            {"label": "Lines", "value": "2"}, {"label": "Gate length", "value": "261", "unit": "ns"},
-            {"label": "Highest level", "value": "3", "unit": "V on q1.z", "tone": "danger"},
-            timing_tile(EXAMPLE_SPANS)]}),
+        (sec, "Stats, a danger and a warn tile", {"part": "stats", "label": "Key numbers",
+                                                  "tiles": dialog_tiles(example_lanes(over=True))}),
         (sec, "Checks, one failed and one skipped", {"part": "checks", "checks": [
             {"name": "Chip loads", "state": "pass"}, {"name": "Pulse lengths", "state": "pass"},
             {"name": "Output range", "state": "fail", "why": "3 V on q1.z is above the 2.5 V limit."},

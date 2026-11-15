@@ -1,5 +1,10 @@
 {
- "_about": "Display vectors: each reason text must reach every surface byte-identical (the agent's answer, the person's dialog). name says whether the planner marked it as a reason a new gate name fixes; that mark travels in name_refusals, never in the words. Read by tests/test_cz_gate_name_refusals.py and tests/cz_gate_dialog_selfcheck.cjs.",
+ "_about": [
+  "Display vectors: each reason text must reach every surface byte-identical (the agent's answer, the",
+  "person's dialog). name says whether the planner marked it as a reason a new gate name fixes; that",
+  "mark travels in name_refusals, never in the words. Read by tests/test_cz_gate_name_refusals.py and",
+  "tests/cz_gate_dialog_selfcheck.cjs."
+ ],
  "reasons": [
   {
    "case": "a typed gate name holding a sentence end and a colon",
