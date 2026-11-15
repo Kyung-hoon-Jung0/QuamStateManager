@@ -33,6 +33,7 @@ def env(tmp_path):
     (live / "wiring.json").write_text(json.dumps(_WIRING), encoding="utf-8")
     app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
     c = app.test_client()
+    c.environ_base["HTTP_X_SM_WINDOW_ID"] = "window-a"
     assert c.post("/load", data={"folder": str(live)}).status_code in (200, 302)
     return {"app": app, "client": c, "live": live}
 
@@ -76,7 +77,8 @@ def test_an_undo_during_a_push_undoes_the_pushed_action(env, monkeypatch):
 
     def undo():
         with env["app"].test_client() as c3:
-            out["undo"] = c3.post("/undo").status_code
+            out["undo"] = c3.post(
+                "/undo", headers={"X-SM-Window-ID": "window-a"}).status_code
 
     u = threading.Thread(target=undo)
     u.start()

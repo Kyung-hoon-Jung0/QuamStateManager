@@ -20,7 +20,8 @@ import logging
 import re
 import threading
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +71,10 @@ def natural_key(name: str) -> tuple:
     return (parts, str(name))
 
 
+# Request-local provenance. Background modifiers deliberately have no window.
+edit_window_id: ContextVar[str | None] = ContextVar("edit_window_id", default=None)
+
+
 @dataclass
 class ChangeEntry:
     """One recorded edit (used by modifier.py and saver.py later)."""
@@ -87,6 +92,7 @@ class ChangeEntry:
     # docs/172: who staged it -- "human" from the window, "agent" through the
     # MCP bridge. The tray shows it; a human's Apply names the agent's share.
     actor: str = "human"
+    window_id: str | None = field(default_factory=edit_window_id.get)
     origin: dict | None = None
     key_index: int | None = None  # Original dictionary position for deleted keys.
 

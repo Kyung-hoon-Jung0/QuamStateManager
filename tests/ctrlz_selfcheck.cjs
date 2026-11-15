@@ -481,6 +481,28 @@ ok(calls[n0] && calls[n0].opts && calls[n0].opts.source
    && calls[n0].opts.target === '#pending-tray',
    'redo request rides the queue\'s own sync lane, targets the tray');
 
+// Ctrl+Y redoes on every OS; Cmd+Y (metaKey only) is the browser's History chord on macOS
+// and must reach neither /redo nor preventDefault; Cmd+Shift+Z is the macOS redo.
+function pressChord(init) {
+    const ev = new window.KeyboardEvent('keydown', Object.assign({ bubbles: true, cancelable: true }, init));
+    window.document.dispatchEvent(ev);
+    return ev;
+}
+await settle();
+n0 = calls.length;
+pressChord({ key: 'y', ctrlKey: true });
+ok(calls.length === n0 + 1 && calls[n0].url === '/redo', 'Ctrl+Y posts /redo');
+await settle();
+n0 = calls.length;
+const cmdY = pressChord({ key: 'y', metaKey: true });
+await settle();
+ok(calls.length === n0, 'Cmd+Y issues no request (got ' + (calls.length - n0) + ')');
+ok(!cmdY.defaultPrevented, 'Cmd+Y default not prevented (browser History chord)');
+n0 = calls.length;
+pressChord({ key: 'Z', metaKey: true, shiftKey: true });
+ok(calls.length === n0 + 1 && calls[n0].url === '/redo', 'Cmd+Shift+Z posts /redo');
+await settle();
+
 // guard: inside an <input> the browser keeps native redo
 await settle();
 inp.focus();

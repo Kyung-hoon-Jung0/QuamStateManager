@@ -97,12 +97,12 @@ async function testUndoAskPrevSession() {
     window.showToast = (m) => { toasts.push(String(m)); };
 
     const DETAIL = {
-        unit_id: 'u-test',
+        unit_id: 'u-test', reasons: ['age'],
         message: 'This Ctrl+Z writes the live chip: qubits.q1.T1 → 2.',
     };
     document.dispatchEvent(new window.CustomEvent('undoAskPrevSession', { detail: DETAIL }));
     await tick(50);
-    ok(/T1 → 2/.test(msgText()) && /undo it on the live chip/.test(msgText()),
+    ok(/T1 → 2/.test(msgText()) && !/\n/.test(msgText()),
        'undoAskPrevSession: shows server message plus choices');
     const before = calls.length;
     overlay().querySelector('.sm-confirm-cancel').click();

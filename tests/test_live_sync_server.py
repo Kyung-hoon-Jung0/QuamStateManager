@@ -64,6 +64,7 @@ def env(tmp_path):
     _write_chip(live, _state())
     app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
     c = app.test_client()
+    c.environ_base["HTTP_X_SM_WINDOW_ID"] = "window-a"
     assert c.post("/load", data={"folder": str(live)}).status_code in (200, 302)
     return {"app": app, "client": c, "live": live, "tmp": tmp_path}
 
@@ -592,6 +593,7 @@ def _pair_env(tmp_path):
     _write_chip(live, st)
     app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
     c = app.test_client()
+    c.environ_base["HTTP_X_SM_WINDOW_ID"] = "window-a"
     assert c.post("/load", data={"folder": str(live)}).status_code in (200, 302)
     return c
 
@@ -697,6 +699,7 @@ def null_env(tmp_path):
     _write_chip(live, st)
     app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
     c = app.test_client()
+    c.environ_base["HTTP_X_SM_WINDOW_ID"] = "window-a"
     assert c.post("/load", data={"folder": str(live)}).status_code in (200, 302)
     return {"app": app, "client": c, "live": live, "tmp": tmp_path}
 
