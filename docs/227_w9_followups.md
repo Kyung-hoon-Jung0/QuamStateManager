@@ -181,8 +181,8 @@ base). In process: the batch pre-check for 2,000 leaf rows ~37 ms,
 chip 47-77 ms (never on a request path).
 
 **Pins.** `tests/test_pulse_structure.py` (99), `tests/pulse_gate_tree_selfcheck.cjs`
-(G1-G7), journeys `pulse_gate.cjs` + `pair_add_gate_pulses.cjs` +
-`pulses_delete_together.cjs`; updated `test_lab_doors`,
+(G1-G7), journeys `pulse_gate.cjs` + `pulses_delete_together.cjs` (the pair
+Add-gate journey left with the old CZ builder in 193e0547); updated `test_lab_doors`,
 `test_pulse_delete_together`, `test_field_crud_routes`,
 `test_web::TestAddGateFlow`, `test_cr_surfaces`, `test_pulses_routes`. Two
 sweeps: 40 → 32 red + 4 equivalent + 3 pinned + 1 anchor; 56 → 56 red after

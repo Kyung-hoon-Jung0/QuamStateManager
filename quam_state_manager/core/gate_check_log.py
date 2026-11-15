@@ -201,6 +201,14 @@ def outcome(result: dict | None, entry: dict | None, *,
             out["failed"].append({"check": name, "label": CHECK_LABELS.get(name, name),
                                   "reason": str(c.get("message") or "A check failed.")})
     if out["failed"]:
+        # the checks that passed beside the failed ones are still counted:
+        # "1 failed, 5 passed", never "1 failed, 0 passed"
+        unrun = set((entry or {}).get("unchecked") or []) | set(
+            (entry or {}).get("partly_checked") or [])
+        out["passed"] = sum(
+            1 for name, c in checks.items()
+            if isinstance(c, dict) and c.get("status") in ("pass", "note")
+            and name not in unrun and not c.get("not_run") and not c.get("partly"))
         out["kind"] = KIND_FAILED
         out["reason"] = out["failed"][0]["reason"]
         out["summary"] = (f"{len(out['failed'])} of {out['total']} checks failed: "

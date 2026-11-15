@@ -62,6 +62,18 @@ def test_outcome_wording_for_the_three_cases():
     assert _oc("none")["kind"] == log.KIND_NONE
 
 
+def test_a_failed_check_still_counts_the_checks_that_passed():
+    """One failing of six: "1 failed, 5 passed", never "1 failed, 0 passed"."""
+    oc = _oc("failed")
+    assert (len(oc["failed"]), oc["passed"], oc["total"]) == (1, 5, 6)
+    # a check that could not run beside the failure is not counted as passed
+    c = json.loads(json.dumps(CASES["failed"]))
+    gate = c["result"]["gates"][0]
+    gate["unchecked"] = ["preview"]
+    oc = log.outcome(c["result"], gate)
+    assert (len(oc["failed"]), oc["passed"]) == (1, 4)
+
+
 def test_result_of_a_check():
     assert log.result_of(None) == (log.NOT_CHECKED, "no check ran")
     assert log.result_of(_oc("checked")) == (log.CHECKED, None)

@@ -359,7 +359,7 @@ def test_dialog_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):
     r = subprocess.run([node, str(root / "tests" / "cz_gate_dialog_selfcheck.cjs")], env=env,
                        capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
-    assert "ok cz_gate_dialog_selfcheck (364 assertions)" in r.stdout
+    assert "ok cz_gate_dialog_selfcheck (365 assertions)" in r.stdout
 
 
 def test_simulate_client_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):
@@ -886,9 +886,15 @@ def test_dialog_tables_scroll_and_hint_has_a_gap():
     assert _decls(_rule(mt, "[data-verify-hint]"))["margin-inline-start"] == "var(--ui-gap-2)"
 
 
+#: the attributes a reader gets (a screen reader, a hover, an empty field, a missing image)
+READER_ATTRS = ("aria-label", "title", "placeholder", "alt")
+
+
 def _kit_example_text_nodes(over_html=None):
-    """Every visible text node of the kit's gate-dialog example on /ui-kit: the reading-order dialog
-    body (form and result columns) and the reading-order specs that stand for the dialog's parts."""
+    """Every text the reader gets from the kit's gate-dialog example on /ui-kit: the visible text nodes
+    and the reader-visible attributes (``aria-label``, ``title``, ``placeholder``, ``alt``, a button's
+    ``value``) of the reading-order dialog body (form and result columns) and of the reading-order specs
+    that stand for the dialog's parts. An input's ``value`` is example data, not read."""
     from html.parser import HTMLParser
     from quam_state_manager.web import ui_kit_fixtures as kit
     if over_html is None:
@@ -906,10 +912,15 @@ def _kit_example_text_nodes(over_html=None):
             self.stack, self.out, self.roots = [], [], 0
 
         def handle_starttag(self, tag, attrs):
-            if tag in void:
-                return
             a = dict(attrs)
             inside = a.get("id") in ids or "ui-kit-reading" in (a.get("class") or "").split()
+            if inside or any(self.stack):
+                shown = list(READER_ATTRS)
+                if tag == "button" or (tag == "input" and a.get("type") in ("button", "submit", "reset")):
+                    shown.append("value")
+                self.out.extend(a[k].strip() for k in shown if (a.get(k) or "").strip())
+            if tag in void:
+                return
             self.roots += inside
             self.stack.append(inside)
 
@@ -988,20 +999,28 @@ def test_every_word_of_the_kit_dialog_example_is_the_dialogs():
 
 
 def test_the_kit_example_counts_are_its_own_rows():
-    """The counts the kit example writes are counted from its own rows, in the dialog's formats."""
+    """Every count the kit example writes is counted from its own rows, in the dialog's formats:
+    the cells over the limit, and the failed, passed and total checks (the spectator note is
+    listed but not counted, gate_check_log ``_counted``)."""
+    from quam_state_manager.core import gate_check
     from quam_state_manager.web import ui_kit_fixtures as kit
+    note = kit.dialog_words("CHECK_WORDS").get(gate_check.OWN_CHECK, gate_check.OWN_CHECK)
     for state in ("ok", "danger"):
         body = kit.reading_evidence(state)[0]["body"]
         table = next(p for p in body if p.get("title") == "Entered and actual")
-        over = sum(1 for r in table["body"][0]["rows"] for c in r if isinstance(c, dict) and c.get("tone") == "danger")
+        over = sum(1 for r in table["body"][0]["rows"] for c in r
+                   if isinstance(c, dict) and c.get("tone") == "danger")
         assert over == (len(kit.EXAMPLE_OVER) if state == "danger" else 0)
         assert table["summary"][0]["text"] == (str(over) + " over the limit" if over else "all as entered")
         chk = next(p for p in body if p.get("title") == "Checks")
         rows = chk["body"][0]["checks"]
-        failed = sum(1 for c in rows if c["state"] == "fail")
+        counted = [c for c in rows if c["name"] != note]
+        assert len(counted) == len(rows) - 1, rows
+        failed = sum(1 for c in counted if c["state"] == "fail")
+        passed = sum(1 for c in counted if c["state"] == "pass")
+        assert failed == (1 if state == "danger" else 0)
         said = chk["summary"][0]["text"]
         if failed:
-            assert re.fullmatch(r"%d failed, \d+ passed" % failed, said), said
+            assert said == "%d failed, %d passed" % (failed, passed), said
         else:
-            counted = len(rows) - 1  # the spectator note is listed but not counted (gate_check_log)
-            assert said == "%d of %d passed" % (counted, counted), said
+            assert said == "%d of %d passed" % (passed, len(counted)), said

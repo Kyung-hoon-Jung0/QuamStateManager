@@ -66,7 +66,7 @@
     ],
     "kind": "failed",
     "not_run": [],
-    "passed": 0,
+    "passed": 5,
     "reason": "The pulse leaves the output range.",
     "summary": "1 of 6 checks failed: output range check.",
     "total": 6

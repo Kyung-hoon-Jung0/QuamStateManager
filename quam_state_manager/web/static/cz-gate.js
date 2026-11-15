@@ -464,7 +464,9 @@
     function spectRefusals(pair) {
         var pr = planRow(pair);
         var named = (pr && pr.name_refusals) || [];
-        return ((pr && !pr.ok && pr.refusals) || []).filter(function (r) { return /spectator/i.test(r) && named.indexOf(r) < 0; });
+        return ((pr && !pr.ok && pr.refusals) || []).filter(function (r) {
+            return /spectator/i.test(r) && named.indexOf(r) < 0;
+        });
     }
     /* The unit method's cells of one ticked row: the unit amplitude (typed when the
        line has no unit operation) and the read-only allowed range. The range is the
@@ -1193,7 +1195,10 @@
         var why = clear($('czg-name-why'));
         var aboutClass = fp && !fp.ok ? (fp.class_refusals || []) : [];
         var aboutSpect = fp ? spectRefusals(fp.pair) : [];
-        var split = splitRefusals(fp && !fp.ok ? (fp.refusals || []).filter(function (r) { return aboutClass.indexOf(r) < 0 && aboutSpect.indexOf(r) < 0; }) : [],
+        var others = fp && !fp.ok ? (fp.refusals || []).filter(function (r) {
+            return aboutClass.indexOf(r) < 0 && aboutSpect.indexOf(r) < 0;
+        }) : [];
+        var split = splitRefusals(others,
                                   fp && !fp.ok ? (fp.name_refusals || []) : []);
         var bad = split.names;
         var general = clear($('czg-refusals'));
@@ -1632,7 +1637,9 @@
                       + line.charAt(0).toUpperCase() + line.slice(1)), 'verdict');
         }
         pairs.forEach(function (p) {
-            (p.tiles || []).filter(function (t) { return t.key === 'timing' && t.tone === 'warn'; }).forEach(function (t) {
+            (p.tiles || []).filter(function (t) {
+                return t.key === 'timing' && t.tone === 'warn';
+            }).forEach(function (t) {
                 $('czg-alert').appendChild(el('p', 'ui-note', (many ? p.pair + ': ' : '')
                     + 'The gate lines have a ' + t.value + ' ns gap with no overlap. Check the port delays.'));
             });
