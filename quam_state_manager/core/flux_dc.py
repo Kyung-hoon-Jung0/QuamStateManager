@@ -171,7 +171,7 @@ def _stored_number(merged: dict, segs: tuple) -> tuple[float | None, str | None]
     if why:
         return None, why
     leaf = ".".join(segs)
-    if v is _SENTINEL or v is None:
+    if v is _SENTINEL:
         return None, f"no value is stored at {leaf}"
     if not _number(v):
         return None, f"the value {v!r} at {leaf} is not a finite number of V"
@@ -235,10 +235,14 @@ def _coupler_names(merged: dict, key: str, node: Any) -> set:
 
 
 def _is_qubit_component(merged: dict, element: str) -> bool:
-    """*element* is ``<qubit>.<component>`` for a qubit in ``qubits``."""
+    """*element* is ``<qubit>.<component>`` for a component stored on a
+    qubit in ``qubits``."""
     qubits = merged.get("qubits") if isinstance(merged, dict) else None
     q, dot, rest = element.partition(".")
-    return bool(dot and rest) and isinstance(qubits, dict) and q in qubits
+    if not (dot and rest) or not isinstance(qubits, dict):
+        return False
+    node = qubits.get(q)
+    return isinstance(node, dict) and rest.split(".")[0] in node
 
 
 def _find_coupler(merged: dict, element: str) -> tuple[tuple | None, str | None]:

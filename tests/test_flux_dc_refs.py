@@ -316,7 +316,7 @@ def test_plain_chip_output_is_unchanged():
 
 DANGLING = {"qubits": {"q1": {"z": {"flux_point": "joint", "joint_offset": 0.1},
                               "xy": {}, "resonator": {}},
-                       "q2": {"z": {"flux_point": "joint", "joint_offset": 0.2}}},
+                       "q2": {"xy": {}, "z": {"flux_point": "joint", "joint_offset": 0.2}}},
             "qubit_pairs": {"q1-2": {"coupler": {"id": "c12", "decouple_offset": 0.05}},
                             "q3-4": {"coupler": "#/nowhere"}}}
 
@@ -330,6 +330,18 @@ def test_dangling_coupler_keeps_a_qubit_component(element):
 def test_dangling_coupler_refuses_what_it_could_be(element):
     levels, why = _levels(copy.deepcopy(DANGLING), element)
     assert levels is None and "qubit_pairs.q3-4.coupler" in why
+
+
+def test_dangling_coupler_refuses_a_component_the_qubit_does_not_store():
+    levels, why = _levels(copy.deepcopy(DANGLING), "q1.coupler")
+    assert levels is None and "qubit_pairs.q3-4.coupler" in why
+
+
+def test_stored_none_is_named_as_a_value_not_as_absent():
+    m = {"qubits": {"q": {"z": {"flux_point": "joint", "joint_offset": 0.1, "min_offset": None}}}}
+    levels, why = _levels(m, "q.z")
+    assert levels is None
+    assert why == "the value None at qubits.q.z.min_offset is not a finite number of V"
 
 
 def test_dangling_coupler_still_finds_the_resolved_one():
