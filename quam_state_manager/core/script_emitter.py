@@ -88,7 +88,7 @@ _RUNTIME_FUNCS = (
     "_bands_covering", "_port_key", "_fix_coupled_bands", "_out_label", "_align_coupler_delays",
     "_is_mw_output", "_used_port_paths", "_container_ports", "_ports_in_use", "_mw_output_ports",
     "_output_timing_plan", "_set_delay", "_tof_provenance", "_user_set_tof", "_lf_output_ports",
-    "_same_number", "_output_key", "_readout_delay",
+    "_same_number", "_output_key", "_readout_delay", "_undo_readout",
     "_align_output_timing",
     "_default_flux_upsampling",
     "_set_port_lo", "_set_channel_lo", "_set_channel_band", "_operation",
