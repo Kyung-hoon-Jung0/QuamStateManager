@@ -10,13 +10,13 @@ A standalone module that resolves QUAM's custom JSON pointer syntax. QUAM state 
 |--------|---------|----------|
 | `#/`   | `"#/qubits/qA1/anharmonicity"` | **Absolute** -- navigate from the JSON root |
 | `#../` | `"#../x180_DragCosine/length"` | **Relative-up** -- go to parent dict, then navigate down |
-| `#./`  | `"#./inferred_RF_frequency"` | **Self-ref** -- QUAM runtime alias, returned as-is (never resolved by this resolver, at the leaf or in the middle of a chain) |
+| `#./`  | `"#./inferred_RF_frequency"` | **Self-ref** -- QUAM runtime alias, returned as-is (never resolved here) |
 
 A `#./` is followed only by the separate, opt-in field follower
 `core/pointer_path.py:resolve_field_target` (when the leaf it names is stored): `state_get`
 (docs/257), Live-Edit click-to-edit, and the time-of-flight band shift (`output_timing.stored_tof`,
-with `cross=True`, docs/27). The resolver itself never follows one; Compare's "derived" rule
-(`compare.py`, a chain ending on `#./`) relies on that.
+with `cross=True`, docs/27). The resolver itself never follows one, at the leaf or in the middle of a
+chain; Compare's "derived" rule (`compare.py`, a chain ending on `#./`) relies on that.
 
 ### Key design decisions
 
@@ -24,7 +24,8 @@ with `cross=True`, docs/27). The resolver itself never follows one; Compare's "d
 
 2. **Dict-based cache** keyed on `(pointer_string, current_path_tuple)`. Same pointer at different locations can resolve differently for `#../` pointers, so the current_path is part of the key. Cache must be cleared after any mutation via `clear_cache()`.
 
-3. **Cycle detection** via a `frozenset[str]` of visited pointers passed through recursive calls. If a pointer chain leads back to itself, we log a warning and return the raw pointer string. This is cheap insurance -- no cycles exist in current data, but a misconfigured state file shouldn't hang the app. The resolver has no other hop limit; the field follower (`pointer_path._MAX_HOPS`, 64) has its own.
+3. **Cycle detection** via a `frozenset[str]` of visited pointers passed through recursive calls. If a pointer chain leads back to itself, we log a warning and return the raw pointer string. This is cheap insurance -- no cycles exist in current data, but a misconfigured state file shouldn't hang the app.
+   The resolver has no other hop limit; the field follower (`pointer_path._MAX_HOPS`, 64) has its own.
 
 4. **Graceful failure.** If a pointer can't be resolved (missing key, bad format), the raw pointer string is returned and a warning is logged. The app never crashes on bad pointers.
 

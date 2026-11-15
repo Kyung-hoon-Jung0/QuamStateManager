@@ -3,8 +3,9 @@
 ruff checks Python code at 120 (pyproject.toml); this also covers the docs, JS and
 selfchecks of the time of flight band shift. Each file keeps at most the count of
 long lines it had when the ratchet was set (lines written before the 120 rule).
-Lower a count when lines are re-wrapped; never raise it.
+Lower a count when lines are re-wrapped (a count that went down is reported); never raise it.
 """
+import warnings
 from pathlib import Path
 
 import pytest
@@ -13,8 +14,8 @@ ROOT = Path(__file__).resolve().parent.parent
 LIMIT = 120
 
 MAX_LONG_LINES = {
-    "docs/00_overview.md": 101,
-    "docs/01_pointer_resolver.md": 12,
+    "docs/00_overview.md": 100,
+    "docs/01_pointer_resolver.md": 11,
     "docs/257_state_get_follows_self_pointers.md": 3,
     "docs/27_config_generator.md": 15,
     "quam_state_manager/core/output_timing.py": 0,
@@ -43,9 +44,25 @@ def test_long_lines_counts_characters_not_line_endings():
     assert long_lines("ok\n" + "x" * (LIMIT + 1) + "\n") == [2]
 
 
+def judge(rel: str, found: list[int], most: int) -> None:
+    """Fail when *rel* has more long lines than *most*; warn when it has fewer."""
+    assert len(found) <= most, (
+        f"{rel} has {len(found)} lines over {LIMIT} characters (at most {most}); "
+        f"re-wrap the new ones (lines {found})")
+    if len(found) < most:
+        warnings.warn(f"{rel}: lines over {LIMIT} went down -- lower the baseline to {len(found)}")
+
+
+def test_judge_fails_a_count_that_grew_and_reports_one_that_went_down():
+    with pytest.raises(AssertionError):
+        judge("x.md", [3, 9], 1)
+    with pytest.warns(UserWarning, match="lower the baseline to 1"):
+        judge("x.md", [3], 2)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        judge("x.md", [3], 1)
+
+
 @pytest.mark.parametrize("rel", sorted(MAX_LONG_LINES))
 def test_no_new_line_over_120_characters(rel):
-    found = long_lines((ROOT / rel).read_text(encoding="utf-8"))
-    assert len(found) <= MAX_LONG_LINES[rel], (
-        f"{rel} has {len(found)} lines over {LIMIT} characters (at most {MAX_LONG_LINES[rel]}); "
-        f"re-wrap the new ones (lines {found})")
+    judge(rel, long_lines((ROOT / rel).read_text(encoding="utf-8")), MAX_LONG_LINES[rel])

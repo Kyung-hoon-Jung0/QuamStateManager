@@ -212,6 +212,7 @@ def test_cross_tells_nested_crossings_apart_by_the_whole_path_still_to_walk():
     assert r["resolved_path"] == "d.w.k" and r["resolved_value"] == 26
     assert [h["from_path"] for h in r["chain"]] == ["q.leaf", "a.ref", "c.p", "d.w.z", "e.r", "c.p"]
 
+
 def _chain(hops: int) -> dict:
     """q.leaf -> h0 -> ... -> h{hops-2} -> number: exactly *hops* pointers followed."""
     m = {"h": {f"h{i}": f"#/h/h{i + 1}" for i in range(hops - 1)}, "q": {"leaf": "#/h/h0"}}
@@ -249,3 +250,135 @@ def test_cross_counts_every_pointer_of_the_walk_once():
         m["h"]["end"] = {"x": 26}
         r = resolve_field_target(m, "q.leaf", cross=True)
         assert r["resolvable"] is ok and len(r["chain"]) == min(n + 1, _MAX_HOPS)
+
+
+# ---------------------------------------------------------------------------
+# cross: the walk against an independent reference, over many small graphs
+# ---------------------------------------------------------------------------
+
+_LIMIT = 64   # the documented whole-walk pointer limit (docs/27); pinned against _MAX_HOPS below
+
+
+def _reference_walk(merged: dict, path: list[str]) -> dict:
+    """A deliberately naive walker for absolute pointers, as quam reads them.
+
+    One flat list of keys still to descend. A pointer at the current node sends
+    the walk back to the root with the pointer's keys put in front of that list.
+    A cycle is the exact same full state met again: the node holding the
+    pointer, the pointer, and every key still to descend. At most _LIMIT
+    pointers are followed in the whole walk.
+    """
+    todo = list(path)
+    at: list[str] = []
+    node = merged
+    seen: set = set()
+    hops: list[str] = []
+    crossed = False   # a pointer met with keys of an earlier pointer still to descend
+    while True:
+        if isinstance(node, str) and node.startswith("#/"):
+            state = (tuple(at), node, tuple(todo))
+            if state in seen:
+                return {"ok": False, "why": "cycle", "hops": hops}
+            seen.add(state)
+            crossed = crossed or bool(hops and todo)
+            if len(hops) == _LIMIT:
+                return {"ok": False, "why": "limit", "hops": hops}
+            hops.append(".".join(at))
+            todo = [s for s in node[2:].split("/") if s] + todo
+            at, node = [], merged
+            continue
+        if not todo:
+            return {"ok": True, "why": "", "at": at, "value": node, "hops": hops, "crossed": crossed}
+        key = todo.pop(0)
+        if not isinstance(node, dict) or key not in node:
+            return {"ok": False, "why": "missing", "hops": hops}
+        at, node = at + [key], node[key]
+
+
+def _agrees(merged: dict, path: list[str]) -> dict:
+    ref = _reference_walk(merged, path)
+    got = resolve_field_target(merged, path, cross=True)
+    case = f"{merged} at {path}: reference {ref}, resolver {got}"
+    assert got["resolvable"] is ref["ok"], case
+    assert [h["from_path"] for h in got["chain"]] == ref["hops"], case
+    if ref["ok"]:
+        assert got["resolved_segments"] == ref["at"], case
+        want = ref["value"] if not isinstance(ref["value"], dict) else None
+        assert got["resolved_value"] == want, case
+    return ref
+
+
+def _random_graph(rng) -> dict:
+    keys = "xyz"
+
+    def path() -> str:
+        return "#/" + "/".join([rng.choice("abc")] + [rng.choice(keys) for _ in range(rng.randint(0, 3))])
+
+    def node(depth: int):
+        roll = rng.random()
+        if depth == 0 or roll < 0.3:
+            return path() if rng.random() < 0.6 else 26
+        return {k: node(depth - 1) for k in rng.sample(keys, rng.randint(1, 3))}
+
+    m = {k: node(3) for k in "abc"}
+    m["q"] = {"leaf": path()}
+    return m
+
+
+def _named_graphs() -> dict:
+    run = {f"h{i}": f"#/h/h{i + 1}" for i in range(_LIMIT - 2)}
+    run[f"h{_LIMIT - 2}"] = "#/h/h0"
+    return {
+        # c.p met twice with w still to walk inside it, z then k outside: lands on d.w.k = 26
+        "inner frames differ": (
+            {"a": {"ref": "#/c/p/w"}, "c": {"p": "#/d"}, "d": {"w": {"z": "#/e/r/k", "k": 26}},
+             "e": {"r": "#/c/p/w"}, "q": {"leaf": "#/a/ref/z"}}, 26),
+        # b.z.z met twice with the same outermost remainder (y), a different inner one: lands on b.z.y = 26
+        "outer frames agree, inner differ": (
+            {"b": {"y": "#/b/z/z/z", "z": {"x": "#/b/z", "y": 26, "z": "#/b/z/x"}}, "q": {"leaf": "#/b/y/y"}}, 26),
+        "same pointer twice": ({"a": {"ref": "#/b"}, "b": {"x": {"y": 26}}, "q": {"leaf": "#/a/ref/x/y"},
+                                "s": "#/a/ref"}, 26),
+        "finished crossing forgotten": (
+            {"a": {"ref": "#/b"}, "b": {"y": {"x": "#/a/ref/y"}}, "q": {"leaf": "#/a/ref/y/x"}}, None),
+        "true cycle": ({"a": "#/b", "b": "#/a", "q": {"leaf": "#/a"}}, None),
+        "crossed cycle": ({"a": {"ref": "#/b"}, "b": {"x": "#/a/ref/x"}, "q": {"leaf": "#/a/ref/x"}}, None),
+        "cycle near the limit": ({"h": run, "q": {"leaf": "#/h/h0"}}, None),
+    }
+
+
+def test_the_reference_uses_the_documented_limit():
+    from quam_state_manager.core.pointer_path import _MAX_HOPS
+    assert _MAX_HOPS == _LIMIT
+
+
+@pytest.mark.parametrize("name", sorted(_named_graphs()))
+def test_cross_agrees_with_the_reference_on_named_graphs(name):
+    merged, value = _named_graphs()[name]
+    ref = _agrees(merged, ["q", "leaf"])
+    if value is not None:
+        assert ref["ok"] and ref["value"] == value
+
+
+def test_cross_agrees_with_the_reference_near_the_limit():
+    for n in range(_LIMIT - 4, _LIMIT + 3):
+        plain = _chain(n)
+        _agrees(plain, ["q", "leaf"])
+        crossed = {"h": {f"h{i}": f"#/h/h{i + 1}" for i in range(n - 1)}, "q": {"leaf": "#/h/h0/x"}}
+        crossed["h"][f"h{n - 1}"] = "#/h/end"
+        crossed["h"]["end"] = {"x": 26}
+        _agrees(crossed, ["q", "leaf"])
+        looped = _chain(n)
+        looped["h"][f"h{n - 1}"] = "#/h/h0"
+        _agrees(looped, ["q", "leaf"])
+
+
+def test_cross_agrees_with_the_reference_on_random_graphs():
+    import random
+    rng = random.Random(20261116)
+    why: dict = {}
+    for _ in range(4000):
+        ref = _agrees(_random_graph(rng), ["q", "leaf"])
+        kind = ref["why"] or ("crossed" if ref["crossed"] else "landed")
+        why[kind] = why.get(kind, 0) + 1
+    # the corpus reaches every outcome, so a mutant has something to disagree on
+    assert all(why.get(k, 0) >= 50 for k in ("cycle", "limit", "missing", "landed", "crossed")), why
