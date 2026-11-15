@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from quam_state_manager.core import safe_io
+# The one parser of the records (raw: a record without a file name or hash is
+# kept, so _file_problem refuses it). Named sm_class_files here for the pins.
 from quam_state_manager.core.gate_status import class_file_records as sm_class_files
 
 _SECTIONS = ("qubit_pairs", "qubits")

@@ -1,4 +1,5 @@
-"""Make active and the status line agree about recorded class files."""
+"""Make active and the status line agree about recorded class files, and
+the records have one parser (core/gate_status.py)."""
 from __future__ import annotations
 
 import ast
@@ -50,8 +51,9 @@ def test_make_active_checks_the_published_file(rig, tmp_path, monkeypatch, state
         assert response.status_code == 409
         message = response.get_json()["error"]
         assert path.name in message
-        advice = f"Save {path.name} to quam_config first" if state == "missing" else "Re-check the gate first"
-        assert advice in message
+        advice = (f"Save {path.name} to quam_config first." if state == "missing"
+                  else "changed since the gate was checked. Re-check the gate first.")
+        assert advice in message and message.endswith("It was not made active.")
         assert store.state == before
         assert store.mutation_seq == seq and len(store.change_log) == changes
         assert rig._calls == []
@@ -95,15 +97,45 @@ def test_raw_reader_preserves_records_that_live_write_must_refuse(tmp_path):
         assert "no file name or content hash" in class_file_check._file_problem(tmp_path, record)
 
 
+def test_an_upper_case_recorded_hash_reads_present_as_the_live_check(tmp_path):
+    path = tmp_path / "GateShape.py"
+    record = dict(_entry(path), sha256=_entry(path)["sha256"].upper())
+    assert gate_status.file_state(record, str(path)) == "present"
+    assert class_file_check._file_problem(tmp_path, record) is None
+
+
+def test_every_missing_and_changed_file_is_named(tmp_path):
+    a, b = tmp_path / "ShapeA.py", tmp_path / "ShapeB.py"
+    ra, rb = dict(_entry(a), qclass="qa"), dict(_entry(b), qclass="qb")
+    a.unlink()
+    b.write_bytes(b"class B: changed = True\n")
+    paths = {"qa": str(a), "qb": str(b)}
+    states = gate_status.class_file_states(_macro([ra, rb]), paths.get)
+    assert [st for _f, st in states] == ["missing", "changed"]
+    text = routes._class_file_refusal(states)
+    assert "Save ShapeA.py to quam_config first." in text
+    assert "The class file ShapeB.py changed since the gate was checked. Re-check the gate first." in text
+    assert text.endswith("It was not made active.")
+    assert routes._class_file_refusal([]) is None
+
+
 def test_class_file_record_parser_has_one_implementation():
-    root = Path(__file__).resolve().parents[1] / "quam_state_manager" / "core"
+    """The records are parsed in core/gate_status.py only; every other
+    module reads them through it."""
+    pkg = Path(__file__).resolve().parents[1] / "quam_state_manager"
+    readers = {"sm_class_files", "class_file_records", "class_file_states"}
+    defined = []
+    for path in pkg.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        defined += [(path.name, n.name) for n in ast.walk(tree)
+                    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in readers]
+    assert sorted(defined) == [("gate_status.py", n) for n in sorted(readers)]
+    root = pkg / "core"
     for name in ("gate_status", "class_file_check"):
         tree = ast.parse((root / (name + ".py")).read_text(encoding="utf-8"))
-        definitions = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
-        readers = {"sm_class_files", "class_file_records"} & definitions
-        assert readers == ({"sm_class_files", "class_file_records"} if name == "gate_status" else set())
         parsing = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
                    and isinstance(n.func, ast.Attribute) and n.func.attr == "get"
                    and n.args and isinstance(n.args[0], ast.Constant)
                    and n.args[0].value in ("extras", "sm_class_files")]
         assert len(parsing) == (2 if name == "gate_status" else 0)
+    assert class_file_check.sm_class_files is gate_status.class_file_records
