@@ -20,7 +20,7 @@ from tests.test_regen_mw_band_shift import _chip, _route
 # -- describe_moved ---------------------------------------------------------
 
 @pytest.mark.parametrize("old,new,want", [
-    (32, 52, "32 → 52 ns (Δ +20)"),
+    (32, 52, "32 \u2192 52 ns (\u0394 +20)"),
     (52, 52, "52 ns, unchanged"),
     (None, 52, "now 52 ns"),
     ("abc", 52, "now 52 ns"),
@@ -83,7 +83,7 @@ def test_shift_result_uses_the_delta_rendering(tmp_path, monkeypatch):
     res = client.post("/regenerate/build", json=body).get_json()
     assert res.get("ok") is True
     text = " ".join(res["result"]["warnings"])
-    assert "Time of flight: q1 32 → 52 ns (Δ +20)" in text
+    assert "Time of flight: q1 32 \u2192 52 ns (\u0394 +20)" in text
     assert "->" not in text
 
 
