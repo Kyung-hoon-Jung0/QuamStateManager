@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 import pytest
 
@@ -114,6 +115,162 @@ def page(app, tab):
     return app.test_client().get(f"/opx-monitor/body?tab={tab}").get_data(as_text=True)
 
 
+@pytest.fixture
+def names_file(env, tmp_path, monkeypatch):
+    monkeypatch.setattr(om, 'marker_dir', lambda: tmp_path)
+    path = tmp_path / 'pc_names.json'
+    path.write_text(json.dumps({'abc': 'Original'}), encoding='utf-8')
+    return env[0], path
+
+
+def _names_base(app):
+    html = page(app, 'settings')
+    assert 'pc_names_version' not in html
+    from html import unescape
+    return {key: unescape(value) for key, value in
+            re.findall(r'name="(was__[^" ]+)" value="([^"]*)"', html)}
+
+
+def _names_post(app, base, **data):
+    return app.test_client().post('/opx-monitor/pc-names', headers=ORIGIN,
+                                  data={**base, **data})
+
+
+def test_names_backup_rotates_after_two_saves(names_file):
+    app, path = names_file
+    for label in ('First', 'Second'):
+        assert _names_post(app, _names_base(app), label__abc=label).status_code == 200
+    assert json.loads(path.read_text()) == {'abc': 'Second'}
+    assert json.loads(path.with_suffix('.json.bak').read_text()) == {'abc': 'First'}
+
+
+def test_names_reject_same_row_from_same_base(names_file):
+    app, path = names_file
+    base = _names_base(app)
+    assert _names_post(app, base, label__abc='First').status_code == 200
+    before, backup = path.read_bytes(), path.with_suffix('.json.bak').read_bytes()
+    response = _names_post(app, base, label__abc='Second', new_tag='def', new_label='Added')
+    assert response.status_code == 409
+    assert response.mimetype == 'text/html'
+    text = response.get_data(as_text=True)
+    assert 'id="ui-opxmon-body"' in text and 'ui-state--error' in text
+    assert 'value="First"' in text and 'name="new_tag" value="def"' in text
+    assert ('Another window changed the name of tag abc; the current names are shown above. '
+            'Type your change again. Nothing was saved.') in text
+    assert 'reload' not in text
+    assert path.read_bytes() == before and path.with_suffix('.json.bak').read_bytes() == backup
+    assert json.loads(path.read_text()) == {'abc': 'First'}
+
+
+def test_names_different_rows_from_same_base_both_save(names_file):
+    app, path = names_file
+    path.write_text(json.dumps({'abc': 'Original', 'def': 'Second'}), encoding='utf-8')
+    base = _names_base(app)
+    assert _names_post(app, base, label__abc='First edit', label__def='Second').status_code == 200
+    assert _names_post(app, base, label__abc='Original', label__def='Second edit').status_code == 200
+    assert json.loads(path.read_text()) == {'abc': 'First edit', 'def': 'Second edit'}
+
+
+@pytest.mark.parametrize('data', [
+    {'label__abc': 'Original'},
+    {'label__abc': 'Edited'},
+    {'label__abc': 'Original', 'remove__abc': '1'},
+])
+def test_names_missing_was_conflicts(names_file, data):
+    app, path = names_file
+    before = path.read_bytes()
+    response = _names_post(app, {}, **data)
+    assert response.status_code == 409 and response.mimetype == 'text/html'
+    assert 'abc' in response.get_data(as_text=True)
+    assert path.read_bytes() == before and not path.with_suffix('.json.bak').exists()
+
+
+def test_names_new_tag_collision(names_file):
+    app, path = names_file
+    before = path.read_bytes()
+    response = _names_post(app, {}, new_tag='abc', new_label='Different')
+    assert response.status_code == 409 and response.mimetype == 'text/html'
+    text = response.get_data(as_text=True)
+    assert 'Tag abc already has a name; remove it first or pick another tag. Nothing was saved.' in text
+    assert 'another window' not in text.lower()
+    assert path.read_bytes() == before and not path.with_suffix('.json.bak').exists()
+    assert _names_post(app, {}, new_tag='abc', new_label='Original').status_code == 200
+
+
+def test_names_multiple_conflicts_refuse_whole_post(names_file):
+    app, path = names_file
+    path.write_text(json.dumps({'abc': 'Changed', 'def': 'Changed'}))
+    before = path.read_bytes()
+    response = _names_post(app, {'was__abc': 'Original', 'was__def': 'Original'},
+                           label__abc='Edited', label__def='Original', remove__def='1',
+                           new_tag='ghi', new_label='Added')
+    assert response.status_code == 409
+    text = response.get_data(as_text=True)
+    assert ('Another window changed the names of tags abc, def; the current names are shown above. '
+            'Type your change again. Nothing was saved.') in text
+    assert path.read_bytes() == before and not path.with_suffix('.json.bak').exists()
+
+
+def test_names_lock_serializes_row_check_and_write(names_file, monkeypatch):
+    import concurrent.futures
+    import threading
+    import time
+    from quam_state_manager.web import opx_monitor_routes as routes
+    app, path = names_file
+    base = _names_base(app)
+    original = routes._label_shown
+    def slow_shown(value):
+        shown = original(value)
+        time.sleep(0.1)  # both unguarded checks would see the original label
+        return shown
+    monkeypatch.setattr(routes, '_label_shown', slow_shown)
+    ready = threading.Barrier(2, timeout=5)
+    def post(label):
+        ready.wait()
+        return label, _names_post(app, base, label__abc=label).status_code
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(post, ('First', 'Second')))
+    assert sorted(code for _, code in results) == [200, 409]
+    winner = next(label for label, code in results if code == 200)
+    assert json.loads(path.read_text()) == {'abc': winner}
+
+
+def test_names_unedited_long_label_survives_unrelated_save(names_file):
+    app, path = names_file
+    label = 'Long label ' * 9 + '  '
+    path.write_text(json.dumps({'abc': label}), encoding='utf-8')
+    html = page(app, 'settings')
+    shown = re.search(r'name="label__abc" value="([^"]+)"', html)[1]
+    assert len(label) > 40 and len(shown) == 40
+    response = _names_post(app, _names_base(app), label__abc=shown, was__abc=shown,
+                           new_tag='def', new_label='Added')
+    assert response.status_code == 200
+    assert json.loads(path.read_text())['abc'].encode('utf-8') == label.encode('utf-8')
+    response = _names_post(app, _names_base(app), label__abc=r'bad\u202e', was__abc=shown)
+    assert response.status_code == 400 and 'Name for tag abc:' in response.get_data(as_text=True)
+
+
+def test_stale_key_numbers_show_last_good_read(env):
+    from quam_state_manager.web.opx_monitor_routes import stale_time
+    app, m, w, clock, _ = env
+    m.poll_once()
+    at = m.status()['section_times']['open_qms']
+    clock.t += 40
+    html = page(app, 'live')
+    stats = html[html.index('class="ui-stats"'):].split('<section', 1)[0]
+    assert 'as of ' + stale_time(at) in stats
+    assert re.search(r'as of .*\d\d:\d\d:\d\d', stats)
+
+
+def test_jobs_tile_wording_is_unambiguous(env):
+    app, m, *_ = env
+    m.poll_once()
+    html = page(app, 'live')
+    stats = html[html.index('class="ui-stats"'):].split('<section', 1)[0]
+    assert '>Jobs<' in stats and '>1 running, queued or processing<' in stats
+    assert 'Jobs running' not in stats
+
+
 def test_live_page_shows_fems_and_occupancy(env):
     app, m, w, clock, _ = env
     m.poll_once()
@@ -148,7 +305,7 @@ def test_refused_list_open_qms_says_so_and_disables_close(env):
     a["open_qms"] = None
     w.script[:] = [a]
     m.poll_once()
-    assert "The server refused list_open_qms: PermissionError: not allowed" in page(app, "jobs")
+    assert "The OPX server did not answer the request for the list of open quantum machines: PermissionError: not allowed" in page(app, "jobs")
     html = page(app, "cleanup")
     assert "Closing is not available." in html and "ui-opxmon-close\"" not in html
     r = app.test_client().post("/opx-monitor/close", data={"all": "1", "qm_ids": "QM-a", "confirm_count": "1"}, headers=ORIGIN)
@@ -772,7 +929,7 @@ def test_d23_verdict_first(env):
     m.poll_once()
     html = page(app, 'live')
     assert html.index('ui-opxmon-verdict') < html.index('ui-opxmon-status')
-    assert '<summary>Details</summary>' in html
+    assert '<h3 class="ui-panel-title">Details</h3>' in html
     assert om.verdict({'open_qms': []}, {'color': 'green'}, {})['label'] == 'FREE'
     assert om.verdict(answer(), {'color': 'amber'}, {})['label'] == 'BUSY'
 
@@ -912,10 +1069,10 @@ def test_round4_unconfigured_health_preserves_occupancy(env, mode, label):
         _slow(m)
         _watch(m, clock, 7300)
     html = page(app, 'live')
-    assert '<strong>' + label + '</strong>' in html
+    assert '<strong class="ui-verdict-key">' + label + '</strong>' in html
     assert 'health not assessed: no admin URL / no limits set' in html
     assert 'ui-opxmon-health-note' in html
-    assert '<strong>PROBLEM</strong>' not in html
+    assert '<strong class="ui-verdict-key">PROBLEM</strong>' not in html
 
 
 def test_round4_recent_open_is_normal(env):
@@ -924,8 +1081,8 @@ def test_round4_recent_open_is_normal(env):
     w.script[:] = [answer(qms=(("QM-placeholder", [], []),), temps={'Chassis': 40})]
     m.poll_once()
     html = page(app, 'live')
-    assert '<strong>OPEN 1</strong> open, no job seen yet; not idle yet' in html
-    assert '<strong>PROBLEM</strong>' not in html
+    assert '<strong class="ui-verdict-key">OPEN 1</strong>' in html and 'ui-verdict-why">Open, no job seen yet; not idle yet' in html
+    assert '<strong class="ui-verdict-key">PROBLEM</strong>' not in html
 
 
 def test_round4_alarm_and_failed_calls(env):
@@ -934,14 +1091,14 @@ def test_round4_alarm_and_failed_calls(env):
     w.script[:] = [answer(qms=(), temps={'FEM 0': 60, 'Chassis': 70})]
     m.poll_once()
     html = page(app, 'live')
-    assert '<strong>PROBLEM</strong>' in html
+    assert '<strong class="ui-verdict-key">PROBLEM</strong>' in html
     assert 'Above limit: FEM 0 60.0 °C' in html
     assert 'limit 50 °C' in html
     assert 'Hottest: Chassis' not in html
     w.script[:] = [om.WorkerError('read failed')]
     m.poll_once()
     html = page(app, 'live')
-    assert '<strong>PROBLEM</strong>' in html
+    assert '<strong class="ui-verdict-key">PROBLEM</strong>' in html
     assert 'Temperatures unavailable (last good read at' in html
     assert 'No temperature readings.' not in html
     assert 'SSH tunnel' not in html
@@ -961,7 +1118,7 @@ def test_round4_partial_failure_and_admin_failure(env, monkeypatch):
     w.script[:] = [answer(qms=(), refused={'con1.temperatures': 'read failed'})]
     m.poll_once()
     html = page(app, 'live')
-    assert '<strong>PROBLEM</strong>' in html
+    assert '<strong class="ui-verdict-key">PROBLEM</strong>' in html
     assert 'Temperatures unavailable (last good read at' in html
     assert 'No temperature readings.' not in html
     def unavailable(*args):
@@ -975,7 +1132,7 @@ def test_round4_partial_failure_and_admin_failure(env, monkeypatch):
     m.poll_once()
     m.admin = admin
     html = page(app, 'live')
-    assert '<strong>PROBLEM</strong>' in html
+    assert '<strong class="ui-verdict-key">PROBLEM</strong>' in html
     assert 'The SDK itself answers.' in html
 
 
@@ -984,8 +1141,8 @@ def test_round5_starting_before_first_poll(env):
     html = page(app, 'live')
     assert m.status()['state'] == 'starting'
     assert not w.calls and m.last_answer is None
-    assert '<strong>Checking...</strong>' in html
-    assert '<strong>PROBLEM</strong>' not in html
+    assert '<strong class="ui-verdict-key">Checking...</strong>' in html
+    assert '<strong class="ui-verdict-key">PROBLEM</strong>' not in html
     assert 'data-health="grey"' in html
 
 
@@ -998,7 +1155,7 @@ def test_round5_mixed_idle_headline(env):
     w.script[:] = [answer(qms=old + (('QM-new', [], []),))]
     m.poll_once()
     html = page(app, 'live')
-    assert '<strong>OPEN 3 · 2 idle</strong> Close idle QMs under Clean up' in html
+    assert '<strong class="ui-verdict-key">OPEN 3 · 2 idle</strong>' in html and 'ui-verdict-why">Close idle QMs under Clean up' in html
     assert 'in use / recent activity' not in html
     assert 'Close idle QMs (2)' in page(app, 'cleanup')
 
@@ -1008,7 +1165,7 @@ def test_round5_no_job_seen_headline(env):
     w.script[:] = [answer(qms=(('QM-new', [], []),))]
     m.poll_once()
     html = page(app, 'live')
-    assert '<strong>OPEN 1</strong> open, no job seen yet; not idle yet' in html
+    assert '<strong class="ui-verdict-key">OPEN 1</strong>' in html and 'ui-verdict-why">Open, no job seen yet; not idle yet' in html
     assert 'in use' not in html
 
 
@@ -1017,7 +1174,7 @@ def test_round5_stale_headline(env):
     m.poll_once()
     clock.t += 60
     m.wanted_until = clock.t + 15
-    assert '<strong>BUSY — as of 60 s ago</strong>' in page(app, 'live')
+    assert '<strong class="ui-verdict-key">BUSY — as of 60 s ago</strong>' in page(app, 'live')
 
 
 def test_round5_frozen_cue_only_after_fifteen_minutes(env):
@@ -1061,7 +1218,7 @@ def test_stress_d1_unconfigured(env):
     om.save_settings(m.instance, {})
     assert m.status()['health']['reason'] == 'health not assessed'
     html = page(app, 'live')
-    assert 'Health not assessed' in html and '<strong>PROBLEM' not in html
+    assert 'Health not assessed' in html and '<strong class="ui-verdict-key">PROBLEM' not in html
 
 
 def test_stress_d2_cleanup_poll_and_close(env):
@@ -1099,7 +1256,7 @@ def test_stress_d5_error_cause(env):
     a['open_qms'] = None; a['jobs'] = None
     w.script[:] = [a]; m.poll_once()
     html = page(app, 'jobs')
-    assert 'Server unreachable while reading list_open_qms' in html
+    assert 'Server unreachable while reading the list of open quantum machines' in html
     assert 'Updated 0 s ago' not in html
     a = answer(refused={'con1.temperatures.FEM 0': "not a number: 'hot'"})
     w.script[:] = [a]; m.poll_once()
@@ -1110,7 +1267,7 @@ def test_stress_d5_error_cause(env):
     assert 'connection' not in m.status()['health']['details']
     a = answer(refused={'get_devices': 'PermissionError: not permitted'})
     w.script[:] = [a]; m.poll_once()
-    assert m.status()['health']['reason'].startswith('The server refused')
+    assert m.status()['health']['reason'].startswith('The OPX server did not answer')
     assert 'permissions' in m.status()['health']['details']
 
 
@@ -1132,7 +1289,7 @@ def test_stress_d6_full_job_ids(env):
     w.script[:] = [answer(qms=(('QM-many', [(j, 'Running') for j in ids], []),))]
     m.poll_once()
     html = page(app, 'jobs')
-    assert all('<code>' + j + '</code>' in html.split('Server jobs')[0] for j in ids)
+    assert all('<code class="ui-chip">' + j + '</code>' in html.split('Server jobs')[0] for j in ids)
 
 
 def test_stress_d7_unverified_type():
@@ -1174,7 +1331,7 @@ def test_stress_r4_outage_red(env):
     app, m, w, *_ = env
     w.script[:] = [om.WorkerError('Server unreachable')]; m.poll_once()
     html = page(app,'live')
-    assert 'ui-opxmon-verdict--red' in html and '<strong>PROBLEM</strong>' in html
+    assert 'ui-verdict--danger ui-opxmon-verdict' in html and '<strong class="ui-verdict-key">PROBLEM</strong>' in html
 
 
 def test_stress_r5_settings(env):
@@ -1190,7 +1347,7 @@ def test_stress_r6_returning_viewer_checks(env):
     html = page(app,'live')
     # earlier answers exist: their age is shown, never "Waiting for the first server answer"
     assert 'Waiting for the first server answer' not in html
-    assert '<strong>BUSY — as of 25 s ago</strong>' in html and 'last good read was 25 s ago' in html
+    assert '<strong class="ui-verdict-key">BUSY — as of 25 s ago</strong>' in html and 'last good read was 25 s ago' in html
 
 
 def test_stress_r7_gap_markers(env):
@@ -1249,7 +1406,7 @@ def test_stress_r1_responsive(env):
     css = (Path(__file__).resolve().parents[1]/'quam_state_manager/web/static/ui-kit.css').read_text(encoding='utf-8')
     assert '.ui-opxmon-tiles {display:flex; flex-wrap:wrap;' in css
     assert '.ui-opxmon-table--stacked tr, .ui-opxmon-table--stacked td { display:block;' in css
-    assert 'data-label="FEMs claimed"' in html
+    assert 'data-label="FEMs"' in html
 
 
 
@@ -1357,7 +1514,9 @@ def test_a_connection_failure_is_said_once_short_then_in_full(env):
     visible = _re.sub(r'<[^>]*>', ' ', html)
     assert visible.count('127.0.0.1:9510') == 1  # said once, in Technical details
     assert visible.count('ConnectionError: Failed to connect to QOP at 127.0.0.1:9510') == 1
-    assert 'Technical details' in visible and 'could not connect. The last good read' in visible
+    # the cause is said once (the band); the status line keeps only the freshness
+    assert 'Technical details' in visible and visible.count('The QM SDK could not connect') == 1
+    assert 'The last good read was 5 s ago.' in visible
 
 
 def test_every_sensor_unreadable_is_not_called_no_readings(env):
@@ -1841,7 +2000,7 @@ def test_history_status_is_labelled_last_seen(env):
     w.script[:] = [answer(qms=())]
     m.poll_once()
     html = page(app, 'history')
-    assert 'Status (last seen)' in html and 'Running (when last seen)' in html
+    assert 'Status (last seen)' in html and 'Running</span> <span class="ui-text-quiet">(when last seen)</span>' in html
 
 
 def test_unreachable_server_is_not_called_unavailable_for_this_target(env):
@@ -1853,7 +2012,7 @@ def test_unreachable_server_is_not_called_unavailable_for_this_target(env):
         assert 'Not available for this target.' not in html
 
 
-def test_r2_live_wording_count_grammar_refusal_and_reasons(env):
+def test_live_wording_count_grammar_refusal_and_reasons(env):
     app, m, w, clock, _ = env
     # the count is the server's, before truncation to the shown 100
     a = answer()
@@ -1911,13 +2070,48 @@ def test_r4_failed_poll_words_the_jobs_row_from_the_last_good_read(env):
     w.script[:] = [answer(qms=(("QM-a", [("j1", "Done")], ["con1/1"]),))]
     _slow(m)
     _watch(m, clock, 30 * 300)
-    assert 'watched continuously &middot; idle' in page(app, 'jobs')
+    fresh = page(app, 'jobs')
+    import re as _re
+    cell = _re.search(r'ui-opxmon-qm-state">(.*?)</td>', fresh, _re.S).group(1)
+    # "idle" is said once per cell: the fact, not again after the basis
+    assert 'watched continuously' in cell and _re.sub(r'<[^>]+>', ' ', cell).split().count('idle') == 1, cell
+    for tab in ('live', 'cleanup'):  # the shared QM table says it once too
+        qcell = _re.search(r'ui-opxmon-qm-state">(.*?)</td>', page(app, tab), _re.S).group(1)
+        assert _re.sub(r'<[^>]+>', ' ', qcell).split().count('idle') == 1, (tab, qcell)
     w.script[:] = [om.WorkerError('connection refused')]
     clock.t += 300
     m.poll_once()
     html = page(app, 'jobs')
     assert 'watched continuously' not in html and '&middot; idle' not in html
-    assert 'watch interrupted; as of the last good read' in html
+    assert html.count("SM's watch is interrupted") == 1
+    assert 'watch interrupted; as of the last good read' not in html
+    assert 'last seen: no job change for' in html
+
+
+def test_stale_live_rows_stay_short_and_the_notice_says_it_once(env):
+    app, m, w, clock, _ = env
+    w.script[:] = [answer(qms=(("QM-a", [("j1", "Done")], ["con1/1"]), ("QM-b", [("j2", "Done")], ["con1/2"])))]
+    _slow(m)
+    _watch(m, clock, 30 * 300)
+    fresh = page(app, 'live')
+    assert "SM's watch is interrupted" not in fresh and 'last seen:' not in fresh
+    assert fresh.count('watched continuously') >= 2
+    w.script[:] = [om.WorkerError('connection refused')]
+    clock.t += 300
+    m.poll_once()
+    html = page(app, 'live')
+    assert html.count("SM's watch is interrupted") == 1
+    assert 'watch interrupted; as of the last good read' not in html.split('ui-opxmon-qm-stale', 1)[1].split('</table>', 1)[0]
+    assert html.count('last seen: no job change for') == 2
+
+
+def test_stale_row_drops_the_interrupted_sentence_the_notice_already_says():
+    st = om.stale_idle_state({'idle': False, 'basis': om.WATCH_INTERRUPTED_BASIS}, '30 s ago')
+    row = om.qm_state({'id': 'QM-a', 'jobs': [{'id': 'j', 'status': 'Done'}]}, st)
+    assert row['basis'] == '' and row['fact'] == 'open, jobs finished'
+    assert 'watch interrupted' in st['basis']  # the close confirm keeps the full sentence
+    fresh = om.qm_state({'id': 'QM-a', 'jobs': []}, {'idle': False, 'basis': 'no job change for 3 min while SM watched'})
+    assert fresh['basis'] == 'no job change for 3 min while SM watched' and fresh['fact'] == 'open, no job seen'
 
 
 def test_r4_stale_slot_card_says_last_good_read_without_zone(env):
@@ -1989,3 +2183,519 @@ def test_fem_occupancy_kept_after_a_failed_read_is_marked_not_current(env):
     assert 'ui-opxmon-fem--stale' in html and 'ui-opxmon-table--stale' in html
     assert 'No open QM claims this FEM' not in html
     assert 'none at the last good read' in html
+
+
+# ------------------------------------------------------------------ reading order of every tab
+def _zones(html):
+    return re.findall(r'<(?:section|details) class="ui-zone[ "]', html)
+
+
+@pytest.mark.parametrize("tab", ["live", "jobs", "history", "cleanup", "settings"])
+def test_every_tab_opens_with_the_verdict_band_and_has_at_most_four_zones(env, tab):
+    app, m, w, *_ = env
+    w.script[:] = [answer(qms=(("QM-a", [("j1", "Running")], ["con1/1"]), ("QM-b", [], ["con1/2"])))]
+    m.poll_once()
+    html = page(app, tab)
+    body = html[html.index('id="ui-opxmon-body"'):]
+    first = re.search(r'>\s*<(\w+) class="([^"]*)"', body)
+    assert first.group(1) == "div" and "ui-verdict--strong" in first.group(2) and "ui-opxmon-verdict" in first.group(2)
+    assert 1 <= len(_zones(html)) <= 4, (tab, len(_zones(html)))
+    assert _max_zone_depth(html) == 1, tab   # no zone inside a zone
+
+
+def _max_zone_depth(html):
+    from html.parser import HTMLParser
+
+    class P(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.stack, self.depth = [], 0
+
+        def handle_starttag(self, tag, attrs):
+            if tag in ("section", "details", "div", "form"):
+                zone = "ui-zone" in (dict(attrs).get("class") or "").split()
+                self.stack.append(zone)
+                self.depth = max(self.depth, sum(self.stack))
+
+        def handle_endtag(self, tag):
+            if tag in ("section", "details", "div", "form") and self.stack:
+                self.stack.pop()
+
+    p = P()
+    p.feed(html)
+    return p.depth
+
+
+def test_live_and_cleanup_use_the_same_open_qm_columns(env):
+    app, m, w, *_ = env
+    m.poll_once()
+
+    def heads(html, label):
+        t = html[html.index(f'aria-label="{label}'):]
+        t = t[:t.index("</thead>")]
+        return [re.sub(r"<[^>]+>.*", "", h).strip() for h in re.findall(r'<th class="ui-table-head"[^>]*>(.*?)</th>', t)]
+
+    live = heads(page(app, "live"), "Who holds each open QM")
+    clean = heads(page(app, "cleanup"), "Close quantum machines")
+    assert live == ["QM", "State", "Owner", "FEMs"] and clean[:4] == live and len(clean) == 5
+
+
+def test_live_tiles_are_coloured_only_from_a_known_abnormal_value(env):
+    app, m, w, *_ = env
+    m.poll_once()
+    html = page(app, "live")
+    stats = html[html.index('class="ui-stats"'):]
+    stats = stats[:stats.index('<section')]
+    assert stats.count('class="ui-stat"') + stats.count('class="ui-stat ui-stat--') == 4
+    assert "ui-stat--danger" not in stats and "ui-stat--warn" not in stats   # one running job, no limit set
+    assert "Hottest sensor" in stats and "unknown" in stats and "ui-stat--quiet" in stats  # no reading: grey, says unknown
+
+
+def test_last_job_without_a_creation_time_says_so_in_plain_words():
+    from quam_state_manager.web.opx_monitor_routes import last_job
+    text = last_job({'jobs': [{'id': 'j3', 'status': 'Done'}]})
+    assert text == 'j3 Done, creation time not reported'
+    assert 'OPX clock' not in text
+
+
+def test_connection_advice_is_a_sentence_of_its_own():
+    from quam_state_manager.core import opx_monitor as om
+    for host in ('localhost', 'service.invalid'):
+        hint = om.connection_hint(host)
+        assert hint[:1].isupper() and hint.endswith('.')
+    body = (Path(__file__).resolve().parents[1] / 'quam_state_manager/web/templates/_opx_monitor_body.html').read_text(encoding='utf-8')
+    assert '{{ why_text[:1]|upper }}{{ why_text[1:] }}' in body, 'the band reason starts with a capital letter'
+
+
+def test_close_all_and_idle_refuse_a_set_that_changed(env):
+    """Consent to close all / close idle is for the exact set the page showed: once the
+    server's list differs, the posted set is refused with 409 and nothing is sent."""
+    app, m, w, clock, _ = env
+    w.script[:] = [answer(qms=(("QM-a", [], ["con1/1"]),))]
+    _slow(m)
+    _watch(m, clock, 7300)
+    assert 'data-qm-ids="QM-a"' in page(app, "cleanup")
+    c = app.test_client()
+    r = c.post("/opx-monitor/close", data={"idle": "1", "qm_ids": "QM-a"}, headers=ORIGIN)
+    assert not r.get_json().get("list_changed")  # the shown idle set passes the set check
+    assert [op for op, _ in w.calls if op.startswith("close")]
+    m.poll_once()
+    w.script[:] = [answer(qms=(("QM-a", [], ["con1/1"]), ("QM-new", [], ["con1/2"])))]
+    m.poll_once()
+    w.calls.clear()
+    for data in ({"all": "1", "qm_ids": "QM-a", "confirm_count": "1"},
+                 {"all": "1", "qm_ids": "QM-a, QM-gone", "confirm_count": "2"},
+                 {"idle": "1", "qm_ids": "QM-a, QM-new"}):
+        r = c.post("/opx-monitor/close", data=data, headers=ORIGIN)
+        assert r.status_code == 409, data
+        j = r.get_json()
+        assert j["list_changed"] and "The list changed; check it again" in j["error"]
+    assert not [op for op, _ in w.calls if op.startswith("close")]
+    r = c.post("/opx-monitor/close", data={"all": "1", "qm_ids": "QM-new, QM-a", "confirm_count": "2"}, headers=ORIGIN)
+    assert r.status_code == 200 and sorted(r.get_json()["closed"]) == ["QM-a", "QM-new"]
+
+
+def test_problem_screen_names_no_sdk_call_and_says_the_cause_once(env):
+    """The problem page speaks of what was read, never the SDK call, and says the cause once."""
+    import re as _re
+    app, m, w, *_ = env
+    a = answer(refused={'qm.list_open_qms': 'PermissionError: not allowed', 'get_devices': 'PermissionError: not allowed',
+                        'con1.temperatures.FEM 0': 'PermissionError: not allowed'})
+    a['open_qms'] = None
+    w.script[:] = [a]; m.poll_once()
+    for tab in ('live', 'jobs', 'cleanup'):
+        html = page(app, tab)
+        for call in ('list_open_qms', 'get_devices', 'get_jobs', 'temperatures.FEM', 'qm.'):
+            assert call not in html, (tab, call)
+    html = page(app, 'live')
+    text = _re.sub(r'<[^>]+>', ' ', html)
+    cause = m.status()['health']['reason']
+    assert cause.startswith('The OPX server did not answer the request for ')
+    assert text.count(cause) == 1, text.count(cause)
+    assert 'Last reply 0 s ago; some data unavailable.' in text
+    with app.test_request_context('/'):
+        from flask import render_template
+        pill = render_template('_opx_alarm_badge.html', st=m.status())
+    assert '> OPX problem</a>' in pill and cause in pill
+
+
+@pytest.mark.parametrize('stored', [' Spaced ', 'L' * 70, ' Escaped\u202e ', 'A & "quoted"'])
+@pytest.mark.parametrize('action', ['edit', 'remove'])
+def test_names_edit_and_remove_use_the_rendered_label(names_file, stored, action):
+    app, path = names_file
+    path.write_text(json.dumps({'abc': stored}), encoding='utf-8')
+    base = _names_base(app)
+    if stored != 'A & "quoted"':
+        assert base['was__abc'] != stored
+    data = {'label__abc': 'Changed'} if action == 'edit' else {
+        'label__abc': base['was__abc'], 'remove__abc': '1'}
+    response = _names_post(app, base, **data)
+    assert response.status_code == 200, response.get_data(as_text=True)
+    assert json.loads(path.read_text()) == ({'abc': 'Changed'} if action == 'edit' else {})
+
+
+def test_names_invalid_key_rename_collision_refuses_every_change(names_file):
+    from quam_state_manager.web.opx_monitor_routes import _key_ref
+    app, path = names_file
+    path.write_text(json.dumps({'abc': 'Original', 'My PC': 'Other'}), encoding='utf-8')
+    before = path.read_bytes()
+    ref = _key_ref('My PC')
+    response = _names_post(app, _names_base(app), **{
+        'badkey__' + ref: '1', 'rename__' + ref: 'abc',
+        'new_tag': 'def', 'new_label': 'Added'})
+    assert response.status_code == 409 and response.mimetype == 'text/html'
+    text = response.get_data(as_text=True)
+    assert 'ui-state--error' in text
+    assert 'Tag abc already has a name; remove it first or pick another tag.' in text
+    assert 'another window' not in text.lower()
+    assert path.read_bytes() == before and not path.with_suffix('.json.bak').exists()
+
+
+@pytest.mark.parametrize('data', [
+    {'label__abc': 'bad\u202e'},
+    {'new_tag': 'Bad Tag', 'new_label': 'Name'},
+    {'new_tag': 'def', 'new_label': '   '},
+])
+def test_names_validation_reply_is_settings_html(names_file, data):
+    app, path = names_file
+    before = path.read_bytes()
+    response = _names_post(app, _names_base(app), **data)
+    assert response.status_code == 400 and response.mimetype == 'text/html'
+    text = response.get_data(as_text=True)
+    assert 'id="ui-opxmon-body"' in text and 'ui-state--error' in text
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize('stale', [False, True])
+def test_unknown_jobs_tile_keeps_its_unread_note(env, stale):
+    app, m, w, clock, _ = env
+    a = answer()
+    a['open_qms'][0]['jobs'] = None
+    w.script[:] = [a]
+    m.poll_once()
+    if stale:
+        clock.t += 40
+    tiles = om.live_tiles(a, {}, None, None, m.status()['state'], 0)
+    tile = next(t for t in tiles if t['label'] == 'Jobs')
+    assert tile['value'] == 'unknown' and tile['note'] == 'job list not read'
+    html = page(app, 'live')
+    job = re.search(r'>Jobs</[^>]+>(.*?)</div>', html, re.S)[1]
+    assert '>unknown<' in job and 'job list not read' in job
+    assert 'as of' not in job and 'running, queued or processing' not in job
+
+
+def test_known_stale_jobs_tile_keeps_count_and_time(env):
+    app, m, w, clock, _ = env
+    m.poll_once()
+    clock.t += 40
+    html = page(app, 'live')
+    job = re.search(r'>Jobs</[^>]+>(.*?)</div>', html, re.S)[1]
+    assert '>1 running, queued or processing<' in job and 'as of ' in job
+
+
+def test_close_idle_stale_status_has_its_own_reason(env):
+    app, m, w, clock, _ = env
+    w.script[:] = [answer(qms=(("QM-a", [], ["con1/1"]),))]
+    _slow(m)
+    _watch(m, clock, 7300)
+    assert 'data-qm-ids="QM-a"' in page(app, 'cleanup')
+    clock.t += 1000
+    w.calls.clear()
+    response = app.test_client().post('/opx-monitor/close', headers=ORIGIN,
+                                      data={'idle': '1', 'qm_ids': 'QM-a'})
+    assert response.status_code == 409
+    reply = response.get_json()
+    assert reply['error'] == 'The status is not fresh; wait for the next refresh. Nothing was closed.'
+    assert not reply.get('list_changed')
+    assert not any(op.startswith('close') for op, _ in w.calls)
+
+
+def test_names_have_one_writer():
+    assert not hasattr(om, 'apply_pc_name_change')
+    assert not hasattr(om, 'save_pc_names')
+
+
+@pytest.mark.parametrize('stored, data', [
+    ({'My PC': 'A', 'Other PC': 'B'}, lambda ref: {
+        'badkey__' + ref('My PC'): '1', 'rename__' + ref('My PC'): 'xyz',
+        'badkey__' + ref('Other PC'): '1', 'rename__' + ref('Other PC'): 'xyz'}),
+    ({'My PC': 'A'}, lambda ref: {
+        'badkey__' + ref('My PC'): '1', 'rename__' + ref('My PC'): 'xyz',
+        'new_tag': 'xyz', 'new_label': 'C'}),
+])
+def test_names_two_changes_onto_one_tag_refuse_the_save(names_file, stored, data):
+    from quam_state_manager.web.opx_monitor_routes import _key_ref
+    app, path = names_file
+    path.write_text(json.dumps(stored), encoding='utf-8')
+    before = path.read_bytes()
+    response = _names_post(app, _names_base(app), **data(_key_ref))
+    assert response.status_code == 409 and response.mimetype == 'text/html'
+    text = response.get_data(as_text=True)
+    assert ('This save gives more than one name to tag xyz; keep one of them. '
+            'Nothing was saved.') in text
+    assert 'another window' not in text.lower()
+    assert path.read_bytes() == before and not path.with_suffix('.json.bak').exists()
+
+
+def test_names_single_invalid_key_rename_onto_a_free_tag_saves(names_file):
+    from quam_state_manager.web.opx_monitor_routes import _key_ref
+    app, path = names_file
+    path.write_text(json.dumps({'abc': 'Original', 'My PC': 'A'}), encoding='utf-8')
+    ref = _key_ref('My PC')
+    response = _names_post(app, _names_base(app), **{'badkey__' + ref: '1', 'rename__' + ref: 'xyz'})
+    assert response.status_code == 200, response.get_data(as_text=True)
+    assert json.loads(path.read_text()) == {'abc': 'Original', 'xyz': 'A'}
+
+
+def test_names_refusal_draws_back_what_was_typed(names_file):
+    from quam_state_manager.web.opx_monitor_routes import _key_ref
+    app, path = names_file
+    path.write_text(json.dumps({'abc': 'Original', 'def': 'Second', 'ghi': 'Third', 'My PC': 'A'}),
+                    encoding='utf-8')
+    ref = _key_ref('My PC')
+    base = _names_base(app)
+    path.write_text(json.dumps({'abc': 'Original', 'def': 'Second', 'ghi': 'Third now', 'My PC': 'A'}),
+                    encoding='utf-8')
+    before = path.read_bytes()
+    response = _names_post(app, base, **{
+        'label__abc': 'Typed edit', 'label__def': 'Second', 'remove__def': '1',
+        'label__ghi': 'Third', 'badkey__' + ref: '1', 'rename__' + ref: 'newtag',
+        'new_tag': 'Bad Tag', 'new_label': 'Typed new'})
+    assert response.status_code == 400
+    text = response.get_data(as_text=True)
+    assert 'A tag uses only a-z and 0-9' in text
+    assert 'name="label__abc" value="Typed edit"' in text and 'name="was__abc" value="Original"' in text
+    assert re.search(r'name="remove__def" value="1"\s*checked', text)
+    # a row the user did not touch shows the file as it is now
+    assert 'name="label__ghi" value="Third now"' in text and 'name="was__ghi" value="Third now"' in text
+    assert 'name="rename__' + ref + '" value="newtag"' in text
+    assert 'name="new_tag" value="Bad Tag"' in text and 'name="new_label" value="Typed new"' in text
+    assert path.read_bytes() == before
+
+
+def test_settings_bad_headers_store_nothing_and_keep_the_typing(env, monkeypatch):
+    app, m, *_ = env
+    before = om.load_settings(app.instance_path)
+    resets = []
+    monkeypatch.setattr(m, 'reset', lambda: resets.append(1))
+    r = app.test_client().post('/opx-monitor/settings', headers=ORIGIN, data={
+        'host': 'newhost.invalid', 'port': '9510', 'headers': '[1]', 'interval_s': '30',
+        'admin_url': 'http://admin.invalid', 'alarms_armed': '1'})
+    assert r.status_code == 400
+    text = r.get_data(as_text=True)
+    assert ('Connection headers must be a JSON object. Type the connection headers again; '
+            'they are never shown.') in text
+    assert om.load_settings(app.instance_path) == before
+    assert not resets
+    assert 'name="host" value="newhost.invalid"' in text and 'name="port" value="9510"' in text
+    assert 'name="interval_s" value="30"' in text and 'name="admin_url" value="http://admin.invalid"' in text
+    assert re.search(r'name="alarms_armed" value="1"\s*checked', text)
+    assert '[1]' not in text
+
+
+def test_settings_bad_port_keeps_the_typing_and_a_good_save_stores(env, monkeypatch):
+    app, m, *_ = env
+    before = om.load_settings(app.instance_path)
+    c = app.test_client()
+    r = c.post('/opx-monitor/settings', headers=ORIGIN, data={'host': 'other', 'port': 'x80'})
+    assert r.status_code == 400
+    text = r.get_data(as_text=True)
+    assert 'Port must be a whole number.' in text and 'Type the connection headers again' not in text
+    assert 'name="host" value="other"' in text and 'name="port" value="x80"' in text
+    assert om.load_settings(app.instance_path) == before
+    resets = []
+    monkeypatch.setattr(m, 'reset', lambda: resets.append(1))
+    r = c.post('/opx-monitor/settings', headers=ORIGIN, data={'host': 'other', 'port': '81'})
+    assert r.status_code == 200 and 'Settings saved.' in r.get_data(as_text=True)
+    assert om.load_settings(app.instance_path)['target']['host'] == 'other' and resets
+    assert 'name="host" value="other"' in r.get_data(as_text=True)
+
+
+def test_close_idle_judges_one_status_answer(env, monkeypatch):
+    app, m, w, clock, _ = env
+    w.script[:] = [answer(qms=(("QM-a", [], ["con1/1"]),))]
+    _slow(m)
+    _watch(m, clock, 7300)
+    assert 'data-qm-ids="QM-a"' in page(app, 'cleanup')
+    fresh = m.status()
+    assert fresh['state'] == 'ok'
+    calls = []
+
+    def status():
+        calls.append(1)
+        return fresh if len(calls) == 1 else {**fresh, 'state': 'stale'}
+    monkeypatch.setattr(m, 'status', status)
+    closed = []
+    monkeypatch.setattr(m, 'close', lambda *a, **k: closed.append(k) or {'ok': True, 'closed': ['QM-a']})
+    response = app.test_client().post('/opx-monitor/close', headers=ORIGIN,
+                                      data={'idle': '1', 'qm_ids': 'QM-a'})
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()['closed'] == ['QM-a'] and len(closed) == 1
+
+
+def test_refusal_flash_sits_next_to_its_save_button(names_file, tmp_path):
+    import shutil
+    import subprocess
+    from pathlib import Path
+    app, path = names_file
+    c = app.test_client()
+    pages = {
+        'flash_names': _names_post(app, _names_base(app), new_tag='Bad Tag', new_label='x').get_data(as_text=True),
+        'flash_names_ok': _names_post(app, _names_base(app), label__abc='Fine').get_data(as_text=True),
+        'flash_settings': c.post('/opx-monitor/settings', headers=ORIGIN,
+                                 data={'host': 'h', 'port': 'x'}).get_data(as_text=True),
+    }
+    fixture = tmp_path / 'flash_pages.json'
+    fixture.write_text(json.dumps(pages), encoding='utf-8')
+    node = shutil.which('node')
+    if not node:
+        pytest.fail('node is required for the flash placement selfcheck')
+    r = subprocess.run([node, str(Path(__file__).with_name('opx_monitor_selfcheck.cjs')), str(fixture)],
+                       capture_output=True, text=True, encoding='utf-8', timeout=60)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert ' 0 failed' in r.stdout and 'the PC names refusal sits right after Save PC names' in r.stdout
+
+
+def test_names_three_changes_onto_one_tag_name_no_wrong_count(names_file):
+    from quam_state_manager.web.opx_monitor_routes import _key_ref
+    app, path = names_file
+    stored = {'My PC': 'A', 'Other PC': 'B', 'Third PC': 'C'}
+    path.write_text(json.dumps(stored), encoding='utf-8')
+    before = path.read_bytes()
+    data = {}
+    for key in stored:
+        data['badkey__' + _key_ref(key)] = '1'
+        data['rename__' + _key_ref(key)] = 'xyz'
+    response = _names_post(app, _names_base(app), **data)
+    assert response.status_code == 409
+    text = response.get_data(as_text=True)
+    assert 'This save gives more than one name to tag xyz; keep one of them. Nothing was saved.' in text
+    assert 'Two changes' not in text and 'Three changes' not in text
+    assert path.read_bytes() == before
+
+
+def test_names_two_taken_tags_use_plural_text(names_file):
+    from quam_state_manager.web.opx_monitor_routes import _key_ref
+    app, path = names_file
+    stored = {'abc': 'One', 'def': 'Two', 'My PC': 'A', 'Other PC': 'B'}
+    path.write_text(json.dumps(stored), encoding='utf-8')
+    before = path.read_bytes()
+    data = {'badkey__' + _key_ref('My PC'): '1', 'rename__' + _key_ref('My PC'): 'abc',
+            'badkey__' + _key_ref('Other PC'): '1', 'rename__' + _key_ref('Other PC'): 'def'}
+    response = _names_post(app, _names_base(app), **data)
+    assert response.status_code == 409
+    text = response.get_data(as_text=True)
+    assert ('Tags abc, def already have names; remove them first or pick other tags. '
+            'Nothing was saved.') in text
+    assert path.read_bytes() == before
+
+
+def test_names_two_tags_given_two_names_each_use_plural_text(names_file):
+    from quam_state_manager.web.opx_monitor_routes import _key_ref
+    app, path = names_file
+    stored = {'My PC': 'A', 'Other PC': 'B', 'Third PC': 'C', 'Fourth PC': 'D'}
+    path.write_text(json.dumps(stored), encoding='utf-8')
+    data = {}
+    for key, tag in zip(stored, ['xyz', 'xyz', 'uvw', 'uvw']):
+        data['badkey__' + _key_ref(key)] = '1'
+        data['rename__' + _key_ref(key)] = tag
+    response = _names_post(app, _names_base(app), **data)
+    assert response.status_code == 409
+    assert ('This save gives more than one name to tags uvw, xyz; keep one for each.'
+            in response.get_data(as_text=True))
+
+
+def test_names_a_tag_removed_in_this_save_is_free_for_a_rename(names_file):
+    from quam_state_manager.web.opx_monitor_routes import _key_ref
+    app, path = names_file
+    path.write_text(json.dumps({'abc': 'Orig', 'My PC': 'A'}), encoding='utf-8')
+    base = _names_base(app)
+    ref = _key_ref('My PC')
+    response = _names_post(app, base, **{'label__abc': base['was__abc'], 'remove__abc': '1',
+                                         'badkey__' + ref: '1', 'rename__' + ref: 'abc'})
+    assert response.status_code == 200, response.get_data(as_text=True)
+    assert json.loads(path.read_text()) == {'abc': 'A'}
+
+
+def test_names_removed_tag_and_two_renames_onto_it_still_refuse(names_file):
+    from quam_state_manager.web.opx_monitor_routes import _key_ref
+    app, path = names_file
+    path.write_text(json.dumps({'abc': 'Orig', 'My PC': 'A', 'Other PC': 'B'}), encoding='utf-8')
+    before = path.read_bytes()
+    base = _names_base(app)
+    data = {'label__abc': base['was__abc'], 'remove__abc': '1'}
+    for key in ('My PC', 'Other PC'):
+        data['badkey__' + _key_ref(key)] = '1'
+        data['rename__' + _key_ref(key)] = 'abc'
+    response = _names_post(app, base, **data)
+    assert response.status_code == 409
+    assert path.read_bytes() == before
+
+
+def test_names_new_tag_onto_a_tag_removed_in_this_save_saves(names_file):
+    app, path = names_file
+    base = _names_base(app)
+    response = _names_post(app, base, **{'label__abc': base['was__abc'], 'remove__abc': '1',
+                                         'new_tag': 'abc', 'new_label': 'Fresh'})
+    assert response.status_code == 200, response.get_data(as_text=True)
+    assert json.loads(path.read_text()) == {'abc': 'Fresh'}
+
+
+def test_names_a_removal_without_its_row_does_not_free_the_tag(names_file):
+    from quam_state_manager.web.opx_monitor_routes import _key_ref
+    app, path = names_file
+    path.write_text(json.dumps({'abc': 'Orig', 'My PC': 'A'}), encoding='utf-8')
+    before = path.read_bytes()
+    ref = _key_ref('My PC')
+    response = _names_post(app, _names_base(app), **{'remove__abc': '1',
+                                                      'badkey__' + ref: '1', 'rename__' + ref: 'abc'})
+    assert response.status_code == 409
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize('action', ['rename', 'new', 'remove'])
+@pytest.mark.parametrize('other_action', ['rename', 'remove'])
+def test_names_removal_checks_the_row_changed_by_another_window(names_file, action, other_action):
+    from quam_state_manager.web.opx_monitor_routes import _key_ref
+    app, path = names_file
+    path.write_text(json.dumps({'abc': 'Orig', 'My PC': 'A'}), encoding='utf-8')
+    base = _names_base(app)
+    other = {'label__abc': 'Other window'} if other_action == 'rename' else {
+        'label__abc': base['was__abc'], 'remove__abc': '1'}
+    assert _names_post(app, base, **other).status_code == 200
+    before, backup = path.read_bytes(), path.with_suffix('.json.bak').read_bytes()
+    data = {'label__abc': base['was__abc'], 'remove__abc': '1'}
+    if action == 'rename':
+        ref = _key_ref('My PC')
+        data.update({'badkey__' + ref: '1', 'rename__' + ref: 'abc'})
+    elif action == 'new':
+        data.update({'new_tag': 'abc', 'new_label': 'Fresh'})
+    response = _names_post(app, base, **data)
+    assert response.status_code == 409
+    assert ('Another window changed the name of tag abc; the current names are shown above. '
+            'Type your change again. Nothing was saved.') in response.get_data(as_text=True)
+    assert path.read_bytes() == before
+    assert path.with_suffix('.json.bak').read_bytes() == backup
+
+
+@pytest.mark.parametrize('labels', [('Lab', 'Lab'), ('Lab', 'Other')])
+def test_names_invalid_keys_merge_only_when_the_names_match(names_file, labels):
+    from quam_state_manager.web.opx_monitor_routes import _key_ref
+    app, path = names_file
+    stored = dict(zip(('My PC', 'my pc'), labels))
+    path.write_text(json.dumps(stored), encoding='utf-8')
+    before = path.read_bytes()
+    data = {}
+    for key in stored:
+        data['badkey__' + _key_ref(key)] = '1'
+        data['rename__' + _key_ref(key)] = 'lab1'
+    response = _names_post(app, _names_base(app), **data)
+    if labels[0] == labels[1]:
+        assert response.status_code == 200, response.get_data(as_text=True)
+        assert json.loads(path.read_text()) == {'lab1': 'Lab'}
+        assert path.with_suffix('.json.bak').read_bytes() == before
+    else:
+        assert response.status_code == 409
+        assert ('This save gives more than one name to tag lab1; keep one of them. '
+                'Nothing was saved.') in response.get_data(as_text=True)
+        assert path.read_bytes() == before and not path.with_suffix('.json.bak').exists()

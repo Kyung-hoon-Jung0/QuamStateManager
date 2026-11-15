@@ -175,11 +175,14 @@ A screen tells the eye where to look first. Six rules, each with its part:
 | # | Rule | Part |
 |---|---|---|
 | 1 | The conclusion first, one banner per region | `ui-verdict ui-verdict--strong ui-verdict--{ok,warn,danger,note}` (`ui_verdict(..., strong=True)`): icon disc, key phrase in the tone colour, one sentence (reason + what to do). The existing verdict is the conclusion part, so the banner is its strong size, not a fourth look-alike of notice / callout / verdict. |
-| 2 | At most four key numbers as tiles; colour only on the abnormal one | `ui-stats` > `ui-stat [ui-stat--warn,--danger]` > `ui-stat-label` / `ui-stat-value` / `ui-stat-unit` (`ui_stats(tiles)`) |
+| 2 | At most four key numbers as tiles; colour only on the abnormal one | `ui-stats` > `ui-stat [ui-stat--warn,--danger,--quiet]` > `ui-stat-label` / `ui-stat-value` / `ui-stat-unit`, an optional quiet `ui-stat-note` line under the value (`ui_stats(tiles)`, tile `{label, value, unit?, note?, tone?, title?}`). `ui-stat--quiet` is an unknown value: grey, never a state colour. |
+| 1b | A banner may carry one quiet meta line under its reason (freshness, source) | `ui-verdict-meta` (`ui_verdict(..., meta=...)`) |
 | 3 | Every group in a panel with a title and a one-phrase summary; details folded unless something is wrong | `ui-panel` (`ui_panel(title, body, step, hint, summary, fold, open, flush)`): `ui-panel-head` (`ui-panel-step`, small-caps `ui-panel-title`, quiet `ui-panel-hint`, right `ui-panel-sum`), `ui-panel-body`; `fold` = `<details class="ui-panel ui-panel--fold">`, the summary stays visible when folded |
 | 4 | Three text levels; an explanation is never louder than the content; prose longer than one line goes into a hint or a disclosure | `ui-text-strong` (names, values), normal, `ui-text-quiet` (smaller, `--ui-text-3`); `ui-field-hint`, `ui-panel-hint`, `ui-disclosure` |
 | 5 | Colour only with a meaning: a state, the identity of a line, or "can be pressed" | state tones; `ui-line-1..6` on `ui-slot` (left bar + tinted `ui-slot-chip`) and `ui-line-dot`; accent on controls |
 | 6 | Passes are counted, failures are spelled out; a cell that differs or is over a limit says so in place | `ui-checks` > `ui-checks-row` of `ui-result [--fail,--skip]` + one `ui-fail-row` per failure; the count goes in the panel summary. Table cells: `ui-cell--warn` (differs), `ui-cell--danger` (over a limit), with a quiet `ui-cell-note` ("limit 2.5 V"); a cell spec `{text, tone, note, line}` |
+| 7 | Facts are label / value pairs, not one run-on sentence | `ui-facts` > `ui-facts-row` > `ui-facts-label` (normal) / `ui-facts-value` (strong) [+ quiet `ui-facts-note`] (`ui_facts(items)`, part `facts`) |
+| 8 | A question about one table row sits directly under that row | `tr.ui-table-sub > td.ui-table-cell[colspan]` holding a part (a `ui_table` row given as `{sub: [specs]}`); a callout takes a body (`ui-callout-body`, e.g. facts) and its buttons (`ui-actions`) at the foot: `ui_callout(tone, title, text, body=(), actions=None)` |
 
 Line colours: `--ui-line-1..6` alias the chart palette variables in the order
 `--plot-colorway-1, 4, 6, 3, 5, 2` (blue, magenta, teal, green, yellow, amber), the same variables
@@ -214,7 +217,9 @@ everything that groups content inside it. Never nest a zone in a zone.
 Parts: `ui-zone`, `ui-zone-head`, `ui-zone-step` (optional), `ui-zone-title`, `ui-zone-sum` (right, quiet),
 `ui-zone-body`; `ui-zone--fill` fills its column's height; `ui-zone--quiet` is a zone with nothing to show yet:
 it keeps its head and shows one centred `ui-zone-empty` line (macro argument `quiet="..."`), so the region stays
-visible before a check. Signature: `ui_zone(title, step=None, summary=None, body=(), fill=False, quiet=None)`.
+visible before a check. `ui-zone--danger` (tone='danger') marks a zone whose actions cannot be undone (danger border,
+tinted head, danger title); `ui-zone--fold` (fold=True) is a `<details>` zone whose head is the summary, folded unless
+`open`. Signature: `ui_zone(title, step=None, summary=None, body=(), fill=False, quiet=None, tone=None, fold=False, open=False)`.
 
 Tokens (all derived, one formula serves light, dark and qm):
 - `--ui-zone-border`: the accent 30 % over a 40 % text-on-ground grey. A cool boundary, deliberately

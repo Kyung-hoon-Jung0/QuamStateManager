@@ -156,10 +156,17 @@ CAPPED_BASIS = (f'job list capped at {JOB_LIST_CAP} by the server; SM cannot see
                 'so activity cannot be judged (never idle)')
 
 
+WATCH_INTERRUPTED_BASIS = "SM's watch was interrupted; idle not established"
+
+
 def stale_idle_state(state, age_text):
-    """The same verdict worded for a page whose last poll failed: never idle."""
+    """The same verdict worded for a page whose last poll failed: never idle.
+
+    ``basis`` is the full sentence (the close confirm quotes it); ``row_basis`` is the short
+    text of a table row, whose table carries the "watch interrupted" notice once."""
     basis = state['basis'].replace(' while SM watched continuously', ' while SM watched')
-    return {'idle': False, 'last_activity': None,
+    row = '' if basis == WATCH_INTERRUPTED_BASIS else f'last seen: {basis}'
+    return {'idle': False, 'last_activity': None, 'row_basis': row,
             'basis': f'watch interrupted; as of the last good read ({age_text}): {basis}'}
 
 
@@ -219,7 +226,7 @@ def idle_state(q, watched, minutes=120):
     if not isinstance(watched, dict):
         return {'idle': False, 'basis': 'SM has not watched this QM yet; idle not established', 'last_activity': None}
     if not watched.get('continuous'):
-        return {'idle': False, 'basis': "SM's watch was interrupted; idle not established", 'last_activity': None}
+        return {'idle': False, 'basis': WATCH_INTERRUPTED_BASIS, 'last_activity': None}
     if watched.get('sig') != job_signature(q):
         return {'idle': False, 'basis': 'its jobs changed since SM last read them; idle not established',
                 'last_activity': None}
@@ -836,15 +843,33 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def connection_hint(host):
     """Connection advice without assuming how the server is reached."""
-    return 'check the server connection, port or power.'
+    return 'Check the server connection, port or power.'
+
+
+CALL_SUBJECTS = {'get_devices': 'the device list', 'controllers': 'the device list',
+                 'list_open_qms': 'the list of open quantum machines', 'open_qms': 'the list of open quantum machines',
+                 'get_jobs': 'the job list', 'jobs': 'the job list', 'poll': 'the status',
+                 'call': 'the status'}
+
+
+def call_subject(name):
+    """What a data call reads, in the user's words; never the SDK call name."""
+    text = str(name or '')
+    for prefix in ('qmm.', 'qm.'):
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+    if text.endswith('.temperatures') or '.temperatures.' in text:
+        return 'the temperatures'
+    return CALL_SUBJECTS.get(text, 'a status request')
 
 
 def call_failure(name, error):
+    subject = call_subject(name)
     if any(word in str(error).lower() for word in ('connectionerror', 'connectionrefused', 'connection refused', 'unreachable', 'failed to connect', 'timeout', 'statuscode.unavailable')):
-        return f'Server unreachable while reading {name}: {error}'
+        return f'Server unreachable while reading {subject}: {error}'
     if call_unreadable(error):
-        return f'Unreadable reply for {name}: {error}'
-    return f'The server refused {name}: {error}'
+        return f'Unreadable reply for {subject}: {error}'
+    return f'The OPX server did not answer the request for {subject}: {error}'
 
 
 def call_timed_out(error):
@@ -943,7 +968,7 @@ def read_admin(url, cluster_name=None, clock=time.time):
         return {'known': bool(complete), 'reason': 'Admin fields incomplete' if not complete else '',
                 'cluster': c, 'devices': ds, 'selection': 'auto-selected from admin' if automatic else 'configured cluster', **clock_out}
     except Exception as exc:
-        out = {'known': False, 'problem': True, 'reason': 'Admin unavailable; ' + connection_hint(admin_host), 'details': str(exc)[:400]}
+        out = {'known': False, 'problem': True, 'reason': 'Admin unavailable. ' + connection_hint(admin_host), 'details': str(exc)[:400]}
         if measured:
             out['clock'] = min(measured, key=lambda m: m['uncertainty_s'])
         return out
@@ -1091,6 +1116,96 @@ def _occupancy_verdict(answer, health_state, idle_states):
     else:
         reason = 'open; no running job reported; idle not established'
     return {'label': 'OPEN ' + str(len(qms)), 'reason': reason}
+
+
+def band_view(verdict_value, state, health, problem_details=None):
+    """Display values of the page's verdict band, from the verdict already computed.
+
+    Returns ``{'tone', 'next'}``: the tone is a state colour only when the state is known
+    (stale, starting and unconfigured are neutral); ``next`` is one next step or None."""
+    label = str(verdict_value.get('label') or '')
+    health = health or {}
+    if state == 'stale':
+        return {'tone': 'neutral', 'next': 'Values are from the last good read; waiting for a fresh answer.'}
+    if label.startswith('PROBLEM') or health.get('color') == 'red' or health.get('problem'):
+        return {'tone': 'danger', 'next': problem_details or None}
+    if state in ('unconfigured', 'starting'):
+        return {'tone': 'neutral', 'next': None}
+    if state != 'ok':
+        return {'tone': 'neutral', 'next': 'Values are from the last good read; waiting for a fresh answer.'}
+    if label == 'FREE':
+        return {'tone': 'ok', 'next': 'No action needed.'}
+    if label.startswith('BUSY'):
+        return {'tone': 'note', 'next': 'A job is running: ask its owner before closing anything (see Open QMs).'}
+    if 'idle' in label.lower():
+        return {'tone': 'warn', 'next': None}
+    return {'tone': 'note', 'next': 'No action needed; a QM can be closed under Clean up once it is idle.'}
+
+
+def qm_state(q, idle_value):
+    """The State cell of one open QM: a short fact, what it is measured from, its job statuses."""
+    jobs = q.get('jobs')
+    iv = idle_value or {}
+    basis = iv['row_basis'] if 'row_basis' in iv else (iv.get('basis') or '')
+    if jobs is None:
+        fact = 'jobs unknown'
+    elif any(job_activity(j.get('status')) == 'active' for j in jobs):
+        fact = ', '.join(sorted({str(j.get('status') or 'active').lower() for j in jobs
+                                 if job_activity(j.get('status')) == 'active'}))
+    elif (idle_value or {}).get('idle'):
+        fact = 'idle'
+    elif not jobs:
+        fact = 'open, no job seen'
+    else:
+        fact = 'open, jobs finished'
+    statuses = 'unknown' if jobs is None else (', '.join(str(j.get('status')) for j in jobs) or 'none')
+    return {'fact': fact, 'basis': basis, 'jobs': statuses}
+
+
+def live_tiles(answer, idle_states, hottest, limit, state, failures):
+    """The four Live tiles. A tile carries a state tone only from a known abnormal value;
+    an unknown value is quiet (grey). ``failures`` = number of calls refused or unanswered."""
+    ans = answer or {}
+    fresh = state == 'ok'
+    qms = ans.get('open_qms')
+    tiles = []
+    if qms is None:
+        tiles.append({'label': 'Open QMs', 'value': 'unknown', 'note': 'QM list not read', 'tone': 'quiet'})
+    else:
+        idle = sum(bool((idle_states.get(q['id']) or {}).get('idle')) for q in qms)
+        tiles.append({'label': 'Open QMs', 'value': str(len(qms)),
+                      'note': (f'{idle} idle' if idle else ('none idle' if qms else 'no QM open')),
+                      'tone': 'warn' if idle and fresh else None})
+    if qms is None or any(q.get('jobs') is None for q in qms):
+        tiles.append({'label': 'Jobs', 'value': 'unknown', 'note': 'job list not read', 'tone': 'quiet'})
+    else:
+        n = sum(job_activity(j.get('status')) == 'active' for q in qms for j in q.get('jobs') or [])
+        tiles.append({'label': 'Jobs', 'value': str(n) + ' running, queued or processing',
+                      'note': ''})
+    if hottest is None:
+        tiles.append({'label': 'Hottest sensor', 'value': 'unknown', 'note': 'no temperature reading', 'tone': 'quiet'})
+    else:
+        over = limit is not None and hottest['value'] > limit
+        tiles.append({'label': 'Hottest sensor', 'value': '%.1f' % hottest['value'], 'unit': '°C',
+                      'note': str(hottest.get('label') or hottest.get('key')) + (' · limit %g °C' % limit if limit is not None else ' · no limit set'),
+                      'tone': 'danger' if over else None,
+                      'title': str(hottest.get('controller') or '') + ' / raw sensor ' + str(hottest.get('key'))})
+    qop = (ans.get('version') or {}).get('QOP')
+    if state == 'error':
+        note, tone = 'not answering', 'danger'
+    elif failures:
+        note, tone = f'{failures} call' + ('s' if failures != 1 else '') + ' refused or unanswered', 'warn'
+    elif not fresh:
+        note, tone = 'no fresh answer', 'quiet'
+    else:
+        note, tone = 'all calls answered', None
+    tiles.append({'label': 'Server', 'value': ('QOP ' + str(qop)) if qop else 'QOP not reported', 'note': note,
+                  'tone': tone if (qop or tone in ('danger', 'warn')) else 'quiet'})
+    if not fresh:
+        for t in tiles:
+            if t.get('tone') != 'danger':
+                t['tone'] = 'quiet'
+    return tiles
 
 
 class Monitor:
@@ -1241,7 +1356,7 @@ class Monitor:
                 return
             self._fails = 0
             if not r.get("ok"):
-                self.last_error = f"The server refused the poll: {r.get('error')}"
+                self.last_error = f"The OPX server did not answer the status request: {r.get('error')}"
                 self._sections_failed(self.last_error)
                 return
             ans = r.get("result") or {}
@@ -1512,13 +1627,18 @@ class Monitor:
         # an alarm is judged only on a fresh answer: stale or failed data never alarms
         alarms = list(self.alarms) if (s.get("alarms_armed") and state == "ok") else []
         health_state = health(self.last_answer, self.admin, s['thresholds'], state)
+        sentence_shown = None
         if self.last_error or self.section_errors or (self.last_answer or {}).get('refused'):
             errors = (self.last_answer or {}).get('refused') or self.section_errors
             cause = self.last_error or failure_summary(errors)
             health_state = {**health_state, 'color': 'red', 'problem': True, 'reason': failure_headline(cause), 'details': failure_advice(errors if not self.last_error or errors else {'call': self.last_error}, (s.get('target') or {}).get('host'))}
             if state == 'ok':
                 sentence = f'Last reply {age:.0f} s ago; some data unavailable. {cause}'
-        return {"section_times": self.section_times, "section_errors": self.section_errors, "state": state, "sentence": sentence, "age_s": age,
+            # the cause is said once, in the band; the meta line keeps only the freshness
+            sentence_shown = (f'Last reply {age:.0f} s ago; some data unavailable.' if state == 'ok'
+                              else f'The last good read was {age:.0f} s ago.' if age is not None
+                              else 'No good read yet.')
+        return {"section_times": self.section_times, "section_errors": self.section_errors, "state": state, "sentence": sentence, "sentence_shown": sentence_shown or sentence, "age_s": age,
                 'health': health_state, 'admin': self.admin,
                 "answer": self.last_answer, "target_label": target_label(s.get("target") or {}),
                 "target_kind": (s.get("target") or {}).get("kind"),
@@ -1533,6 +1653,128 @@ class Monitor:
         fresh = [a for a in current if (a["controller"], a["key"]) not in self._toasted]
         self._toasted = keys
         return fresh
+
+
+# ------------------------------------------------------------------ QM owner marker
+# An owner-marker config element names the client that opened a QM. The server does not
+# check it, so it is shown as the client's claim and never used to pick a QM to close.
+
+def marker_dir() -> Path:
+    """The marker's own per-user app-data folder (holds ``pc_tag`` and ``pc_names.json``)."""
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+    else:
+        base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    return Path(base) / "qm_owner_marker"
+
+
+def own_pc_tag(folder: Optional[Path] = None) -> Optional[str]:
+    """This PC's own tag, read only; a missing or malformed file is no tag."""
+    import re
+    try:
+        text = ((folder or marker_dir()) / "pc_tag").read_text(encoding="ascii").strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return text if re.fullmatch(r"[0-9a-f]{8}", text) else None
+
+
+def _read_pc_names_raw(p: Path) -> tuple:
+    """``(text-only map, ignored count, problem)`` from the file as it is on disk now."""
+    try:
+        text = p.read_text(encoding="utf-8-sig")
+    except FileNotFoundError:
+        return {}, 0, None
+    except (OSError, UnicodeDecodeError):
+        return {}, 0, "The PC names file could not be read; no names are applied."
+    try:
+        d = json.loads(text)
+    except ValueError:
+        return {}, 0, "The PC names file is not valid JSON; no names are applied."
+    if not isinstance(d, dict):
+        return {}, 0, "The PC names file is not a tag-to-name object; no names are applied."
+    names = {str(k): v.strip() for k, v in d.items() if isinstance(v, str) and v.strip()}
+    ignored = sum(1 for v in d.values() if not isinstance(v, str))
+    return names, ignored, None
+
+
+def load_pc_names(folder: Optional[Path] = None) -> tuple:
+    """``({tag: label}, problem)``. A missing file is an empty map with no problem; an
+    unreadable one is an empty map with a one-line problem for the settings tab; entries
+    that are not text are ignored and counted in the problem line."""
+    names, ignored, problem = _read_pc_names_raw((folder or marker_dir()) / "pc_names.json")
+    if problem is None and ignored:
+        problem = (f"{ignored} entr{'y' if ignored == 1 else 'ies'} in the PC names file "
+                   f"{'is' if ignored == 1 else 'are'} not text and ignored.")
+    return names, problem
+
+
+PC_LABEL_MAX = 40
+
+
+def check_pc_label(label: str) -> tuple:
+    """``(trimmed label, problem)``; a label holding a non-printable character is refused."""
+    label = (label or "").strip()[:PC_LABEL_MAX]
+    if any(not (ch == " " or ch.isprintable()) for ch in label):
+        return label, "A PC name cannot hold control or other invisible characters."
+    return label, None
+
+
+def owner_info(q: dict) -> dict:
+    """What a QM's config says about its owner, without labels (labels apply at render).
+
+    kind: 'unreported' (the worker's answer has no ``markers`` key: an older worker),
+    'unread' (config not read), 'none', 'one', 'unreadable' (one shaped, not v1),
+    'several'. ``markers`` lists every shaped name with its parsed fields, its version
+    (None when unknown or too long) and the version as display text."""
+    from quam_state_manager.core import qm_owner_marker as qom
+    if "markers" not in q:
+        return {"kind": "unreported", "markers": []}
+    names = q.get("markers")
+    if names is None:
+        return {"kind": "unread", "markers": []}
+    rows = [{"name": n, "parsed": qom.parse_marker(n), "version": qom.marker_version(n),
+             "version_text": qom.version_text(n),
+             # a v1 name may end in one newline the parse accepts; the cell shows it escaped
+             "ends_with": qom.display_text(n[-1]) if n.endswith("\n") else ""}
+            for n in names if qom.is_marker(n)]
+    if not rows:
+        kind = "none"
+    elif len(rows) > 1:
+        kind = "several"
+    else:
+        kind = "one" if rows[0]["parsed"] else "unreadable"
+    return {"kind": kind, "markers": rows}
+
+
+_OWNER_FAIL_LOGGED: set = set()
+
+
+def safe_owner_info(q: dict) -> dict:
+    """``owner_info`` that never raises: a failure for one QM gives that QM an honest row
+    ("marker present, not readable" per known name, or kind 'failed' when no name is
+    known) and one log record per QM and error type, without the name's content."""
+    try:
+        return owner_info(q)
+    except Exception as exc:  # one QM must never take the page down
+        key = (str(q.get("id")), type(exc).__name__)
+        if key not in _OWNER_FAIL_LOGGED:
+            _OWNER_FAIL_LOGGED.add(key)
+            logger.warning("owner of QM %s could not be worked out (%s)", key[0], key[1])
+        try:
+            names = [n for n in (q.get("markers") or []) if isinstance(n, str)]
+        except Exception:
+            names = []
+        rows = [{"name": n, "parsed": None, "version": None, "version_text": "version unknown"}
+                for n in names]
+        if not rows:
+            return {"kind": "failed", "markers": []}
+        return {"kind": "several" if len(rows) > 1 else "unreadable", "markers": rows}
+
+
+def owner_tags(answer: Optional[dict]) -> list:
+    """The parsed tags in the currently open QMs (offered on the settings tab)."""
+    return sorted({m["parsed"]["tag"] for q in (answer or {}).get("open_qms") or []
+                   for m in safe_owner_info(q)["markers"] if m["parsed"]})
 
 
 def default_python() -> str:

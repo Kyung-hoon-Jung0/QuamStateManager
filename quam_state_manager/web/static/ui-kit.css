@@ -249,6 +249,8 @@
     --ui-opxmon-confirm-padding: 0.7rem;
     --ui-opxmon-alarm-max-width: 38vw;
     --ui-opxmon-health-max-width: 22rem;
+    --ui-opxmon-owner-clip-max: 22rem;
+    --ui-opxmon-state-min: 13rem;
     --ui-opxmon-legend-font: 0.9rem;
     --ui-opxmon-note-space: 0.2rem;
     --ui-opxmon-full-width: 100%;
@@ -604,10 +606,9 @@
 
 /* OPX monitor (core/opx_monitor.py) -- ui-kit tokens only, so light and dark follow ---- */
 .ui-opxmon-page { padding: var(--ui-gap-2) var(--ui-opxmon-space-lg) var(--ui-opxmon-page-bottom); max-width: var(--ui-opxmon-page-width); }
-.ui-opxmon-status { margin: var(--ui-opxmon-space-md) 0; padding: var(--ui-opxmon-space-sm) var(--ui-opxmon-space-md); border-radius: var(--ui-r-md); border: var(--ui-bw) solid var(--ui-border); }
-.ui-opxmon-status--ok { border-color: var(--ui-ok-border); color: var(--ui-ok-text); }
-.ui-opxmon-status--stale, .ui-opxmon-status--starting { border-color: var(--ui-warn-border); color: var(--ui-warn-text); background: var(--ui-warn-bg); }
-.ui-opxmon-status--error { border-color: var(--ui-danger-border); color: var(--ui-danger-text); background: var(--ui-danger-bg); }
+.ui-opxmon-status { margin: 0; }
+.ui-opxmon-status--stale, .ui-opxmon-status--starting { color: var(--ui-warn-text); }
+.ui-opxmon-status--error { color: var(--ui-danger-text); }
 .ui-opxmon-status--unconfigured { color: var(--ui-opxmon-muted); }
 .ui-opxmon-target { font-weight: var(--ui-fw); }
 .ui-opxmon-h { font-size: var(--ui-opxmon-heading-font); margin: var(--ui-opxmon-heading-space) 0 var(--ui-opxmon-tile-padding); }
@@ -630,7 +631,7 @@
 .ui-opxmon-alarm-badge { display: inline-block; padding: var(--ui-opxmon-badge-padding-y) var(--ui-gap-2); border-radius: var(--ui-r-md); font-size: var(--ui-opxmon-fem-font); text-decoration: none;
                       color: var(--ui-danger-text); background: var(--ui-danger-bg); border: var(--ui-bw) solid var(--ui-danger-border); }
 .ui-opxmon-alarm-badge--blind { color: var(--ui-warn-text); background: var(--ui-warn-bg); border-color: var(--ui-warn-border); }
-.ui-opxmon-close.outline, .ui-opxmon-close-all.outline { color: var(--ui-danger-text); border-color: var(--ui-danger-border); background: transparent; }
+.ui-opxmon-close.outline, .ui-opxmon-close-all.outline { white-space: nowrap; color: var(--ui-danger-text); border-color: var(--ui-danger-border); background: transparent; }
 
 .ui-opxmon-health-dot--grey { color: var(--ui-text-2); }
 .ui-opxmon-health-dot--green { color: var(--ui-ok-text); }
@@ -639,10 +640,9 @@
 .ui-opxmon-health { font-size: var(--ui-opxmon-health-font); }
 
 /* D-23: the verdict carries health; freshness is secondary. */
-.ui-opxmon-verdict {font-size:var(--ui-opxmon-verdict-font); margin:var(--ui-opxmon-space-md) 0; display:flex; gap:var(--ui-opxmon-space-md); align-items:baseline; flex-wrap:wrap}
-.ui-opxmon-verdict strong {font-size:var(--ui-opxmon-verdict-label-font)}
+.ui-opxmon-verdict {margin:0 0 var(--ui-gap-3)}
 .ui-opxmon-verdict--red {color:var(--ui-danger-text)}
-.ui-opxmon-status--ok {border:0; color:var(--ui-opxmon-muted); padding:0; font-size:var(--ui-opxmon-compact-font)}
+.ui-opxmon-status--ok {color:var(--ui-text-2)}
 .ui-opxmon-details {margin:var(--ui-gap-2) 0}
 
 .ui-opxmon-tiles {display:flex; flex-wrap:wrap; gap:var(--ui-opxmon-space-xs); padding:var(--ui-opxmon-tile-padding) 0; align-items:flex-start; min-width:0}
@@ -656,11 +656,14 @@
 .ui-opxmon-qm-stale {margin:var(--ui-gap-2) 0}
 .ui-opxmon-table--stale {opacity:0.6}
 .ui-opxmon-hot {color:var(--ui-danger-text)}
-.ui-opxmon-hottest {font-size:var(--ui-opxmon-input-font); color:var(--ui-opxmon-muted)}
-.ui-opxmon-confirm {white-space:pre-line; padding:var(--ui-opxmon-confirm-padding); margin:var(--ui-gap-2) 0}
+.ui-opxmon-hottest {font-size:inherit; color:inherit}
+.ui-opxmon-confirm {margin:var(--ui-gap-2) 0}
 
 .ui-opxmon-alarm-slot {display:flex; align-items:center; gap:var(--ui-gap-2); min-width:0; max-width:var(--ui-opxmon-alarm-max-width)}
 .ui-opxmon-alarm-slot .ui-opxmon-health {overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; max-width:var(--ui-opxmon-health-max-width)}
+/* One clipped-text rule for the top bar text and long owner-marker texts: cut with an ellipsis, full text on hover (title). */
+.ui-opxmon-owner-marker .ui-opxmon-owner-clip {display:inline-block; vertical-align:bottom; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; max-width:var(--ui-opxmon-owner-clip-max)}
+.ui-opxmon-table--stacked .ui-opxmon-owner-marker .ui-opxmon-owner-clip {max-width:min(var(--ui-opxmon-owner-clip-max), 70vw)}
 .ui-opxmon-alarm-slot .ui-opxmon-alarm-badge {flex-shrink:0; white-space:nowrap}
 .ui-opxmon-alarm-slot > a {margin:0}
 
@@ -677,22 +680,34 @@
 
 .ui-opxmon-tile svg {display:block; width:var(--ui-opxmon-full-width); height:var(--ui-icon-btn); color:var(--ui-accent)}
 .ui-opxmon-tile summary > span {overflow-wrap:anywhere}
-.ui-opxmon-health-note {font-size:var(--ui-opxmon-compact-font); margin:var(--ui-opxmon-space-xxs) 0}
+.ui-opxmon-health-note {margin:0}
 .ui-opxmon-settings .ui-opxmon-input-number {width:var(--ui-opxmon-number-width); display:inline-block; padding:var(--ui-opxmon-space-xs) var(--ui-gap-2); height:auto}
 
 .ui-opxmon-other-temperatures {margin:var(--ui-opxmon-space-sm) 0; font-size:var(--ui-opxmon-input-font)}
 .ui-opxmon-other-temperatures > summary {margin:0}
 
-.ui-opxmon-body { min-width: 0; }
+.ui-opxmon-body { display: flex; flex-direction: column; gap: var(--ui-gap-3); min-width: 0; }
 .ui-opxmon-close-result { overflow-wrap: anywhere; }
 .ui-opxmon-confirm-count { min-width: 0; }
 .ui-opxmon-danger { overflow-wrap: anywhere; }
 .ui-opxmon-fem-temp { white-space: nowrap; }
 .ui-opxmon-health-dot { display: inline; }
-.ui-opxmon-qm-row { overflow-wrap: anywhere; }
+.ui-opxmon-qm-row { overflow-wrap: break-word; }
+.ui-opxmon-qm-state { width: var(--ui-opxmon-state-min); min-width: var(--ui-opxmon-state-min); }
+.ui-opxmon-table--stacked .ui-opxmon-qm-state { width: auto; min-width: 0; }
 .ui-opxmon-section-age { overflow-wrap: anywhere; }
 .ui-opxmon-sentence { overflow-wrap: anywhere; }
 .ui-opxmon-version { overflow-wrap: anywhere; }
+.ui-opxmon-owners { margin: 0 0 var(--ui-opxmon-space-md); padding: 0; list-style: none; }
+.ui-opxmon-owners > li { display: grid; grid-template-columns: auto 1fr; align-items: baseline; gap: var(--ui-gap-2); margin: 0; }
+.ui-opxmon-owner { min-width: 0; max-width: 100%; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--ui-gap-2); }
+.ui-opxmon-owner-marker { flex: 0 1 auto; max-width: 100%; min-width: 0; overflow-wrap: break-word; }
+.ui-opxmon-owner-marker code { display: inline; }
+.ui-opxmon-owner-tag { font-weight: var(--ui-fw); }
+.ui-opxmon-settings, .ui-opxmon-pcnames { display: flex; flex-direction: column; align-items: stretch; gap: var(--ui-gap-3); margin: 0; }
+.ui-opxmon-pcname-row code, .ui-opxmon-pcname-new input { overflow-wrap: anywhere; }
+.ui-opxmon-this-pc, .ui-opxmon-several { vertical-align: baseline; }
+.ui-opxmon-owner-note, .ui-opxmon-pcnames-problem { margin: 0 0 var(--ui-opxmon-space-md); }
 
 .ui-opxmon-close-idle { width: auto; }
 .ui-opxmon-confirm-accept, .ui-opxmon-confirm-cancel { width: auto; }
@@ -1161,6 +1176,37 @@
 .ui-stat--warn > .ui-stat-label, .ui-stat--warn > .ui-stat-value, .ui-stat--warn .ui-stat-unit { color: var(--ui-warn-text); }
 .ui-stat--danger { border-color: var(--ui-danger-border); background: var(--ui-danger-bg); }
 .ui-stat--danger > .ui-stat-label, .ui-stat--danger > .ui-stat-value, .ui-stat--danger .ui-stat-unit { color: var(--ui-danger-text); }
+.ui-stat-note { margin: 0; color: var(--ui-text-2); font-size: var(--ui-fs-xs); line-height: var(--ui-lh-dense); overflow-wrap: anywhere; }
+.ui-stat--warn > .ui-stat-note { color: var(--ui-warn-text); }
+.ui-stat--danger > .ui-stat-note { color: var(--ui-danger-text); }
+/* quiet tile: the value is unknown; grey, never a state colour */
+.ui-stat--quiet > .ui-stat-value { color: var(--ui-text-2); }
+/* banner meta: one quiet line under the reason (freshness, source) */
+.ui-verdict-meta { flex: 1 1 100%; min-width: 0; color: var(--ui-text-2); font-size: var(--ui-fs-xs); line-height: var(--ui-lh-dense); overflow-wrap: anywhere; }
+.ui-verdict--strong > .ui-verdict-meta { grid-column: 2; }
+/* facts: label / value pairs; labels normal, values strong */
+.ui-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--ui-gap-1) var(--ui-gap-3); margin: 0; font-size: var(--ui-fs-sm); line-height: var(--ui-lh-dense); }
+.ui-facts-row { display: contents; }
+.ui-facts-label { color: var(--ui-text-2); font-weight: var(--ui-fw-normal); }
+.ui-facts-value { margin: 0; min-width: 0; color: var(--ui-text); font-weight: var(--ui-fw); overflow-wrap: anywhere; }
+.ui-facts-note { display: block; color: var(--ui-text-2); font-size: var(--ui-fs-xs); font-weight: var(--ui-fw-normal); }
+.ui-callout--warn .ui-facts-label, .ui-callout--warn .ui-facts-note { color: var(--ui-warn-text); }
+.ui-callout--danger .ui-facts-label, .ui-callout--danger .ui-facts-note { color: var(--ui-danger-text); }
+/* callout with a body (facts) and its buttons at the foot */
+.ui-callout-body { margin: var(--ui-gap-2) 0 0; }
+.ui-callout > .ui-actions { margin-top: var(--ui-gap-2); }
+/* a table row that carries a callout (or another part) under the row above it */
+.ui-table-sub > .ui-table-cell { padding-top: 0; }
+.ui-table-sub > .ui-table-cell > .ui-callout { margin: 0; }
+/* danger zone: actions that cannot be undone; fold: the zone folds to its head */
+.ui-zone--danger { border-color: var(--ui-danger-border); }
+.ui-zone--danger > .ui-zone-head { background: var(--ui-danger-bg); border-bottom-color: var(--ui-danger-border); }
+.ui-zone--danger > .ui-zone-head > .ui-zone-title { color: var(--ui-danger-text); }
+.ui-zone--fold > .ui-zone-head { cursor: pointer; list-style: none; }
+.ui-zone--fold > .ui-zone-head::-webkit-details-marker { display: none; }
+.ui-zone--fold > .ui-zone-head::after { display: none; }
+.ui-zone--fold > .ui-zone-head::before { content: var(--ui-disclosure-marker); order: 9; color: var(--ui-text-3); font-size: var(--ui-fs-xs); }
+.ui-zone--fold > .ui-zone-head:last-child { border-bottom: 0; }
 
 /* checks: a row of result chips; every failure spelled out under the row */
 .ui-checks { display: flex; flex-direction: column; gap: var(--ui-gap-2); margin: 0; }

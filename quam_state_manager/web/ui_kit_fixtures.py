@@ -287,6 +287,26 @@ def _reading():
             {"text": "strong", "level": "strong"}, " normal ", {"text": "quiet", "level": "quiet"}, " ",
             {"text": "ok", "level": "ok"}, " ", {"text": "warn", "level": "warn"}, " ", {"text": "danger", "level": "danger"}]}),
     ]
+    out += [
+        (sec, "Banner with a quiet meta line", {"part": "verdict", "strong": True, "tone": "ok", "key": "FREE",
+                                                "why": "No open QM. No action needed.", "meta": "Bench A · updated 3 s ago"}),
+        (sec, "Stats with notes and a quiet (unknown) tile", {"part": "stats", "label": "Key numbers", "tiles": [
+            {"label": "Open QMs", "value": "3", "note": "1 idle", "tone": "warn"}, {"label": "Jobs running", "value": "1"},
+            {"label": "Hottest slot", "value": "unknown", "note": "no reading yet", "tone": "quiet"},
+            {"label": "Server", "value": "QOP 3.5", "note": "all calls answered"}]}),
+        (sec, "Facts (label / value)", {"part": "facts", "label": "Facts", "items": [
+            {"label": "State", "value": "idle", "note": "no job change for 42 min while SM watched"},
+            {"label": "FEMs", "value": "con1/1, con1/2"}, {"label": "Owner", "value": "Bench A (ab12cd34)"}]}),
+        (sec, "Callout with facts and buttons", {"part": "callout", "tone": "warn", "title": "Close qm-1004?",
+                                                 "text": "Any running job will stop.",
+                                                 "body": [{"part": "facts", "items": [{"label": "State", "value": "idle"},
+                                                                                      {"label": "FEMs", "value": "con1/1"}]}],
+                                                 "actions": [{"label": "Confirm close", "cls": "btn-sm"}, P_QUIET]}),
+        (sec, "Table row with a callout under it", {"part": "table", "label": "Rows", "columns": ["QM", "State"], "rows": [
+            [{"chip": "qm-1004"}, "idle"],
+            {"sub": [{"part": "callout", "tone": "warn", "title": "Close qm-1004?", "text": "Any running job will stop."}]},
+            [{"chip": "qm-1005"}, "running"]]}),
+    ]
     for n in range(1, 7):
         out.append((sec, "Line " + str(n) + " slot", {"part": "slot", "title": "Pulse on line " + str(n), "chip": "q" + str(n) + ".z", "line": n}))
     out.append((sec, "Unit input, invalid", {"part": "input", "label": "Amplitude", "num": True, "value": "3.0", "unit": "V",
@@ -376,6 +396,8 @@ def zone_samples():
             {"part": "panel", "title": "Checks", "summary": [{"text": "6 of 6 passed", "level": "ok"}],
              "body": ["A panel groups inside a zone and stays lighter than it."]}]},
         {"part": "zone", "step": 3, "title": "Result", "quiet": READING_EMPTY},
+        {"part": "zone", "title": "Danger", "tone": "danger", "fold": True, "summary": ["cannot be undone"],
+         "body": ["Actions here stop other people's work; each one asks first."]},
     ]
 
 
@@ -383,7 +405,7 @@ def _zones():
     sec = "Zones"
     z = zone_samples()
     return [(sec, "Zone with a step and a summary", z[0]), (sec, "Zone without a step, a panel inside", z[1]),
-            (sec, "Zone, quiet (nothing to show yet)", z[2])]
+            (sec, "Zone, quiet (nothing to show yet)", z[2]), (sec, "Zone, danger tone, folded", z[3])]
 
 
 def specs():

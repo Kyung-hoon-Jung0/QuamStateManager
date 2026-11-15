@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 import time
 import warnings
@@ -147,7 +148,7 @@ class QmmTarget:
         self._config_cache = cache
         qms = []
         for qid in qm_ids or []:
-            row = {"id": str(qid), "jobs": None, "ports": None}
+            row = {"id": str(qid), "jobs": None, "ports": None, "markers": None}
             qm = call(f"get_qm({qid})", lambda: self.qmm.get_qm(qid))
             if qm is not None:
                 row['jobs'] = call(f"qm.get_jobs({qid})", lambda: [_job_row(j) for j in qm.get_jobs()])
@@ -161,8 +162,12 @@ class QmmTarget:
                     cfg = call(f"qm.get_config({qid})", qm.get_config)
                     if isinstance(cfg, dict):
                         ports = call(f"qm.get_config({qid})", lambda: _used_fems(cfg))
-                        cache[str(qid)] = {'ports': ports, 'jobs': job_ids, 'at': time.monotonic()}
+                        markers = call(f"qm.get_config({qid})", lambda: _marker_names(cfg))
+                        cache[str(qid)] = {'ports': ports, 'markers': markers, 'jobs': job_ids,
+                                           'at': time.monotonic()}
                 row['ports'] = (cache.get(str(qid)) or {}).get('ports')
+                # None = the config could not be read; [] = read, no marker-shaped element
+                row['markers'] = (cache.get(str(qid)) or {}).get('markers')
             qms.append(row)
         ans["open_qms"] = qms if qm_ids is not None else None
         jobs = call("get_jobs", lambda: [_job_row(j) for j in self.qmm.get_jobs()]) if include_jobs else None
@@ -248,6 +253,16 @@ def _job_row(j):
             "started_at": _ts(getattr(md, "started_at", None)),
             "updated_at": _ts(getattr(md, "last_status_updated_at", None)),
             "is_simulation": bool(getattr(j, "is_simulation", False))}
+
+
+_MARKER_SHAPE = re.compile(r"^qmowner__v[0-9]+__")
+
+
+def _marker_names(cfg):
+    """The owner-marker-shaped element names of a config, nothing else about elements.
+
+    Parsing happens in SM; the worker only filters by shape."""
+    return sorted(n for n in (cfg.get("elements") or {}) if isinstance(n, str) and _MARKER_SHAPE.match(n))
 
 
 def _used_fems(cfg):
