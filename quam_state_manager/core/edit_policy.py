@@ -34,8 +34,9 @@ def cas_equal(a: Any, b: Any) -> bool:
     with a relative tolerance; bools are NOT numbers here (True == 1 would
     make a boolean flip invisible); everything else is plain equality.
 
-    Lifted verbatim from ``autofit/writer._values_equal`` (docs/56 §8), which
-    now delegates here so the robot path and the user path can never drift.
+    Started as ``autofit/writer._values_equal`` (docs/56 §8), which now
+    delegates here so the robot path and the user path can never drift; a
+    bool now equals only a bool of the same value.
     """
     if isinstance(a, bool) or isinstance(b, bool):
         return type(a) is type(b) and a == b
