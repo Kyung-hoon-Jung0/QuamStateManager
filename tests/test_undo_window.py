@@ -345,15 +345,19 @@ def test_a_yes_to_another_windows_step_is_not_a_yes_to_an_old_edit(env, monkeypa
 
 @pytest.mark.parametrize("direction", ["/undo", "/redo"])
 def test_the_age_sentence_needs_an_undo_that_writes_the_chip(env, monkeypatch, direction):
-    """Another window's old step: the window question names the age only for
+    """Another window's earlier-session step: the window question names the age only for
     an /undo with Ctrl+Z writing live ON; with OFF, and on redo, it does not
     (redo never had the age question; a redo never reads "It undoes an edit")."""
     c = env["client"]
     _set_setting(env, True)
-    u1 = _apply_from(env, B, 0.1)
+    _apply_from(env, B, 0.1)
     if direction == "/redo":
         assert "cellsReverted" in _trig(c.post("/undo", headers=B))
-    _age(u1, monkeypatch)
+    # The restart rule, not a stored age: the journal is re-read from its
+    # sidecar on the way, and every unit stays from an earlier SM session.
+    import time
+    from quam_state_manager.web import routes
+    monkeypatch.setattr(routes, "_PROCESS_STARTED_AT", time.time() + 60)
     for on in (True, False):
         _set_setting(env, on)
         before = snapshot(env)
