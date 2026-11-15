@@ -57,6 +57,7 @@ def env(tmp_path):
     _write_chip(live, _state())
     app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
     c = app.test_client()
+    c.environ_base["HTTP_X_SM_WINDOW_ID"] = "window-a"
     r = c.post("/load", data={"folder": str(live)})
     assert r.status_code in (200, 302)
     # docs/160: Ctrl+Z after an apply now writes the chip by DEFAULT. The pins
@@ -387,7 +388,7 @@ class TestJournalStepHonesty:
         # Hand-build a poison unit: [delete-entry, set-entry] → inverse ops
         # run [set (succeeds), create (clobbers — path still exists)].
         ctx["undo_units"].append({
-            "id": "poison", "ts": 0.0, "entries": [
+            "id": "poison", "ts": 0.0, "meta": {"window_id": "window-a"}, "entries": [
                 {"path": "qubits.qA1.f_01", "old": 4.9e9, "new": None,
                  "source_file": "state", "created": False, "deleted": True},
                 {"path": "qubits.qA1.z.joint_offset", "old": 0.05, "new": 0.10,

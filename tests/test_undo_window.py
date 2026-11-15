@@ -181,3 +181,88 @@ def test_wholesale_capture_records_window_and_asks(env):
     assert _live_off(env) == 0.08
     assert "cellsReverted" in _trig(c.post("/undo", headers=A))
     assert _live_off(env) == 0.1
+
+
+@pytest.mark.parametrize("direction", ["/undo", "/redo"])
+@pytest.mark.parametrize("on", [True, False])
+@pytest.mark.parametrize("consent", ["", "1"])
+def test_headerless_person_asks_before_any_mutation(env, direction, on, consent):
+    _set_setting(env, on)
+    capture(env, 0.1)
+    c = env["client"]
+    if direction == "/redo":
+        assert "cellsReverted" in _trig(c.post("/undo", headers=A))
+    before = snapshot(env)
+    c.environ_base.pop("HTTP_X_SM_WINDOW_ID", None)
+    r = c.post(direction, data={"ack_prev_window": consent})
+    assert r.status_code == 409
+    q = _trig(r)["undoAskPrevSession"]
+    assert q["direction"] == direction and "joint_offset" in q["message"]
+    assert ("writes the chip" if on else "stages only") in q["message"]
+    assert snapshot(env) == before
+
+
+@pytest.mark.parametrize("direction", ["/undo", "/redo"])
+@pytest.mark.parametrize("window", ["", "window-b"])
+def test_agent_keeps_window_exemption_and_route_ownership_guard(env, direction, window):
+    from quam_state_manager.web import routes
+    capture(env, 0.1)
+    c = env["client"]
+    unit = _ctx(env)["undo_units"][-1]
+    headers = {"X-SM-Agent": "mcp", "X-SM-Window-ID": window}
+    # The route's ownership guard precedes the helper and refuses applied
+    # history. Pin the helper too: dropping its exemption must fail here.
+    with env["app"].test_request_context(direction, method="POST", headers=headers):
+        assert routes._journal_window_ask(unit, direction) is None
+    before = snapshot(env)
+    r = c.post(direction, headers=headers)
+    assert r.status_code == 409
+    assert "undoAskPrevSession" not in _trig(r)
+    assert snapshot(env) == before
+
+
+def test_agent_headerless_age_rule_is_retained(env, monkeypatch):
+    import time
+    from quam_state_manager.web import routes
+    now = time.time()
+    monkeypatch.setattr(routes, "_PROCESS_STARTED_AT", now - 12 * 3600)
+    with env["app"].test_request_context("/undo", method="POST", headers={"X-SM-Agent": "mcp"}):
+        assert not routes._unit_needs_ask({"ts": now - 7 * 3600})
+        assert routes._unit_needs_ask({"ts": now - 9 * 3600})
+        assert routes._unit_needs_ask({"ts": now - 13 * 3600})
+        assert routes._unit_needs_ask({})
+
+
+@pytest.mark.parametrize("window", [A, B])
+def test_mixed_window_group_asks_each_creator_before_reverting_whole_unit(env, window):
+    c = env["client"]
+    ctx = _ctx(env)
+    for headers, path, value in ((A, "qubits.qA1.z.joint_offset", "0.1"),
+                                  (B, "qubits.qA1.f_01", "6e9")):
+        r = c.post("/field/edit-batch", headers=headers, json={"updates": [
+            {"dot_path": path, "value": value}], "expect_chip": ""})
+        assert r.get_json()["ok"]
+        ctx["store"].change_log[-1].group_id = "together"
+    assert c.post("/state/apply-to-live", headers=A).status_code == 200
+    unit = ctx["undo_units"][-1]
+    assert len(unit["entries"]) == 2
+    assert unit["meta"]["window_id"] is None
+    before = snapshot(env)
+    assert "2 changes" in _trig(c.post("/undo", headers=window))["undoAskPrevSession"]["message"]
+    assert snapshot(env) == before
+    t = _trig(c.post("/undo", headers=window, data={"ack_prev_window": "1"}))
+    assert t["cellsReverted"]["live"] is True
+    assert _work_off(env) == _live_off(env) == 0.08
+    assert ctx["store"].merged["qubits"]["qA1"]["f_01"] == 5e9
+    assert "undoAskPrevSession" in _trig(c.post("/redo", headers=window))
+
+
+def test_headerless_person_can_undo_and_redo_an_unapplied_edit(env):
+    c = env["client"]
+    _edit(c, 0.1)
+    c.environ_base.pop("HTTP_X_SM_WINDOW_ID", None)
+    assert "cellsReverted" in _trig(c.post("/undo"))
+    assert _work_off(env) == 0.08
+    assert "cellsReverted" in _trig(c.post("/redo"))
+    assert _work_off(env) == 0.1
+    assert _live_off(env) == 0.08

@@ -1,4 +1,4 @@
-/* v1.5.1 T1-F2: Ctrl+Z into an earlier session's journal -- the page side.
+/* v1.5.1 T1-F2: Ctrl+Z into an earlier session's journal; the page side.
  *
  * Pins, against the real app.js + undo-trail.js under jsdom:
  *  A  the server's undoAskPrevSession question is asked (in-page smConfirm with
@@ -6,7 +6,7 @@
  *     (ack_prev_session), Cancel sends nothing and says so;
  *  B  a later /undo does not carry that unit's yes again, but carries the
  *     WINDOW's yes (R2 MINOR 4: kept per window in sessionStorage, keyed by
- *     the chip folder -- not per chip context on the server);
+ *     the chip folder; not per chip context on the server);
  *  E  presses queued behind the asked one are dropped when it asks (R2
  *     MINOR 4: a Cancel used to be asked again for each of them);
  *  C  the Undo / Redo panel names the edit's age;
@@ -97,26 +97,26 @@ function ask(unit) {
     ask('u-old-1');
     await tick(80);
     ok(!!confirmOverlay() && /from 2 days ago/.test(confirmMsg()) && /earlier SM session/.test(confirmMsg()),
-       'A1: the question is asked with the edit and its age -- ' + JSON.stringify(confirmMsg() || ''));
+       'A1: the question is asked with the edit and its age; ' + JSON.stringify(confirmMsg() || ''));
     await clickConfirm(true);
     const undo = ajaxCalls.filter((c) => c.u === '/undo');
     ok(undo.length === 1 && undo[0].o && undo[0].o.values
        && undo[0].o.values.ack_prev_session === 'u-old-1',
-       'A2: OK sends one /undo with that unit\'s yes -- ' + JSON.stringify(undo.map((c) => c.o && c.o.values)));
+       'A2: OK sends one /undo with that unit\'s yes; ' + JSON.stringify(undo.map((c) => c.o && c.o.values)));
     /* B */
     window.UndoQueue.push('/undo');
     await tick(80);
     const undo2 = ajaxCalls.filter((c) => c.u === '/undo');
     ok(undo2.length === 2 && !undo2[1].o.values.ack_prev_session,
-       'B1: the next press does not carry the yes again -- ' + JSON.stringify(undo2[1] && undo2[1].o.values));
+       'B1: the next press does not carry the yes again; ' + JSON.stringify(undo2[1] && undo2[1].o.values));
     ok(undo2[1].o.values.ack_prev_window === '1' && SESSION.getItem('sm.undoOldOk.chip_k-0123abcd') === null,
-       'B2: ...it carries the yes of THIS window, kept per window -- ' + JSON.stringify(undo2[1].o.values));
+       'B2: ...it carries the yes of THIS window, kept per window; ' + JSON.stringify(undo2[1].o.values));
     window.__chipKey = 'another-scope';
     window.UndoQueue.push('/undo');
     await tick(80);
     const undo3 = ajaxCalls.filter((c) => c.u === '/undo');
     ok(undo3.length === 3 && undo3[2].o.values.ack_prev_window === '1',
-       'B3: consent stays in this document across chip changes -- ' + JSON.stringify(undo3[2].o.values));
+       'B3: consent stays in this document across chip changes; ' + JSON.stringify(undo3[2].o.values));
 
     // A fresh queue closure models document initialization.
     const appSource = fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8');
@@ -158,7 +158,7 @@ function ask(unit) {
     await tick(120);
     const undo4 = ajaxCalls.filter((c) => c.u === '/undo' || /^\/undo\?/.test(c.u));
     ok(undo4.length === 4 && window.UndoQueue.depth() === 0,
-       'E1: Cancel sends nothing more -- the queued presses were dropped (' + undo4.length + ')');
+       'E1: Cancel sends nothing more; the queued presses were dropped (' + undo4.length + ')');
     /* A: Cancel */
     const before = ajaxCalls.length;
     ask('u-old-2');
@@ -174,10 +174,10 @@ function ask(unit) {
         entries: [{ dot_path: 'ports.x.full_scale_power_dbm', old_value_str: '10', old_value_disp: '10' }] } }));
     const p = d.getElementById('undo-trail');
     ok(p && !p.hidden && /edit from 2 days ago/.test(p.textContent),
-       'C1: the Undo / Redo panel names the edit\'s age -- ' + (p ? p.textContent.slice(0, 120) : 'no panel'));
+       'C1: the Undo / Redo panel names the edit\'s age; ' + (p ? p.textContent.slice(0, 120) : 'no panel'));
     ok(d.body.classList.contains('undo-trail-on'), 'D1: the open panel lifts the toast sink');
     ok(/px$/.test(d.body.style.getPropertyValue('--undo-trail-h')),
-       'D2: ...by its measured height -- ' + d.body.style.getPropertyValue('--undo-trail-h'));
+       'D2: ...by its measured height; ' + d.body.style.getPropertyValue('--undo-trail-h'));
     p.querySelector('.undo-trail-close').click();
     ok(!d.body.classList.contains('undo-trail-on'), 'D3: closing the panel drops the lift');
 

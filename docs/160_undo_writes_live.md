@@ -479,8 +479,11 @@ A missing stamp is another window. Before undo or redo mutates that step,
 the existing kit confirmation names the change and whether Ctrl+Z writes
 the chip (ON) or stages only (OFF). No changes nothing; Yes repeats the
 request with `ack_prev_window=1`. Consent lives only in document memory,
-covers later undo and redo steps, and resets on reload. Same-window steps
-need no new question. Headerless callers retain the earlier age-based
-live-write confirmation. Agent undo-mine and robot policy are unchanged.
+covers later undo and redo steps, and resets on reload. A reload creates
+a new window id and asks again, including for that document's earlier edits.
+Same-window steps need no new question. A person without a window header
+gets 409 with the question before any write; consent requires a window id.
+Agent callers retain the earlier age-based live-write confirmation. Agent
+undo-mine and robot policy are unchanged.
 The unseen-edit gate precedes the question; the live door and grouped
 rollback still run after consent, including the class-file-left notice.

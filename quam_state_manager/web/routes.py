@@ -3845,14 +3845,10 @@ def _journal_window_id() -> str | None:
 
 
 def _unit_needs_ask(unit: dict) -> bool:
-    """A browser asks once before walking another window's journal unit.
-
-    Headerless callers retain the existing age-based live-write rule.
-    Browser requests always carry the document's X-SM-Window-ID.
-    """
+    """People ask for foreign units; agents keep the age-based rule."""
     window_id = _journal_window_id()
-    if window_id:
-        return (unit.get("meta") or {}).get("window_id") != window_id
+    if window_id or not request.headers.get("X-SM-Agent"):
+        return not window_id or (unit.get("meta") or {}).get("window_id") != window_id
     if _unit_from_previous_session(unit):
         return True
     ts = _unit_ts(unit)
@@ -3861,10 +3857,11 @@ def _unit_needs_ask(unit: dict) -> bool:
 
 def _journal_window_ask(unit: dict, direction: str):
     """Return the existing kit-dialog event before any journal mutation."""
-    if (not _journal_window_id()
-            or request.headers.get("X-SM-Agent")
+    # callers.py: this advisory label preserves the agent path, not proof of
+    # personhood or authority. Existing agent ownership guards still apply.
+    if (request.headers.get("X-SM-Agent")
             or not _unit_needs_ask(unit)
-            or request.values.get("ack_prev_window") == "1"):
+            or (_journal_window_id() and request.values.get("ack_prev_window") == "1")):
         return None
     entries = unit.get("entries") or []
     if not entries:
@@ -3885,7 +3882,7 @@ def _journal_window_ask(unit: dict, direction: str):
     effect = ("writes the chip" if _undo_live_enabled()
               else "stages only; the chip stays unchanged")
     verb = "Undo" if direction == "/undo" else "Redo"
-    resp = make_response(_tray_html())
+    resp = make_response(_tray_html(), 200 if _journal_window_id() else 409)
     resp.headers["HX-Trigger"] = json.dumps({"undoAskPrevSession": {
         "unit_id": str(unit.get("id") or ""), "direction": direction,
         "message": f"{verb} another window's change: {what}; Ctrl+Z {effect}."}})

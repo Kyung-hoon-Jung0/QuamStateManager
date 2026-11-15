@@ -5,10 +5,10 @@ undid a 2-day-old edit, and with "Ctrl+Z writes live: ON" one keypress would
 have written that inverse to the live chip; the toast never said how old the
 edit was, and it covered the Undo / Redo panel's button.
 
-Now: every journal-walk toast names the edit's age; a step that would write
-the live chip with an EARLIER session's edit asks once first (nothing staged
-or written while it asks; the answer travels as ``ack_prev_session``, and
-after one yes the session is not asked again); the page side
+Now: every journal-walk toast names the edit's age; a step from another
+document asks once first (nothing staged
+or written while it asks; the answer travels as ``ack_prev_window``, and
+after one yes the document is not asked again); the page side
 (tests/v151_undo_prev_session_selfcheck.cjs) asks, shows the age in the
 panel and lifts the toasts above it (the style rule pinned here).
 """
@@ -45,6 +45,7 @@ def env(tmp_path):
     routes._quam_cache.clear()
     app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
     c = app.test_client()
+    c.environ_base["HTTP_X_SM_WINDOW_ID"] = "window-a"
     assert c.post("/load", data={"folder": str(live)}).status_code in (200, 302)
     assert c.post("/settings/undo-live", data={"enabled": "1"}).get_json()["enabled"] is True
     return {"app": app, "client": c, "live": live}
@@ -79,6 +80,8 @@ def _age_units(env, monkeypatch, seconds=TWO_DAYS):
     for u in ctx["undo_units"]:
         u["ts"] = then
         (u.setdefault("meta", {}))["at"] = then
+        u["meta"].pop("window_id", None)
+    env["client"].environ_base["HTTP_X_SM_WINDOW_ID"] = "window-b"
     monkeypatch.setattr(routes, "_PROCESS_STARTED_AT", time.time())
 
 
@@ -92,7 +95,7 @@ def test_an_earlier_sessions_edit_is_not_written_live_without_a_yes(env, monkeyp
     t = _trig(r)
     assert "undoAskPrevSession" in t, t
     q = t["undoAskPrevSession"]
-    assert "2 days ago" in q["message"] and "earlier SM session" in q["message"], q
+    assert "another window" in q["message"], q
     assert "qubits.qA1.z.joint_offset" in q["message"]
     assert q["unit_id"] == str(ctx["undo_units"][cursor - 1]["id"])
     # nothing happened anywhere while the question is open
@@ -101,7 +104,7 @@ def test_an_earlier_sessions_edit_is_not_written_live_without_a_yes(env, monkeyp
     assert "cellsReverted" not in t
 
     # the yes for THIS unit writes it, and the toast says how old it was
-    r = c.post("/undo", data={"ack_prev_session": q["unit_id"]})
+    r = c.post("/undo", data={"ack_prev_session": q["unit_id"], "ack_prev_window": "1"})
     cr = _trig(r)["cellsReverted"]
     assert cr["live"] is True and _live(env) == 0.08, cr
     assert "(edit from 2 days ago)" in cr["message"], cr["message"]
@@ -148,11 +151,12 @@ def test_an_edit_older_than_8_hours_of_this_session_is_asked(env, monkeypatch):
     for u in _ctx(env)["undo_units"]:
         u["ts"] = then
         (u.setdefault("meta", {}))["at"] = then
+        u["meta"].pop("window_id", None)
     monkeypatch.setattr(routes, "_PROCESS_STARTED_AT", then - 60)    # the same session
     t = _trig(c.post("/undo"))
     assert "undoAskPrevSession" in t, t
     q = t["undoAskPrevSession"]
-    assert "9 h ago" in q["message"] and "earlier SM session" not in q["message"], q
+    assert "another window" in q["message"], q
     assert _live(env) == 0.10
 
 
@@ -178,13 +182,13 @@ def test_this_sessions_older_edit_says_its_age(env, monkeypatch):
     assert cr["live"] is True and "(edit from 3 h ago)" in cr["message"], cr["message"]
 
 
-def test_with_ctrl_z_writing_live_off_nothing_is_asked_and_the_age_is_said(env, monkeypatch):
+def test_with_ctrl_z_writing_live_off_foreign_step_asks_and_the_age_is_said(env, monkeypatch):
     c = env["client"]
     assert c.post("/settings/undo-live", data={"enabled": "0"}).get_json()["enabled"] is False
     _edit_apply(c, 0.10)
     _age_units(env, monkeypatch)
-    t = _trig(c.post("/undo"))
-    assert "undoAskPrevSession" not in t
+    assert "undoAskPrevSession" in _trig(c.post("/undo"))
+    t = _trig(c.post("/undo", data={"ack_prev_window": "1"}))
     cr = t["cellsReverted"]
     assert cr["live"] is False and "(edit from 2 days ago)" in cr["message"], cr
     assert _live(env) == 0.10                # staged only, as before

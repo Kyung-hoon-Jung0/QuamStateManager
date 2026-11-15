@@ -61,6 +61,7 @@ def env(tmp_path):
     _write_chip(live, _state())
     app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
     c = app.test_client()
+    c.environ_base["HTTP_X_SM_WINDOW_ID"] = "window-a"
     r = c.post("/load", data={"folder": str(live)})
     assert r.status_code in (200, 302)
     return {"app": app, "client": c, "live": live, "tmp": tmp_path}
@@ -331,7 +332,8 @@ class TestLiveWalk:
         # now the journal step: must NOT flush (the f_01 edit would ride along)
         # -- force the journal branch by leaving the pending edit and walking
         ctx = _ctx(env)
-        with env["app"].app_context(), env["app"].test_request_context("/undo", method="POST"):
+        with env["app"].app_context(), env["app"].test_request_context(
+                "/undo", method="POST", headers={"X-SM-Window-ID": "window-a"}):
             resp = routes_mod._undo_journal_step(ctx)
         t = json.loads(resp.headers["HX-Trigger"])["cellsReverted"]
         assert t["live"] is False and "unapplied edits" in t["message"]
@@ -1450,6 +1452,7 @@ class TestUndoChipIdentity:
         B = tmp_path / "lab-B" / "chipB"; self._chip(B, "qB1", 0.55, "10.0.0.2")
         app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
         c = app.test_client()
+        c.environ_base["HTTP_X_SM_WINDOW_ID"] = "window-a"
         c.post("/load", data={"folder": str(A)})
         tokA = c.get("/chip/active-token").get_json().get("token")
         c.post("/field/edit-batch", json={"updates": [{"dot_path": "qubits.qA1.z.joint_offset", "value": "0.20"}], "expect_chip": ""})
@@ -1516,6 +1519,7 @@ class TestReplayNeverMergesTwoGestures:
         _write_chip(live, _state())
         app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
         c = app.test_client()
+        c.environ_base["HTTP_X_SM_WINDOW_ID"] = "window-a"
         c.post("/load", data={"folder": str(live)})
         return app, c, live
 
