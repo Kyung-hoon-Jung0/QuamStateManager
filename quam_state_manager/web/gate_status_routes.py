@@ -92,6 +92,40 @@ def gate_list(store, ctx, pair: str) -> dict:
             "no_active": bool(lines) and not any(ln["active"] for ln in lines)}
 
 
+def parts_text(n: int) -> str:
+    """"1 part" / "2 parts": the count of what went with a gate."""
+    return f"{n} part" if n == 1 else f"{n} parts"
+
+
+def list_answer(store, ctx, pair: str, *, notice: dict | None = None,
+                gate: str | None = None, row_note: str | None = None, code: int = 200):
+    """The whole refreshed gate list in place of the zone the press came from:
+    *notice* ``{tone, title, text}`` sits in the zone above the rows (never in a
+    row, so it outlives a row that went); *row_note* goes on *gate*'s row."""
+    gl = gate_list(store, ctx, pair)
+    gl["notice"] = notice
+    if row_note:
+        for ln in gl["lines"]:
+            if ln["gate"] == gate:
+                ln["note"], ln["note_tone"] = row_note, "danger"
+    resp = make_response(render_template("_gate_status_list.html", gate_lines=gl), code)
+    resp.headers["HX-Retarget"] = "closest .gate-status-list"
+    resp.headers["HX-Reswap"] = "outerHTML"
+    return resp
+
+
+def gone_notice(pair: str, gate: str) -> dict:
+    """The plain sentence for a gate that is no longer there (two windows)."""
+    return {"tone": "warn", "title": f"{gate} is no longer on pair {pair}",
+            "text": "Another window may have deleted it. The list below is the chip as it is now."}
+
+
+def _pair_exists(store, pair: str) -> bool:
+    with store._lock:
+        pairs = store.merged.get("qubit_pairs")
+        return isinstance(pairs, dict) and isinstance(pairs.get(pair), dict)
+
+
 def _broken_line(pair: str, gate: str, exc: BaseException) -> dict:
     """The honest line of a gate whose status could not be computed."""
     item = {"key": "error", "text": "status could not be read", "tone": "warn",
@@ -156,6 +190,18 @@ def cz_gate_status():
     return render_template("_gate_status.html", line=line)
 
 
+@bp.route("/pulse/cz-gate/list")
+def cz_gate_list():
+    """The pair detail's whole gate list (re-fetched by the zone after an undo
+    or redo, so a gate that came back shows without a reload)."""
+    store = R._store()
+    pair = (request.args.get("pair") or "").strip()
+    if not store or not pair or not _pair_exists(store, pair):
+        return "", 204
+    gl = gate_list(store, R._active_ctx(), pair)
+    return render_template("_gate_status_list.html", gate_lines=gl)
+
+
 @bp.route("/pulse/cz-gate/offer-close")
 def cz_gate_offer_close():
     """Cancel / Close of the delete offer: the empty slot. Stages nothing and
@@ -172,11 +218,16 @@ def cz_gate_delete_offer():
         return render_template("_status.html", message="No state loaded", level="warning")
     pair, gate = _args()
     bad = _gate_problem(store, pair, gate)
+    in_list = (request.args.get("scope") or "") == "list"
+    if bad and in_list and gate and gate != "cz" and _pair_exists(store, pair):
+        # a gate another window deleted: say so and show the list as it is
+        return list_answer(store, R._active_ctx(), pair, notice=gone_notice(pair, gate))
     if bad:
         return render_template("_status.html", message=bad, level="error"), 404
     with store._lock:
         parts = gate_parts.gate_parts(store.merged, pair, gate)
-    return render_template("_gate_delete_offer.html", pair=pair, gate=gate, parts=parts)
+    return render_template("_gate_delete_offer.html", pair=pair, gate=gate, parts=parts,
+                           in_list=in_list)
 
 
 def _refuse(message: str, code: int, *, htmx: bool, pair: str, gate: str, store, ctx,
@@ -340,8 +391,13 @@ def delete_gate_together(ctx, modifier, body: dict):
     store = modifier.store
     htmx = bool(request.headers.get("HX-Request"))
     pair, gate = json_text(body, "pair"), json_text(body, "gate")
+    in_list = htmx and str(body.get("scope") or "") == "list"
 
     def say(message, code, **extra):
+        if in_list and _pair_exists(store, pair):
+            if _gate_problem(store, pair, gate):
+                return list_answer(store, ctx, pair, notice=gone_notice(pair, gate))
+            return list_answer(store, ctx, pair, gate=gate, row_note=message)
         if htmx:
             return make_response(render_template(
                 "_gate_fail.html", message=message), 200)
@@ -365,7 +421,8 @@ def delete_gate_together(ctx, modifier, body: dict):
         paths.append(parts["alias"])
     by_name = R._by_name_cut(store, paths)
     if by_name and str(body.get("force") or "") != "1":
-        return R._by_name_refused_json(by_name)
+        refused = R._by_name_refused_json(by_name)
+        return say(_text_of(refused), 409) if htmx else refused
     payload = {"updates": [{"dot_path": p, "delete": True} for p in paths],
                "group": "new", "expect_chip": body.get("expect_chip") or "",
                "force_chip": body.get("force_chip")}
@@ -375,10 +432,14 @@ def delete_gate_together(ctx, modifier, body: dict):
     r = resp[0] if isinstance(resp, tuple) else resp
     data = r.get_json(silent=True) or {}
     if data.get("ok"):
-        out = make_response(render_template(
-            "_status.html", level="success",
-            message=f"Deleted {gate} and {len(paths) - 1} part(s). Ctrl+Z brings them back.")
-            + R._tray_oob())
+        done = f"Deleted {gate} and {parts_text(len(paths) - 1)}. Ctrl+Z brings them back."
+        if in_list:
+            out = list_answer(store, ctx, pair, notice={
+                "tone": "note", "title": f"{gate} deleted", "text": done})
+            out.set_data(out.get_data(as_text=True) + R._tray_oob())
+        else:
+            out = make_response(render_template(
+                "_status.html", level="success", message=done) + R._tray_oob())
         out.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
         return out
     return say(data.get("error") or "Nothing was deleted.", 400)

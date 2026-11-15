@@ -25,7 +25,7 @@
     <div class="ui-actions gate-delete-actions">
         <button type="button" class="btn-sm danger gate-delete-confirm"
                 hx-post="/api/pulse/delete-together"
-                hx-vals='{{ {"pair": pair, "gate": gate, "confirm_active": ("1" if parts.active else "")} | tojson }}'
+                hx-vals='{{ {"pair": pair, "gate": gate, "confirm_active": ("1" if parts.active else ""), "scope": ("list" if in_list else "")} | tojson }}'
                 hx-target="closest .gate-status-slot" hx-swap="innerHTML">{{ 'Delete the active gate' if parts.active else 'Delete gate' }}</button>
         <button type="button" class="btn-sm outline secondary gate-delete-cancel"
                 hx-get="/pulse/cz-gate/offer-close" hx-target="closest .gate-status-slot"

@@ -30,7 +30,7 @@
                     title="Check the gate with the lab's code, then point the pair's cz at it (one Ctrl+Z)">Make active</button>
             {% endif %}
             <button type="button" class="btn-sm outline secondary gate-status-delete"
-                    hx-get="/pulse/cz-gate/delete-offer?pair={{ line.pair | urlencode }}&amp;gate={{ line.gate | urlencode }}"
+                    hx-get="/pulse/cz-gate/delete-offer?pair={{ line.pair | urlencode }}&amp;gate={{ line.gate | urlencode }}{% if in_list %}&amp;scope=list{% endif %}"
                     hx-target="next .gate-status-slot" hx-swap="innerHTML"
                     title="Show what goes with this gate before deleting">Delete</button>
         </span>
