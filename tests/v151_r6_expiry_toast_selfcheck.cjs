@@ -33,7 +33,7 @@ const dom = new JSDOM('<!doctype html><html><body><div id="status-bar"></div>'
 const w = dom.window, d = w.document;
 const realSetInterval = w.setInterval.bind(w);
 w.setInterval = (fn, ms) => realSetInterval(fn, Math.max(1, (ms || 0) / 50));
-// gl-17y: the confirm window is a deadline on the clock now, so the clock runs
+// the confirm window is a deadline on the clock now, so the clock runs
 // 50x as fast as the intervals do
 const realNow = w.Date.now.bind(w.Date), t0 = realNow();
 w.Date.now = () => t0 + (realNow() - t0) * 50;

@@ -1,4 +1,4 @@
-// Pulse class edit screen under jsdom: the real cm-python.js bundle and the
+// Pulse class edit screen under jsdom: the real cm6-python.min.js bundle and the
 // real pulse-class-edit.js on the real template markup, with a mocked server.
 // Pins: form redraw from every adopted text, stale form asks, SM loads are not
 // undoable, the END marker line end is guarded, a keystroke during a poll is
@@ -123,7 +123,7 @@ window._plotlyRender = function () { window.__plots.wave++; };
 window.GateTimeline = { render: function () { window.__plots.timeline++; } };`);
 win.__plots = plots;
 
-win.eval(fs.readFileSync(path.join(STATIC, "cm-python.js"), "utf8"));
+win.eval(fs.readFileSync(path.join(STATIC, "vendor", "cm6", "cm6-python.min.js"), "utf8"));
 const CMP = win.SmCodePython;
 ok(CMP && typeof CMP.create === "function", "bundle exposes SmCodePython.create");
 

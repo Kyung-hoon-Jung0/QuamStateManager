@@ -69,3 +69,21 @@ def test_bridge_sends_the_mode_only_when_readonly(monkeypatch):
 def test_the_readonly_backend_sets_the_bridge_mode():
     src = (_PKG / "core" / "agent_backend.py").read_text(encoding="utf-8")
     assert "SM_MCP_MODE" in src and "readonly" in src
+
+
+def test_a_readonly_bridge_offers_no_tool_that_posts(monkeypatch):
+    """Every POST of a read-only bridge is refused, so a tool whose function
+    posts is not listed there, and the read-only allow-list names none."""
+    import inspect
+    from quam_state_manager import mcp
+    from quam_state_manager.core import agent_backend
+    posting = {n for n, (_spec, fn) in mcp.TOOLS.items() if re.search(r"\bpost_\w+\(", inspect.getsource(fn))}
+    assert {"cz_gate_plan", "propose_additions", "state_edit"} <= posting, "the scan must see the posting tools"
+    monkeypatch.setattr(mcp, "READ_ONLY", True)
+    visible = set(mcp._visible_tools())
+    assert not (posting & visible), sorted(posting & visible)
+    assert visible, "a read-only bridge still reads"
+    assert not (posting & set(agent_backend.READ_TOOLS)), sorted(posting & set(agent_backend.READ_TOOLS))
+    assert set(agent_backend.READ_TOOLS) <= visible, sorted(set(agent_backend.READ_TOOLS) - visible)
+    monkeypatch.setattr(mcp, "READ_ONLY", False)
+    assert set(mcp._visible_tools()) == set(mcp.TOOLS)

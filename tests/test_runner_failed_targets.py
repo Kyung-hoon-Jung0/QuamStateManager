@@ -191,7 +191,7 @@ class TestRevertTheFailedTargets:
         assert live["q1"]["f_01"] == 5.01e9           # the other leaf still reverts
         assert [c["path"] for c in body["result"]["refused"]] == ["qubits.q1.T1"]
         assert "qubits.q1.T1" in body["message"] and "not reverted" in body["message"]
-        # gl-aat: plain words for a person; the machine reason and code are kept
+        # plain words for a person; the machine reason and code are kept
         assert "CAS" not in body["message"] and "patch" not in body["message"]
         assert "the live value changed since the run (now 9.9e-05)" in body["message"]
         ref = body["result"]["refused"][0]

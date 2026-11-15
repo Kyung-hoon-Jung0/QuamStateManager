@@ -4640,7 +4640,7 @@ window.SyncPanel = (function () {
                 if (g !== _gen || !_syncPanelOpen()) return;
                 h.innerHTML = html;
                 if (window.htmx) htmx.process(h);
-                carryArm();     // gl-17y: an armed confirm survives the refresh
+                carryArm();     // an armed confirm survives the refresh
                 // docs/244: the panel's times (checked / last apply / take
                 // live) are ts_local spans now -- show them in the viewer's zone
                 if (typeof applyLocalTimes === "function") applyLocalTimes(h);
@@ -4678,8 +4678,7 @@ window.SyncPanel = (function () {
     }
     /* One armed confirm at a time: which button, when it was armed and when
        its window closes. The window is a DEADLINE, not a count of timer ticks,
-       so the badge and the expiry always agree with the 5 s the toast names
-       (gl-17y). */
+       so the badge and the expiry always agree with the 5 s the toast names. */
     var _live = null;
     function _startArm(btn, armedAt, deadline, released) {
         var lab = btn.querySelector(".sp-choice-label") || btn;
@@ -4712,7 +4711,7 @@ window.SyncPanel = (function () {
             _expired(btn);
         }, 250);
     }
-    /* gl-17y: a panel refresh (a poll, another window, a node's save) re-renders
+    /* a panel refresh (a poll, another window, a node's save) re-renders
        the armed button. The fresh twin -- the same action, recognised by
        _armKey -- keeps the confirm armed until the ORIGINAL deadline, so a
        second press inside the window still lands. A twin whose action changed

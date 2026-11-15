@@ -75,8 +75,8 @@ CODEX_OFF_FEATURES = ("apps", "plugins", "browser_use", "computer_use", "multi_a
 CODEX_REQUIRED_FLAGS = ("--ignore-user-config", "--ignore-rules")
 READ_TOOLS = ("sm_status", "state_get", "state_search", "tray", "versions", "field_history", "runs", "run",
               "diagnostics", "check_fit", "families", "family_manual", "journal_read", "approvals", "plan_status",
-              # Generate-Config proposals write nothing a chip reads: they wait for a person's Accept
-              "generate_roles", "propose_additions", "propose_card")
+              # a proposal is a POST and SM refuses every POST of a read-only ask: only the read is offered
+              "generate_roles")
 MCP_TOOL_TIMEOUT_S = 30 * 60      # run_node blocks up to wait_s (<= 60 min); both CLIs default far lower
 IN_APP_ENV = "SM_IN_APP_SESSION"  # set on every CLI process SM launches; quam_state_manager.hook reads it
 _LIMIT_RE = re.compile(r"(limit|quota|rate).{0,80}?(resets?|until|at)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)", re.I)

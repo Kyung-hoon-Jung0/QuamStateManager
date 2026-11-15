@@ -182,4 +182,4 @@ A terminal agent (MCP bridge, `quam_state_manager/mcp.py`) builds a gate through
   auto mode too. The mode is the existing `routes._agent_apply_mode` (plan, then session, then the chip's
   default). Outside auto mode a tray with created rows is refused (`agent_structural_rows`): no approval card
   is made; the gate waits for the person's Apply.
-- `cz_gate_check`, `cz_gate_create` and `class_file_save` are write tools, hidden with `SM_MCP_MODE=readonly`.
+- `cz_gate_check`, `cz_gate_create` and `class_file_save` are write tools, hidden with `SM_MCP_MODE=readonly`. `cz_gate_plan` writes nothing but is a POST, which SM refuses from a read-only bridge, so it is hidden there too.

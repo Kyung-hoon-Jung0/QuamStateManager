@@ -82,7 +82,7 @@ def test_only_nonfinite_bell_values_render_empty(tmp_path, nonfinite):
     assert re.sub(r"\s+", "", re.sub(r"<[^>]+>", "", cell)) == "-", cell
 
 
-# gl-9ab: the pair's `cz` alias decides the headline (query.pair_operational_gate),
+# the pair's `cz` alias decides the headline (query.pair_operational_gate),
 # the same rule as the topology edge; with no alias the rule above is unchanged.
 
 def _text(cell):
