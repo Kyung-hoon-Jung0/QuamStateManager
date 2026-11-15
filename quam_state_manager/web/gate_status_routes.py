@@ -6,7 +6,8 @@ pulse detail of a gate pulse show. Its actions:
 
 * "Edit values" opens the gate's pulses in the pulse detail;
 * "Make active": ``POST /api/pulse/cz-gate/make-active`` ``{pair, gate}``
-  checks the EXISTING gate with the lab's code again (no creates), then sets
+  refuses missing or changed SM-made class files using the status line check,
+  then checks the EXISTING gate with the lab's code again (no creates), then sets
   the pair's ``cz`` alias to ``#./<gate>`` as one ordinary edit (one Ctrl+Z),
   guarded by the store sequence the check ran at, and records the check;
 * "Re-check", on a gate whose class file changed since it was checked:
@@ -319,6 +320,35 @@ def _cannot_run(entry: dict | None) -> str | None:
     return None
 
 
+def _files_text(names: list[str]) -> str:
+    return ("The class file " if len(names) == 1 else "The class files ") + ", ".join(names)
+
+
+def _class_file_refusal(states: list[tuple[dict, str]]) -> str | None:
+    """The Make active refusal of a gate whose SM-made class files are not
+    in place (``gate_status.class_file_states``, as the status line), naming
+    each file; None when every file is present and unchanged, or the gate
+    records none."""
+    if not all(gate_status.names_file(f) for f, _st in states):
+        return ("Its class file record has no file name, so SM cannot tell which file the "
+                "gate needs. Delete the gate and make it again. It was not made active.")
+    if not all(gate_status.has_hash(f) for f, _st in states):
+        return ("Its class file record has no content hash, so SM cannot tell whether the file "
+                "is the one the gate was checked with. Delete the gate and make it again. "
+                "It was not made active.")
+    gone = [f["file"] for f, st in states if st == "missing"]
+    moved = [f["file"] for f, st in states if st == "changed"]
+    parts = []
+    if gone:
+        are = "is" if len(gone) == 1 else "are"
+        parts.append(f"{_files_text(gone)} {are} not in quam_config. "
+                     f"Save {' and '.join(gone)} to quam_config first.")
+    if moved:
+        parts.append(f"{_files_text(moved)} changed since the gate was checked. "
+                     "Re-check the gate first.")
+    return " ".join(parts) + " It was not made active." if parts else None
+
+
 @bp.route("/api/pulse/cz-gate/make-active", methods=["POST"])
 def api_cz_gate_make_active():
     """Make a gate the pair's active CZ gate (see the module doc)."""
@@ -350,6 +380,9 @@ def api_cz_gate_make_active():
     if isinstance(alias, dict):
         return _refuse("The pair's cz entry is a gate itself, not a name of one, "
                        "so it cannot be pointed at another gate.", 400, **kw)
+    files_bad = _class_file_refusal(gate_status.class_file_states(macro, _class_path(ctx)))
+    if files_bad:
+        return _refuse(files_bad, 409, **kw)
     try:
         python_path = R.config_generator.get_selected_env(R.current_app.instance_path)
     except Exception:  # noqa: BLE001

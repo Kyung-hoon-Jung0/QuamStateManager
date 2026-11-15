@@ -9,8 +9,9 @@ order:
 3. ``class``: for a gate whose ``extras.sm_class_files`` names SM-made
    classes, the class files compared with the files in the folder they were
    published to: "class file present" / "class file missing:
-   quam_config/<file>.py" / "class file changed since the gate was checked";
-   else "not a class SM made"; "class <name> not importable in <env>" when
+   quam_config/<file>.py" / "class file changed since the gate was checked"
+   / "class file missing" for a record that names no file or carries no hash (the
+   live-write check refuses it too); else "not a class SM made"; "class <name> not importable in <env>" when
    the selected env cannot import the gate's class (a missing or changed
    file is said first);
 4. ``scaling``: "amplitude scaling: checked" / "not proportional" / "not
@@ -53,32 +54,66 @@ SCALING_NOT = "amplitude scaling: not proportional"
 SCALING_UNKNOWN = "amplitude scaling: not known"
 
 
-def sm_class_files(macro: Any) -> list[dict]:
-    """The SM-made class files a gate macro records
-    (``extras.sm_class_files``): ``[{qclass, file, sha256, proportional}]``,
-    [] for a gate without them. Entries that are not records are dropped."""
+def class_file_records(macro: Any) -> list[dict]:
+    """Every class file record a gate macro carries under
+    ``extras.sm_class_files`` (``[{qclass, file, sha256, proportional}]``),
+    raw: a record without a usable file name is kept, so the live-write check
+    can refuse it. Entries that are not dicts are dropped; [] for a gate
+    without records. The one parser of the records."""
     extras = macro.get("extras") if isinstance(macro, dict) else None
     files = extras.get("sm_class_files") if isinstance(extras, dict) else None
-    if not isinstance(files, list):
-        return []
-    return [f for f in files if isinstance(f, dict) and isinstance(f.get("file"), str)]
+    return [f for f in files if isinstance(f, dict)] if isinstance(files, list) else []
+
+
+def names_file(record: dict) -> bool:
+    """True when *record* names its file (a non-empty string)."""
+    name = record.get("file")
+    return isinstance(name, str) and bool(name)
+
+
+def has_hash(record: dict) -> bool:
+    """True when *record* carries a non-empty string content hash."""
+    digest = record.get("sha256")
+    return isinstance(digest, str) and bool(digest)
+
+
+def sm_class_files(macro: Any) -> list[dict]:
+    """The records of :func:`class_file_records` that name their file."""
+    return [f for f in class_file_records(macro) if names_file(f)]
 
 
 def file_state(entry: dict, path: str | None) -> str:
     """``"present"`` / ``"missing"`` / ``"changed"`` of one recorded class
     file: the bytes at *path* (where it was published) hashed and compared
-    with the recorded sha256."""
+    with the recorded sha256 (letter case ignored, as the live-write check)."""
     if not path:
         return "missing"
     try:
         data = Path(path).read_bytes()
     except OSError:
         return "missing"
-    return "present" if hashlib.sha256(data).hexdigest() == entry.get("sha256") else "changed"
+    digest = entry.get("sha256")
+    digest = digest.lower() if isinstance(digest, str) else digest
+    return "present" if hashlib.sha256(data).hexdigest() == digest else "changed"
 
 
-def _class_files(files: list[dict], where) -> dict:
-    states = [(f, file_state(f, where(f.get("qclass")))) for f in files]
+def class_file_states(macro: Any, where) -> list[tuple[dict, str]]:
+    """``(record, state)`` of every raw record of *macro*: :func:`file_state`
+    at ``where(qclass)`` (the published path), "missing" for a record that
+    names no file or carries no hash. The status line and Make active both read this."""
+    return [(f, file_state(f, where(f.get("qclass")))
+             if names_file(f) and has_hash(f) else "missing")
+            for f in class_file_records(macro)]
+
+
+def _class_files(states: list[tuple[dict, str]]) -> dict:
+    files = [f for f, _ in states]
+    if not all(names_file(f) for f in files):
+        return _item("class", "class file missing", "warn",
+                     "its class file record has no file name")
+    if not all(has_hash(f) for f in files):
+        return _item("class", "class file missing", "warn",
+                     "its class file record has no content hash")
     gone = [f for f, st in states if st == "missing"]
     moved = [f for f, st in states if st == "changed"]
     if gone:
@@ -222,7 +257,8 @@ def status(store, ctx: dict | None, pair: str, gate: str, *,
                            "The pair's cz alias names another gate or none.", pill=False))
     cls = str(macro.get("__class__") or "")
     files = sm_class_files(macro)
-    file_item = _class_files(files, class_path or (lambda q: None)) if files else None
+    states = class_file_states(macro, class_path or (lambda q: None))
+    file_item = _class_files(states) if states else None
     if file_item is not None and file_item["tone"] == "warn":
         items.append(file_item)
     elif cls and missing_classes and cls in set(missing_classes):
