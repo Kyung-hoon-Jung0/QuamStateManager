@@ -1901,6 +1901,55 @@ def _pre_door_state(r, ctx) -> dict:
             "reapply_orig": _copy.deepcopy(ctx.get("pending_reapply_orig")), "units": ids}
 
 
+def _overlaps(a: str, b: str) -> bool:
+    """True when one dot-path is the other or lies under it."""
+    return a == b or a.startswith(b + ".") or b.startswith(a + ".")
+
+
+def _take_back_own(store, mod, gid) -> list[str]:
+    """Take this approval's own rows (``gid``) back out of the tray; never undo another window.
+
+    Each own row is taken back whole or left whole, newest first:
+    - no later row of another group touches its path (the same path, under it or above it):
+      it is discarded (its old value restored), as before;
+    - a plain set whose only later rows are plain sets of exactly the same path: the value
+      stays what the other window set, the first of those rows takes this row's old value as
+      its own "before" (the tray then reads old -> theirs, and its Ctrl+Z restores old, never
+      the refused approval's value), and this row leaves the tray;
+    - anything else (a created or deleted subtree another window changed since, a later
+      structural edit on or above it): the row stays in the tray untouched, never half
+      reverted, and its path is returned so the refusal can say a human decides.
+    Returns the dot-paths that stayed.
+    """
+    kept: list[str] = []
+    with store._lock:
+        log = store.change_log
+        for i in range(len(log) - 1, -1, -1):
+            if i >= len(log) or log[i].group_id != gid:
+                continue
+            own = log[i]
+            later = [e for e in log[i + 1:] if _overlaps(e.dot_path, own.dot_path)]
+            if not later:
+                try:
+                    mod.discard(i)
+                except Exception:  # noqa: BLE001 -- a row SM cannot revert stays, for a human
+                    logger.debug("take-back of %s failed", own.dot_path, exc_info=True)
+                    kept.append(own.dot_path)
+                continue
+            plain = (not own.created and not own.deleted
+                     and all(e.group_id != gid and e.dot_path == own.dot_path
+                             and not e.created and not e.deleted for e in later))
+            if not plain:
+                kept.append(own.dot_path)
+                continue
+            later[0].old_value = copy.deepcopy(own.old_value)
+            log.pop(i)
+            store.mutation_seq += 1
+        store._clear_pointer_cache()
+    kept.reverse()
+    return kept
+
+
 def _take_back_saved(r, ctx, staged: list, before: dict) -> str | None:
     """Undo a group the door SAVED into the working copy but could not push:
     write each leaf's old value back, save the working copy, drop the journal
@@ -2221,21 +2270,23 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
         out["error"] = "another chip is active in the window; staged only"
         return out
 
-    def _take_back():
-        with store._lock:                      # the group comes back out of the tray
-            # only THIS group's rows, wherever they sit: an edit another window made after
-            # them stays in the tray (an undo_group of the last group would revert that one)
-            for i in range(len(store.change_log) - 1, -1, -1):
-                if store.change_log[i].group_id == gid:
-                    mod.discard(i)
+    def _take_back() -> str:
+        # the group comes back out of the tray, never over another window's later edit
+        # (docs/254); the returned text names what had to stay for a human
+        kept = _take_back_own(store, mod, gid)
+        if not kept:
+            return ""
+        return (f"; {len(kept)} value(s) of this approval could not be taken back because another window "
+                f"changed them since ({', '.join(kept[:6])}); a human decides in the window")
     # The door SAVES the log into the working copy before it writes the chip and
     # only then notices a moved chip (docs/65's re-apply stash) -- a refusal there
     # would leave the agent's values half-way, in SM but not on the chip. Ask first.
     try:
         from quam_state_manager.core import working_copy as wc_mod
         if wc_mod.live_diverged_now(ctx["working_copy"]):
-            _take_back()
-            out["error"] = "stale_live: the live files moved outside SM since the last sync (take live first)"
+            kept = _take_back()
+            out["error"] = ("stale_live: the live files moved outside SM since the last sync (take live first)"
+                            + kept)
             return out
     except Exception:  # noqa: BLE001
         logger.debug("live_diverged_now failed", exc_info=True)
@@ -2245,9 +2296,11 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
         # staging refuses here, and one after this point makes the door's count refuse
         foreign = sum(1 for e in store.change_log if e.group_id != gid)
         if person and foreign:
-            _take_back()
-            return _tray_busy(foreign, "another edit reached the tray while this approval was staged, so "
+            kept = _take_back()
+            busy = _tray_busy(foreign, "another edit reached the tray while this approval was staged, so "
                                        "nothing was written: ")
+            busy["error"] += kept
+            return busy
         n = len(store.change_log)
     # verifier P0 (w7/agentsqa): what SM looked like before the door, so a push
     # refused AFTER the door's save can be taken back to exactly this
@@ -2285,7 +2338,7 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
         out["error"] = ((js or {}).get("message") or (js or {}).get("conflict") or (js or {}).get("error")
                         or _status_text(body) or f"HTTP {status}")
         if store.change_log:
-            _take_back()                       # refused BEFORE the save: the group comes back out
+            out["error"] += _take_back()       # refused BEFORE the save: the group comes back out
         else:
             # refused AFTER the save (the live write itself failed -- a reader
             # holding state.json open on Windows). The values used to stay in

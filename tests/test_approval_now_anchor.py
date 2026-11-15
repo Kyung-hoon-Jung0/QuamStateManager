@@ -343,10 +343,12 @@ def test_the_summary_offers_no_write_when_it_cannot_list_every_row(approval_case
     html = _summary_html(approval_case[0], rows, 1)                   # 13 rows: 12 listed
     assert 'data-ns-act="approve"' not in html and "Write to chip" not in html
     assert "data-ns-review" in html and ">Review in panel</a>" in html and 'href="/agent"' in html
-    assert "and 1 more rows" in html and 'data-ns-act="reject"' in html
+    assert "and 1 more row<" in html and "more rows" not in html and 'data-ns-act="reject"' in html
     html = _summary_html(approval_case[0], rows, 0)                   # 12 rows: every one listed
     assert 'data-ns-act="approve"' in html and "Write to chip" in html and "data-ns-review" not in html
     assert html.count("data-seen-path=") == 12
+    html = _summary_html(approval_case[0], rows, 3)                   # 15 rows: 12 listed
+    assert "and 3 more rows<" in html and "Write to chip" not in html
 
 
 def test_the_summary_lists_at_most_twelve_rows():
@@ -505,13 +507,57 @@ def test_an_edit_landing_before_the_staging_is_never_pushed_under_the_approval(t
     before = (case[2] / "state.json").read_bytes()
     response = press(case, [{"path": "value", "new": 30, "seen_now": 10}])
     assert response.status_code == 409, response.get_json()
-    # refused by the empty-tray check inside the staging lock, before a row of this approval
-    # was staged (not later by the count at the door, which names "another edit reached")
+    # refused by the empty-tray check, which runs after the never-touch read and before a row of
+    # this approval was staged (not later by the count at the door, which names "another edit
+    # reached"); that the check shares the staging's lock hold is pinned by the next test
     assert response.get_json()["error"].startswith("the tray holds 1 staged edit(s)"), response.get_json()
     assert (case[2] / "state.json").read_bytes() == before
     tray = case[1].get("/api/agent/tray").get_json()["entries"]
     assert [(x["path"], x["new"]) for x in tray] == [("third", 99)]      # the other window's edit stays its own
 
+
+
+class _LockThatLetsAnEditIn:
+    """The store's RLock, except that the first hold the approval's staging takes lets another
+    window's edit land just before the lock is taken: the empty-tray check must see it, which it
+    does only when the check sits inside that same hold."""
+
+    def __init__(self, real, edit):
+        self.real, self.edit, self.fired = real, edit, False
+
+    def __enter__(self):
+        import sys
+        if not self.fired and sys._getframe(1).f_code.co_name == "_stage_writes":
+            self.fired = True
+            self.edit()
+        return self.real.__enter__()
+
+    def __exit__(self, *exc):
+        return self.real.__exit__(*exc)
+
+    def __getattr__(self, name):
+        return getattr(self.real, name)
+
+
+def test_the_empty_tray_check_shares_the_staging_lock_hold(tmp_path):
+    case = _case(tmp_path, {"value": 10, "third": 5}, [{"path": "value", "old": 10, "new": 30}])
+    with case[0].app_context():
+        store = _ctx(case)["store"]
+        lock = _LockThatLetsAnEditIn(store._lock, lambda: _foreign_edit(case))
+        store._lock = lock
+    before = (case[2] / "state.json").read_bytes()
+    try:
+        response = press(case, [{"path": "value", "new": 30, "seen_now": 10}])
+    finally:
+        store._lock = lock.real
+    assert lock.fired
+    assert response.status_code == 409, response.get_json()
+    # the edit that landed as the staging took the lock is seen by the check inside that hold;
+    # a check taken before the hold would let it pass and leave it to the door's count
+    assert response.get_json()["error"].startswith("the tray holds 1 staged edit(s)"), response.get_json()
+    assert (case[2] / "state.json").read_bytes() == before
+    tray = case[1].get("/api/agent/tray").get_json()["entries"]
+    assert [(x["path"], x["new"]) for x in tray] == [("third", 99)]
 
 def test_an_edit_landing_after_the_staging_is_never_pushed_under_the_approval(tmp_path, monkeypatch):
     case = _case(tmp_path, {"value": 10, "third": 5}, [{"path": "value", "old": 10, "new": 30}])
@@ -533,3 +579,86 @@ def test_an_edit_landing_after_the_staging_is_never_pushed_under_the_approval(tm
         from quam_state_manager.web import routes
         assert routes._active_ctx()["store"].get_value("value") == 10
     assert approvals.get(str(case[3]), case[4], case[5]["id"])["status"] == "pending"
+
+
+# ---- the take-back never undoes another window's later edit
+
+def _land_after_staging(monkeypatch, edit):
+    from quam_state_manager.core import working_copy
+    real = working_copy.live_diverged_now
+    once = []
+
+    def lands(wc):                              # another window's edit, between the staging and the door
+        if not once:                            # once: later reads (the tray) must not edit again
+            once.append(1)
+            edit()
+        return real(wc)
+    monkeypatch.setattr(working_copy, "live_diverged_now", lands)
+
+
+def _ctx(case):
+    from quam_state_manager.web import routes
+    return routes._active_ctx()
+
+
+def test_a_take_back_keeps_another_windows_later_edit_of_the_same_path(tmp_path, monkeypatch):
+    case = _case(tmp_path, {"value": 10, "third": 5}, [{"path": "value", "old": 10, "new": 30}])
+    _land_after_staging(monkeypatch, lambda: _foreign_edit(case, "value", 99))
+    before = (case[2] / "state.json").read_bytes()
+    response = press(case, [{"path": "value", "new": 30, "seen_now": 10}])
+    assert response.status_code == 409, response.get_json()
+    assert "could not be taken back" not in response.get_json()["error"]
+    assert (case[2] / "state.json").read_bytes() == before
+    tray = case[1].get("/api/agent/tray").get_json()["entries"]
+    # the other window's value stays, and its row's "before" is the chip's, never the refused 30
+    assert [(x["path"], x["old"], x["new"]) for x in tray] == [("value", 10, 99)]
+    with case[0].app_context():
+        ctx = _ctx(case)
+        assert ctx["store"].get_value("value") == 99
+        assert [(e.dot_path, e.old_value, e.new_value) for e in ctx["store"].change_log] == [("value", 10, 99)]
+        ctx["modifier"].undo()                  # Ctrl+Z on that row: back to the chip's value
+        assert ctx["store"].get_value("value") == 10 and not ctx["store"].change_log
+    assert approvals.get(str(case[3]), case[4], case[5]["id"])["status"] == "pending"
+
+
+def test_a_take_back_of_an_untouched_path_still_reverts_it(tmp_path, monkeypatch):
+    case = _case(tmp_path, {"value": 10, "third": 5}, [{"path": "value", "old": 10, "new": 30}])
+    _land_after_staging(monkeypatch, lambda: _foreign_edit(case, "third", 99))
+    response = press(case, [{"path": "value", "new": 30, "seen_now": 10}])
+    assert response.status_code == 409, response.get_json()
+    tray = case[1].get("/api/agent/tray").get_json()["entries"]
+    assert [(x["path"], x["old"], x["new"]) for x in tray] == [("third", 5, 99)]
+    with case[0].app_context():
+        assert _ctx(case)["store"].get_value("value") == 10
+
+
+@pytest.mark.parametrize("edit", ["delete", "change"])
+def test_a_created_key_another_window_changed_since_stays_whole(tmp_path, monkeypatch, edit):
+    case = _case(tmp_path, {"value": 10, "third": 5},
+                 [{"path": "value", "old": 10, "new": 30},
+                  {"path": "fresh.x", "old": None, "new": 1, "created": True}])
+
+    def other():
+        with case[0].app_context():
+            mod = _ctx(case)["modifier"]
+            mod.delete_subtree("fresh") if edit == "delete" else mod.set_value("fresh.x", 7)
+    _land_after_staging(monkeypatch, other)
+    before = (case[2] / "state.json").read_bytes()
+    response = press(case, [{"path": "value", "new": 30, "seen_now": 10},
+                            {"path": "fresh.x", "new": 1, "seen_unknown": True}])
+    assert response.status_code == 409, response.get_json()      # never a 500
+    error = response.get_json()["error"]
+    assert "1 value(s) of this approval could not be taken back" in error and "(fresh)" in error
+    assert "a human decides in the window" in error
+    assert (case[2] / "state.json").read_bytes() == before
+    with case[0].app_context():
+        store = _ctx(case)["store"]
+        assert store.get_value("value") == 10                  # the untouched row came back out
+        log = [(e.dot_path, e.created, e.deleted) for e in store.change_log]
+        # the created key and the other window's edit of it stay whole, as the tray says
+        if edit == "delete":
+            assert log == [("fresh", True, False), ("fresh", False, True)]
+            assert "fresh" not in store.merged
+        else:
+            assert log == [("fresh", True, False), ("fresh.x", False, False)]
+            assert store.get_value("fresh.x") == 7

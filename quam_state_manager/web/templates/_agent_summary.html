@@ -13,7 +13,7 @@
   <thead><tr><th>value</th><th>old</th><th>new</th>{% if show_now %}<th>now</th>{% endif %}</tr></thead>
   <tbody>
   {% for w in ws %}<tr{% if seen %} data-seen-path="{{ w.path }}"{% if w.now_known %} data-seen-now='{{ w.seen_now | tojson }}'{% else %} data-seen-unknown="1"{% endif %}{% endif %}><td title="{{ w.path }}"><code>{{ w.path }}</code></td><td>{{ cell(w.old, w, 'old') }}</td><td>{{ cell(w.new, w, 'new') }}</td>{% if show_now %}<td>{% if w.now_known %}{{ cell(w.now, w, 'now') }}{% else %}<span class="muted">?</span>{% endif %}</td>{% endif %}</tr>{% endfor %}
-  {% if more %}<tr><td colspan="{{ 4 if show_now else 3 }}" class="muted" data-ns-more>and {{ more }} more rows</td></tr>{% endif %}
+  {% if more %}<tr><td colspan="{{ 4 if show_now else 3 }}" class="muted" data-ns-more>and {{ more }} more row{{ 's' if more != 1 }}</td></tr>{% endif %}
   </tbody></table></div>
 {% endmacro %}
 <div id="agent-summary" class="agent-summary" data-plan="{{ p.id if p else '' }}">
