@@ -70,9 +70,16 @@ def stored_tof(doc: dict, rr: dict, path: str):
     if pointer_resolver.is_pointer(stored):
         holder = tuple(path.split("/"))
         try:
-            value = pointer_resolver.resolve_pointer(doc, stored, holder)
+            # the resolver's own hops name the leaf it read the value from
+            value, read_at = pointer_resolver.resolve_with_landing(doc, stored, holder)
             first = pointer_resolver.target_path(doc, stored, holder)
-            land = pointer_resolver.landing_path(doc, stored, holder)
+            if pointer_resolver.is_self_ref(stored):
+                # the resolver hands a stored #./ back as is; name the leaf it names
+                land = pointer_resolver.landing_path(doc, stored, holder)
+            elif pointer_resolver.is_pointer(value) and not pointer_resolver.is_self_ref(value):
+                land = None     # dangling, a cycle, too many hops: named by the first hop
+            else:
+                land = read_at  # a value, or the leaf holding a #./ the resolver stops at
         except (AttributeError, TypeError, ValueError, KeyError, IndexError):
             value, first, land = stored, None, None   # named as not resolving
         through = "/".join(first) if first else stored
@@ -80,7 +87,7 @@ def stored_tof(doc: dict, rr: dict, path: str):
                "resolves": _finite(value), "held": None}
         if ref["resolves"]:
             return stored, "it is a reference", ref
-        if pointer_resolver.is_self_ref(stored):
+        if pointer_resolver.is_self_ref(stored) or pointer_resolver.is_self_ref(value):
             ref["held"] = "SM does not follow a #./ reference"
         elif not pointer_resolver.is_pointer(value):
             # the chain lands on a value: name it (text, a bool, nan, ...)
@@ -95,22 +102,37 @@ def stored_tof(doc: dict, rr: dict, path: str):
     return stored, None, None
 
 
-def tof_unplaced_note(qubit: str, reading, moved: dict | None = None, shift=None):
+def follows_lag(moved_by: dict | None, target: str, shift):
+    """How many ns more a moved target time of flight moved than the
+    referencing qubit's own readout output (``shift``); ``0`` when either is
+    unknown (nothing to compare, the plain sentence)."""
+    by = (moved_by or {}).get(target)
+    if not (_finite(by) and _finite(shift)):
+        return 0
+    return by - shift
+
+
+def tof_unplaced_note(qubit: str, reading, moved: dict | None = None, shift=None,
+                      moved_by: dict | None = None):
     """The one sentence for a stored time of flight SM does not write, or
     ``None`` when the grid rule places it. ``reading`` is :func:`stored_tof`'s
     answer, ``moved`` ``{path: new value}`` of the times of flight this run
-    moves (a reference to one of them follows it), ``shift`` the readout
-    output delay change (a plain number whose sum is negative is named).
-    Returns ``(note, kind)`` with kind ``follows`` / ``reference`` /
-    ``not_number`` / ``not_moved``, or ``None``. The band shift plan, its
-    offer, the applied note and the result review all print this sentence."""
+    moves (a reference to one of them follows it) and ``moved_by``
+    ``{path: new - old}``, ``shift`` this qubit's readout output delay change
+    (a plain number whose sum is negative is named; a reference that follows
+    a value moved by a different amount than ``shift`` is told the
+    difference, :func:`follows_lag`). Returns ``(note, kind)`` with kind
+    ``follows`` / ``reference`` / ``not_number`` / ``not_moved``, or ``None``.
+    The band shift plan, its offer, the applied note and the result review
+    all print this sentence."""
     value, why_not, ref = reading
     if ref is not None:
         target = ref["target"]
         if not ref["resolves"]:
             return tof_reference_not_number_note(qubit, target, ref["held"]), "not_number"
         if target in (moved or {}):
-            return tof_follows_note(qubit, target, moved[target], ref["through"]), "follows"
+            return tof_follows_note(qubit, target, moved[target], ref["through"], shift,
+                                    follows_lag(moved_by, target, shift)), "follows"
         return tof_reference_note(qubit, target, ref["through"]), "reference"
     if why_not is None:
         if shift is None:
@@ -296,10 +318,18 @@ def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=(),
                 reading = stored_tof(doc, rr, tof_path)
                 moved_to = {f"qubits/{m}/resonator/time_of_flight": v for m in moved_set
                             if _finite(v := _moved_value(state, m))}
-                note = tof_unplaced_note(qid, reading, moved_to)
-                follows = note is not None and note[1] == "follows"
-                if note is not None and (follows or (s != 0 or (
-                        tof_moved is not None and qid in before and not same))):
+                moved_by = {p: v - old_tof[m] for p, v in moved_to.items()
+                            if _finite(old_tof.get(m := p.split("/")[1]))}
+                # this readout output's own change on this run (unknown: plain sentence)
+                own = (s - before[qid][0] if qid in before and _num(before[qid][0])
+                       else None) if tof_moved is not None else None
+                note = tof_unplaced_note(qid, reading, moved_to, shift=own, moved_by=moved_by)
+                kind = note[1] if note is not None else None
+                # on an output whose delay is the source chip's nothing moved
+                # here: a reference is said nothing, as an unchanged literal
+                changed = s != 0 and not (kind == "reference" and same) or (
+                    tof_moved is not None and qid in before and not same)
+                if kind == "follows" or (note is not None and changed):
                     unplaced.append({"qubit": qid, "note": note[0]})
                 continue
             typed_off_grid = qid in typed and not _grid(rr["time_of_flight"])[0]

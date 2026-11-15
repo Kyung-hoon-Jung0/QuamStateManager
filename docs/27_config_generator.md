@@ -701,23 +701,35 @@ same rule applies to every readout, provisionally untested on LF-FEM and OPX+.
 - The Re-generate band shift plan writes `new` = the nearest allowed value and keeps `sum` = the raw
   sum. SM never replaces a QUAM pointer with a literal at the resonator leaf: a pointer may be shared
   by several elements, and overwriting it would cut the link silently. A stored pointer is read with
-  the store's resolver and named by the leaf its chain lands on (`pointer_resolver.landing_path`,
-  with "(through <first hop>)" for a chain); it is listed in `tof_unplaced` (with its `target`) and
-  Apply leaves the pointer string at that leaf. When the target is a time of flight the same plan
-  moves, the item carries `follows` and reads "Time of flight of q2 is a reference to <target>; it
-  follows that value (now 48 ns)." (also for a resonator on an unshifted readout output). Any other
-  pointer to a finite number reads "... is a reference to <target>; it is not moved. Move it at
-  <target> if that is meant."; the target moves only as its own element's line. A pointer that gives
-  no finite number (dangling, a cycle, text, a bool, nan / inf, a `#./` form the resolver does not
-  follow) reads "... is a reference to <target> that does not resolve to a number (it holds nan); it
-  is not moved.". Any other stored value the rule cannot place is not written: it is listed in
+  the store's resolver and named by the leaf the resolver read its value from
+  (`pointer_resolver.resolve_with_landing`; `landing_path` is the same hops, so the two cannot
+  disagree: a `#./` in the middle of a chain is followed when the leaf it names is stored, and a
+  chain longer than `MAX_CHAIN_HOPS` (64) resolves in neither), with "(through <first hop>)" for a
+  chain; it is listed in `tof_unplaced` (with its `target`) and Apply leaves the pointer string at
+  that leaf. When the target is a time of flight the same plan moves, the item carries `follows`.
+  If the target moves by the same amount as the resonator's own readout output, it reads "Time of
+  flight of q2 is a reference to <target>; it follows that value (now 48 ns).". If not (the readout
+  output does not move, or the target was rounded or raised to the floor), the item carries `lag`
+  (target move minus own readout move, in ns) and reads "...; it follows that value to 48 ns, but
+  q2's readout did not move (or: moved 20 ns), so q2's time of flight is now 22 ns later than its
+  readout. Give q2 its own value if that is not meant."; that qubit is in the question's and the
+  offer's "Re-check the time of flight of ..." clause, so it is seen before Apply. Any other pointer
+  to a finite number reads "... is a reference to <target>; it is not moved. Move it at <target> if
+  that is meant."; the target moves only as its own element's line. A pointer that gives no finite
+  number (dangling, a cycle, text, a bool, nan / inf, a `#./` naming a leaf that is not stored)
+  reads "... is a reference to <target> that does not resolve to a number (it holds nan); it is not
+  moved.". Any other stored value the rule cannot place is not written: it is listed in
   `tof_unplaced` with a sentence naming why (no time of flight stored, a value that is not a number, a
   value that is not finite, or a sum that is negative), and the rest of the shift is still offered.
   The Re-generate question names the qubits not moved in one clause (every one of them; a `follows`
   item is not in it); the full sentence is its own line under it, in the offer text and in the
   applied note. After Apply the output timing review (`output_timing.summary` `tof_unplaced`) lists
-  each such resonator with the same sentence: all of them come from `output_timing.tof_unplaced_note`
-  over the sentence helpers in `generator/_script_common.py`.
+  each such resonator with the same sentence (the `lag` from the moved value's old and new time of
+  flight and the readout delay against the source chip): all of them come from
+  `output_timing.tof_unplaced_note` over the sentence helpers in `generator/_script_common.py`. On a
+  Re-generate whose readout output delay is the source chip's (nothing moved there this run), a
+  reference to a finite number is not listed, the same as an unchanged literal; a value that gives
+  no number is still named.
 - A value the user set stays as entered, with the reason and nearest allowed value (`tof_kept_note`);
   on an undelayed readout output the review names only the grid. A default SM pre-filled, or a
   builder value nobody set, is written on the grid. Stored values SM does not move stay unchanged.

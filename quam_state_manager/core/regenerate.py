@@ -578,7 +578,7 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
                     # one on an unshifted readout is named only if it follows
                     refs.append({"qubit": qid, "path": path, "old": old, "sum": None,
                                  "target": ref["target"], "_reading": reading,
-                                 "_shifted": bool(r)})
+                                 "_shift": r})
                 elif r:
                     unplaced = output_timing.tof_unplaced_note(qid, reading, shift=r)
                     if unplaced is not None:
@@ -611,14 +611,21 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
         # a reference to a time of flight this run moves follows it (the
         # planned new value); any other reference is named as not moved
         moved = {t["path"]: t["new"] for t in plan["tof"]}
+        moved_by = {t["path"]: t["new"] - t["old"] for t in plan["tof"]}
         order = list(((state or {}).get("qubits") or {}))
         for item in refs:
-            note, kind = output_timing.tof_unplaced_note(item["qubit"], item.pop("_reading"), moved)
-            if not item.pop("_shifted") and kind != "follows":
+            r = item.pop("_shift")
+            note, kind = output_timing.tof_unplaced_note(
+                item["qubit"], item.pop("_reading"), moved, shift=r, moved_by=moved_by)
+            if not r and kind != "follows":
                 continue
             item["note"] = note
             if kind == "follows":
                 item["follows"] = True
+                lag = output_timing.follows_lag(moved_by, item["target"], r)
+                if lag:
+                    # the link moves this time of flight off its own readout
+                    item["lag"] = lag
             plan["tof_unplaced"].append(item)
         plan["tof_unplaced"].sort(key=lambda t: order.index(t["qubit"]))
         return plan if plan["ports"] else None
@@ -626,14 +633,23 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
         return None
 
 
+def _recheck(plan: dict) -> list:
+    """Qubits whose time of flight is measured again: every moved one, and a
+    reference that follows a value moved by a different amount than its own
+    readout output (``lag``), in chip order of the plan's lists."""
+    out = [t["qubit"] for t in plan.get("tof") or ()]
+    return out + [t["qubit"] for t in plan.get("tof_unplaced") or ()
+                  if t.get("lag") and t["qubit"] not in out]
+
+
 def mw_band_shift_question(plan: dict) -> dict:
     """The review question for :func:`mw_band_shift_plan`, as
     ``{"kind", "question", "why"}``; the per-qubit consequences are the
     review's own lines under it."""
     why = "Band 1/3 MW outputs leave 20 ns before band 2 ones."
-    if plan.get("tof"):
-        why += (" Re-check the time of flight of " +
-                ", ".join(t["qubit"] for t in plan["tof"]) + ".")
+    recheck = _recheck(plan)
+    if recheck:
+        why += " Re-check the time of flight of " + ", ".join(recheck) + "."
     still = [t["qubit"] for t in plan.get("tof_unplaced") or () if not t.get("follows")]
     if still:
         # the full sentence is the question's own line under it; one clause
@@ -646,9 +662,9 @@ def mw_band_shift_question(plan: dict) -> dict:
 def mw_band_shift_offer_text(plan: dict) -> str:
     """The question for :func:`mw_band_shift_plan`."""
     text = ("Band 1/3 MW outputs leave 20 ns before band 2 ones. Shift them by 20 ns?")
-    if plan.get("tof"):
-        text += (" Re-check the time of flight of " +
-                 ", ".join(t["qubit"] for t in plan["tof"]) + ".")
+    recheck = _recheck(plan)
+    if recheck:
+        text += " Re-check the time of flight of " + ", ".join(recheck) + "."
     for t in plan.get("tof_unplaced") or ():
         text += " " + t["note"]
     if plan.get("spacing"):

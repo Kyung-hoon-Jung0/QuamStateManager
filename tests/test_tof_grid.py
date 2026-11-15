@@ -285,17 +285,24 @@ FOLLOWS_Q1 = ("Time of flight of q2 is a reference to qubits/q1/resonator/time_o
               "follows that value (now 48 ns).")
 
 
+def _follows_lag(q, value, readout, lag):
+    return (f"Time of flight of {q} is a reference to qubits/q1/resonator/time_of_flight; it "
+            f"follows that value to {value} ns, but {q}'s readout {readout}, so {q}'s time of "
+            f"flight is now {lag} ns later than its readout. Give {q} its own value if that is "
+            "not meant.")
+
+
 @pytest.mark.parametrize("pointer", ["#/qubits/q1/resonator/time_of_flight",
                                      "#../../q1/resonator/time_of_flight"])
-def test_a_pointer_to_a_value_this_run_moves_follows_it(tmp_path, pointer):
+def test_a_pointer_that_moves_with_its_own_readout_follows_it_plainly(tmp_path, pointer):
+    # q1 28 -> 48 moves 20 ns, and q2's readout output moves the same 20 ns
     state, wiring = _chip(ro_band=3, tof=28)
-    state["qubits"]["q1"]["resonator"]["time_of_flight"] = 26
     state["qubits"]["q2"]["resonator"]["time_of_flight"] = pointer
     plan = regenerate.mw_band_shift_plan(state, wiring)
     assert [(t["qubit"], t["new"]) for t in plan["tof"]] == [("q1", 48)]
     (ref,) = plan["tof_unplaced"]
     assert ref["target"] == "qubits/q1/resonator/time_of_flight" and ref["follows"] is True
-    assert ref["note"] == FOLLOWS_Q1 and "Move it at" not in ref["note"]
+    assert ref["note"] == FOLLOWS_Q1 and "lag" not in ref
     assert FOLLOWS_Q1 in regenerate.mw_band_shift_offer_text(plan)
     why = regenerate.mw_band_shift_question(plan)["why"]
     assert why == ("Band 1/3 MW outputs leave 20 ns before band 2 ones. Re-check the time of "
@@ -307,17 +314,129 @@ def test_a_pointer_to_a_value_this_run_moves_follows_it(tmp_path, pointer):
     assert written["q1"]["resonator"]["time_of_flight"] == 48
 
 
-def test_a_pointer_on_an_unshifted_readout_still_names_that_it_follows():
+@pytest.mark.parametrize("pointer", ["#/qubits/q1/resonator/time_of_flight",
+                                     "#../../q1/resonator/time_of_flight"])
+def test_a_pointer_whose_target_moves_more_than_its_readout_states_the_difference(pointer):
+    # q1 26 -> 46 rounds to 48 (22 ns); q2's readout output moves 20 ns
     state, wiring = _chip(ro_band=3, tof=28)
-    # q2 reads out on a band 2 port nothing shifts
+    state["qubits"]["q1"]["resonator"]["time_of_flight"] = 26
+    state["qubits"]["q2"]["resonator"]["time_of_flight"] = pointer
+    plan = regenerate.mw_band_shift_plan(state, wiring)
+    (ref,) = plan["tof_unplaced"]
+    note = _follows_lag("q2", 48, "moved 20 ns", 2)
+    assert ref["note"] == note and ref["lag"] == 2 and "Move it at" not in note
+    assert note in regenerate.mw_band_shift_offer_text(plan)
+    assert regenerate.mw_band_shift_question(plan)["why"] == (
+        "Band 1/3 MW outputs leave 20 ns before band 2 ones. Re-check the time of flight of "
+        "q1, q2.")
+
+
+def _three(q1_tof):
+    """q1 and q3 read out on the shifted band 3 output, q2 on a band 2 output
+    nothing shifts; q2 and q3 hold a reference to q1's time of flight."""
+    state, wiring = _chip(xy_bands=(2, 1, 1), z=(61, 63, 65), ro_band=3, tof=28)
     state["ports"]["mw_outputs"]["con1"]["1"]["9"] = dict(
         state["ports"]["mw_outputs"]["con1"]["1"]["8"], band=2)
     wiring["wiring"]["qubits"]["q2"]["rr"]["opx_output"] = "#/ports/mw_outputs/con1/1/9"
-    state["qubits"]["q2"]["resonator"]["time_of_flight"] = "#/qubits/q1/resonator/time_of_flight"
+    state["qubits"]["q1"]["resonator"]["time_of_flight"] = q1_tof
+    for q in ("q2", "q3"):
+        state["qubits"][q]["resonator"]["time_of_flight"] = "#/qubits/q1/resonator/time_of_flight"
+    return state, wiring
+
+
+@pytest.mark.parametrize("q1_tof, lag2, lag3", [(26, 22, 2), (4, 24, 4)])
+def test_a_pointer_on_an_unmoved_readout_is_told_it_no_longer_matches(tmp_path, q1_tof,
+                                                                     lag2, lag3):
+    # 26 + 20 = 46 -> 48; 4 + 20 = 24 -> the 28 ns floor: q1 moves 22 / 24 ns
+    state, wiring = _three(q1_tof)
+    source = copy.deepcopy((state, wiring))
     plan = regenerate.mw_band_shift_plan(state, wiring)
-    assert [t["qubit"] for t in plan["tof"]] == ["q1"]
+    new = q1_tof + lag2
+    assert [(t["qubit"], t["new"]) for t in plan["tof"]] == [("q1", new)]
+    q2 = _follows_lag("q2", new, "did not move", lag2)
+    q3 = _follows_lag("q3", new, "moved 20 ns", lag3)
+    assert [(t["qubit"], t["note"], t["lag"]) for t in plan["tof_unplaced"]] == [
+        ("q2", q2, lag2), ("q3", q3, lag3)]
+    text = regenerate.mw_band_shift_offer_text(plan)
+    assert q2 in text and q3 in text
+    assert regenerate.mw_band_shift_question(plan)["why"] == (
+        "Band 1/3 MW outputs leave 20 ns before band 2 ones. Re-check the time of flight of "
+        "q1, q2, q3.")
+    _write(tmp_path, state, wiring)
+    applied = regenerate.apply_mw_band_shift(tmp_path)
+    after = json.loads((tmp_path / "state.json").read_text())
+    assert after["qubits"]["q2"]["resonator"]["time_of_flight"].startswith("#/")
+    timing = output_timing.summary(after, wiring, source=source,
+                                   tof_moved={t["qubit"]: t["old"] for t in applied["tof"]})
+    # the review prints the same sentences, the unshifted q2 included
+    assert timing["tof_unplaced"] == [{"qubit": "q2", "note": q2}, {"qubit": "q3", "note": q3}]
+
+
+def test_the_review_names_a_pointer_to_a_value_nothing_moved_as_a_reference():
+    # q1 reads out on an undelayed band 2 output and is not moved; q2 on the
+    # delayed one references it: a reference, not "follows"
+    state, wiring = _three(28)
+    source = copy.deepcopy((state, wiring))
+    wiring["wiring"]["qubits"]["q1"]["rr"]["opx_output"] = "#/ports/mw_outputs/con1/1/9"
+    wiring["wiring"]["qubits"]["q2"]["rr"]["opx_output"] = "#/ports/mw_outputs/con1/1/8"
+    state["qubits"]["q3"]["resonator"]["time_of_flight"] = 48
+    state["ports"]["mw_outputs"]["con1"]["1"]["8"]["delay"] = 20
+    timing = output_timing.summary(state, wiring, source=source, tof_moved={"q3": 28})
+    assert timing["tof_unplaced"] == [{"qubit": "q2", "note": (
+        "Time of flight of q2 is a reference to qubits/q1/resonator/time_of_flight; it is not "
+        "moved. Move it at qubits/q1/resonator/time_of_flight if that is meant.")}]
+
+
+@pytest.mark.parametrize("held, listed", [(48, False), (float("nan"), True)])
+def test_a_regenerate_that_moves_nothing_gives_a_reference_no_advice(held, listed):
+    # the source chip already carries the shift: same delay before and after
+    state, wiring = _chip(ro_band=3, tof=48)
+    state["ports"]["mw_outputs"]["con1"]["1"]["8"]["delay"] = 20
+    state["shared"] = {"tof": held}
+    state["qubits"]["q2"]["resonator"]["time_of_flight"] = "#/shared/tof"
+    source = copy.deepcopy((state, wiring))
+    timing = output_timing.summary(state, wiring, source=source, tof_moved={})
+    assert timing["tof_unchanged"] == ["q1"]
+    if listed:   # a reference that gives no number is still named
+        assert timing["tof_unplaced"] == [{"qubit": "q2", "note": NOT_A_NUMBER.format(
+            "shared/tof", " (it holds nan)")}]
+    else:
+        assert "tof_unplaced" not in timing
+
+
+def test_a_self_reference_in_the_middle_of_a_chain_is_followed():
+    from quam_state_manager.core import pointer_resolver as pr
+    state, wiring = _chip(ro_band=3, tof=28)
+    state["shared"] = {"a": "#./b", "b": 26}
+    state["qubits"]["q2"]["resonator"]["time_of_flight"] = "#/shared/a"
+    holder = ("qubits", "q2", "resonator", "time_of_flight")
+    assert pr.resolve_pointer(state, "#/shared/a", holder) == 26
+    assert pr.landing_path(state, "#/shared/a", holder) == ["shared", "b"]
+    plan = regenerate.mw_band_shift_plan(state, wiring)
     (ref,) = plan["tof_unplaced"]
-    assert ref["note"] == FOLLOWS_Q1
+    assert ref["target"] == "shared/b"
+    assert ref["note"] == ("Time of flight of q2 is a reference to shared/b (through shared/a); it "
+                           "is not moved. Move it at shared/b if that is meant.")
+
+
+@pytest.mark.parametrize("hops", [17, 70])
+def test_a_long_chain_gives_one_answer_in_the_resolver_and_the_landing(hops):
+    from quam_state_manager.core import pointer_resolver as pr
+    state, wiring = _chip(ro_band=3, tof=28)
+    state["shared"] = {f"h{i}": f"#/shared/h{i + 1}" for i in range(hops)}
+    state["shared"][f"h{hops}"] = 26
+    state["qubits"]["q2"]["resonator"]["time_of_flight"] = "#/shared/h0"
+    holder = ("qubits", "q2", "resonator", "time_of_flight")
+    value = pr.resolve_pointer(state, "#/shared/h0", holder)
+    land = pr.landing_path(state, "#/shared/h0", holder)
+    resolves = hops <= pr.MAX_CHAIN_HOPS
+    assert (value == 26) is resolves and (land == ["shared", f"h{hops}"]) is resolves
+    assert (land is None) is (not resolves)
+    (ref,) = regenerate.mw_band_shift_plan(state, wiring)["tof_unplaced"]
+    if resolves:
+        assert ref["target"] == f"shared/h{hops}" and "(through shared/h0)" in ref["note"]
+    else:
+        assert ref["note"] == NOT_A_NUMBER.format("shared/h0", "")
 
 
 @pytest.mark.parametrize("held", [26, 28])

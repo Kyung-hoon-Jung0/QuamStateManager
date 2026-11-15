@@ -171,11 +171,20 @@ def tof_reference_note(qubit, target, through=None):
             f"moved. Move it at {target} if that is meant.")
 
 
-def tof_follows_note(qubit, target, value, through=None):
+def tof_follows_note(qubit, target, value, through=None, readout_shift=None, lag=0):
     """A stored reference to a time of flight this same run moves: the link
-    is kept, so the value follows its target (``value`` is the target's new value)."""
-    return (f"Time of flight of {qubit} is a reference to {_via(target, through)}; it follows "
-            f"that value (now {value:g} ns).")
+    is kept, so the value follows its target (``value`` is the target's new
+    value). ``lag`` is how much more the target moves than this qubit's own
+    readout output (``readout_shift`` ns): when it is not 0 the time of
+    flight no longer matches the readout, and the sentence says by how much."""
+    head = f"Time of flight of {qubit} is a reference to {_via(target, through)}; it follows "
+    if not lag:
+        return head + f"that value (now {value:g} ns)."
+    moved = ("did not move" if not readout_shift else f"moved {readout_shift:g} ns")
+    side = "later" if lag > 0 else "earlier"
+    return (head + f"that value to {value:g} ns, but {qubit}'s readout {moved}, so {qubit}'s "
+            f"time of flight is now {abs(lag):g} ns {side} than its readout. Give {qubit} its "
+            "own value if that is not meant.")
 
 
 def tof_reference_not_number_note(qubit, target, held=None):
