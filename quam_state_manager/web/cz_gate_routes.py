@@ -54,7 +54,9 @@ from typing import Any
 from flask import current_app, jsonify, render_template, request
 
 from quam_state_manager.core import chip_copy, cz_gate_build as cgb, cz_gate_create
-from quam_state_manager.core.quam_config_save import class_files, class_refusal, lab_package
+from quam_state_manager.core.quam_config_save import (ClassFileError, class_files,
+                                                      class_files_moved, class_refusal,
+                                                      lab_package)
 from quam_state_manager.core import gate_check, gate_check_log, gate_intent, gate_timeline_view, pulse_catalog
 from quam_state_manager.web import request_body
 from quam_state_manager.web import routes as R
@@ -266,11 +268,17 @@ def _plan_all(merged: dict, body: dict) -> list[tuple[str, dict]]:
             **({"spectators": spect[pid]} if pid in spect else {}))
         why = why or class_refusal(current_app.instance_path, scope, res.get("creates") or [],
                                    lab_folder=lab_folder)
+        files = []
+        if not why:
+            try:
+                files = class_files(current_app.instance_path, scope, res.get("creates") or [],
+                                    classes=requested)
+            except ClassFileError as exc:
+                why = str(exc)
         if why:
             res = {"error": why, "refusals": [why]}
         else:
-            _record_class_files(res, pid, body["gate_name"], class_files(
-                current_app.instance_path, scope, res.get("creates") or [], classes=requested))
+            _record_class_files(res, pid, body["gate_name"], files)
         if i == 0:
             first = res
         out.append((pid, res))
@@ -719,6 +727,7 @@ def api_cz_gate_check():
         previews[(pid, body["gate_name"])] = pv
         skipped_by[pid] = sk
     res = run_check(store, _env_python(), gates, creates, previews) if gates else None
+    scope = R._ctx_chip_key(R._active_ctx()) or "no-chip"
     out_pairs, verdicts, sigs, checks_by = [], {}, {}, {}
     for pid, p in plans:
         if "error" in p:
@@ -734,6 +743,9 @@ def api_cz_gate_check():
             sm_classes=bool(p.get("sm_class_files")))
         if not allowed and p.get("sm_class_files") and "extras" in reason:
             reason = f"{reason} {EXTRAS_SLOT_REFUSAL}"
+        moved = class_files_moved(current_app.instance_path, scope, p.get("sm_class_files"))
+        if moved:
+            allowed, state, reason = False, cz_gate_create.NOT_CHECKED, moved
         couplers = {_element(op) for op in (p.get("operations") or {}).values()
                     if (op.get("channel") or "").startswith(("coupler", "the coupler"))}
         src = p.get("sources") or {}

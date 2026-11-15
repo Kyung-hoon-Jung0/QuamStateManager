@@ -100,17 +100,95 @@ def test_amplitude_scaling_follows_the_recorded_result(tmp_path, flag, text, pil
     assert items["scaling"]["text"] == text and items["scaling"]["pill"] is pill
 
 
-def test_class_files_copy_the_publish_receipt(tmp_path):
+def _published(tmp_path, data=b"class A: pass\n", sha="abc"):
     inst, scope = tmp_path / "inst", "chip"
     folder = D.draft_path(inst, scope, CLASS).parent
     folder.mkdir(parents=True)
-    receipt = {"path": str(tmp_path / f"{CLASS}.py"), "sha": "abc", "importable": True,
+    target = tmp_path / f"{CLASS}.py"
+    if data is not None:
+        target.write_bytes(data)
+    receipt = {"path": str(target), "sha": sha, "importable": True,
                "qclass": QCLASS, "proportional": {"proportional": False, "ratio_min": 1}}
     (folder / W.PUBLISHED_FILE).write_text(json.dumps(receipt), encoding="utf-8")
+    return inst, scope, target
+
+
+def test_class_files_hash_the_published_bytes_not_the_receipt(tmp_path):
+    inst, scope, target = _published(tmp_path)
+    sha = hashlib.sha256(target.read_bytes()).hexdigest()
     assert Q.class_files(inst, scope, classes=[QCLASS]) == [
-        {"qclass": QCLASS, "file": f"{CLASS}.py", "sha256": "abc", "proportional": False}]
+        {"qclass": QCLASS, "file": f"{CLASS}.py", "sha256": sha, "proportional": False}]
     assert Q.class_files(inst, scope, classes=["quam.Other"]) == []
-    assert Q.published_path(inst, scope, QCLASS) == receipt["path"]
+    assert Q.published_path(inst, scope, QCLASS) == str(target)
+
+
+def test_a_missing_published_file_refuses_naming_the_file(tmp_path):
+    inst, scope, _ = _published(tmp_path, data=None)
+    with pytest.raises(Q.ClassFileError, match=rf"quam_config/{CLASS}\.py"):
+        Q.class_files(inst, scope, classes=[QCLASS])
+
+
+def test_class_files_moved_names_a_file_whose_bytes_changed(tmp_path):
+    inst, scope, target = _published(tmp_path)
+    files = Q.class_files(inst, scope, classes=[QCLASS])
+    assert Q.class_files_moved(inst, scope, files) is None
+    target.write_bytes(target.read_bytes() + b"#")
+    assert f"quam_config/{CLASS}.py" in Q.class_files_moved(inst, scope, files)
+    target.unlink()
+    assert f"quam_config/{CLASS}.py" in Q.class_files_moved(inst, scope, files)
+
+
+def test_scaling_any_not_proportional_wins_over_checked(tmp_path):
+    a, b = tmp_path / "a.py", tmp_path / "b.py"
+    files = [_entry(a, proportional=True), _entry(b, proportional=False)]
+    for order in (files, files[::-1]):
+        items, _ = _items(_macro(order), lambda q: None)
+        assert items["scaling"]["text"] == "amplitude scaling: not proportional"
+
+
+def test_a_missing_or_changed_file_outranks_class_not_importable(tmp_path):
+    f = tmp_path / f"{CLASS}.py"
+    e = _entry(f)
+    cls = "quam_config.Slot.Slot"
+
+    def text():
+        out = GS.status(_Store(_macro([e], cls=cls)), None, "p", "g", class_path=lambda q: str(f),
+                        missing_classes=[cls], env_name="env")
+        return next(i["text"] for i in out if i["key"] == "class")
+    assert text() == "class Slot not importable in env"
+    f.write_bytes(b"other\n")
+    assert text() == "class file changed since the gate was checked"
+    f.unlink()
+    assert text() == f"class file missing: quam_config/{CLASS}.py"
+
+
+def test_may_create_with_sm_classes_needs_load_and_ops_to_pass():
+    from quam_state_manager.core import cz_gate_create as C
+    checks = {c: {"status": "pass", "message": "ok"} for c in gate_check.CHECKS}
+    checks["ops"] = {"status": "skipped", "message": "ops could not run"}
+    entry = {"pair": PAIR, "gate": GATE, "checks": checks, "ran": True, "unchecked": []}
+    result = {"status": "ok", "checked": True, "gates": [entry]}
+    known = sorted(C.GATE_CLASSES)[0]
+    assert C.may_create(result, entry, gate_class=known, layout="known")[0] is True
+    assert C.may_create(result, entry, gate_class=known, layout="known", sm_classes=True)[0] is False
+    checks["ops"] = {"status": "pass", "message": "ok"}
+    checks["load_config"] = {"status": "skipped", "message": "no load"}
+    assert C.may_create(result, entry, gate_class=known, layout="known", sm_classes=True)[0] is False
+
+
+def test_copied_layout_settings_leave_out_extras():
+    plan = {"layout": "copied", "creates": [(MPATH, {"__class__": "x.Y", "extras": {"a": 1},
+                                                     "phase": 0.5})],
+            "fields": {}, "operations": {}, "reset": []}
+    assert [s["key"] for s in czr._settings(plan)] == ["phase"]
+
+
+def test_recorded_class_files_merge_into_existing_extras():
+    rec = [{"qclass": QCLASS, "file": f"{CLASS}.py", "sha256": "ab", "proportional": None}]
+    plan = {"creates": [(MPATH, {"__class__": "x.Y", "extras": {"note": "keep"}})]}
+    czr._record_class_files(plan, PAIR, GATE, rec)
+    assert plan["creates"][0][1]["extras"] == {"note": "keep", "sm_class_files": rec}
+    assert plan["sm_class_files"] == rec
 
 
 # ------------------------------------------------------------ create and status through Flask
@@ -271,3 +349,148 @@ def test_a_gate_with_sm_classes_is_refused_when_not_checked(env, monkeypatch):  
     j = env.c.post(CHECK, json=_sm_class_body()).get_json()
     v = j["pairs"][0]["verdict"]
     assert not v["allowed"] and "uses a class SM made" in v["reason"]
+
+
+def test_the_needs_notice_is_a_detail_not_a_pill(made):
+    from quam_state_manager.web import gate_status_routes as gsr
+    with made.app.test_request_context("/"):
+        line = gsr.gate_line(made.store, None, PAIR, GATE, env=([], None), folder=None)
+    needs = [i for i in line["items"] if i["key"] == "needs"]
+    assert [n["text"] for n in needs] == [NOTICE] and needs[0]["pill"] is False
+    assert all(i["key"] != "needs" for i in line["pills"])
+
+
+# ------------------------------------------------------------ hashes are the file's bytes
+
+def _check_create(a, monkeypatch, run=None):
+    monkeypatch.setattr(czr, "run_check", run or _fake())
+    monkeypatch.setattr(czr, "_env_python", lambda: "C:/fake/python.exe")
+    j = a.c.post(CHECK, json=_sm_class_body()).get_json()
+    r = a.c.post(CREATE, json={"check_token": j["check_token"], "plan_sig": j["plan_sig"]})
+    return j, r
+
+
+def test_a_file_edited_outside_sm_then_created_reads_present(env, monkeypatch):  # noqa: F811
+    assert _save(env).status_code == 200
+    target = env.folder / f"{CLASS}.py"
+    target.write_bytes(target.read_bytes() + b"\n# edited outside SM\n")
+    _, r = _check_create(env, monkeypatch)
+    assert r.status_code == 200, r.get_json()
+    assert GS.sm_class_files(_macro_of(env))[0]["sha256"] == hashlib.sha256(
+        target.read_bytes()).hexdigest()
+    html = _status_html(env)
+    assert "class file present" in html and "class file changed" not in html
+    target.write_bytes(target.read_bytes() + b"# later\n")
+    assert "class file changed since the gate was checked" in _status_html(env)
+
+
+def test_bytes_changed_during_the_check_refuse_the_create(env, monkeypatch):  # noqa: F811
+    assert _save(env).status_code == 200
+    target = env.folder / f"{CLASS}.py"
+    fake = _fake()
+
+    def run(store, python_path, gates, creates, previews):
+        target.write_bytes(target.read_bytes() + b"# during the check\n")
+        return fake(store, python_path, gates, creates, previews)
+    before = env.snap()
+    j, r = _check_create(env, monkeypatch, run)
+    v = j["pairs"][0]["verdict"]
+    assert not v["allowed"] and f"quam_config/{CLASS}.py" in v["reason"]
+    assert "changed while the gate was checked" in v["reason"]
+    assert r.status_code == 400 and env.snap() == before
+
+
+def test_a_published_file_that_is_gone_refuses_the_check(env, monkeypatch):  # noqa: F811
+    assert _save(env).status_code == 200
+    target = env.folder / f"{CLASS}.py"
+    real = czr.class_refusal
+    seen = []
+
+    def refusal(*a, **k):
+        # the file goes after the last refusal check, before the record is made
+        out = real(*a, **k)
+        seen.append(1)
+        if len(seen) == 2 and target.exists():
+            target.unlink()
+        return out
+    monkeypatch.setattr(czr, "class_refusal", refusal)
+    before = env.snap()
+    j, r = _check_create(env, monkeypatch)
+    refusals = " ".join(j["pairs"][0].get("refusals") or [])
+    assert f"quam_config/{CLASS}.py is not in the folder it was saved to" in refusals
+    assert r.status_code == 400 and env.snap() == before
+
+
+def _recheck_env(monkeypatch):
+    from quam_state_manager.core import config_generator
+    monkeypatch.setattr(config_generator, "get_selected_env", lambda inst: "C:/fake/python.exe")
+
+
+def test_recheck_after_an_outside_edit_reads_present(made, monkeypatch):
+    _recheck_env(monkeypatch)
+    target = made.folder / f"{CLASS}.py"
+    target.write_bytes(target.read_bytes() + b"\n# edited outside SM\n")
+    assert "class file changed since the gate was checked" in _status_html(made)
+    monkeypatch.setattr(gate_check, "check_gates",
+                        lambda store, py, gates, creates=(), **kw: _gate_check(store))
+    r = made.c.post("/api/pulse/cz-gate/recheck", json={"pair": PAIR, "gate": GATE})
+    assert r.status_code == 200, r.get_json()
+    html = _status_html(made)
+    assert "class file present" in html and "class file changed" not in html
+
+
+def test_recheck_refuses_bytes_changed_during_the_check(made, monkeypatch):
+    _recheck_env(monkeypatch)
+    target = made.folder / f"{CLASS}.py"
+    target.write_bytes(target.read_bytes() + b"\n# edited\n")
+    old = GS.sm_class_files(_macro_of(made))
+    n = len(made.store.change_log)
+
+    def fake(store, py, gates, creates=(), **kw):
+        target.write_bytes(target.read_bytes() + b"# during the check\n")
+        return _gate_check(store)
+    monkeypatch.setattr(gate_check, "check_gates", fake)
+    r = made.c.post("/api/pulse/cz-gate/recheck", json={"pair": PAIR, "gate": GATE})
+    assert r.status_code == 409 and f"quam_config/{CLASS}.py" in r.get_json()["error"]
+    assert GS.sm_class_files(_macro_of(made)) == old and len(made.store.change_log) == n
+
+
+def test_recheck_refuses_when_the_class_is_not_published_any_more(made, monkeypatch):
+    _recheck_env(monkeypatch)
+    old = GS.sm_class_files(_macro_of(made))
+    next(Path(made.app.instance_path).rglob(W.PUBLISHED_FILE)).write_text("{}", encoding="utf-8")
+    calls = []
+
+    def fake(store, py, gates, creates=(), **kw):
+        calls.append(gates)
+        return _gate_check(store)
+    monkeypatch.setattr(gate_check, "check_gates", fake)
+    r = made.c.post("/api/pulse/cz-gate/recheck", json={"pair": PAIR, "gate": GATE})
+    assert r.status_code == 409 and "not saved to quam_config any more" in r.get_json()["error"]
+    assert calls == [] and GS.sm_class_files(_macro_of(made)) == old
+
+
+def test_recheck_refuses_a_published_file_that_is_gone(made, monkeypatch):
+    _recheck_env(monkeypatch)
+    old = GS.sm_class_files(_macro_of(made))
+    (made.folder / f"{CLASS}.py").unlink()
+    r = made.c.post("/api/pulse/cz-gate/recheck", json={"pair": PAIR, "gate": GATE})
+    assert r.status_code == 409 and f"quam_config/{CLASS}.py" in r.get_json()["error"]
+    assert GS.sm_class_files(_macro_of(made)) == old
+
+
+def test_recheck_refuses_when_the_chip_changed_during_the_check(made, monkeypatch):
+    _recheck_env(monkeypatch)
+    target = made.folder / f"{CLASS}.py"
+    target.write_bytes(target.read_bytes() + b"\n# edited\n")
+    old = GS.sm_class_files(_macro_of(made))
+
+    def fake(store, py, gates, creates=(), **kw):
+        out = _gate_check(store)
+        with store._lock:
+            store.mutation_seq += 1          # another edit landed while the check ran
+        return out
+    monkeypatch.setattr(gate_check, "check_gates", fake)
+    r = made.c.post("/api/pulse/cz-gate/recheck", json={"pair": PAIR, "gate": GATE})
+    assert r.status_code == 409 and r.get_json().get("stale") is True
+    assert GS.sm_class_files(_macro_of(made)) == old

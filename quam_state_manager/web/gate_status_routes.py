@@ -404,8 +404,11 @@ def api_cz_gate_recheck():
     if not old:
         return _refuse(f"{gate} uses no class SM made, so there is no class file to "
                        "check again.", 409, **kw)
-    new = quam_config_save.class_files(current_app.instance_path, _scope(ctx),
-                                       classes=[f.get("qclass") for f in old])
+    try:
+        new = quam_config_save.class_files(current_app.instance_path, _scope(ctx),
+                                           classes=[f.get("qclass") for f in old])
+    except quam_config_save.ClassFileError as exc:
+        return _refuse(str(exc), 409, **kw)
     if {f.get("qclass") for f in new} != {f.get("qclass") for f in old}:
         return _refuse("A class file of this gate is not saved to quam_config any more, so "
                        "it cannot be checked again. Save the class to quam_config first.",
@@ -422,6 +425,9 @@ def api_cz_gate_recheck():
         return _refuse(f"The gate did not pass the lab check with the class files as they "
                        f"are now: {reason} The gate's file record was not changed.", 400,
                        **kw, check=check)
+    moved = quam_config_save.class_files_moved(current_app.instance_path, _scope(ctx), new)
+    if moved:
+        return _refuse(moved, 409, **kw)
     path = f"qubit_pairs.{pair}.macros.{gate}.extras.sm_class_files"
     info = g.lab_info = {"notes": []}
     release = R._lab_hold(store, [path])
