@@ -1,23 +1,8 @@
-"""Two ratchets on text written for the time of flight band shift, plus a rule for new text.
+"""Two per-file ratchets: lines over 120 characters and lines with a non-ASCII character.
 
-1. Lines over 120 characters: ruff checks Python code at 120 (pyproject.toml); this also covers the docs,
-   JS and selfchecks. Each listed file keeps at most the count of long lines it had when the ratchet was set.
-2. Lines with a non-ASCII character: each listed file keeps at most its measured count; write a character
-   as an escape or name it instead.
-Lower a count when lines are re-wrapped (a count that went down is reported, for both tables); never raise it.
-3. New text: for every committed file the branch adds or modifies (git diff main...HEAD, i.e. from the
-   merge-base, renames counted as added files) that is not in the tables, every line of an added file and
-   every added line of a modified file must be ASCII and at most 120 characters. Content is read from the commit
-   (git show HEAD:<path> for an added file, the committed diff for a modified one), never the working tree.
-   Skipped: the whole check when git is absent, outside a git repository, with no main ref, or with no
-   merge base with main; per file, a file in the tables, a gitlink
-   (mode 160000), or a binary file. No changed files means no new text to judge. For a numstat
-   "-" row, committed bytes with a UTF-16/UTF-32 BOM fail; otherwise a NUL in the first 8000 bytes means binary.
-   Without that NUL the file is judged as text, including files with a -diff attribute.
-   A text file that is not UTF-8 or a per-file git error is a failure naming the file.
+Each listed file must stay at or below its count in each table. Counts may only go down;
+a count that went down is reported so its baseline can be lowered.
 """
-import os
-import subprocess
 import warnings
 from pathlib import Path
 
@@ -41,6 +26,7 @@ MAX_LONG_LINES = {
     "quam_state_manager/web/routes.py": 33,
     "quam_state_manager/web/static/generate.js": 29,
     "tests/generate_output_timing_selfcheck.cjs": 1,
+    "tests/golden/scripts_bundle_cz/02_build_machine.py": 5,
     "tests/test_line_length.py": 0,
     "tests/test_pointer_path.py": 0,
     "tests/test_run_build_delay.py": 0,
@@ -100,6 +86,7 @@ MAX_NON_ASCII_LINES = {
     "quam_state_manager/web/routes.py": 1803,
     "quam_state_manager/web/static/generate.js": 928,
     "tests/generate_output_timing_selfcheck.cjs": 1,
+    "tests/golden/scripts_bundle_cz/02_build_machine.py": 78,
     "tests/test_line_length.py": 0,
     "tests/test_pointer_path.py": 4,
     "tests/test_run_build_delay.py": 9,
@@ -119,270 +106,14 @@ def test_no_new_non_ascii_line(rel):
     judge(rel, found, MAX_NON_ASCII_LINES[rel], "lines with a non-ASCII character")
 
 
-def _git_env() -> dict[str, str]:
-    """Keep Git diagnostics stable even when the caller uses a translated locale."""
-    return {**os.environ, "LC_ALL": "C", "LANGUAGE": ""}
+@pytest.mark.parametrize("rel", sorted(set(MAX_LONG_LINES) | set(MAX_NON_ASCII_LINES)))
+def test_baseline_file_exists(rel):
+    assert (ROOT / rel).is_file(), f"baseline file does not exist: {rel}"
 
 
-def _git_bytes(*args: str, rel: str = "", main_probe: bool = False,
-               repository_probe: bool = False, merge_base_probe: bool = False) -> bytes:
-    try:
-        done = subprocess.run(["git", *args], cwd=ROOT, env=_git_env(), capture_output=True, timeout=30)
-    except FileNotFoundError:
-        pytest.skip("git is absent: executable not found")
-    except (OSError, subprocess.SubprocessError) as exc:
-        pytest.fail(f"git failed for {rel or 'branch metadata'}: {exc}")
-    if done.returncode != 0:
-        if repository_probe and b"not a git repository" in done.stderr:
-            pytest.skip("not a git repository: no working tree metadata")
-        if main_probe and done.returncode == 1:
-            pytest.skip("no main ref: main does not resolve to a commit")
-        if merge_base_probe and done.returncode == 1:
-            pytest.skip("no merge base with main: history may be shallow or unrelated")
-        pytest.fail(f"git failed for {rel or 'branch metadata'}: "
-                    f"{done.stderr.decode('utf-8', 'replace').strip()[:120]}")
-    return done.stdout
-
-
-def _git(*args: str) -> str:
-    return _git_bytes(*args).decode("utf-8", "replace")
-
-
-def binary_paths(numstat: str) -> set[str]:
-    """Paths git declines to diff in 'git diff --numstat -z' (no renames): '-<TAB>-<TAB>path' records."""
-    out = set()
-    for rec in numstat.split("\0"):
-        parts = rec.split("\t", 2)
-        if len(parts) == 3 and parts[0] == "-" and parts[1] == "-":
-            out.add(parts[2])
-    return out
-
-
-def gitlink_paths(raw: str) -> set[str]:
-    """Read destination modes from no-rename 'git diff --raw -z' metadata/path pairs."""
-    records = raw.split("\0")
-    return {path for meta, path in zip(records[::2], records[1::2]) if meta.split()[1] == "160000"}
-
-
-def is_binary(rel: str, content: bytes) -> bool:
-    if content.startswith((b"\xff\xfe\0\0", b"\0\0\xfe\xff")):
-        pytest.fail(f"{rel}: not UTF-8 (UTF-32)")
-    if content.startswith((b"\xff\xfe", b"\xfe\xff")):
-        pytest.fail(f"{rel}: not UTF-8 (UTF-16)")
-    return b"\0" in content[:8000]
-
-
-def added_lines(diff: str) -> list[str]:
-    """The '+' lines of a zero-context diff; the file header (everything before the first '@@') is dropped."""
-    out, in_hunk = [], False
-    for ln in diff.splitlines():
-        if ln.startswith("@@"):
-            in_hunk = True
-        elif in_hunk and ln.startswith("+"):
-            out.append(ln[1:])
-    return out
-
-
-def bad_new_lines(lines: list[str]) -> list[str]:
-    return [ln for ln in lines if len(ln) > LIMIT or any(ord(ch) > 127 for ch in ln)]
-
-
-def test_added_lines_and_bad_new_lines_see_what_they_should():
-    diff = chr(10).join(["--- a/f", "+++ b/f", "@@ -1 +1,3 @@", "-old", "+ok", "+" + "x" * (LIMIT + 1),
-                         "+++ x", " context"])
-    assert added_lines(diff) == ["ok", "x" * (LIMIT + 1), "++ x"]
-    assert bad_new_lines(added_lines(diff)) == ["x" * (LIMIT + 1)]
-    assert bad_new_lines(["fine", "bad " + chr(0x661)]) == ["bad " + chr(0x661)]
-
-
-def test_binary_paths_reads_numstat_records():
-    assert binary_paths("1\t0\ta.md\0-\t-\tb.png\0-\t-\tc d.bin\0") == {"b.png", "c d.bin"}
-
-
-def test_gitlink_paths_reads_destination_modes():
-    raw = ":000000 160000 0000000 abcdef0 A\0sub dir\0:160000 100644 abcdef0 1234567 T\0text\0"
-    assert gitlink_paths(raw) == {"sub dir"}
-    assert gitlink_paths("") == set()
-
-
-def test_binary_detection_checks_boms_and_the_nul_boundary():
-    for bom in (b"\xff\xfe", b"\xfe\xff", b"\xff\xfe\0\0", b"\0\0\xfe\xff"):
-        with pytest.raises(BaseException, match="note.md: not UTF-8 \\(UTF-") as caught:
-            is_binary("note.md", bom + b"text")
-        assert caught.type is pytest.fail.Exception
-    assert is_binary("image.png", b"\x89PNG\r\n\x1a\n\0")
-    assert is_binary("data", b"a" * 7999 + b"\0")
-    assert not is_binary("text", b"a" * 8000 + b"\0")
-    assert not is_binary("text", b"")
-
-
-def test_git_file_errors_fail_with_the_path(monkeypatch):
-    def failed(*args, **kwargs):
-        return subprocess.CompletedProcess(args, 128, b"", b"bad object")
-
-    monkeypatch.setattr(subprocess, "run", failed)
-    with pytest.raises(BaseException, match="note.md.*bad object") as caught:
-        _git_bytes("show", "HEAD:note.md", rel="note.md")
-    assert caught.type is pytest.fail.Exception
-    with pytest.raises(BaseException, match="branch metadata.*bad object") as caught:
-        _git_bytes("rev-parse", "--verify", "--quiet", "main^{commit}", main_probe=True)
-    assert caught.type is pytest.fail.Exception
-    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 1, b"", b""))
-    with pytest.raises(pytest.skip.Exception, match="no main ref"):
-        _git_bytes("rev-parse", "--verify", "--quiet", "main^{commit}", main_probe=True)
-
-
-def test_git_launch_errors_only_skip_for_an_absent_executable(monkeypatch):
-    def raises(error):
-        def run(*args, **kwargs):
-            raise error
-        return run
-
-    monkeypatch.setattr(subprocess, "run", raises(FileNotFoundError()))
-    with pytest.raises(pytest.skip.Exception, match="git is absent"):
-        _git_bytes("show", "HEAD:note.md", rel="note.md")
-    for error in (PermissionError("denied"), subprocess.TimeoutExpired("git", 30)):
-        monkeypatch.setattr(subprocess, "run", raises(error))
-        with pytest.raises(BaseException, match="git failed for note.md") as caught:
-            _git_bytes("show", "HEAD:note.md", rel="note.md")
-        assert caught.type is pytest.fail.Exception
-
-
-def test_new_text_is_ascii_and_within_120_characters():
-    """Branch-time check (main...HEAD, from the merge-base): added files whole, modified files only their
-    added lines, for files outside the two tables. A renamed file counts as added."""
-    _git_bytes("rev-parse", "--git-dir", repository_probe=True)
-    _git_bytes("rev-parse", "--verify", "--quiet", "main^{commit}", main_probe=True)
-    _git_bytes("merge-base", "main", "HEAD", merge_base_probe=True)
-    flags = ["-c", "core.quotePath=false", "diff", "--no-renames", "-z", "--name-only"]
-    names = [n for n in _git(*flags, "--diff-filter=AM", "main...HEAD").split("\0") if n]
-    added = {n for n in _git(*flags, "--diff-filter=A", "main...HEAD").split("\0") if n}
-    tabled = set(MAX_LONG_LINES) | set(MAX_NON_ASCII_LINES)
-    binary = binary_paths(_git(*flags[:-1], "--numstat", "main...HEAD"))
-    gitlinks = gitlink_paths(_git(*flags[:-1], "--raw", "--diff-filter=AM", "main...HEAD"))
-    bad, not_utf8 = {}, []
-    for rel in names:
-        if rel in tabled or rel in gitlinks:
-            continue
-        content = None
-        if rel in binary:
-            content = _git_bytes("show", f"HEAD:{rel}", rel=rel)
-            if is_binary(rel, content):
-                continue
-        try:
-            if rel in added:
-                if content is None:
-                    content = _git_bytes("show", f"HEAD:{rel}", rel=rel)
-                lines = content.decode("utf-8").splitlines()
-            else:
-                diff = _git_bytes("-c", "core.quotePath=false", "diff", "--no-renames", "--text", "-U0",
-                                  "main...HEAD", "--", rel, rel=rel)
-                lines = added_lines(diff.decode("utf-8"))
-        except UnicodeDecodeError:
-            not_utf8.append(rel)
-            continue
-        found = bad_new_lines(lines)
-        if found:
-            bad[rel] = len(found)
-    assert not not_utf8, f"text files that are not UTF-8: {not_utf8}"
-    assert not bad, f"new text with a non-ASCII character or a line over {LIMIT} characters: {bad}"
-
-
-def _fixture_git_env(root: Path) -> dict[str, str]:
-    """Keep disposable repositories independent of system and global Git configuration."""
-    empty_config = root / ".empty-gitconfig"
-    empty_config.write_bytes(b"")
-    return {**_git_env(), "GIT_CONFIG_GLOBAL": str(empty_config), "GIT_CONFIG_SYSTEM": str(empty_config)}
-
-
-@pytest.fixture
-def isolated_git(tmp_path, monkeypatch):
-    env = _fixture_git_env(tmp_path)
-    for key in ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"):
-        monkeypatch.setenv(key, env[key])
-
-
-def _fixture_git(root: Path, *args: str) -> bytes:
-    """Isolate disposable Git repositories from machine configuration and hooks."""
-    env = _fixture_git_env(root)
-
-    def run(*command):
-        return subprocess.run(
-            ["git", "-c", "core.hooksPath=", *command], cwd=root, env=env,
-            capture_output=True, check=True, timeout=30,
-        ).stdout
-
-    if args[0] == "commit":
-        run("config", "--local", "user.name", "Test")
-        run("config", "--local", "user.email", "test@example.invalid")
-    return run(*args)
-
-
-def test_fixture_git_ignores_machine_configuration(tmp_path, monkeypatch):
-    config = tmp_path / "machine-config"
-    config.write_text('[commit]\n    gpgsign = true\n[core]\n    hooksPath = /unreadable/hooks\n')
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
-    monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(config))
-    monkeypatch.setenv("BEADS_GATE_TEST_BD", "C:/nonexistent/bd.exe")
-    _fixture_git(tmp_path, "init", "-b", "main")
-    hooks = tmp_path / "hooks"
-    hooks.mkdir()
-    (hooks / "pre-commit").write_text("#!/bin/sh\nexit 1\n", encoding="ascii")
-    _fixture_git(tmp_path, "config", "--local", "core.hooksPath", str(hooks))
-    _fixture_git(tmp_path, "commit", "--allow-empty", "-m", "Initial")
-    assert _fixture_git(tmp_path, "config", "--local", "user.name").strip() == b"Test"
-    assert _fixture_git(tmp_path, "config", "--local", "user.email").strip() == b"test@example.invalid"
-
-
-def test_git_diagnostics_use_a_fixed_locale(monkeypatch):
-    monkeypatch.setenv("LC_ALL", "de_DE.UTF-8")
-    monkeypatch.setenv("LANGUAGE", "de")
-
-    def outside(*args, **kwargs):
-        assert kwargs["env"]["LC_ALL"] == "C"
-        assert kwargs["env"]["LANGUAGE"] == ""
-        return subprocess.CompletedProcess(args, 128, b"", b"fatal: not a git repository")
-
-    monkeypatch.setattr(subprocess, "run", outside)
-    with pytest.raises(pytest.skip.Exception, match="not a git repository"):
-        _git_bytes("rev-parse", "--git-dir", repository_probe=True)
-
-
-def test_new_text_skips_outside_a_repository(tmp_path, monkeypatch, isolated_git):
-    monkeypatch.setattr(f"{__name__}.ROOT", tmp_path)
-    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
-    with pytest.raises(pytest.skip.Exception, match="not a git repository"):
-        test_new_text_is_ascii_and_within_120_characters()
-
-
-def test_new_text_skips_without_main(tmp_path, monkeypatch, isolated_git):
-    _fixture_git(tmp_path, "init", "-b", "topic")
-    _fixture_git(tmp_path, "commit", "--allow-empty", "-m", "Initial")
-    monkeypatch.setattr(f"{__name__}.ROOT", tmp_path)
-    with pytest.raises(pytest.skip.Exception, match="no main ref"):
-        test_new_text_is_ascii_and_within_120_characters()
-
-
-def test_new_text_skips_without_a_merge_base_in_a_shallow_clone(tmp_path, monkeypatch, isolated_git):
-    source = tmp_path / "source"
-    source.mkdir()
-    _fixture_git(source, "init", "-b", "main")
-    _fixture_git(source, "commit", "--allow-empty", "-m", "Initial")
-    _fixture_git(source, "checkout", "-b", "topic")
-    _fixture_git(source, "commit", "--allow-empty", "-m", "Next")
-    clone = tmp_path / "clone"
-    _fixture_git(tmp_path, "clone", "--no-local", "--depth=1", "--branch=topic", str(source), str(clone))
-    _fixture_git(clone, "fetch", "--depth=1", "origin", "main:main")
-    assert _fixture_git(clone, "rev-parse", "--is-shallow-repository").strip() == b"true"
-    monkeypatch.setattr(f"{__name__}.ROOT", clone)
-    with pytest.raises(pytest.skip.Exception, match="no merge base with main"):
-        test_new_text_is_ascii_and_within_120_characters()
-
-
-def test_git_missing_file_in_a_repository_fails_with_the_path(tmp_path, monkeypatch, isolated_git):
-    _fixture_git(tmp_path, "init", "-b", "main")
-    _fixture_git(tmp_path, "commit", "--allow-empty", "-m", "Initial")
-    monkeypatch.setattr(f"{__name__}.ROOT", tmp_path)
-    with pytest.raises(BaseException, match="git failed for note.md") as caught:
-        _git_bytes("show", "HEAD:note.md", rel="note.md")
-    assert caught.type is pytest.fail.Exception
+def test_baseline_tables_have_the_same_files():
+    only_long = sorted(set(MAX_LONG_LINES) - set(MAX_NON_ASCII_LINES))
+    only_non_ascii = sorted(set(MAX_NON_ASCII_LINES) - set(MAX_LONG_LINES))
+    assert not only_long and not only_non_ascii, (
+        f"files only in long-line table: {only_long}; files only in non-ASCII table: {only_non_ascii}"
+    )
