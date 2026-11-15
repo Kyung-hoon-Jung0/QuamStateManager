@@ -1199,6 +1199,19 @@ _STAGE6_SELECTORS = {
     '.ui-menu-list > .ui-option[aria-disabled="true"] > .ui-option-title',
     '.ui-input-unit > .ui-input.ui-input[aria-invalid="true"]',
     '.ui-input-unit > .ui-input.ui-input[aria-invalid="true"]:focus',
+    # Intrinsic page-body wrapping and the Workbench narrow split.
+    '.ui-pulses-head.ui-head--data',
+    '.inspector-header-pair',
+    '.ui-pair-title',
+    '.ui-pair-title strong',
+    '.ui-pair-title small',
+    '.inspector-header-pair .inspector-actions',
+    '.inspector-header-pair .inspector-czplan-link',
+    'table.ui-pair-props',
+    '.ui-pair-props .col-prop',
+    '.ui-pair-props .col-val',
+    '.ui-pair-props code',
+    '.ui-pair-props .pointer-badge',
     # the top bar below its two-row floor: the tray cluster wraps so the page never
     # scrolls sideways at a phone width (tests/test_topbar_narrow_no_side_scroll.py)
     '.topbar.tb-fit-11 #topbar-tray-slot',

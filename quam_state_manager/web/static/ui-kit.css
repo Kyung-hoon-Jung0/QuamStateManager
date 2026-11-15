@@ -1810,3 +1810,17 @@ dialog.ui-dialog:not(.gen-rule-dlg)::backdrop { background: var(--ui-backdrop); 
 .topbar.tb-fit-11 .sync-control .state-status-badge.sync-control-main { flex: 1 1 auto; text-align: left; }
 .topbar.tb-fit-11 .sync-control-text { min-width: 0; white-space: normal; }
 .topbar.tb-fit-11 #pending-tray .sync-control-act { flex: 1 1 auto; }
+
+/* Page bodies use intrinsic wrapping; wide rows keep their existing alignment. */
+.ui-pulses-head.ui-head--data { flex-wrap: wrap; }
+.inspector-header-pair { flex-wrap: wrap; gap: var(--ui-gap-2); }
+.ui-pair-title { flex: 1 1 auto; flex-wrap: wrap; max-width: 100%; }
+.ui-pair-title strong { min-width: 0; max-width: 100%; white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
+.ui-pair-title small { overflow-wrap: anywhere; min-width: 0; }
+.inspector-header-pair .inspector-actions { flex-wrap: wrap; max-width: 100%; }
+.inspector-header-pair .inspector-czplan-link { white-space: nowrap; flex: none; }
+table.ui-pair-props { table-layout: fixed; width: 100%; }
+.ui-pair-props .col-prop { width: min(15rem, 40%); min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.ui-pair-props .col-val { width: auto; white-space: normal; overflow-wrap: anywhere; }
+.ui-pair-props code { white-space: normal; overflow-wrap: anywhere; }
+.ui-pair-props .pointer-badge { white-space: normal; overflow-wrap: anywhere; word-break: normal; max-width: 100%; }
