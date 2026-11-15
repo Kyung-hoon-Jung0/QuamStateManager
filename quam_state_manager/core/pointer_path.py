@@ -34,8 +34,25 @@ def _scalar(value: Any) -> Any:
     return None
 
 
-def _walk(root: dict, segments: list[str]) -> tuple[bool, Any]:
-    """Walk *root* by absolute *segments*; return (found, value)."""
+def _list_item(node: list, seg: str, digits_only: bool = False) -> tuple[bool, Any]:
+    """The item of list *node* that key *seg* names: (found, value).
+
+    With *digits_only* (the cross walk) only a key of plain digits indexes,
+    as quam reads a list (``quam/utils/string_reference.py``:
+    ``if next_attr.isdigit() and isinstance(obj, (list, UserList))``), so
+    "-1", "+1", " 1" and "0_1" name nothing. Otherwise any text ``int()``
+    reads indexes (the click-to-edit default, unchanged).
+    """
+    if digits_only and not seg.isdigit():
+        return False, None
+    try:
+        return True, node[int(seg)]
+    except (ValueError, IndexError):
+        return False, None
+
+
+def _walk(root: dict, segments: list[str], digits_only: bool = False) -> tuple[bool, Any]:
+    """Walk *root* by absolute *segments*; return (found, value). *digits_only*: see :func:`_list_item`."""
     current: Any = root
     for seg in segments:
         if isinstance(current, dict):
@@ -43,9 +60,8 @@ def _walk(root: dict, segments: list[str]) -> tuple[bool, Any]:
                 return False, None
             current = current[seg]
         elif isinstance(current, list):
-            try:
-                current = current[int(seg)]
-            except (ValueError, IndexError):
+            found, current = _list_item(current, seg, digits_only)
+            if not found:
                 return False, None
         else:
             return False, None
@@ -102,6 +118,8 @@ def resolve_field_target(merged: dict, dot_path, *, cross: bool = False) -> dict
     pointer met again at the same leaf with the same path still to walk
     (with *cross*; without it, the same leaf met again): crossing one pointer
     twice on the way to different keys is not a cycle. Nothing is cached.
+    With *cross* a list is indexed by plain digits only, as quam reads it
+    ("#/a/-1" names nothing; see :func:`_list_item`).
     """
     if isinstance(dot_path, (list, tuple)):
         segs = [str(s) for s in dot_path if s != ""]
@@ -148,7 +166,7 @@ def resolve_field_target(merged: dict, dot_path, *, cross: bool = False) -> dict
         if cross:
             hop["to_segments"] = list(target)
         chain.append(hop)
-        found, value = _walk(merged, target)
+        found, value = _walk(merged, target, cross)
         if not found and cross:
             # the target path passes through a pointer: walk it from the root,
             # following each crossed pointer to its real target
@@ -185,9 +203,8 @@ def resolve_field_target(merged: dict, dot_path, *, cross: bool = False) -> dict
                     current = current[seg]
                     continue
                 if isinstance(current, list):
-                    try:
-                        value = current[int(seg)]
-                    except (ValueError, IndexError):
+                    found, value = _list_item(current, seg, cross)
+                    if not found:
                         resolvable = False
                         return False
                     abs_path.append(seg)

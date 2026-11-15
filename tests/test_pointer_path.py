@@ -259,7 +259,7 @@ def test_cross_counts_every_pointer_of_the_walk_once():
 _LIMIT = 64   # the documented whole-walk pointer limit (docs/27); pinned against _MAX_HOPS below
 
 
-def _reference_walk(merged: dict, path: list[str]) -> dict:
+def _reference_walk(merged: dict, path: list[str], int_index: bool = False) -> dict:
     """A deliberately naive walker for absolute pointers, as quam reads them.
 
     One flat list of keys still to descend. A pointer at the current node sends
@@ -267,9 +267,15 @@ def _reference_walk(merged: dict, path: list[str]) -> dict:
     A cycle is the exact same full state met again: the node holding the
     pointer, the pointer, and every key still to descend. At most _LIMIT
     pointers are followed in the whole walk. A key is a whole string, never split
-    or unescaped once read; a list is indexed by the key read as an integer.
+    or unescaped once read; a list is indexed only by a key of plain digits, as
+    quam reads one (quam/utils/string_reference.py: ``next_attr.isdigit()``);
+    *int_index* reads any text int() accepts instead, to count where the rules differ.
+    A cycle "spans" when the repeated state was first met while keys of *path* were still to descend
+    and is met again after all of them were descended.
     """
     todo = list(path)
+    mine = len(todo)   # the keys of *path* not yet descended: always the last *mine* keys of todo
+    phase: dict = {}   # state -> whether keys of *path* were still to descend when it was first met
     at: list[str] = []
     node = merged
     seen: set = set()
@@ -279,8 +285,9 @@ def _reference_walk(merged: dict, path: list[str]) -> dict:
         if isinstance(node, str) and node.startswith("#/"):
             state = (tuple(at), node, tuple(todo))
             if state in seen:
-                return {"ok": False, "why": "cycle", "hops": hops}
+                return {"ok": False, "why": "cycle", "hops": hops, "spans": phase[state] and not mine}
             seen.add(state)
+            phase[state] = mine > 0
             crossed = crossed or bool(hops and todo)
             if len(hops) == _LIMIT:
                 return {"ok": False, "why": "limit", "hops": hops}
@@ -290,11 +297,13 @@ def _reference_walk(merged: dict, path: list[str]) -> dict:
             continue
         if not todo:
             return {"ok": True, "why": "", "at": at, "value": node, "hops": hops, "crossed": crossed}
+        if len(todo) == mine:
+            mine -= 1
         key = todo.pop(0)
         if isinstance(node, dict) and key in node:
             at, node = at + [key], node[key]
             continue
-        if isinstance(node, list):
+        if isinstance(node, list) and (int_index or key.isdigit()):
             try:
                 at, node = at + [key], node[int(key)]
                 continue
@@ -316,8 +325,8 @@ def _agrees(merged: dict, path: list[str]) -> dict:
     return ref
 
 
-def _random_graph(rng, roots="abc", keys="xyz", lists: bool = False) -> dict:
-    """Small random pointer graph; with *lists* some containers are lists, indexed by "0", "1", ..."""
+def _random_graph(rng, roots="abc", keys="xyz", lists: bool = False, list_share: float = 0.2) -> dict:
+    """Small random pointer graph; with *lists* a *list_share* of containers are lists, indexed by "0", "1", ..."""
     def path() -> str:
         return "#/" + "/".join([rng.choice(roots)] + [rng.choice(keys) for _ in range(rng.randint(0, 3))])
 
@@ -325,7 +334,7 @@ def _random_graph(rng, roots="abc", keys="xyz", lists: bool = False) -> dict:
         roll = rng.random()
         if depth == 0 or roll < 0.3:
             return path() if rng.random() < 0.6 else 26
-        if lists and rng.random() < 0.2:
+        if lists and rng.random() < list_share:
             return [node(depth - 1) for _ in range(rng.randint(1, 2))]
         return {k: node(depth - 1) for k in rng.sample(keys, rng.randint(1, 3))}
 
@@ -641,3 +650,95 @@ def test_cross_agrees_with_the_reference_on_twin_holders():
         why[kind] = why.get(kind, 0) + 1
     # nearly every walk reaches both holders and stops at the cycle, so a key that joins holders stops early
     assert why.get("cycle", 0) >= 500, why
+
+
+def _walk_then_leaf_graph(rng) -> tuple[dict, list[str]]:
+    """A pointer met while the path is walked, then met again in the leaf chain.
+
+    The path starts at a holder (one or two keys) holding a pointer to a root t, and walks on along
+    t.<inner>.<rest> to a leaf pointer. The leaf chain reaches a root u, directly or through one more pointer at
+    a root w, and u names the holder with keys <again> still to walk. <again> is <rest> in most graphs: the state
+    met in the walk comes back in the leaf chain, a cycle that spans both. Otherwise the walk lands or misses.
+    Returns the graph and the path to resolve.
+    """
+    h, t, u, w = rng.sample("abcd", 4)
+    holder = [h] + ([rng.choice("xy")] if rng.random() < 0.5 else [])
+    inner = [rng.choice("xy") for _ in range(rng.randint(0, 1))]
+    rest = [rng.choice("xy") for _ in range(rng.randint(1, 2))]
+    m = _random_graph(rng)
+    _put(m, holder, "/".join(["#", t] + inner))
+    m[t] = {}
+    again = rest if rng.random() < 0.6 else [rng.choice("xy") for _ in range(rng.randint(0, 2))]
+    back = "/".join(["#", u] + again)
+    if rng.random() < 0.5:
+        m[w], back = back, "#/" + w
+    _put(m[t], inner + rest, back)
+    m[u] = "/".join(["#"] + holder)
+    clash = again[:len(rest)] == rest or rest[:len(again)] == again
+    if not clash and rng.random() < 0.7:
+        _put(m[t], inner + again, 26)
+    return m, holder + rest
+
+
+def test_cross_stops_a_cycle_met_in_the_walk_and_again_in_the_leaf_chain():
+    # a is met with k still to walk, then b.k leads through c back to a with k still to walk: stop there
+    merged = {"a": "#/b", "b": {"k": "#/c/k"}, "c": "#/a"}
+    ref = _agrees(merged, ["a", "k"])
+    assert ref["why"] == "cycle" and ref["spans"] and ref["hops"] == ["a", "b.k", "c"]
+
+
+def test_cross_agrees_with_the_reference_on_walk_then_leaf_cycles():
+    import random
+    rng = random.Random(20261122)
+    why: dict = {}
+    for _ in range(500):
+        ref = _agrees(*_walk_then_leaf_graph(rng))
+        kind = "spans" if ref.get("spans") else (ref["why"] or "landed")
+        why[kind] = why.get(kind, 0) + 1
+    # most walks stop at a state met in the walk and again in the leaf chain, so forgetting it in between is seen
+    assert why.get("spans", 0) >= 150 and why.get("landed", 0) >= 30, why
+
+
+# Text int() reads as an integer but quam does not index a list with (not plain digits).
+_INT_ONLY_INDICES = ("-1", "+1", " 1", "0_1", "-0", " 0 ")
+
+
+@pytest.mark.parametrize("index", ["-1", "+1", " 1", "0_1"])
+def test_cross_reads_a_list_index_of_plain_digits_only(index):
+    merged = {"a": [5, 26], "r": "#/a", "q": {"leaf": f"#/a/{index}"}, "p": {"leaf": f"#/r/{index}"}}
+    for path in (["q", "leaf"], ["p", "leaf"]):
+        got = resolve_field_target(merged, path, cross=True)
+        assert got["resolvable"] is False and got["resolved_value"] == merged[path[0]]["leaf"], got
+        assert _agrees(merged, path)["why"] == "missing"
+    got = resolve_field_target(merged, ["a", index], cross=True)
+    assert got["resolvable"] is False and got["chain"] == []
+    assert _agrees(merged, ["a", index])["why"] == "missing"
+    # the click-to-edit default (no cross) reads such a key with int(), as before
+    assert resolve_field_target(merged, f"a.{index}")["resolved_value"] == 26
+
+
+def test_cross_still_reads_plain_digit_list_indices():
+    merged = {"a": list(range(13)), "r": "#/a", "q": {"leaf": "#/a/0"}, "p": {"leaf": "#/r/12"}}
+    assert resolve_field_target(merged, ["q", "leaf"], cross=True)["resolved_value"] == 0
+    assert resolve_field_target(merged, ["p", "leaf"], cross=True)["resolved_value"] == 12
+    assert resolve_field_target(merged, ["a", "12"], cross=True)["resolved_value"] == 12
+    for path in (["q", "leaf"], ["p", "leaf"], ["a", "12"]):
+        assert _agrees(merged, path)["ok"]
+
+
+def test_cross_agrees_with_the_reference_on_list_indices():
+    import random
+    rng = random.Random(20261123)
+    keys = ("0", "1", "x") + _INT_ONLY_INDICES
+    why: dict = {}
+    for _ in range(1000):
+        merged = _random_graph(rng, "abc", keys, lists=True, list_share=0.5)
+        path = ["q", "leaf"]
+        if rng.random() < 0.5:
+            path = [rng.choice("abc")] + [rng.choice(keys) for _ in range(rng.randint(1, 3))]
+        ref = _agrees(merged, path)
+        other = _reference_walk(merged, path, int_index=True)
+        kind = "rules differ" if (other["ok"], other["hops"]) != (ref["ok"], ref["hops"]) else ref["why"] or "landed"
+        why[kind] = why.get(kind, 0) + 1
+    # many walks read a list by such a key, so a walker that reads it with int() disagrees with the reference
+    assert why.get("rules differ", 0) >= 80 and why.get("landed", 0) >= 50, why

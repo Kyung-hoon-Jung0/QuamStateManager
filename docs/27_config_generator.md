@@ -710,6 +710,8 @@ same rule applies to every readout, provisionally untested on LF-FEM and OPX+.
   the middle of a path and inside every crossing; 64 in total resolve, 65 do not; nothing is
   cached). A cycle is the same pointer met again at the same leaf with the same path still to walk:
   crossing `a.ref` once toward `x` and once toward `y` is not one (`b.x = "#/a/ref/y"` reads `b.y`).
+  A list is indexed by a key of plain digits only, as quam reads one: `#/a/0` and `#/a/12` index `a`,
+  `#/a/-1`, `#/a/+1`, `#/a/ 1` and `#/a/0_1` name nothing, so such a pointer is not resolvable.
   A leaf is named by its real keys joined with "/", the form a QUAM pointer to it takes, so a key
   holding a "." keeps it (`#/shared/tof.base` is named `shared/tof.base`). It is named by the leaf
   it lands on, with "(through <first hop>)" for a chain; it is listed in `tof_unplaced` (with its
