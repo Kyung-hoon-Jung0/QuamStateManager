@@ -626,6 +626,9 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
                 if lag:
                     # the link moves this time of flight off its own readout
                     item["lag"] = lag
+                    if output_timing.tof_grid_only(moved[item["target"]], lag, r):
+                        # only the grid: its own value would be the same, no action
+                        item["grid_only"] = True
             plan["tof_unplaced"].append(item)
         plan["tof_unplaced"].sort(key=lambda t: order.index(t["qubit"]))
         return plan if plan["ports"] else None
@@ -636,10 +639,12 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
 def _recheck(plan: dict) -> list:
     """Qubits whose time of flight is measured again: every moved one, and a
     reference that follows a value moved by a different amount than its own
-    readout output (``lag``), in chip order of the plan's lists."""
+    readout output (``lag``), in chip order of the plan's lists. A reference
+    whose difference is only the grid (``grid_only``) needs no action and is
+    not named; with no qubit to name there is no clause."""
     out = [t["qubit"] for t in plan.get("tof") or ()]
     return out + [t["qubit"] for t in plan.get("tof_unplaced") or ()
-                  if t.get("lag") and t["qubit"] not in out]
+                  if t.get("lag") and not t.get("grid_only") and t["qubit"] not in out]
 
 
 def mw_band_shift_question(plan: dict) -> dict:

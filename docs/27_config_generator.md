@@ -706,7 +706,12 @@ same rule applies to every readout, provisionally untested on LF-FEM and OPX+.
   raw. The walk follows a `#./` that names a stored leaf (at the resonator leaf or in the middle of
   a chain), crosses a pointer inside a target path (`#/a/ref/x` with `a.ref = "#/b"` reads `b.x`,
   and a `#./` found there is relative to `b`, as quam reads it), and follows at most 64 pointers
-  (`pointer_path._MAX_HOPS`: 64 resolve, 65 do not; nothing is cached). It is named by the leaf
+  in the whole walk (`pointer_path._MAX_HOPS`: every pointer followed counts once, at the leaf, in
+  the middle of a path and inside every crossing; 64 in total resolve, 65 do not; nothing is
+  cached). A cycle is the same pointer met again at the same leaf with the same path still to walk:
+  crossing `a.ref` once toward `x` and once toward `y` is not one (`b.x = "#/a/ref/y"` reads `b.y`).
+  A leaf is named by its real keys joined with "/", the form a QUAM pointer to it takes, so a key
+  holding a "." keeps it (`#/shared/tof.base` is named `shared/tof.base`). It is named by the leaf
   it lands on, with "(through <first hop>)" for a chain; it is listed in `tof_unplaced` (with its `target`) and Apply leaves the pointer string at
   that leaf. When the target is a time of flight the same plan moves, the item carries `follows`.
   If the target moves by the same amount as the resonator's own readout output, it reads "Time of
@@ -720,8 +725,12 @@ same rule applies to every readout, provisionally untested on LF-FEM and OPX+.
   own 46 would round to 48), it reads instead "...; it follows that value to 48 ns. The 2 ns
   difference to its readout is only the 4 ns grid (multiples of 4 ns, at least 28 ns): q3's own
   value would round to the same 48 ns, so no action is needed."; a readout that did not move keeps
-  the advice (its own value would not be written). Either way that qubit is in the question's and the
-  offer's "Re-check the time of flight of ..." clause, so it is seen before Apply. Any other pointer
+  the advice (its own value would not be written). The question's and the offer's "Re-check the
+  time of flight of ..." clause names only qubits that need action: every moved one and a `lag`
+  reference that is not only the grid; a grid-only reference (the item carries `grid_only`) is not
+  in it, its sentence above says no action is needed, and with no qubit to name there is no
+  clause (the mixed case reads "Re-check the time of flight of q1, q2." with q3 grid-only). Either
+  way the sentence is in the offer, so it is seen before Apply. Any other pointer
   to a finite number reads "... is a reference to <target>; it is not moved. Move it at <target> if
   that is meant."; the target moves only as its own element's line. A pointer that gives no finite
   number (dangling, a cycle, text, a bool, nan / inf, a `#./` naming a leaf that is not stored, a chain

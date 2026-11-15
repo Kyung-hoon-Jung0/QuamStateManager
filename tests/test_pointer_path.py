@@ -196,3 +196,26 @@ def test_the_hop_limit_boundary(cross):
     assert ok["resolvable"] is True and ok["resolved_value"] == 26
     cut = resolve_field_target(_chain(_MAX_HOPS + 1), "q.leaf", cross=cross)
     assert cut["resolvable"] is False and cut["resolved_value"].startswith("#/h/")
+
+
+def test_cross_names_leaves_by_their_real_keys():
+    m = {"s": {"a.b": "#/s/c.d", "c.d": 26}, "q.1": {"leaf": "#/s/a.b"}}
+    r = resolve_field_target(m, ["q.1", "leaf"], cross=True)
+    assert r["resolvable"] is True and r["resolved_value"] == 26
+    assert r["resolved_segments"] == ["s", "c.d"]
+    assert [h["to_segments"] for h in r["chain"]] == [["s", "a.b"], ["s", "c.d"]]
+    # the default result keeps its keys
+    plain = resolve_field_target(_crossed(), "q.leaf")
+    assert "resolved_segments" not in plain and all("to_segments" not in h for h in plain["chain"])
+
+
+def test_cross_counts_every_pointer_of_the_walk_once():
+    # a crossed run of 63 pointers plus the leaf: 64 resolve; one more is cut
+    from quam_state_manager.core.pointer_path import _MAX_HOPS
+    for extra, ok in ((0, True), (1, False)):
+        n = _MAX_HOPS - 1 + extra
+        m = {"h": {f"h{i}": f"#/h/h{i + 1}" for i in range(n - 1)}, "q": {"leaf": "#/h/h0/x"}}
+        m["h"][f"h{n - 1}"] = "#/h/end"
+        m["h"]["end"] = {"x": 26}
+        r = resolve_field_target(m, "q.leaf", cross=True)
+        assert r["resolvable"] is ok and len(r["chain"]) == min(n + 1, _MAX_HOPS)

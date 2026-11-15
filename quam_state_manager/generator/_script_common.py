@@ -171,6 +171,20 @@ def tof_reference_note(qubit, target, through=None):
             f"moved. Move it at {target} if that is meant.")
 
 
+def tof_grid_only(value, lag, readout_shift):
+    """True when a reference that follows a moved time of flight (now
+    ``value``) differs from its own readout move only by the grid: the
+    readout moved (``readout_shift``), there is a difference (``lag``), and
+    the qubit's own value, ``value - lag``, would be written as the same
+    ``value``. Such a qubit needs no action (it is not re-checked)."""
+    if not lag or not readout_shift:
+        return False
+    try:
+        return tof_on_grid(value - lag)[1] == value
+    except (TypeError, ValueError):
+        return False
+
+
 def tof_follows_note(qubit, target, value, through=None, readout_shift=None, lag=0):
     """A stored reference to a time of flight this same run moves: the link
     is kept, so the value follows its target (``value`` is the target's new
@@ -187,11 +201,7 @@ def tof_follows_note(qubit, target, value, through=None, readout_shift=None, lag
         return head + f"that value (now {value:g} ns)."
     moved = ("did not move" if not readout_shift else f"moved {readout_shift:g} ns")
     side = "later" if lag > 0 else "earlier"
-    try:
-        grid_only = bool(readout_shift) and tof_on_grid(value - lag)[1] == value
-    except ValueError:
-        grid_only = False
-    if grid_only:
+    if tof_grid_only(value, lag, readout_shift):
         return (head + f"that value to {value:g} ns. The {abs(lag):g} ns difference to its "
                 "readout is only the 4 ns grid (multiples of 4 ns, at least 28 ns): "
                 f"{qubit}'s own value would round to the same {value:g} ns, so no action is "

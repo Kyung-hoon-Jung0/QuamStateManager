@@ -78,7 +78,7 @@ def _candidate(path_segs: list[str], value: Any) -> dict:
     }
 
 
-def resolve_field_target(merged: dict, dot_path: str, *, cross: bool = False) -> dict:
+def resolve_field_target(merged: dict, dot_path, *, cross: bool = False) -> dict:
     """Follow pointers along *dot_path*; return the resolution result.
 
     Result keys: ``input_path``, ``resolved_path``, ``resolved_value``,
@@ -90,36 +90,64 @@ def resolve_field_target(merged: dict, dot_path: str, *, cross: bool = False) ->
     quam reads it: the walk continues from the crossed pointer's real target,
     so a ``#./`` met afterwards is relative to the object really reached
     (``b``). Without it such a hop is a dead end (the click-to-edit default).
+    *dot_path* may then also be a list of real keys (a key may hold a "."),
+    and the result adds ``resolved_segments`` and each chain hop
+    ``to_segments``, the real keys, so a caller can name a leaf by them.
 
     A leaf chain follows at most ``_MAX_HOPS`` pointers: a chain of exactly
     ``_MAX_HOPS`` hops resolves, a longer one is cut, ``resolvable`` False and
-    the last pointer reached is ``resolved_value``. Nothing is cached.
+    the last pointer reached is ``resolved_value``. With *cross* the limit
+    counts the whole walk: every pointer followed, mid-path, at the leaf and
+    inside every crossing, ``_MAX_HOPS`` in total. A cycle is the same
+    pointer met again at the same leaf with the same path still to walk
+    (with *cross*; without it, the same leaf met again): crossing one pointer
+    twice on the way to different keys is not a cycle. Nothing is cached.
     """
-    segs = [s for s in dot_path.split(".") if s != ""]
+    if isinstance(dot_path, (list, tuple)):
+        segs = [str(s) for s in dot_path if s != ""]
+        dot_path = ".".join(segs)
+    else:
+        segs = [s for s in dot_path.split(".") if s != ""]
     abs_path: list[str] = []
     current: Any = merged
     chain: list[dict] = []
     candidates: list[dict] = []
-    visited: set[str] = set()
+    cand_segs: list[list[str]] = []   # the real keys of each candidate
+    visited: set = set()
+    frames: list[list] = []   # with cross: [segments, index] of each walk in progress
+    followed = 0              # with cross: pointers followed in the whole walk
     is_ptr = False
     resolvable = True
 
+    def still_to_walk() -> tuple:
+        """The keys every walk in progress has still to descend, innermost first."""
+        return tuple(s for segs_, i in reversed(frames) for s in segs_[i:])
+
     def one_hop() -> str:
         """Follow exactly one pointer hop at *current*: 'ok' | 'deadend' | 'notptr'."""
-        nonlocal current, abs_path, is_ptr, resolvable
+        nonlocal current, abs_path, is_ptr, resolvable, followed
         if not is_pointer(current):
             return "notptr"
         is_ptr = True
         key = ".".join(abs_path)
-        if key in visited:
+        seen = (tuple(abs_path), current, still_to_walk()) if cross else key
+        if seen in visited:
             resolvable = False
             return "deadend"
-        visited.add(key)
+        visited.add(seen)
+        if cross:
+            if followed >= _MAX_HOPS:
+                resolvable = False   # the whole walk is over the pointer limit
+                return "deadend"
+            followed += 1
         target = _pointer_to_abs(current, abs_path, merged)
         if target is None:
             resolvable = False
             return "deadend"
-        chain.append({"from_path": key, "pointer": current, "to_path": ".".join(target)})
+        hop = {"from_path": key, "pointer": current, "to_path": ".".join(target)}
+        if cross:
+            hop["to_segments"] = list(target)
+        chain.append(hop)
         found, value = _walk(merged, target)
         if not found and cross:
             # the target path passes through a pointer: walk it from the root,
@@ -137,32 +165,40 @@ def resolve_field_target(merged: dict, dot_path: str, *, cross: bool = False) ->
         """Walk *path_segs* from the current node, following any pointer met
         before each step; False (``resolvable`` cleared) on a dead end."""
         nonlocal current, abs_path, resolvable
-        for seg in path_segs:
-            # Resolve any mid-path pointer(s) at the current node before descending.
-            hops = 0
-            while hops < _MAX_HOPS:
-                if one_hop() != "ok":
-                    break
-                hops += 1
-            if not resolvable:
-                return False
-            # Descend one segment.
-            if isinstance(current, dict) and seg in current:
-                abs_path.append(seg)
-                current = current[seg]
-                continue
-            if isinstance(current, list):
-                try:
-                    value = current[int(seg)]
-                except (ValueError, IndexError):
-                    resolvable = False
+        frame = [path_segs, 0]
+        if cross:
+            frames.append(frame)
+        try:
+            for i, seg in enumerate(path_segs):
+                frame[1] = i
+                # Resolve any mid-path pointer(s) at the current node before descending.
+                hops = 0
+                while hops < _MAX_HOPS:
+                    if one_hop() != "ok":
+                        break
+                    hops += 1
+                if not resolvable:
                     return False
-                abs_path.append(seg)
-                current = value
-                continue
-            resolvable = False
-            return False
-        return True
+                # Descend one segment.
+                if isinstance(current, dict) and seg in current:
+                    abs_path.append(seg)
+                    current = current[seg]
+                    continue
+                if isinstance(current, list):
+                    try:
+                        value = current[int(seg)]
+                    except (ValueError, IndexError):
+                        resolvable = False
+                        return False
+                    abs_path.append(seg)
+                    current = value
+                    continue
+                resolvable = False
+                return False
+            return True
+        finally:
+            if cross:
+                frames.pop()
 
     consumed_all = descend(segs)
 
@@ -170,21 +206,24 @@ def resolve_field_target(merged: dict, dot_path: str, *, cross: bool = False) ->
         # At the requested leaf. Record it, then follow leaf pointers one hop
         # at a time so each intermediate level is offered as a write candidate.
         candidates.append(_candidate(abs_path, current))
+        cand_segs.append(list(abs_path))
         hops = 0
         while is_pointer(current) and hops < _MAX_HOPS:
             hops += 1
             if one_hop() != "ok":
                 break
             candidates.append(_candidate(abs_path, current))
+            cand_segs.append(list(abs_path))
         if resolvable and is_pointer(current) and hops >= _MAX_HOPS:
             resolvable = False   # cut by the hop limit, not a dead end
 
     if not candidates:
         # Dead-ended mid-path: best-effort = the deepest real node reached.
         candidates.append(_candidate(abs_path, current))
+        cand_segs.append(list(abs_path))
 
     final = candidates[-1]
-    return {
+    out = {
         "input_path": dot_path,
         "resolved_path": final["path"],
         "resolved_value": final["value"],
@@ -193,6 +232,9 @@ def resolve_field_target(merged: dict, dot_path: str, *, cross: bool = False) ->
         "is_pointer": is_ptr,
         "resolvable": resolvable,
     }
+    if cross:
+        out["resolved_segments"] = cand_segs[-1]
+    return out
 
 
 def find_shared_by(

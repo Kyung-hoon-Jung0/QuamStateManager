@@ -19,7 +19,7 @@ import math
 
 from quam_state_manager.core import pointer_path, pointer_resolver
 from quam_state_manager.generator._script_common import (  # noqa: F401  (re-exported)
-    tof_follows_note, tof_kept_note, tof_not_moved_note, tof_on_grid,
+    tof_follows_note, tof_grid_only, tof_kept_note, tof_not_moved_note, tof_on_grid,
     tof_reference_not_number_note, tof_reference_note, tof_rounded_note)
 
 
@@ -57,15 +57,17 @@ def _reference(doc: dict, stored: str, path: str):
     pointer on the way). ``target`` is the leaf the chain lands on (None when
     it stops on a pointer it cannot follow), ``through`` the first hop,
     ``alias`` True when it stops on a ``#./`` naming a leaf that is not stored
-    (a value quam computes at run time)."""
-    ft = pointer_path.resolve_field_target(doc, path.replace("/", "."), cross=True)
+    (a value quam computes at run time). Leaves are named by their real keys
+    joined with "/", the form a QUAM pointer to them takes (a key may hold
+    a ".")."""
+    ft = pointer_path.resolve_field_target(doc, path.split("/"), cross=True)
     chain = ft["chain"]
-    through = chain[0]["to_path"].replace(".", "/") if chain else stored
+    through = "/".join(chain[0]["to_segments"]) if chain else stored
     value = ft["resolved_value"]
     if value is None:
         # the follower names containers as None: read the node itself
-        value = pointer_path._walk(doc, ft["resolved_path"].split("."))[1]
-    stuck = ft["resolved_path"].replace(".", "/")
+        value = pointer_path._walk(doc, ft["resolved_segments"])[1]
+    stuck = "/".join(ft["resolved_segments"])
     if ft["resolvable"] and not pointer_resolver.is_pointer(value):
         return value, stuck, through, False
     if pointer_resolver.is_self_ref(value):

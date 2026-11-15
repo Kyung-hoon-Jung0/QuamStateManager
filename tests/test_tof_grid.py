@@ -335,9 +335,12 @@ def test_a_pointer_whose_target_moves_more_than_its_readout_states_the_differenc
     assert ref["note"] == note and ref["lag"] == 2 and "Move it at" not in note
     assert "Give q2 its own value" not in note
     assert note in regenerate.mw_band_shift_offer_text(plan)
+    # only the grid: q2 needs no action, so it is not in the re-check clause
+    assert ref["grid_only"] is True
     assert regenerate.mw_band_shift_question(plan)["why"] == (
         "Band 1/3 MW outputs leave 20 ns before band 2 ones. Re-check the time of flight of "
-        "q1, q2.")
+        "q1.")
+    assert "Re-check the time of flight of q1. " in regenerate.mw_band_shift_offer_text(plan)
 
 
 def _three(q1_tof):
@@ -370,9 +373,12 @@ def test_a_pointer_on_an_unmoved_readout_is_told_it_no_longer_matches(tmp_path, 
         ("q2", q2, lag2), ("q3", q3, lag3)]
     text = regenerate.mw_band_shift_offer_text(plan)
     assert q2 in text and q3 in text
+    # q2 needs action, q3 is only the grid: the re-check clause names q1, q2
+    assert [t.get("grid_only", False) for t in plan["tof_unplaced"]] == [False, True]
     assert regenerate.mw_band_shift_question(plan)["why"] == (
         "Band 1/3 MW outputs leave 20 ns before band 2 ones. Re-check the time of flight of "
-        "q1, q2, q3.")
+        "q1, q2.")
+    assert "Re-check the time of flight of q1, q2. " in text
     _write(tmp_path, state, wiring)
     applied = regenerate.apply_mw_band_shift(tmp_path)
     after = json.loads((tmp_path / "state.json").read_text())
@@ -526,6 +532,11 @@ NOT_A_NUMBER = ("Time of flight of q2 is a reference to {} that does not resolve
     ("#/shared/a", {"a": "#/shared/b", "b": float("inf")}, "shared/b", " (it holds inf)"),
     ("#./tof_alias", None, "qubits/q2/resonator/tof_alias",
      " (#./tof_alias names a leaf that is not stored)"),
+    # a reference to an object reads as one, never as a stored None
+    ("#/shared/a", {"a": {"x": 26}}, "shared/a", " (it holds an object)"),
+    ("#/shared/a", {"a": [26, 28]}, "shared/a", " (it holds an object)"),
+    ("#/shared/a", {"a": "#/shared/b", "b": {"x": 26}}, "shared/b", " (it holds an object)"),
+    ("#/shared/a", {"a": None}, "shared/a", " (it holds None)"),
 ])
 def test_a_pointer_that_gives_no_finite_number_is_named(tmp_path, pointer, shared, target, held):
     state, wiring = _chip(ro_band=3, tof=28)
@@ -620,3 +631,116 @@ def test_a_stored_self_reference_to_a_stored_leaf_is_a_reference():
     assert ref["note"] == (
         "Time of flight of q2 is a reference to qubits/q2/resonator/tof_base; it is not moved. "
         "Move it at qubits/q2/resonator/tof_base if that is meant.")
+
+
+def test_every_qubit_grid_only_leaves_only_the_moved_ones_to_re_check():
+    # q2 and q3 both read out on the moved band 3 output and follow q1 26 -> 48:
+    # each 2 ns difference is only the grid, so only the moved q1 is re-checked
+    state, wiring = _chip(xy_bands=(2, 1, 1), z=(61, 63, 65), ro_band=3, tof=28)
+    state["qubits"]["q1"]["resonator"]["time_of_flight"] = 26
+    for q in ("q2", "q3"):
+        state["qubits"][q]["resonator"]["time_of_flight"] = "#/qubits/q1/resonator/time_of_flight"
+    plan = regenerate.mw_band_shift_plan(state, wiring)
+    assert [(t["qubit"], t["lag"], t["grid_only"]) for t in plan["tof_unplaced"]] == [
+        ("q2", 2, True), ("q3", 2, True)]
+    assert regenerate.mw_band_shift_question(plan)["why"] == (
+        "Band 1/3 MW outputs leave 20 ns before band 2 ones. Re-check the time of flight of q1.")
+    text = regenerate.mw_band_shift_offer_text(plan)
+    assert "Re-check the time of flight of q1. " in text
+    assert _follows_grid("q2", 48, 2) in text and _follows_grid("q3", 48, 2) in text
+
+
+def test_no_qubit_to_re_check_gives_no_re_check_clause():
+    plan = {"ports": [{"port": "p"}], "tof": [], "spacing": [],
+            "tof_unplaced": [{"qubit": "q2", "follows": True, "lag": 2, "grid_only": True,
+                              "note": _follows_grid("q2", 48, 2)}]}
+    assert "Re-check" not in regenerate.mw_band_shift_question(plan)["why"]
+    assert "Re-check" not in regenerate.mw_band_shift_offer_text(plan)
+
+
+def test_a_key_holding_a_dot_is_named_by_its_real_key():
+    # quam reads shared["tof.base"]; there is no shared/tof/base
+    state, wiring = _chip(ro_band=3, tof=28)
+    state["shared"] = {"tof.base": 26}
+    state["qubits"]["q2"]["resonator"]["time_of_flight"] = "#/shared/tof.base"
+    (ref,) = regenerate.mw_band_shift_plan(state, wiring)["tof_unplaced"]
+    assert ref["target"] == "shared/tof.base"
+    assert ref["note"] == ("Time of flight of q2 is a reference to shared/tof.base; it is not "
+                           "moved. Move it at shared/tof.base if that is meant.")
+
+
+def test_a_dotted_key_in_a_chain_is_named_by_its_real_keys():
+    state, wiring = _chip(ro_band=3, tof=28)
+    state["shared"] = {"a.b": "#/shared/c.d", "c.d": 26}
+    state["qubits"]["q2"]["resonator"]["time_of_flight"] = "#/shared/a.b"
+    (ref,) = regenerate.mw_band_shift_plan(state, wiring)["tof_unplaced"]
+    assert ref["note"] == ("Time of flight of q2 is a reference to shared/c.d (through "
+                           "shared/a.b); it is not moved. Move it at shared/c.d if that is meant.")
+
+
+def test_crossing_one_pointer_twice_toward_different_keys_is_not_a_cycle():
+    # quam reads a.ref/x -> b.x -> a.ref/y -> b.y = 26: a.ref is crossed twice,
+    # toward different keys, which is not a loop
+    state, wiring = _chip(ro_band=3, tof=28)
+    state["shared"] = {"a": {"ref": "#/shared/b"}, "b": {"x": "#/shared/a/ref/y", "y": 26}}
+    state["qubits"]["q2"]["resonator"]["time_of_flight"] = "#/shared/a/ref/x"
+    (ref,) = regenerate.mw_band_shift_plan(state, wiring)["tof_unplaced"]
+    assert ref["target"] == "shared/b/y"
+    assert ref["note"] == ("Time of flight of q2 is a reference to shared/b/y (through "
+                           "shared/a/ref/x); it is not moved. Move it at shared/b/y if that is "
+                           "meant.")
+
+
+def test_a_true_cycle_through_a_crossed_pointer_is_refused():
+    state, wiring = _chip(ro_band=3, tof=28)
+    state["shared"] = {"a": {"ref": "#/shared/b"}, "b": {"x": "#/shared/a/ref/x"}}
+    state["qubits"]["q2"]["resonator"]["time_of_flight"] = "#/shared/a/ref/x"
+    (ref,) = regenerate.mw_band_shift_plan(state, wiring)["tof_unplaced"]
+    assert ref["note"] == NOT_A_NUMBER.format("shared/a/ref/x", "")
+
+
+def _crossed_runs(total: int, crossings: int) -> tuple[dict, str]:
+    """``(shared, leaf pointer)``: the walk from the resonator leaf crosses
+    *crossings* runs of pointers (each run entered through its first pointer,
+    ``#/shared/r{c}/h0/...``) and follows exactly *total* pointers: the leaf,
+    every run pointer and each run's ``end.next`` into the next run."""
+    sizes = [(total - crossings) // crossings] * crossings
+    sizes[-1] += (total - crossings) - sum(sizes)
+    shared = {}
+    for c, n in enumerate(sizes):
+        run = {f"h{i}": f"#/shared/r{c}/h{i + 1}" for i in range(n - 1)}
+        run[f"h{n - 1}"] = f"#/shared/r{c}/end"
+        last = c == crossings - 1
+        nxt = f"#/shared/r{c + 1}/h0/" + ("x" if c + 1 == crossings - 1 else "next")
+        run["end"] = {"x": 26} if last else {"next": nxt}
+        shared[f"r{c}"] = run
+    return shared, "#/shared/r0/h0/" + ("x" if crossings == 1 else "next")
+
+
+@pytest.mark.parametrize("crossings", [1, 2])
+@pytest.mark.parametrize("total, resolves", [(64, True), (65, False)])
+def test_the_hop_limit_counts_the_whole_walk(crossings, total, resolves):
+    from quam_state_manager.core import pointer_path
+    state, wiring = _chip(ro_band=3, tof=28)
+    state["shared"], first = _crossed_runs(total, crossings)
+    state["qubits"]["q2"]["resonator"]["time_of_flight"] = first
+    ft = pointer_path.resolve_field_target(
+        state, ["qubits", "q2", "resonator", "time_of_flight"], cross=True)
+    assert len(ft["chain"]) == min(total, pointer_path._MAX_HOPS)
+    assert ft["resolvable"] is resolves
+    (ref,) = regenerate.mw_band_shift_plan(state, wiring)["tof_unplaced"]
+    if resolves:
+        assert ref["target"] == f"shared/r{crossings - 1}/end/x"
+        assert ref["note"].startswith(f"Time of flight of q2 is a reference to "
+                                      f"shared/r{crossings - 1}/end/x (through {first[2:]});")
+    else:
+        assert ref["note"] == NOT_A_NUMBER.format(first[2:], "")
+
+
+def test_a_walk_that_stops_before_the_leaf_names_no_landing_leaf():
+    # the resonator path itself does not resolve: the deepest node reached is
+    # not a leaf the reference lands on, whatever it holds
+    state, _ = _chip(ro_band=3, tof=28)
+    value, target, through, alias = output_timing._reference(
+        state, "#/shared/x", "qubits/q9/resonator/time_of_flight")
+    assert target is None and through == "#/shared/x" and alias is False

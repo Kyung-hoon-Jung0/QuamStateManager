@@ -98,7 +98,9 @@ pointer behavior. MCP needs no change because it forwards the JSON response.
 The global `pointer_resolver`, `QuamStore.resolve_pointer`, its cache, and
 `pointer_path` are unchanged. (Later addition: `resolve_field_target` takes an
 opt-in `cross=True` that walks a target path through a crossed pointer, used
-only by the time-of-flight band shift, docs/27; and a leaf chain cut by its
+only by the time-of-flight band shift, docs/27; with it the 64-pointer limit counts the whole
+walk, a cycle is the same pointer at the same leaf with the same path still to walk, and the
+result adds the real keys, `resolved_segments` / `to_segments`; and a leaf chain cut by its
 64-hop limit now reports `resolvable` False, so the store falls back to the
 legacy resolver as for any other unresolved follow.) Their existing consumers retain their behavior.
 The new behavior is confined to the store read accessor and agent route;
