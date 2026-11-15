@@ -475,9 +475,13 @@ defect was in the very commit that closed the original of the same bug.
 Edits retain their creating window through a different window's Apply.
 Browser journal captures stamp `meta.window_id` from the existing document
 header `X-SM-Window-ID` (also used for multi-window replacement notices).
-The stamp is set app-wide (`routes.bind_edit_window`), so rows an agent card brings in through 
-Approve are the pressing window's change; an agent's own staging carries no stamp.
-A missing stamp is another window. Before undo or redo mutates that step,
+The stamp is set app-wide (`routes.bind_edit_window`), so rows an agent card
+brings in through Approve are the pressing window's change. An agent's own
+staging carries no stamp. Agent-only rows that nobody applied (the agent's
+auto-mode Apply, the plan driver) ask in every window. Once a person pressed
+Apply on them in window B, the step is B's change: B's Ctrl+Z does not ask and
+every other window does (the person consciously took those rows, as with
+Approve). A missing stamp is another window. Before undo or redo mutates that step,
 the existing kit confirmation names the change and whether Ctrl+Z writes
 the chip (ON) or stages only (OFF). No changes nothing; Yes repeats the
 request with `ack_prev_window=1`. Consent lives only in document memory,

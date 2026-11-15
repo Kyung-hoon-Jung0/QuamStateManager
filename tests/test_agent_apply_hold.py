@@ -154,6 +154,58 @@ class TestApproveIsThePressingWindowsChange:
         assert _live(synth_folder)["T1"] == 4242
 
 
+def _agent_stage_without_window(c, value="4242"):
+    own = c.environ_base.pop("HTTP_X_SM_WINDOW_ID")
+    try:
+        r = c.post("/field/edit", data={"dot_path": "qubits.qA1.T1", "value": value}, headers=AGENT)
+        assert r.status_code == 200, r.get_data(as_text=True)[:300]
+    finally:
+        c.environ_base["HTTP_X_SM_WINDOW_ID"] = own
+
+
+class TestAPersonsApplyOfAgentRowsIsThePressingWindowsChange:
+    """Agent rows carry no window; the person who presses Apply takes them."""
+
+    def _apply_in_b(self, c, synth_folder):
+        _agent_stage_without_window(c)
+        r = c.post("/state/apply-to-live", data={"seen_changes": "1"}, headers={**HUMAN, **WIN_B, **J})
+        assert r.status_code == 200, r.get_data(as_text=True)[:300]
+        assert _live(synth_folder)["T1"] == 4242
+
+    def test_undo_in_the_applying_window_does_not_ask(self, c, inst, synth_folder):
+        before = _live(synth_folder)["T1"]
+        self._apply_in_b(c, synth_folder)
+        t = _undo_trigger(c, WIN_B)
+        assert "undoAskPrevSession" not in t
+        assert _live(synth_folder)["T1"] == before
+
+    def test_undo_in_another_window_asks_and_writes_nothing(self, c, inst, synth_folder):
+        self._apply_in_b(c, synth_folder)
+        t = _undo_trigger(c, WIN_A)
+        assert "another window" in t["undoAskPrevSession"]["message"]
+        assert _live(synth_folder)["T1"] == 4242
+
+
+class TestTheWindowStampLivesOneRequest:
+    def test_no_stamp_leaks_into_the_next_request(self, c, inst, synth_folder):
+        from quam_state_manager.core.loader import edit_window_id
+        _approve_in(c, WIN_B)
+        assert edit_window_id.get() is None, "an approve left its window stamp on the thread"
+        assert c.post("/field/edit", data={"dot_path": "qubits.qA1.T1", "value": "5151"},
+                      headers={**HUMAN, **WIN_B}).status_code == 200
+        assert edit_window_id.get() is None, "an edit left its window stamp on the thread"
+
+    def test_a_nested_request_context_keeps_the_outer_stamp(self, app, c):
+        from quam_state_manager.core.loader import edit_window_id
+        with app.test_request_context("/", headers={**HUMAN, **WIN_B}):
+            app.preprocess_request()
+            assert edit_window_id.get() == "window-b"
+            with app.test_request_context("/"):
+                pass
+            assert edit_window_id.get() == "window-b", "a nested context released the outer stamp"
+        assert edit_window_id.get() is None
+
+
 def test_the_mcp_bridge_relays_a_held_apply(monkeypatch):
     held = {"ok": False, "held": True, "applied": False, "approval": {"id": "ap1", "n_writes": 1},
             "message": "held for approval: card ap1 (1 value(s)); nothing was written to the chip"}
