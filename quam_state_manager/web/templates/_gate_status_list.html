@@ -18,20 +18,29 @@
    every refresh renders again, so they carry no mark and are never carried. #}
 {% import "_ui.html" as ui %}
 {% if gate_lines and gate_lines.pair %}
-<section class="ui-zone gate-status-list{% if not gate_lines.count %} ui-zone--quiet{% endif %}" aria-label="CZ gates" data-gate-pair="{{ gate_lines.pair }}"
+{% set totals = namespace(active=0, checked=0, warning=false) %}
+{% for line in gate_lines.lines %}
+    {% if line.active %}{% set totals.active = totals.active + 1 %}{% endif %}
+    {% for it in line['items'] %}
+        {% if it.key == 'check' and (it.text.startswith('checked') or it.text == 'values changed since the check') %}{% set totals.checked = totals.checked + 1 %}{% endif %}
+        {% if it.tone in ['warn', 'danger'] %}{% set totals.warning = true %}{% endif %}
+    {% endfor %}
+{% endfor %}
+{% set count = gate_lines.lines | length %}
+<section class="ui-zone gate-status-list{% if not count %} ui-zone--quiet{% endif %}" aria-label="CZ gates" data-gate-pair="{{ gate_lines.pair }}"
          hx-get="/pulse/cz-gate/list?pair={{ gate_lines.pair | urlencode }}"
     hx-trigger="pulses-changed from:body, cellsReverted from:document, stateRestored from:document, gate-list-refresh"
          hx-target="this" hx-swap="outerHTML" hx-sync="this:drop">
     <div class="ui-zone-head">
         <h3 class="ui-zone-title">CZ gates</h3>
         <button type="button" class="btn-sm outline" data-czg-open data-czg-pair="{{ gate_lines.pair }}" title="Create a new CZ gate on this pair">+ Gate</button>
-        <span class="ui-zone-sum"><span class="ui-count">{{ gate_lines.count }}</span>{% if gate_lines.no_active %}<span class="ui-text-warn" title="The pair's cz alias is not set">no active gate</span>{% endif %}</span>
+        <div class="ui-panel-sum"><span class="ui-count">{{ count }}</span>{% if gate_lines.no_active %}<span class="ui-text-warn" title="The pair's cz alias is not set">{{ ui.ui_pill('no active gate', 'warn') }}</span>{% endif %}{% if count %}{{ ui.ui_verdict('warn' if totals.warning or not totals.active else 'neutral', totals.active ~ ' active, ' ~ (count - totals.active) ~ ' not active, ' ~ (totals.checked ~ ' checked' if totals.checked else 'none checked'), strong=True) }}{% else %}<span class="ui-text-quiet">No CZ gate on this pair yet.</span>{% endif %}</div>
     </div>
     <div class="ui-zone-body">
         <div data-gate-zone-slot role="status" aria-live="polite"></div>
         {% with recheck_notice=gate_lines.recheck_notice %}{% include '_gate_recheck_notice.html' %}{% endwith %}
         {% if gate_lines.notice %}<div class="gate-status-notice" role="status" data-press-answer>{{ ui.ui_callout(gate_lines.notice.tone, gate_lines.notice.title, gate_lines.notice.text) }}</div>{% endif %}
-        {% if not gate_lines.count %}<p class="ui-zone-empty">No CZ gate on this pair yet. Press + Gate to create one.</p>{% endif %}
+        {% if not count %}<p class="ui-zone-empty">Press + Gate to create one.</p>{% endif %}
         {% set in_list = True %}
         {% for line in gate_lines.lines %}{% include '_gate_status.html' %}{% endfor %}
     </div>
