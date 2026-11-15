@@ -360,6 +360,58 @@ def _reordered_revisit_graph(rng) -> dict:
     return m
 
 
+def _nested_revisit_graph(rng) -> dict:
+    """One pointer met twice, each time inside one or two pending walks, the walks split another way.
+
+    holder.p points at a root t. The first visit enters holder.p from q.leaf directly, or through a relay
+    pointer u.s whose own keys stay pending outside; the walk then runs along t.<first>, where <first> is every
+    key still to walk at that visit. Partway along it, with the rest of <first> still pending outside, a pointer
+    re-enters holder.p, again directly or through a relay v.s. Still to walk at the second visit, innermost walk
+    first: <second>. It may equal <first> (a true cycle with the walks split differently), or reorder, nest or
+    split the same keys. What sits at t.<second> is random. Short keys over a two-letter alphabet make keys
+    that lose frame order, key order or frame boundaries collide with the first visit often.
+    """
+    keys = "xy"
+
+    def run() -> list[str]:
+        return [rng.choice(keys) for _ in range(rng.randint(1, 2))]
+
+    def enter(m: dict, relay: str, inner: list[str], outer: list[str]) -> str:
+        """The pointer that reaches holder.p with *inner* inside and *outer* pending in a relay walk."""
+        if not outer:
+            return "/".join(["#", holder, p] + inner)
+        m[relay] = {"s": "/".join(["#", holder, p] + inner)}
+        return "/".join(["#", relay, "s"] + outer)
+
+    holder, target = rng.sample("abc", 2)
+    p = rng.choice("xyz")
+    m = _random_graph(rng)
+    m[holder] = {p: "#/" + target}
+    m[target] = {}
+    r1, r2 = run(), (run() if rng.random() < 0.5 else [])
+    first = r1 + r2
+    if len(first) < 2:
+        first.append(rng.choice(keys))
+        r1 = first[:len(first) - len(r2)]
+    m["q"] = {"leaf": enter(m, "u", r1, r2)}
+    j = rng.randint(1, len(first) - 1)
+    at, rest = first[:j], first[j:]
+    if rng.random() < 0.2:   # the same keys again, split another way: a cycle
+        cut = rng.randint(0, len(at))
+        s1, s2 = at[:cut] or at, at[cut:] if cut else []
+    else:
+        s1, s2 = run(), (run() if rng.random() < 0.5 else [])
+    _put(m[target], at, enter(m, "v", s1, s2))
+    second = s1 + s2 + rest
+    clash = second[:len(at)] == at or at[:len(second)] == second
+    roll = rng.random()
+    if not clash and roll < 0.7:
+        _put(m[target], second, 26)
+    elif not clash and roll < 0.9:
+        _put(m[target], second, "/".join(["#", holder, p] + run()))
+    return m
+
+
 def _named_graphs() -> dict:
     run = {f"h{i}": f"#/h/h{i + 1}" for i in range(_LIMIT - 2)}
     run[f"h{_LIMIT - 2}"] = "#/h/h0"
@@ -381,6 +433,11 @@ def _named_graphs() -> dict:
         # b.p met twice, the keys still to walk x, y the first time and y, x the second: lands on c.y.x = 26
         "same pointer, remainder reordered": (
             {"b": {"p": "#/c"}, "c": {"x": {"y": "#/b/p/y/x"}, "y": {"x": 26}}, "q": {"leaf": "#/b/p/x/y"}}, 26),
+        # b.p met with x, y, x still to walk, then again with y, x inside and x outside (y, x, x innermost first;
+        # outermost first it would read x, y, x again): lands on c.y.x.x = 26
+        "same pointer, frames nested the other way": (
+            {"b": {"p": "#/c"}, "c": {"x": {"y": "#/b/p/y/x"}, "y": {"x": {"x": 26}}}, "q": {"leaf": "#/b/p/x/y/x"}},
+            26),
     }
 
 
@@ -431,3 +488,15 @@ def test_cross_agrees_with_the_reference_on_reordered_revisits():
         landed += ref["ok"]
     # most of these walks land, so a cycle key blind to key order has walks to refuse
     assert landed >= 300, landed
+
+
+def test_cross_agrees_with_the_reference_on_nested_revisits():
+    import random
+    rng = random.Random(20261118)
+    why: dict = {}
+    for _ in range(1500):
+        ref = _agrees(_nested_revisit_graph(rng), ["q", "leaf"])
+        kind = ref["why"] or "landed"
+        why[kind] = why.get(kind, 0) + 1
+    # both verdicts are common, so a cycle key that merges or splits states has walks to disagree on
+    assert why.get("landed", 0) >= 300 and why.get("cycle", 0) >= 100, why
