@@ -697,3 +697,24 @@ def test_busy_window_refuses_before_making_a_copy(tmp_path):
                         limit_s=1, make_copy=no_copy, remove_copy=lambda c: None, macro="m",
                         popen_for=lambda folder: None)
     assert code == 409 and ans["state"] == "busy"
+
+
+@pytest.mark.parametrize("dt", [10**400, -10**400])
+def test_time_step_too_large_for_a_float_is_unknown_and_the_entry_is_kept(dt):
+    base = {"controller": "con1", "fem": 1, "port": 1, "volts": [0.1]}
+    [p] = sim._shape_ports([dict(base, dt_ns=dt)])
+    assert p["dt_ns"] is None and p["time_step_unknown"] is True and p["volts"] == [0.1]
+
+
+def test_a_number_whose_float_conversion_fails_drops_its_entry():
+    import numbers
+
+    class Odd:
+        def __float__(self):
+            raise TypeError("no float")
+    numbers.Real.register(Odd)
+    base = {"controller": "con1", "fem": 1, "port": 1, "volts": [0.1]}
+    for field, val in (("fem", Odd()), ("port", Odd()), ("t0_ns", Odd()), ("volts", [Odd()])):
+        bad = dict(base, port=2)
+        bad[field] = val
+        assert [p["port"] for p in sim._shape_ports([bad, base])] == [1]

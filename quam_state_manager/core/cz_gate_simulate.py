@@ -114,7 +114,7 @@ def _real(x: Any) -> bool:
         return False
     try:
         return math.isfinite(float(x))
-    except (OverflowError, ValueError):
+    except (OverflowError, ValueError, TypeError):
         return False
 
 
@@ -150,7 +150,7 @@ def _shape_ports(ports: Any) -> list:
             continue
         try:
             dt = float(p.get("dt_ns"))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             dt = None
         if dt is not None and not (math.isfinite(dt) and dt > 0):
             dt = None
