@@ -159,9 +159,14 @@ def page(tmp_path):
     return resp.data.decode()
 
 
+# A gate's parameter zone folds under `<summary class="ui-zone-head"><h3 class="ui-zone-title">NAME</h3>`
+# (the pair page's reading order); any other section keeps a plain `section-header` summary.
+_ZONE_TITLE = r'<summary class="ui-zone-head">\s*<h3 class="ui-zone-title">'
+
+
 def _section(html, title):
-    m = re.search(r'<summary class="section-header">' + re.escape(title)
-                  + r"</summary>(.*?)</details>", html, re.S)
+    m = re.search(r'(?:<summary class="section-header">|' + _ZONE_TITLE + r')' + re.escape(title)
+                  + r"(?:</h3>.*?)?</summary>(.*?)</details>", html, re.S)
     assert m, title
     return m.group(1)
 
@@ -172,7 +177,8 @@ def _row(section, key):
 
 
 def _titles(html):
-    return re.findall(r'<summary class="section-header">(.*?)</summary>', html)
+    return (re.findall(r'<summary class="section-header">(.*?)</summary>', html)
+            + re.findall(_ZONE_TITLE + r'(.*?)</h3>', html))
 
 
 class TestInspector:

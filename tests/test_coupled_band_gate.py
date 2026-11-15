@@ -86,6 +86,11 @@ class _NS:
         self.__dict__.update(kw)
 
 
+class LFFEMAnalogOutputPort(_NS):
+    """A flux output as the pass sees it: the LF delay rule keys on this class name
+    (run_build._is_lf_output); any other output keeps its delay."""
+
+
 def _chip(rb, xy_lo, ro_lo, *, xy_port="1", ro_in="1", ro_out="8", with_z=False):
     """One qubit: xy on out <xy_port>, readout on out <ro_out> / in <ro_in>.
     With the defaults the xy drive and the readout INPUT are the coupled
@@ -133,7 +138,8 @@ def test_no_legal_pair_is_left_for_the_refusal():
 
 def test_the_same_band_is_preferred_and_the_flux_delay_follows_a_moved_xy_band():
     rb = _rb()
-    z1 = _NS(opx_output=_NS(delay=rb._delay_for_band(1)))
+    assert rb._delay_for_band(1) != rb._delay_for_band(2)
+    z1 = _NS(opx_output=LFFEMAnalogOutputPort(delay=rb._delay_for_band(1)))
     m = _NS(qubits={
         "q1": _NS(xy=_NS(opx_output=_Port("con1", 1, "2", "out", 5.0e9, 1)),   # band 1 or 2
                   resonator=None, z=z1),
@@ -142,6 +148,16 @@ def test_the_same_band_is_preferred_and_the_flux_delay_follows_a_moved_xy_band()
     warnings = rb._fix_coupled_bands(m, {}, [])
     assert (m.qubits["q1"].xy.opx_output.band, m.qubits["q2"].xy.opx_output.band) == (2, 2)
     assert z1.opx_output.delay == rb._delay_for_band(2)
+    # a flux output that is not an LF-FEM port keeps its delay when the xy band moves
+    z_other = _NS(opx_output=_NS(delay=rb._delay_for_band(1)))
+    m2 = _NS(qubits={
+        "q1": _NS(xy=_NS(opx_output=_Port("con1", 1, "2", "out", 5.0e9, 1)),
+                  resonator=None, z=z_other),
+        "q2": _NS(xy=_NS(opx_output=_Port("con1", 1, "3", "out", 6.0e9, 2)),
+                  resonator=None, z=None)})
+    rb._fix_coupled_bands(m2, {}, [])
+    assert m2.qubits["q1"].xy.opx_output.band == 2
+    assert z_other.opx_output.delay == rb._delay_for_band(1)
     assert warnings and "out 2 moved from band 1 to band 2" in warnings[0], warnings
 
 

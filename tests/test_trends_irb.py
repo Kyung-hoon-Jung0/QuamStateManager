@@ -143,7 +143,10 @@ def test_held_family_draws_and_labels_each_variant(irb_client):
     chart, = _charts(body)
     assert len(chart["series"]) == 2 * len(PAIRS)
     assert chart["n_entities"] == len(PAIRS)
-    assert {s["entity"] for s in chart["series"]} == {p + " · " + gate for p in PAIRS for gate in ("cz_SNZ", "cz_GNZ")}
+    # each line names its pair, the CZ variant the second wildcard stood for, and the one raw
+    # per-gate key it was read from (two raw families that share a title never read as one number)
+    assert {s["entity"] for s in chart["series"]} == {
+        p + " · " + gate + " · InterleavedRB" for p in PAIRS for gate in ("cz_SNZ", "cz_GNZ")}
     assert all(len(s["points"]) == 2 and s["held"] for s in chart["series"])
     assert "no trend yet" not in body
 
