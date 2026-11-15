@@ -860,7 +860,8 @@ def _refusal_functions():
     # (approvals_decide), the staging and its take-backs, the unstaged list, the tray count,
     # and the apply door it calls (routes: the unseen-edit refusal and the door itself)
     names = {agent_api: {"approvals_decide", "_stage_writes", "_unstaged_message", "_take_back_own",
-                         "_take_back_saved", "_refusal_line", "_structural_why", "_count_of", "_then"},
+                         "_take_back_saved", "_refusal_line", "_structural_why", "_count_of", "_then",
+                         "_taken_back"},
              routes: {"_unseen_edit_refusal", "state_apply_to_live"}}
     found = {}
     for mod, want in names.items():
@@ -883,6 +884,8 @@ def test_no_approval_refusal_text_says_s_in_brackets():
     marks = ("of this approval", "the tray holds", "cannot be staged", "made in another")
     assert all(any(m in t for _, t in texts) for m in marks), marks
     assert not [(n, t) for n, t in texts if "(s)" in t.replace(journal, "")], texts
+    from quam_state_manager.web import agent_api
+    assert "(s)" not in agent_api.TAKEN_BACK          # the taken-back clause is a module constant
 
 
 def _refused_live_write(case, monkeypatch, save_stands):
