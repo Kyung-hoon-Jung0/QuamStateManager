@@ -307,7 +307,8 @@ def _reading():
     sec = "Reading order"
     out = []
     for tone, key, why in (("ok", "Ready to create", "Checked on a copy of the chip: it loads, and the gate runs."),
-                           ("warn", "Created with a warning", "The qubit pulse starts 101 ns after the coupler pulse ends."),
+                           ("warn", "Created with a warning",
+                            "The qubit pulse starts 101 ns after the coupler pulse ends."),
                            ("danger", "Cannot be created yet", "q1.z would play 3 V; the limit is 2.5 V. Lower the amplitude."),
                            ("note", "Not checked on hardware", "Only the samples written to the config are compared.")):
         out.append((sec, "Banner " + tone, {"part": "verdict", "strong": True, "tone": tone, "key": key, "why": why}))
