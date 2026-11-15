@@ -7,6 +7,21 @@ from tests.state_model.repros._rig import Chip
 # history, queues or generated output; none stages an edit into the chip store.
 # A new POST requires classification here or inclusion in the mutator lock.
 _NON_STAGING_POSTS = {
+    # CZ gate dialog Simulate: start sends the checked plan's program to the
+    # simulator and keeps the run in memory; stop ends it. Neither stages a chip
+    # edit, and Stop must stay available during a run.
+    'cz_gate_sim.cz_gate_simulate_start',
+    'cz_gate_sim.cz_gate_simulate_stop',
+    # OPX monitor: PC names are an instance settings file, never chip state.
+    'opx_monitor.opx_monitor_save_pc_names',
+    # Pulse class editor: new / form / save keep a draft in the instance folder,
+    # preview runs the draft in the chosen environment, and save-file writes the
+    # class source file the user named (with a backup). None stages a chip edit.
+    'pulse_class_page.pulse_class_new',
+    'pulse_class_page.pulse_class_form',
+    'pulse_class_page.pulse_class_save',
+    'pulse_class_page.pulse_class_preview',
+    'pulse_class_page.pulse_class_save_file',
     # Load checks save a fresh store into scratch space, never the loaded store.
     'main.state_load_check',
     # Port tests operate on hardware and instance run/settings sidecars; none
