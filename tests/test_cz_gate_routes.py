@@ -338,6 +338,28 @@ def test_dialog_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):
     assert "(178 assertions)" in r.stdout
 
 
+def test_simulate_client_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):
+    import os
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    root = Path(__file__).resolve().parent.parent
+    env = dict(os.environ)
+    env.setdefault("NODE_PATH", str(root / "node_modules"))
+    if not any((Path(p) / "jsdom").exists() for p in env["NODE_PATH"].split(os.pathsep)):
+        pytest.skip("jsdom not installed")
+    html = chip.c.get("/pulse/cz-gate/dialog?pair=q1-2").get_data(as_text=True)
+    f = tmp_path / "dialog.html"
+    f.write_text(html, encoding="utf-8")
+    env["CZG_DIALOG"] = str(f)
+    r = subprocess.run([node, str(root / "tests" / "cz_gate_simulate_client_selfcheck.cjs")], env=env,
+                       capture_output=True, text=True, encoding="utf-8", timeout=120)
+    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
+    assert "(39 assertions)" in r.stdout
+
+
 def test_headline_names_line_value_and_limit():
     entry = {"checks": {"range": {"status": "fail", "message": "long"}}}
     tl = {"lanes": [{"key": "q1.z", "limit_v": [-2.5, 2.5], "segments": [
