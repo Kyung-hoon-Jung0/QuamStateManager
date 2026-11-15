@@ -344,8 +344,12 @@ def unused_files(instance, scope, merged):
 
 def left_behind_notice(instance, scope, merged, removed):
     """The undo notice for class files an undo left on disk with no gate using
-    them; "" when none. *removed* is the state text the undo took out."""
+    them; "" when none. *removed* is the state text the undo took out: a
+    subtree, or a ``__class__`` string itself when the undo reverted that leaf."""
     mentioned = _class_names(removed)
+    for value in (removed if isinstance(removed, list) else [removed]):
+        if isinstance(value, str):
+            mentioned.add(value)
     files = published_files(instance, scope)
     unused = set(unused_files(instance, scope, merged))
     lines = [f"quam_config/{Path(files[n]).name} stays on disk; no gate uses it"
