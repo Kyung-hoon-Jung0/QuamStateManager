@@ -451,6 +451,27 @@ def test_lab_level_parity(tmp_path, level):
         assert result["slots_played"] == result["spectator_plays"] == result["alignments"] == []
 
 
+@pytest.mark.parametrize("ref", ["#/qubits/ q1", "#/qubits/q 1", "q" + chr(9) + "1", "#/qubits/q1" + chr(10) + "2", "#/qubits/#q1"])
+def test_whitespace_or_hash_inside_a_name_is_not_a_qubit(ref):
+    assert T.qubit_name(ref) is None
+    problem = T.spectator_rows_problem(**rows(ref="#/qubits/q4", control=ref, target="q5"))
+    assert isinstance(problem, str) and problem
+    # never mistaken for, or hidden from, the own-qubit check
+    assert T.spectator_rows_problem(**rows(ref=ref, control="#/qubits/q1", target="q5")) != T.OWN_PROBLEM.format(name="s")
+
+
+def test_unit_without_an_amplitude_reads_as_missing():
+    assert T.spectator_rows_problem(**rows(unit_amplitudes={"s": None})) == T.UNIT_PROBLEM.format(name="s")
+
+
+@lab
+def test_lab_unit_without_an_amplitude_reads_as_missing(tmp_path):
+    result = run_check(tmp_path, T.render(T.SlotSpec("ExampleGate", T.SLOTS, True)),
+                       spectators={"spectator": [0.0, 16, None]})
+    assert not result["ok"], result
+    assert result["error"] == "ValueError: " + T.UNIT_PROBLEM.format(name="spectator"), result
+
+
 @lab
 @pytest.mark.parametrize("unit", [0, 0.0, float("nan"), float("inf")])
 def test_lab_unit_parity(tmp_path, unit):

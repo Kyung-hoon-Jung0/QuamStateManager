@@ -130,16 +130,16 @@ def spectator_length_problem(length_ns) -> str | None:
 def qubit_name(ref):
     """Return the qubit name of "#/qubits/<name>" or of a bare name; None for anything else.
 
-    Surrounding whitespace is stripped. The name must be non-empty and contain no "/"; a bare name
-    must also contain no "#". Relative references and other collections are not qubit references.
+    Whitespace around the whole reference is stripped. The name must be non-empty and contain no
+    "/", no "#" and no whitespace. Relative references and other collections are not qubit references.
     """
     if not isinstance(ref, str):
         return None
     ref = ref.strip()
-    if ref.startswith("#/qubits/"):
-        name = ref[len("#/qubits/"):]
-        return name if name and "/" not in name else None
-    return ref if ref and "/" not in ref and "#" not in ref else None
+    name = ref[len("#/qubits/"):] if ref.startswith("#/qubits/") else ref
+    if not name or "/" in name or "#" in name or any(ch.isspace() for ch in name):
+        return None
+    return name
 
 
 def spectator_rows_problem(qubits, levels, lengths, control=None, target=None, unit_amplitudes=None):
@@ -251,7 +251,8 @@ def _region(spec):
                   f"            if isinstance(value, bool) or not isinstance(value, (int, float)) or value % {LENGTH_STEP_NS}"
                   f" or value < {MIN_LENGTH_NS}:",
                   f"                raise ValueError({LENGTH_PROBLEM!r}.format(name=name, value=value))",
-                  "            if SPECTATOR_UNIT_OP not in qubit.z.operations:",
+                  "            if (SPECTATOR_UNIT_OP not in qubit.z.operations",
+                  "                    or qubit.z.operations[SPECTATOR_UNIT_OP].amplitude is None):",
                   f"                raise ValueError({UNIT_PROBLEM!r}.format(name=name))",
                   "            unit, level = qubit.z.operations[SPECTATOR_UNIT_OP].amplitude, levels[name]",
                   "            finite = []",
