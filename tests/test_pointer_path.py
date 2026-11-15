@@ -325,6 +325,41 @@ def _random_graph(rng) -> dict:
     return m
 
 
+def _put(m: dict, keys: list[str], value) -> None:
+    for k in keys[:-1]:
+        if not isinstance(m.get(k), dict):
+            m[k] = {}
+        m = m[k]
+    m[keys[-1]] = value
+
+
+def _reordered_revisit_graph(rng) -> dict:
+    """One pointer met twice with the same keys still to walk, in another order.
+
+    holder.p points at a root t; q.leaf enters holder.p with keys k; at t.k a
+    pointer re-enters holder.p with a reordering of k; what sits at t.<reordered>
+    is random (a value, a pointer, or nothing).
+    """
+    keys = "xyz"
+    holder, target = rng.sample("abc", 2)
+    p = rng.choice(keys)
+    first = rng.sample(keys, rng.randint(2, 3))
+    again = first[:]
+    while again == first:
+        rng.shuffle(again)
+    m = _random_graph(rng)
+    m[holder] = {p: "#/" + target}
+    m[target] = {}
+    m["q"] = {"leaf": "/".join(["#", holder, p] + first)}
+    _put(m[target], first, "/".join(["#", holder, p] + again))
+    roll = rng.random()
+    if roll < 0.7:
+        _put(m[target], again, 26)
+    elif roll < 0.9:
+        _put(m[target], again, "#/" + "/".join([rng.choice("abc")] + rng.sample(keys, rng.randint(0, 2))))
+    return m
+
+
 def _named_graphs() -> dict:
     run = {f"h{i}": f"#/h/h{i + 1}" for i in range(_LIMIT - 2)}
     run[f"h{_LIMIT - 2}"] = "#/h/h0"
@@ -343,6 +378,9 @@ def _named_graphs() -> dict:
         "true cycle": ({"a": "#/b", "b": "#/a", "q": {"leaf": "#/a"}}, None),
         "crossed cycle": ({"a": {"ref": "#/b"}, "b": {"x": "#/a/ref/x"}, "q": {"leaf": "#/a/ref/x"}}, None),
         "cycle near the limit": ({"h": run, "q": {"leaf": "#/h/h0"}}, None),
+        # b.p met twice, the keys still to walk x, y the first time and y, x the second: lands on c.y.x = 26
+        "same pointer, remainder reordered": (
+            {"b": {"p": "#/c"}, "c": {"x": {"y": "#/b/p/y/x"}, "y": {"x": 26}}, "q": {"leaf": "#/b/p/x/y"}}, 26),
     }
 
 
@@ -382,3 +420,14 @@ def test_cross_agrees_with_the_reference_on_random_graphs():
         why[kind] = why.get(kind, 0) + 1
     # the corpus reaches every outcome, so a mutant has something to disagree on
     assert all(why.get(k, 0) >= 50 for k in ("cycle", "limit", "missing", "landed", "crossed")), why
+
+
+def test_cross_agrees_with_the_reference_on_reordered_revisits():
+    import random
+    rng = random.Random(20261117)
+    landed = 0
+    for _ in range(600):
+        ref = _agrees(_reordered_revisit_graph(rng), ["q", "leaf"])
+        landed += ref["ok"]
+    # most of these walks land, so a cycle key blind to key order has walks to refuse
+    assert landed >= 300, landed
