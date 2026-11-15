@@ -45,6 +45,7 @@ def env(tmp_path):
     routes._quam_cache.clear()
     app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
     c = app.test_client()
+    c.environ_base["HTTP_X_SM_WINDOW_ID"] = "window-a"
     assert c.post("/load", data={"folder": str(x)}).status_code in (200, 302)
     return {"app": app, "c": c, "x": x, "y": y}
 
@@ -90,6 +91,7 @@ def test_two_folders_of_one_declared_chip_are_told_apart_by_folder(tmp_path):
     routes._quam_cache.clear()
     app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
     c = app.test_client()
+    c.environ_base["HTTP_X_SM_WINDOW_ID"] = "window-a"
     assert c.post("/load", data={"folder": str(x)}).status_code in (200, 302)
     key_x = _page_key(c)
     assert c.post("/load", data={"folder": str(y)}).status_code in (200, 302)
@@ -105,6 +107,7 @@ def test_an_undeclared_chip_is_still_named_by_its_folder(tmp_path):
     routes._quam_cache.clear()
     app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
     c = app.test_client()
+    c.environ_base["HTTP_X_SM_WINDOW_ID"] = "window-a"
     assert c.post("/load", data={"folder": str(x)}).status_code in (200, 302)
     assert c.post("/field/edit", data={"dot_path": "qubits.q2.T1", "value": "2.5e-05"}).status_code == 200
     assert c.post("/state/apply-to-live").status_code == 200

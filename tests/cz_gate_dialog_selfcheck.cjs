@@ -30,8 +30,11 @@ const DATA = {
 };
 
 let dataOverride = null;             // a test's own dialog data (which classes can run where)
+let openScrollFixture = false;
 function dialogHtml() {
-    const h = dialogHtmlBase();
+    let h = dialogHtmlBase();
+    if (openScrollFixture) h = h.replace(/(<[^>]+id="czg-empty"[^>]*>)/,
+        '<div data-czg-table-scroll data-czg-open-scroll-fixture><table aria-label="Open table"></table></div>$1');
     if (!dataOverride) return h;
     return h.replace(/(<script type="application\/json" id="czg-data">)[\s\S]*?(<\/script>)/,
         (m, a, b) => a + JSON.stringify(dataOverride) + b);
@@ -201,6 +204,18 @@ const ajax = [];
 window.htmx = { ajax: (m, u, o) => ajax.push(u), trigger: () => {} };
 window.alert = () => { throw new Error('alert used'); };
 window.eval(fs.readFileSync(path.join(ROOT, 'static', 'ui.js'), 'utf8'));
+const originalAdd = window.addEventListener;
+const originalRemove = window.removeEventListener;
+const resizeListeners = new Set();
+let resizeAdds = 0, resizeRemoves = 0;
+window.addEventListener = function (type, listener, options) {
+    if (type === 'resize') { resizeAdds++; resizeListeners.add(listener); }
+    return originalAdd.call(this, type, listener, options);
+};
+window.removeEventListener = function (type, listener, options) {
+    if (type === 'resize') { resizeRemoves++; resizeListeners.delete(listener); }
+    return originalRemove.call(this, type, listener, options);
+};
 window.eval(fs.readFileSync(path.join(ROOT, 'static', 'cz-gate.js'), 'utf8'));
 
 let n = 0, failed = 0;
@@ -213,8 +228,65 @@ const count = (k) => sent.filter((s) => s.kind === k).length;
 const alertText = () => ($('#czg-alert') || { textContent: '' }).textContent;
 function type(input, v) { input.value = v; input.dispatchEvent(new window.Event('input', { bubbles: true })); }
 function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('change', { bubbles: true })); }
+function tableWidths(el, sw, cw) {
+    Object.defineProperty(el, 'scrollWidth', { configurable: true, get: () => el.closest('[hidden]') ? 0 : sw });
+    Object.defineProperty(el, 'clientWidth', { configurable: true, get: () => el.closest('[hidden]') ? 0 : cw });
+}
 
 (async () => {
+    // Supply layout before rendering, including the browser's zero size under hidden ancestors.
+    const proto = window.HTMLElement.prototype;
+    const savedWidths = ['scrollWidth', 'clientWidth'].map((key) => Object.getOwnPropertyDescriptor(proto, key));
+    let wide = true;
+    ['scrollWidth', 'clientWidth'].forEach((key) => Object.defineProperty(proto, key, {
+        configurable: true, get() {
+            if (!this.hasAttribute('data-czg-table-scroll') || this.closest('[hidden]')) return 0;
+            return key === 'scrollWidth' && wide ? 900 : 300;
+        }
+    }));
+    const named = (w, name) => w && w.getAttribute('tabindex') === '0' && w.getAttribute('role') === 'region'
+        && w.getAttribute('aria-label') === 'Scrollable table region: ' + name;
+    const plain = (w) => w && !w.hasAttribute('tabindex') && !w.hasAttribute('role') && !w.hasAttribute('aria-label');
+    try {
+        openScrollFixture = true;
+        await window.CzGate.open({ pair: 'q1-2' }); await settle();
+        ok(named($('[data-czg-open-scroll-fixture]'), 'Open table'), 'open measures an existing visible scrolling table without a resize');
+        openScrollFixture = false;
+        ok($('#czg-sec-intent').hidden, 'first check starts with the intent section hidden');
+        prim().click(); await settle();
+        ok(named($('#czg-intent > [data-czg-table-scroll]'), 'Entered and actual'), 'first check measures the intent table after showing its section without a resize');
+        wide = false;
+        // A new check redraws the table while the section is already visible.
+        type($('#czg-name'), 'cz_width'); await settle(); prim().click(); await settle();
+        ok(plain($('#czg-intent > [data-czg-table-scroll]')), 'a fitting redrawn intent table has no region attributes');
+        wide = true;
+        type($('#czg-name'), 'cz_wider'); await settle(); prim().click(); await settle();
+        ok(named($('#czg-intent > [data-czg-table-scroll]'), 'Entered and actual'), 'redraw measures a scrolling intent table without a resize');
+        window.CzGate.close();
+        await window.CzGate.open({ pair: 'q1-2' }); await settle();
+        { const st = window.CzGate.state(); if (!st.data.classes.some((c) => c['class'] === 'L.TwoFlux')) st.data.classes.push(DATA.classes[2]); }
+        $('#czg-class-host .ui-menu').dispatchEvent(new window.CustomEvent('ui-menu-pick', { bubbles: true, detail: { value: 'L.TwoFlux', kind: 'pick' } }));
+        await settle();
+        ok(named($('#czg-model-facts > [data-czg-table-scroll]'), 'From the model gate'), 'redraw measures the model table without a resize');
+        window.CzGate.close();
+        openScrollFixture = true;
+        await window.CzGate.open({ pair: 'q1-2' }); await settle();
+        ok(named($('[data-czg-open-scroll-fixture]'), 'Open table'), 'reopen measures an existing table without a resize');
+        ok(resizeListeners.size === 1 && resizeAdds - resizeRemoves === 1, 'reopening leaves exactly one resize listener counted through add and remove');
+        wide = false;
+        window.dispatchEvent(new window.Event('resize'));
+        ok(plain($('[data-czg-open-scroll-fixture]')), 'the resize listener updates the reopened dialog');
+    } finally {
+        window.CzGate.close();
+        openScrollFixture = false;
+        ['scrollWidth', 'clientWidth'].forEach((key, i) => {
+            if (savedWidths[i]) Object.defineProperty(proto, key, savedWidths[i]); else delete proto[key];
+        });
+        window.addEventListener = originalAdd;
+        window.removeEventListener = originalRemove;
+        sent.length = 0; charts.length = 0;
+    }
+    const scrollAssertions = n;
     // row buttons: reachable, the row under them never opens
     let rowClicks = 0;
     $('#row').addEventListener('click', () => { rowClicks++; });
@@ -446,6 +518,15 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     ok(sent.filter((x) => x.kind === 'plan').pop().body.macro_fields.mode === 'slow', 'a changed setting goes to the plan as macro_fields');
     ok(!$('#czg-model-panel').hidden && /cz_m/.test($('#czg-model-facts').textContent) && /fidelity/.test($('#czg-model-facts').textContent),
        'before the first check the model gate and what is not inherited are shown');
+    { const mw = $('#czg-model-facts > [data-czg-table-scroll]');
+      ok(mw && mw.querySelector(':scope > table.ui-table') && mw.classList.contains('ui-xscroll-table') && !mw.hasAttribute('tabindex'),
+         'the model gate table sits in the scrolling wrapper, plain layout while it fits');
+      tableWidths(mw, 900, 300);
+      window.dispatchEvent(new window.Event('resize'));
+      ok(mw.getAttribute('tabindex') === '0' && /^Scrollable table region: /.test(mw.getAttribute('aria-label')),
+         'the model gate table wrapper becomes a named tab stop once it scrolls sideways');
+      tableWidths(mw, 300, 300);
+      window.dispatchEvent(new window.Event('resize')); }
     queue.check.push((b) => { const j = checkOk(b, { refuse: 'q1-2' }); j.pairs.forEach((p) => {
         p.checks = [{ name: 'ops', status: 'fail', message: 'The gate cz_x does not run with the lab\'s code. The lab\'s error: \u201cValueError: flat lengths differ.\u201d' }]
             .concat(['length', 'preview', 'timeline', 'range'].map((n) => ({ name: n, status: 'skipped', message: 'Not checked: the gate cz_x does not run.' })));
@@ -962,6 +1043,23 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
         ok([...doc.querySelectorAll('#czg-intent tbody tr')].map((tr) => tr.children[0].textContent).join('|') === 'op_q1-2|spectator on q3.z|spectator on q4.z'
            && $('#czg-intent tbody tr:nth-child(3) .ui-line-dot.ui-line-3'),
            'check: Entered and actual has one row per spectator, named by its line, with its dot');
+        { const w = $('#czg-intent > [data-czg-table-scroll]');
+          ok(w && w.classList.contains('ui-xscroll') && w.classList.contains('ui-xscroll-table') && w.querySelector(':scope > table.ui-table')
+             && !w.hasAttribute('tabindex') && !w.hasAttribute('role') && !w.hasAttribute('aria-label'),
+             'check: a table that fits has no tab stop, role or label of its own');
+          const setW = tableWidths;
+          const all = [...doc.querySelectorAll('[data-czg-table-scroll]')];
+          all.forEach((x) => setW(x, 900, 300));
+          window.dispatchEvent(new window.Event('resize'));
+          ok(all.length >= 1 && all.every((x) => x.getAttribute('tabindex') === '0' && x.getAttribute('role') === 'region'
+               && /^Scrollable table region: /.test(x.getAttribute('aria-label')) && x.getAttribute('aria-label') !== x.querySelector('table').getAttribute('aria-label')),
+             'check: a table that scrolls sideways is a focusable, named scrollable region (re-decided on resize)');
+          all.forEach((x) => setW(x, 300, 300));
+          window.dispatchEvent(new window.Event('resize'));
+          ok(all.every((x) => !x.hasAttribute('tabindex') && !x.hasAttribute('role') && !x.hasAttribute('aria-label')),
+             'check: after widening, the wrapper is plain layout again'); }
+        ok([...doc.querySelectorAll('.czg table')].length > 0 && [...doc.querySelectorAll('.czg table')].every((t) => t.parentElement.hasAttribute('data-czg-table-scroll')),
+           'every table the dialog draws sits in the one scrolling wrapper');
         ok(doc.querySelectorAll('[data-czg-spect-uncal]').length === 1 && /not calibrated/.test($('[data-czg-spect-uncal]').textContent)
            && $('[data-czg-spect-uncal]').classList.contains('ui-text-quiet') && !/not calibrated/.test(alertText()),
            'check: the phase shift is not calibrated, said once in the panel, quiet, not in the banner');
@@ -1622,6 +1720,7 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     await settle();
     ok(/Chart not loaded/.test($('#czg-chart').textContent), 'no chart component: said, never a throw');
 
+    console.log(`Scroll checks: ${scrollAssertions}; existing dialog checks (${n - scrollAssertions} assertions)`);
     console.log(failed ? `FAIL cz_gate_dialog_selfcheck (${n} assertions, ${failed} failed)` : `ok cz_gate_dialog_selfcheck (${n} assertions)`);
     process.exit(failed ? 1 : 0);
 })().catch((e) => { console.log('FAIL crashed: ' + (e && e.stack || e)); process.exit(1); });

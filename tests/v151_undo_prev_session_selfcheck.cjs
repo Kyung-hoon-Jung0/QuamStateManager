@@ -1,12 +1,16 @@
-/* v1.5.1 T1-F2: Ctrl+Z into an earlier session's journal -- the page side.
+/* v1.5.1 T1-F2: Ctrl+Z into an earlier session's journal; the page side.
  *
  * Pins, against the real app.js + undo-trail.js under jsdom:
  *  A  the server's undoAskPrevSession question is asked (in-page smConfirm with
  *     the server's sentence); OK sends ONE /undo carrying that unit's yes
  *     (ack_prev_session), Cancel sends nothing and says so;
  *  B  a later /undo does not carry that unit's yes again, but carries the
- *     WINDOW's yes (R2 MINOR 4: kept per window in sessionStorage, keyed by
- *     the chip folder -- not per chip context on the server);
+ *     WINDOW's yes to old edits (R2 MINOR 4: kept per window in
+ *     sessionStorage, keyed by the chip folder; not per chip context on the
+ *     server), and never a yes to another window's step;
+ *  F  a Yes to another window's step covers that one step (undo or redo)
+ *     and is never a yes to old edits;
+ *  G  a question naming both reasons: its Yes covers both, for that step only;
  *  E  presses queued behind the asked one are dropped when it asks (R2
  *     MINOR 4: a Cancel used to be asked again for each of them);
  *  C  the Undo / Redo panel names the edit's age;
@@ -86,7 +90,7 @@ window.showToast = function (m, l, ms) { toasts.push(String(m)); return realToas
 
 function ask(unit) {
     d.dispatchEvent(new window.CustomEvent('undoAskPrevSession', { detail: {
-        unit_id: unit, age: 'from 2 days ago',
+        unit_id: unit, age: 'from 2 days ago', reasons: ['age'],
         message: 'This Ctrl+Z writes the live chip: ports.x.full_scale_power_dbm → 10. '
                + 'It undoes an edit from 2 days ago, made in an earlier SM session.' } }));
 }
@@ -97,27 +101,76 @@ function ask(unit) {
     ask('u-old-1');
     await tick(80);
     ok(!!confirmOverlay() && /from 2 days ago/.test(confirmMsg()) && /earlier SM session/.test(confirmMsg()),
-       'A1: the question is asked with the edit and its age -- ' + JSON.stringify(confirmMsg() || ''));
+       'A1: the question is asked with the edit and its age; ' + JSON.stringify(confirmMsg() || ''));
     await clickConfirm(true);
     const undo = ajaxCalls.filter((c) => c.u === '/undo');
     ok(undo.length === 1 && undo[0].o && undo[0].o.values
        && undo[0].o.values.ack_prev_session === 'u-old-1',
-       'A2: OK sends one /undo with that unit\'s yes -- ' + JSON.stringify(undo.map((c) => c.o && c.o.values)));
+       'A2: OK sends one /undo with that unit\'s yes; ' + JSON.stringify(undo.map((c) => c.o && c.o.values)));
+    ok(undo[0].o.values.ack_prev_window === '',
+       'A2b: a Yes to the age question is not a yes to another window\'s step; ' + JSON.stringify(undo[0].o.values));
     /* B */
     window.UndoQueue.push('/undo');
     await tick(80);
     const undo2 = ajaxCalls.filter((c) => c.u === '/undo');
     ok(undo2.length === 2 && !undo2[1].o.values.ack_prev_session,
-       'B1: the next press does not carry the yes again -- ' + JSON.stringify(undo2[1] && undo2[1].o.values));
-    ok(undo2[1].o.values.ack_prev_window === '1' && SESSION.getItem('sm.undoOldOk.chip_k-0123abcd') === '1',
-       'B2: ...it carries the yes of THIS window, kept per window -- ' + JSON.stringify(undo2[1].o.values));
+       'B1: the next press does not carry the yes again; ' + JSON.stringify(undo2[1] && undo2[1].o.values));
+    ok(undo2[1].o.values.ack_old_edits === '1' && SESSION.getItem('sm.undoOldOk.chip_k-0123abcd') === '1',
+       'B2: ...it carries the yes of THIS window to old edits, kept per window; ' + JSON.stringify(undo2[1].o.values));
+    ok(undo2[1].o.values.ack_prev_window === '',
+       'B2b: ...and never a yes to another window\'s step; ' + JSON.stringify(undo2[1].o.values));
     SESSION._m.clear();
     window.UndoQueue.push('/undo');
     await tick(80);
     const undo3 = ajaxCalls.filter((c) => c.u === '/undo');
-    ok(undo3.length === 3 && undo3[2].o.values.ack_prev_window === '',
-       'B3: a window that never said yes sends none -- ' + JSON.stringify(undo3[2].o.values));
+    ok(undo3.length === 3 && undo3[2].o.values.ack_old_edits === '',
+       'B3: a window that never said yes sends none; ' + JSON.stringify(undo3[2].o.values));
 
+    /* F: the window question; its Yes covers that one step and no age */
+    function askWindow(unit, direction, reasons) {
+        d.dispatchEvent(new window.CustomEvent('undoAskPrevSession', { detail: {
+            unit_id: unit, direction: direction, reasons: reasons,
+            message: (direction === '/redo' ? 'Redo' : 'Undo')
+                   + ' another window\'s change: ports.x.full_scale_power_dbm to 10; Ctrl+Z writes the chip.' } }));
+    }
+    const last = () => ajaxCalls[ajaxCalls.length - 1];
+    askWindow('w-1', '/undo', ['other_window']);
+    await clickConfirm(true);
+    ok(last().u === '/undo' && last().o.values.ack_prev_window === 'w-1'
+       && last().o.values.ack_prev_session === '' && last().o.values.ack_old_edits === '',
+       'F1: a Yes to the window question sends only the window yes, for that step; ' + JSON.stringify(last().o.values));
+    ok(SESSION.getItem('sm.undoOldOk.chip_k-0123abcd') === null,
+       'F2: ...and never stands for a yes to old edits');
+    window.UndoQueue.push('/undo');
+    await tick(80);
+    ok(last().o.values.ack_prev_window === '' && last().o.values.ack_old_edits === '',
+       'F3: the next step carries no consent, so the server asks again; ' + JSON.stringify(last().o.values));
+    askWindow('r-1', '/redo', ['other_window']);
+    await clickConfirm(true);
+    ok(last().u === '/redo' && last().o.values.ack_prev_window === 'r-1',
+       'F4: a redo question Yes repeats the redo with that step\'s yes; ' + JSON.stringify(last().o.values));
+    window.UndoQueue.push('/redo');
+    await tick(80);
+    ok(last().u === '/redo' && last().o.values.ack_prev_window === '',
+       'F5: the next redo carries no consent; ' + JSON.stringify(last().o.values));
+
+    /* G: one question naming both reasons; its Yes covers both, for that step only */
+    askWindow('c-1', '/undo', ['other_window', 'age']);
+    await clickConfirm(true);
+    ok(last().u === '/undo' && last().o.values.ack_prev_window === 'c-1'
+       && last().o.values.ack_prev_session === 'c-1',
+       'G1: a combined Yes sends both yeses for that step; ' + JSON.stringify(last().o.values));
+    window.UndoQueue.push('/undo');
+    await tick(80);
+    ok(last().o.values.ack_prev_window === '' && last().o.values.ack_prev_session === ''
+       && last().o.values.ack_old_edits === '' && SESSION.getItem('sm.undoOldOk.chip_k-0123abcd') === null,
+       'G2: ...and nothing for the next step; ' + JSON.stringify(last().o.values));
+
+    d.body.focus();
+    d.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'y', ctrlKey: true, bubbles: true }));
+    await tick(80);
+    ok(last().u === '/redo', 'Ctrl+Y routes to redo');
+    const undoBeforeE = ajaxCalls.filter((c) => c.u === '/undo' || /^\/undo\?/.test(c.u)).length;
     /* E: presses queued behind the asked one */
     let release;
     hold = { p: new Promise((r) => { release = r; }) };
@@ -132,8 +185,8 @@ function ask(unit) {
     release();
     await tick(120);
     const undo4 = ajaxCalls.filter((c) => c.u === '/undo' || /^\/undo\?/.test(c.u));
-    ok(undo4.length === 4 && window.UndoQueue.depth() === 0,
-       'E1: Cancel sends nothing more -- the queued presses were dropped (' + undo4.length + ')');
+    ok(undo4.length === undoBeforeE + 1 && window.UndoQueue.depth() === 0,
+       'E1: Cancel sends nothing more; the queued presses were dropped (' + undo4.length + ')');
     /* A: Cancel */
     const before = ajaxCalls.length;
     ask('u-old-2');
@@ -149,10 +202,10 @@ function ask(unit) {
         entries: [{ dot_path: 'ports.x.full_scale_power_dbm', old_value_str: '10', old_value_disp: '10' }] } }));
     const p = d.getElementById('undo-trail');
     ok(p && !p.hidden && /edit from 2 days ago/.test(p.textContent),
-       'C1: the Undo / Redo panel names the edit\'s age -- ' + (p ? p.textContent.slice(0, 120) : 'no panel'));
+       'C1: the Undo / Redo panel names the edit\'s age; ' + (p ? p.textContent.slice(0, 120) : 'no panel'));
     ok(d.body.classList.contains('undo-trail-on'), 'D1: the open panel lifts the toast sink');
     ok(/px$/.test(d.body.style.getPropertyValue('--undo-trail-h')),
-       'D2: ...by its measured height -- ' + d.body.style.getPropertyValue('--undo-trail-h'));
+       'D2: ...by its measured height; ' + d.body.style.getPropertyValue('--undo-trail-h'));
     p.querySelector('.undo-trail-close').click();
     ok(!d.body.classList.contains('undo-trail-on'), 'D3: closing the panel drops the lift');
 

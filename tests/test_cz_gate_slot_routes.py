@@ -770,8 +770,7 @@ def test_posted_steps_are_not_taken_through_the_older_render_remake(env):
     before = env.stored()
     r = env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": list(OWN), "spectators": True,
                                      "before": [{"kind": "wait", "length": 32}], "after": []})
-    assert r.status_code == 409
-    assert r.get_json()["error"] == czr.NAME_IN_USE.format(name=NAME, count=1)
+    _steps_refused(r)
     assert env.stored() == before
 
 
@@ -823,6 +822,54 @@ def test_posted_steps_on_an_in_use_current_render_are_refused(env):
     before = env.stored()
     r = env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": list(OWN), "spectators": True,
                                      "before": [{"kind": "wait", "length": 32}], "after": []})
-    assert r.status_code == 409
-    assert r.get_json()["error"] == czr.NAME_IN_USE.format(name=NAME, count=1)
+    _steps_refused(r)
     assert env.stored() == before
+
+
+def _steps_refused(r):
+    assert r.status_code == 400, r.get_json()
+    assert r.get_json() == {"ok": False, "error": czr.STEPS_NOT_TAKEN, "problems": [czr.STEPS_NOT_TAKEN]}
+
+
+_WAIT = [{"kind": "wait", "length": 32}]
+
+
+@pytest.mark.parametrize("steps", [{"before": _WAIT}, {"after": _WAIT}, {"before": _WAIT, "after": _WAIT},
+                                   {"before": _WAIT, "after": []}, {"after": "wait"}, {"before": 1},
+                                   {"before": {"kind": "wait"}},
+                                   # only None, [] and () are no steps: every other value is refused
+                                   {"before": 0}, {"after": False}, {"before": ""}, {"after": {}}])
+def test_posted_steps_on_a_new_class_are_refused_and_nothing_is_written(env, steps):
+    before = env.stored()
+    r = env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": list(OWN), "spectators": True, **steps})
+    _steps_refused(r)
+    assert env.stored() == before
+    assert D.load_draft(env.a.app.instance_path, env.scope, NAME) is None
+
+
+def test_posted_steps_on_a_stored_free_draft_leave_its_bytes(env):
+    env.make(slots=OWN)
+    before, text = env.stored(), _draft_text(env)
+    r = env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": ["control"], "spectators": True,
+                                     "after": _WAIT})
+    _steps_refused(r)
+    assert env.stored() == before and _draft_text(env) == text
+
+
+@pytest.mark.parametrize("steps", [{}, {"before": None}, {"before": [], "after": []}, {"after": None}])
+def test_empty_steps_make_the_class_as_before(env, steps):
+    r = env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": list(OWN), "spectators": True, **steps})
+    assert r.status_code == 200 and r.get_json()["ok"]
+    assert _draft_text(env) == sgt.render(sgt.SlotSpec(NAME, list(OWN), True))
+
+
+@pytest.mark.parametrize("body, error", [({"class_name": 3, "slots": list(OWN)}, "name"),
+                                         ({"class_name": NAME, "slots": "nope"}, "slots")])
+def test_a_bad_name_or_slots_is_refused_before_posted_steps(env, body, error):
+    r = env.c.post(SLOT_ROUTE, json={**body, "before": _WAIT})
+    assert r.status_code == 400
+    got = r.get_json()["error"]
+    if error == "name":
+        assert got == czr.NAME_NOT_TEXT
+    else:
+        assert got != czr.STEPS_NOT_TAKEN

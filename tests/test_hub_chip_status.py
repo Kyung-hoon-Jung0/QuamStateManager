@@ -72,6 +72,7 @@ def load(tmp_path, runs, live_state, *, sync=True):
     write_chip(live, live_state, data)
     app = make_app(tmp_path, sync=sync)
     c = app.test_client()
+    c.environ_base["HTTP_X_SM_WINDOW_ID"] = "window-a"
     assert c.post("/load", data={"folder": str(live)}).status_code in (200, 302)
     return {"app": app, "client": c, "live": live, "data": data, "tmp": tmp_path}
 

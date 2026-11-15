@@ -65,6 +65,7 @@ def env(tmp_path):
     routes._quam_cache.clear()
     app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
     c = app.test_client()
+    c.environ_base["HTTP_X_SM_WINDOW_ID"] = "window-a"
     # chip Y gets an applied edit, so its undo journal has a unit to walk live
     assert c.post("/load", data={"folder": str(y)}).status_code in (200, 302)
     r = c.post("/field/edit", data={"dot_path": "qubits.q2.T1", "value": "2.5e-05"})

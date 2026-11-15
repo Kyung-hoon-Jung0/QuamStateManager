@@ -69,14 +69,14 @@ t = honest(chips({ status_chip: 'Reproduced with the current analysis code', cli
 assert.deepStrictEqual(t, ['Reproduced with the current analysis code', 'proposed, not applied'], 'a replot keeps its reproduction status'); n++;
 t = honest(chips({ status_chip: 'raw data', clickable: null, display_only_reason: 'this run wrote no state: click-to-apply off' }), 'display only');
 assert.deepStrictEqual(t, ['raw data', 'not verified on this run'], 'a display-only figure is not verified, reason on hover'); n++;
-assert.deepStrictEqual(hints(), ['this run wrote no state: click-to-apply off'], 'no click contract: the hint is the payload own display-only reason, never the verify rule'); n++;
+assert.deepStrictEqual(hints(), ['This run wrote no state: click-to-apply off. No click on this map is verified on this run.'], 'no click contract: the payload own display-only reason, then a sentence true for this run only, never the verify rule'); n++;
 // a raw map mounted with no contract and its own reason (the raw data viewer)
 const rawReason = 'no node fit to compare; the map shows the stored data';
 chips({ status_chip: 'raw data', display_only_reason: rawReason });
-assert.deepStrictEqual(hints(), [rawReason], 'raw map without a contract shows its reason'); n++;
+assert.deepStrictEqual(hints(), ['No node fit to compare; the map shows the stored data. No click on this map is verified on this run.'], 'raw map without a contract shows its reason'); n++;
 assert.ok(!hints().includes(w.MapTools.VERIFY_HINT), 'raw map never promises a verification'); n++;
 t = honest(chips({ status_chip: 'raw data' }), 'no contract, no reason');
-assert.deepStrictEqual(hints(), ['No click contract was recorded for this map.'], 'missing contract is named without inventing a cause'); n++;
+assert.deepStrictEqual(hints(), ['No click contract is recorded for this kind of map, so nothing can verify a click on it: a click here sets no parameter whose saved value could be checked.'], 'missing contract is named without inventing a cause'); n++;
 chips({ clickable: { n_verified: 0, targets: [{ path: 'qubits.q0.f', evidence_tier: 'applied' }] } });
 assert.deepStrictEqual(hints(), [w.MapTools.VERIFY_HINT], 'a contract with zero writes states the verify rule'); n++;
 chips({ clickable: { n_verified: 1, targets: [{ path: 'qubits.q0.f', evidence_tier: 'applied' }, { path: 'qubits.q0.g', evidence_tier: 'applied' }] } });

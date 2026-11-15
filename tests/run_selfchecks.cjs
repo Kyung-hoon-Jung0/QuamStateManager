@@ -5,11 +5,8 @@
 // and native Windows is this project's canonical test platform (CLAUDE.md), so
 // a POSIX-only script would break for exactly the developer it exists to help.
 //
-// Exit code 2 from a selfcheck means "jsdom not installed", which the pytest
-// drivers treat as a skip; this runner reports it the same way rather than
-// failing, so a machine without node_modules gets an honest message instead of
-// a wall of red. (docs/120: a skipped pin and a passing pin looked identical in
-// a pytest -q summary for long enough to hide four real failures.)
+// Exit code 2 means a missing dependency. Report it as a skipped check and
+// fail the run: an unexecuted DOM check cannot validate a change.
 'use strict';
 
 const fs = require('fs');
@@ -17,14 +14,19 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const here = __dirname;
-const requested = new Set(process.argv.slice(2));
+// Optional names let a change run only its relevant DOM checks through npm.
+const requested = new Set(process.argv.slice(2).map(name =>
+  name.replace(/_selfcheck\.cjs$/, '')));
 const files = fs.readdirSync(here)
-  .filter((f) => f.endsWith('_selfcheck.cjs') && (!requested.size || requested.has(f)))
+  .filter((f) => f.endsWith('_selfcheck.cjs'))
+  .filter((f) => !requested.size || requested.has(f.replace(/_selfcheck\.cjs$/, '')))
   .sort();
 
-if (requested.size && files.length !== requested.size) {
-  console.error('Unknown selfcheck: ' + [...requested].filter((f) => !files.includes(f)).join(', '));
-  process.exit(1);
+for (const name of requested) {
+  if (!files.includes(name + '_selfcheck.cjs')) {
+    console.error('Unknown selfcheck: ' + name);
+    process.exit(1);
+  }
 }
 
 let pass = 0, fail = 0, skip = 0;
@@ -68,4 +70,4 @@ for (const f of files) {
 console.log(`\n${pass} passed, ${fail} failed, ${skip} skipped, of ${files.length}`);
 if (failed.length) console.log(`failed: ${failed.join(', ')}`);
 if (suspect.length) console.log(`no output (check these ran): ${suspect.join(', ')}`);
-process.exit(fail ? 1 : 0);
+process.exit(fail || skip ? 1 : 0);

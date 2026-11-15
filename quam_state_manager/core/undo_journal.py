@@ -134,6 +134,12 @@ def make_unit(entries: list[ChangeEntry], ts: float | None = None,
     }
     if meta:
         unit["meta"] = dict(meta)
+    # Preserve the editing document even when another window presses Apply.
+    windows = {getattr(e, "window_id", None) for e in entries}
+    if any(windows):
+        unit.setdefault("meta", {})["window_id"] = (
+            next(iter(windows)) if len(windows) == 1 else None)
+
     # docs/261: the group the unit came from (a segment is one group: segment_change_log), so a
     # record that knows its group -- an agent run's ``agent:<run key>`` -- finds its undo unit.
     # Additive: an older sidecar has no gid and simply finds nothing.

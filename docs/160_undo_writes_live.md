@@ -468,3 +468,57 @@ separate units (harmless, ≤ pre-R-A1). Pinned by
 `tests/test_undo_live.py::TestReplayNeverMergesTwoGestures` (the Round-2 repro,
 mutation-checked). Lesson, again: re-review a fix campaign's own fixes — this
 defect was in the very commit that closed the original of the same bug.
+
+
+## Window confirmation for journal steps
+
+Edits retain their creating window through a different window's Apply.
+Browser journal captures stamp `meta.window_id` from the existing document
+header `X-SM-Window-ID` (also used for multi-window replacement notices).
+The stamp is set app-wide (`routes.bind_edit_window`), so rows an agent card
+brings in through Approve are the pressing window's change. An agent's own
+staging carries no stamp. Agent-only rows that nobody applied (the agent's
+auto-mode Apply, the plan driver) ask in every window. Once a person pressed
+Apply on them in window B, the step is B's change: B's Ctrl+Z does not ask and
+every other window does (the person consciously took those rows, as with
+Approve). A missing stamp is another window. Before undo or redo mutates that step,
+the existing kit confirmation names the change and whether Ctrl+Z writes
+the chip (ON) or stages only (OFF). No changes nothing; Yes repeats the
+request with `ack_prev_window=<unit id>`. That consent covers only the step
+it was asked about: the next step from another window asks again (the server
+accepts the ack only for the unit it names). A reload creates a new window
+id and asks again, including for that document's earlier edits.
+Same-window steps need no window question. A person without a window header
+gets 409 with the question before any write; consent requires a window id.
+
+The age rule is kept for every person, the pressing window's own steps
+included: with "Ctrl+Z writes live" ON, an /undo whose step comes from an
+earlier SM session or is older than 8 h (`_unit_needs_ask`) asks before the
+live write, exactly as before (nothing staged or written until Yes; OFF
+stages without asking). The two rules combine: either one asks, and one
+question names every reason, in its text and in the machine field `reasons`
+(`["other_window"]`, `["age"]` or `["other_window", "age"]`). A same-window
+step asks only the age question (at the live flush); another window's step
+asks before any mutation, and when the age rule also applies (and the presser
+has not already said yes to that age: the tab's standing yes to old edits or
+this step's age yes) that question adds the age sentence and the `age` reason.
+Each reason has its own consent, never borrowed across reasons. The page's
+Yes sends the ack of each reason the question named: `ack_prev_window=<unit
+id>` for the window reason, `ack_prev_session=<unit id>` for the age reason.
+A Yes to the age question alone is also the tab's standing yes to old edits
+(`ack_old_edits=1` on every later /undo, kept in sessionStorage per chip
+folder, the same lifetime the age yes always had). A Yes to a question naming
+both reasons covers both for that step only. So a Yes to an age question
+never lets another window's step through without its question, and a Yes to
+a window question never silences an age question.
+Redo asks only the window question; redo never had the age question (before
+window confirmation, redo asked nothing), and a redo question never names an age.
+An agent never sees either question: an agent /undo with an empty tray (or a
+staged journal step on top) and every agent /redo are refused with 409 by
+the agent ownership guard before any journal step. Agent undo-mine and robot
+policy are unchanged.
+The unseen-edit gate precedes the question; the live door and grouped
+rollback still run after consent, including the class-file-left notice.
+
+Keys: Ctrl+Z undoes and Ctrl+Shift+Z or Ctrl+Y redoes, on every OS; on macOS Cmd+Z and Cmd+Shift+Z
+work the same, and Cmd+Y is not bound (it stays the browser's History key).
