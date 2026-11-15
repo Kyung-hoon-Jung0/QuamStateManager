@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from quam_state_manager.core import safe_io
+from quam_state_manager.core.gate_status import class_file_records as sm_class_files
 
 _SECTIONS = ("qubit_pairs", "qubits")
 
@@ -37,13 +38,6 @@ def set_env_source(fn: Callable[[Path], str | None] | None) -> None:
     """Register how a live folder maps to its chip's environment."""
     global _env_source
     _env_source = fn
-
-
-def sm_class_files(macro: Any) -> list[dict]:
-    """The class files a gate macro records under ``extras.sm_class_files``."""
-    extras = macro.get("extras") if isinstance(macro, dict) else None
-    files = extras.get("sm_class_files") if isinstance(extras, dict) else None
-    return [f for f in files if isinstance(f, dict)] if isinstance(files, list) else []
 
 
 def env_folder(python: str) -> Path:

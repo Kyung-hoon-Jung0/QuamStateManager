@@ -6,7 +6,8 @@ pulse detail of a gate pulse show. Its actions:
 
 * "Edit values" opens the gate's pulses in the pulse detail;
 * "Make active": ``POST /api/pulse/cz-gate/make-active`` ``{pair, gate}``
-  checks the EXISTING gate with the lab's code again (no creates), then sets
+  refuses missing or changed SM-made class files using the status line check,
+  then checks the EXISTING gate with the lab's code again (no creates), then sets
   the pair's ``cz`` alias to ``#./<gate>`` as one ordinary edit (one Ctrl+Z),
   guarded by the store sequence the check ran at, and records the check;
 * "Re-check", on a gate whose class file changed since it was checked:
@@ -350,6 +351,18 @@ def api_cz_gate_make_active():
     if isinstance(alias, dict):
         return _refuse("The pair's cz entry is a gate itself, not a name of one, "
                        "so it cannot be pointed at another gate.", 400, **kw)
+    states = gate_status.class_file_states(macro, _class_path(ctx))
+    problems = []
+    for record, state in states:
+        name = record.get("file")
+        if not isinstance(name, str) or not name:
+            problems.append("Its class file record has no file name. Re-check the gate first.")
+        elif state == "missing":
+            problems.append(f"Save {name} to quam_config first.")
+        elif state == "changed":
+            problems.append(f"{name} changed. Re-check the gate first.")
+    if problems:
+        return _refuse(" ".join(problems), 409, **kw)
     try:
         python_path = R.config_generator.get_selected_env(R.current_app.instance_path)
     except Exception:  # noqa: BLE001

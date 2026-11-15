@@ -85,7 +85,8 @@ quam_config refuse its own file, nor make gates using the class wait again.
   the files are read again (`class_files_moved`): bytes that changed during the check refuse it, nothing is written.
   The entry goes into the planned macro, so the lab check loads the gate as it will be written; a gate class without
   an `extras` slot fails that load and the refusal says why. No source text goes
-  into state. A gate without SM-made classes gets no key. Readers use `gate_status.sm_class_files(macro)`.
+  into state. A gate without SM-made classes gets no key. Readers use `gate_status.class_file_records(macro)`;
+  `sm_class_files` filters file names.
 - A gate with SM-made classes is created only when the lab check loaded the chip and ran the gate (`load_config` and
   `ops` passed): "not checked" refuses it, whatever its class (`cz_gate_create.may_create(..., sm_classes=True)`).
 - The status line compares each record with the bytes of the published file (path from the publication record):
@@ -93,6 +94,8 @@ quam_config refuse its own file, nor make gates using the class wait again.
   record order, joined with ", quam_config/"), "class file changed since the gate was checked", or "not a class SM
   made" (a detail). Scaling: "amplitude scaling: checked" / "not proportional" /
   "not known" (a detail) from the recorded `proportional`.
+- Make active refuses missing or changed class files: save the missing file to quam_config first, or Re-check the gate.
+  A class file record without a file name shows as missing and also refuses Make active.
 - For as long as a gate records a file, its line shows "this chip now needs quam_config/<file>.py; every computer
   that opens this state needs the same file" (dialog, pair detail and pulse detail all render the same partial).
 - "Re-check" (shown on a "changed" line, `POST /api/pulse/cz-gate/recheck`) runs the lab check of the existing gate

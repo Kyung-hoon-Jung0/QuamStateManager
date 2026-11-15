@@ -53,15 +53,16 @@ SCALING_NOT = "amplitude scaling: not proportional"
 SCALING_UNKNOWN = "amplitude scaling: not known"
 
 
-def sm_class_files(macro: Any) -> list[dict]:
-    """The SM-made class files a gate macro records
-    (``extras.sm_class_files``): ``[{qclass, file, sha256, proportional}]``,
-    [] for a gate without them. Entries that are not records are dropped."""
+def class_file_records(macro: Any) -> list[dict]:
+    """Every raw class file record, including records without a file name."""
     extras = macro.get("extras") if isinstance(macro, dict) else None
     files = extras.get("sm_class_files") if isinstance(extras, dict) else None
-    if not isinstance(files, list):
-        return []
-    return [f for f in files if isinstance(f, dict) and isinstance(f.get("file"), str)]
+    return [f for f in files if isinstance(f, dict)] if isinstance(files, list) else []
+
+
+def sm_class_files(macro: Any) -> list[dict]:
+    """The recorded SM-made class files with string file names."""
+    return [f for f in class_file_records(macro) if isinstance(f.get("file"), str)]
 
 
 def file_state(entry: dict, path: str | None) -> str:
@@ -77,8 +78,18 @@ def file_state(entry: dict, path: str | None) -> str:
     return "present" if hashlib.sha256(data).hexdigest() == entry.get("sha256") else "changed"
 
 
-def _class_files(files: list[dict], where) -> dict:
-    states = [(f, file_state(f, where(f.get("qclass")))) for f in files]
+def class_file_states(macro: Any, where) -> list[tuple[dict, str]]:
+    """The status of every record using its published path."""
+    return [(f, file_state(f, where(f.get("qclass")))
+             if isinstance(f.get("file"), str) and f["file"] else "missing")
+            for f in class_file_records(macro)]
+
+
+def _class_files(states: list[tuple[dict, str]]) -> dict:
+    files = [f for f, _ in states]
+    if any(not isinstance(f.get("file"), str) or not f["file"] for f in files):
+        return _item("class", "class file missing", "warn",
+                     "its class file record has no file name")
     gone = [f for f, st in states if st == "missing"]
     moved = [f for f, st in states if st == "changed"]
     if gone:
@@ -222,7 +233,8 @@ def status(store, ctx: dict | None, pair: str, gate: str, *,
                            "The pair's cz alias names another gate or none.", pill=False))
     cls = str(macro.get("__class__") or "")
     files = sm_class_files(macro)
-    file_item = _class_files(files, class_path or (lambda q: None)) if files else None
+    states = class_file_states(macro, class_path or (lambda q: None))
+    file_item = _class_files(states) if states else None
     if file_item is not None and file_item["tone"] == "warn":
         items.append(file_item)
     elif cls and missing_classes and cls in set(missing_classes):
