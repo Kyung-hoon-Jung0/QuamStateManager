@@ -295,3 +295,31 @@ def cz_gates(merged: dict, pair: str) -> list[str]:
     if not isinstance(macros, dict):
         return []
     return [str(g) for g, m in macros.items() if is_cz_macro(str(g), m)]
+
+
+def gates_to_recheck(merged: Any, where) -> list[dict]:
+    """Every gate of the chip, over all pairs, whose status line says
+    :data:`FILE_CHANGED` (the gates that wait for Re-check), in state order:
+    ``[{pair, gate, files}]`` with *files* the recorded file names whose bytes
+    changed. *where* is ``qclass -> path`` as for :func:`status`. Read through
+    :func:`class_file_states`, so a missing file or a bad record is not
+    listed here (the gate's own line says it); a gate that cannot be read is
+    skipped, never raised."""
+    pairs = merged.get("qubit_pairs") if isinstance(merged, dict) else None
+    out: list[dict] = []
+    if not isinstance(pairs, dict):
+        return out
+    for pair, pobj in pairs.items():
+        macros = pobj.get("macros") if isinstance(pobj, dict) else None
+        if not isinstance(macros, dict):
+            continue
+        for gate, macro in macros.items():
+            try:
+                states = class_file_states(macro, where)
+                if not states or _class_files(states)["text"] != FILE_CHANGED:
+                    continue
+                files = [str(f["file"]) for f, st in states if st == "changed"]
+            except Exception:  # noqa: BLE001 (one unreadable gate never hides the rest)
+                continue
+            out.append({"pair": str(pair), "gate": str(gate), "files": files})
+    return out

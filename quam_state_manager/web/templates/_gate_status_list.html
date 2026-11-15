@@ -3,19 +3,25 @@
    gate in the flush body. A pair with no gate keeps the zone, quiet, with the
    one door that creates its first gate. `gate_lines`: web/gate_status_routes.gate_list.
    Make active and Delete answer this whole partial, so the summary and the rows update together;
-   `gate_lines.notice` (a delete's result) sits above the rows, outside any row. An undo or redo
-   (`cellsReverted`) or a sync pull (`stateRestored`) re-fetches the list; while a delete offer is
-   open static/gate-status.js holds that refresh until the offer closes (`gate-list-refresh`). #}
+   `gate_lines.notice` (a delete's result) sits above the rows, outside any row, under the chip-level
+   Re-check notice (`gate_lines.recheck_notice`, _gate_recheck_notice.html), which the same refresh renews. A gate
+   write from elsewhere on the page (the pulse detail's Re-check or delete answers `pulses-changed`), an undo or redo
+   (`cellsReverted`) or a sync pull (`stateRestored`) re-fetches the list; static/gate-status.js skips the
+   `pulses-changed` of the list's own answer (it already re-rendered the list) and, while a delete offer is
+   open, holds the refresh until the offer closes (`gate-list-refresh`). #}
 {% import "_ui.html" as ui %}
 {% if gate_lines and gate_lines.pair %}
 <section class="ui-zone gate-status-list{% if not gate_lines.count %} ui-zone--quiet{% endif %}" aria-label="CZ gates" data-gate-pair="{{ gate_lines.pair }}"
-         hx-get="/pulse/cz-gate/list?pair={{ gate_lines.pair | urlencode }}" hx-trigger="cellsReverted from:document, stateRestored from:document, gate-list-refresh" hx-target="this" hx-swap="outerHTML">
+         hx-get="/pulse/cz-gate/list?pair={{ gate_lines.pair | urlencode }}"
+    hx-trigger="pulses-changed from:body, cellsReverted from:document, stateRestored from:document, gate-list-refresh"
+         hx-target="this" hx-swap="outerHTML">
     <div class="ui-zone-head">
         <h3 class="ui-zone-title">CZ gates</h3>
         <button type="button" class="btn-sm outline" data-czg-open data-czg-pair="{{ gate_lines.pair }}" title="Create a new CZ gate on this pair">+ Gate</button>
         <span class="ui-zone-sum"><span class="ui-count">{{ gate_lines.count }}</span>{% if gate_lines.no_active %}<span class="ui-text-warn" title="The pair's cz alias is not set">no active gate</span>{% endif %}</span>
     </div>
     <div class="ui-zone-body">
+        {% with recheck_notice=gate_lines.recheck_notice %}{% include '_gate_recheck_notice.html' %}{% endwith %}
         {% if gate_lines.notice %}<div class="gate-status-notice" role="status">{{ ui.ui_callout(gate_lines.notice.tone, gate_lines.notice.title, gate_lines.notice.text) }}</div>{% endif %}
         {% if not gate_lines.count %}<p class="ui-zone-empty">No CZ gate on this pair yet. Press + Gate to create one.</p>{% endif %}
         {% set in_list = True %}

@@ -6,8 +6,9 @@
     'use strict';
     if (window.GateStatus) return;
 
-    /* The pair's gate zone re-fetches itself on an undo, a redo or a sync pull.
-       While a delete offer is open in it that refresh waits (the offer would be
+    /* The pair's gate zone re-fetches itself on a gate write from elsewhere on
+       the page (pulses-changed), an undo, a redo or a sync pull. While a
+       delete offer is open in it that refresh waits (the offer would be
        wiped under the user's eyes); it runs once the last offer closes. */
     function offerOpen(zone) {
         return !!(zone && zone.querySelector('.gate-status-slot .gate-delete-offer'));
@@ -44,7 +45,12 @@
         var d = ev.detail || {};
         var zone = d.elt;
         if (!zone || !zone.classList || !zone.classList.contains('gate-status-list')) return;
-        if (d.triggeringEvent && d.triggeringEvent.type === 'gate-list-refresh') return;
+        var t = d.triggeringEvent;
+        if (t && t.type === 'gate-list-refresh') return;
+        /* the list's own answer already re-rendered it: its pulses-changed,
+           fired from a press inside the zone, needs no second fetch */
+        if (t && t.type === 'pulses-changed' && t.target && t.target.nodeType === 1
+            && zone.contains(t.target)) { ev.preventDefault(); return; }
         if (!offerOpen(zone)) return;
         ev.preventDefault();
         zone.setAttribute('data-gate-stale', '1');

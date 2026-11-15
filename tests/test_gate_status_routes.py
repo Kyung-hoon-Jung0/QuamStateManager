@@ -626,4 +626,5 @@ def test_zone_refreshes_on_undo_and_on_a_sync_pull(rig):
     body = rig.get("/pulse/cz-gate/list?pair=q1-q2").get_data(as_text=True)
     trig = body.split('hx-trigger="')[1].split('"')[0]
     assert {t.strip() for t in trig.split(",")} == {
-        "cellsReverted from:document", "stateRestored from:document", "gate-list-refresh"}
+        "pulses-changed from:body", "cellsReverted from:document", "stateRestored from:document",
+        "gate-list-refresh"}

@@ -25369,8 +25369,19 @@ def pulses_page():
             has_pair_drive=has_pair_drive,
             has_found=has_found,
             vt_json=vt_json,
+            recheck_notice=_pulses_recheck_notice(store),
         ),
     )
+
+
+def _pulses_recheck_notice(store):
+    """The chip-level Re-check notice of the Pulses page (never breaks it)."""
+    try:
+        from quam_state_manager.web.gate_status_routes import recheck_notice
+        return recheck_notice(store, _active_ctx())
+    except Exception:  # noqa: BLE001
+        logger.warning("re-check notice failed", exc_info=True)
+        return None
 
 
 @bp.route("/api/pulse/paths")

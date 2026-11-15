@@ -113,11 +113,40 @@ def gate_line(store, ctx, pair: str, gate: str, *, env=None, folder=None,
             "note_tone": note_tone}
 
 
+#: the last sentence of the chip-level Re-check notice
+RECHECK_OTHER_CHIPS = "Other chips that use this file were not checked."
+
+
+def recheck_notice(store, ctx) -> dict | None:
+    """The chip-level notice ``{tone, title, text}`` while gates of this chip
+    wait for Re-check (:func:`core.gate_status.gates_to_recheck`), or None
+    when none waits. It only informs: nothing is refused because of it."""
+    if store is None:
+        return None
+    try:
+        with store._lock:
+            waiting = gate_status.gates_to_recheck(store.merged, _class_path(ctx))
+    except Exception:  # noqa: BLE001 (the notice never breaks a page)
+        logger.warning("re-check notice failed", exc_info=True)
+        return None
+    if not waiting:
+        return None
+    n = len(waiting)
+    title = ("1 gate waits for Re-check" if n == 1 else f"{n} gates wait for Re-check")
+    names = "; ".join(f"{w['pair']} / {w['gate']} ({', '.join(w['files'])})" for w in waiting)
+    text = (f"The class file changed since the gate was checked: {names}. Press Re-check on "
+            f"the gate's status line (in the pair's CZ gates or the gate's pulse detail) to "
+            f"check it with the file as it is now. {RECHECK_OTHER_CHIPS}")
+    return {"tone": "warn", "title": title, "text": text, "gates": waiting}
+
+
 def gate_list(store, ctx, pair: str) -> dict:
-    """The pair detail's gate list: its lines and the one head note."""
+    """The pair detail's gate list: its lines, the one head note and the
+    chip-level Re-check notice."""
     lines = gate_lines(store, ctx, pair)
     return {"pair": pair, "lines": lines, "count": len(lines),
-            "no_active": bool(lines) and not any(ln["active"] for ln in lines)}
+            "no_active": bool(lines) and not any(ln["active"] for ln in lines),
+            "recheck_notice": recheck_notice(store, ctx)}
 
 
 def parts_text(n: int) -> str:
@@ -237,6 +266,16 @@ def cz_gate_list():
         return "", 204
     gl = gate_list(store, R._active_ctx(), pair)
     return render_template("_gate_status_list.html", gate_lines=gl)
+
+
+@bp.route("/pulse/cz-gate/recheck-notice")
+def cz_gate_recheck_notice():
+    """The chip-level Re-check notice of the Pulses page (re-fetched on the
+    same events as the gate list and on ``pulses-changed``); empty when no
+    gate waits, so the slot shows nothing."""
+    store = R._store()
+    notice = recheck_notice(store, R._active_ctx()) if store else None
+    return render_template("_gate_recheck_notice.html", recheck_notice=notice)
 
 
 @bp.route("/pulse/cz-gate/offer-close")
