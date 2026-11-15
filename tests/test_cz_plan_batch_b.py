@@ -131,7 +131,9 @@ def test_no_coupler_table_identity(tmp_path):
     # difference from the previous pin: "q1</span><span" -> "q1</span> / <span").
     # The two-flux row of two standard pulses now carries its length help note (control
     # 40 ns vs target 32 ns): that one cell is the only difference from the previous pin.
-    assert hashlib.sha256(table.encode()).hexdigest() == "094355b3d9c6bed5711eaa0d9a80782a69d787cde0dbe58eb6cc92f83938795d"
+    # Reading order: each row carries data-plan-state; the estimate tier, the validity and a
+    # not-playable reason are kit pills (validity shows its short state plus the words).
+    assert hashlib.sha256(table.encode()).hexdigest() == "df1ef0b97abd770afd373785892db28dd210ed276597d1450ed22bda21262bd5"
 
 
 def test_empty_ledger_explains_data_folder(tmp_path):
