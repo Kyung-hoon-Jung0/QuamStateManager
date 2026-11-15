@@ -52836,6 +52836,8 @@ _SCHEDULER_MUTATOR_ENDPOINTS = {
     # The CZ gate dialog: create stages the gate; check runs the lab's code in the
     # chosen env (a subprocess, like the other env spawners below).
     "main.api_cz_gate_create", "main.api_cz_gate_check",
+    # ... and the agent's doors to the same two functions
+    "agent.cz_gate_create", "agent.cz_gate_check",
     # Add a qubit / a pair from the chip diagram: creates subtrees through the
     # modifier under one group id (a staging door like /field/edit-batch).
     "main.diagram_add_stage",

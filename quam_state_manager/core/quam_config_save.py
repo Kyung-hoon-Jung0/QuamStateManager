@@ -126,11 +126,15 @@ def save_class(python, instance, scope, class_name, *, confirmed_folder=None, fo
                store=None, live=None, history_folder=None, actor="person", runner=None):
     """Discover, confirm, freeze, check, publish and record one class file.
 
+    *actor* is ``person``, ``agent``, or the agent's own name ``by_<name>``
+    (the agent door records which agent wrote the file).
+
     A caller first omits confirmed_folder to obtain the reviewable destination
     and gate list. It then sends that exact absolute folder back. Source bytes
     and current chip copies are never supplied by the caller.
     """
-    if actor not in ("person", "agent"):
+    if actor not in ("person", "agent") and not (isinstance(actor, str) and actor.startswith("by_")
+                                                 and len(actor) > 3):
         raise D.DraftError("The author must be a person or agent.")
     if not config_generator.known_interpreter(python, instance):
         raise D.DraftError("Choose a Python environment SM found on this computer.")

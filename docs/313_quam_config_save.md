@@ -146,3 +146,24 @@ a thread with no app context (the Auto Calibrate writer); when no open chip writ
 tell which environment the chip uses, never that none is selected.
 Tests: `tests/test_class_file_live_check.py`.
 
+
+## Agent
+
+A terminal agent (MCP bridge, `quam_state_manager/mcp.py`) builds a gate through the person's own functions:
+
+- `class_file_save` -> `/api/agent/class-file/save` calls `pulse_class_page.save_config`, the function behind
+  `/pulse-class/save-config`; the history line names the agent (`by_claude`, `by_codex`, `agent`). The payload's
+  `python` is dropped: the chip's chosen env runs the import. A saved file writes a journal line carrying the
+  restart notice (`RESTART_NEW` / `RESTART_EDIT`), which is how the person reads it (the cockpit's journal).
+- `cz_gate_plan` / `cz_gate_check` / `cz_gate_create` -> `/api/agent/cz-gate/{plan,check,create}` call
+  `cz_gate_routes.plan_answer` / `check_answer` / `create_answer`, the bodies of the dialog's routes. Every
+  refusal reads the same words; the check token is the same token. The person's `/api/pulse/cz-gate/create` and
+  `make-active` stay person-only.
+- Create stages the gate into the tray under the agent's actor and never writes the chip. The answer adds one card
+  per gate: the pulses made, the check's timeline data, the gate's status line, and the restart notice of a class
+  file an agent saved in this SM process. A journal line names the staged gates.
+- The chip is written only by `apply_to_live`, so the live-write check above and the unseen-edit gate apply in
+  auto mode too. The mode is the existing `routes._agent_apply_mode` (plan, then session, then the chip's
+  default). Outside auto mode a tray with created rows is refused (`agent_structural_rows`): no approval card
+  is made; the gate waits for the person's Apply.
+- `cz_gate_check`, `cz_gate_create` and `class_file_save` are write tools, hidden with `SM_MCP_MODE=readonly`.
