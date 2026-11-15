@@ -130,7 +130,7 @@ def test_populate_coupler_model_selfcheck():
 
 
 @pytest.mark.parametrize("gate", ["cz_tunable", "cz_coupler"])
-def test_build_to_cz_plan_and_exported_recipe(tmp_path, gate):
+def test_build_to_cz_plan_and_exported_recipe(tmp_path, gate, monkeypatch):
     if gate == "cz_tunable":
         pytest.importorskip("quam")
         pytest.importorskip("quam_builder")
@@ -144,6 +144,11 @@ def test_build_to_cz_plan_and_exported_recipe(tmp_path, gate):
         python = str(Path(sys.prefix).parent / "qsm_official_ext" / "python.exe")
         if not Path(python).exists():
             pytest.skip("Coupler-only integration requires an environment with the extension")
+        # The build runs this repository's own extension source, never a copy
+        # the environment may have installed from another checkout.
+        ext = Path(__file__).resolve().parents[1] / "extensions" / "qsm_quam_ext"
+        monkeypatch.setenv("PYTHONPATH", os.pathsep.join(
+            [str(ext)] + [x for x in [os.environ.get("PYTHONPATH")] if x]))
     result = cg.run_generator(python, "build", s, tmp_path / "built", timeout=300)
     assert result.get("ok"), result
     state = json.loads((tmp_path / "built/state.json").read_text(encoding="utf-8"))
