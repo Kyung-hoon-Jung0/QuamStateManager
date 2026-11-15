@@ -16,6 +16,7 @@ Lower a count when lines are re-wrapped (a count that went down is reported, for
    Without that NUL the file is judged as text, including files with a -diff attribute.
    A text file that is not UTF-8 or a per-file git error is a failure naming the file.
 """
+import os
 import subprocess
 import warnings
 from pathlib import Path
@@ -65,8 +66,9 @@ def judge(rel: str, found: list[int], most: int, noun: str = f"lines over {LIMIT
 
 
 def test_judge_fails_a_count_that_grew_and_reports_one_that_went_down():
-    with pytest.raises(AssertionError):
+    with pytest.raises(BaseException, match="x.md") as caught:
         judge("x.md", [3, 9], 1)
+    assert caught.type is AssertionError
     with pytest.warns(UserWarning, match="lower the baseline to 1"):
         judge("x.md", [3], 2)
     with warnings.catch_warnings():
@@ -117,10 +119,15 @@ def test_no_new_non_ascii_line(rel):
     judge(rel, found, MAX_NON_ASCII_LINES[rel], "lines with a non-ASCII character")
 
 
+def _git_env() -> dict[str, str]:
+    """Keep Git diagnostics stable even when the caller uses a translated locale."""
+    return {**os.environ, "LC_ALL": "C", "LANGUAGE": ""}
+
+
 def _git_bytes(*args: str, rel: str = "", main_probe: bool = False,
                repository_probe: bool = False, merge_base_probe: bool = False) -> bytes:
     try:
-        done = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, timeout=30)
+        done = subprocess.run(["git", *args], cwd=ROOT, env=_git_env(), capture_output=True, timeout=30)
     except FileNotFoundError:
         pytest.skip("git is absent: executable not found")
     except (OSError, subprocess.SubprocessError) as exc:
@@ -200,8 +207,9 @@ def test_gitlink_paths_reads_destination_modes():
 
 def test_binary_detection_checks_boms_and_the_nul_boundary():
     for bom in (b"\xff\xfe", b"\xfe\xff", b"\xff\xfe\0\0", b"\0\0\xfe\xff"):
-        with pytest.raises(pytest.fail.Exception, match="note.md: not UTF-8 \\(UTF-"):
+        with pytest.raises(BaseException, match="note.md: not UTF-8 \\(UTF-") as caught:
             is_binary("note.md", bom + b"text")
+        assert caught.type is pytest.fail.Exception
     assert is_binary("image.png", b"\x89PNG\r\n\x1a\n\0")
     assert is_binary("data", b"a" * 7999 + b"\0")
     assert not is_binary("text", b"a" * 8000 + b"\0")
@@ -213,10 +221,12 @@ def test_git_file_errors_fail_with_the_path(monkeypatch):
         return subprocess.CompletedProcess(args, 128, b"", b"bad object")
 
     monkeypatch.setattr(subprocess, "run", failed)
-    with pytest.raises(pytest.fail.Exception, match="note.md.*bad object"):
+    with pytest.raises(BaseException, match="note.md.*bad object") as caught:
         _git_bytes("show", "HEAD:note.md", rel="note.md")
-    with pytest.raises(pytest.fail.Exception, match="branch metadata.*bad object"):
+    assert caught.type is pytest.fail.Exception
+    with pytest.raises(BaseException, match="branch metadata.*bad object") as caught:
         _git_bytes("rev-parse", "--verify", "--quiet", "main^{commit}", main_probe=True)
+    assert caught.type is pytest.fail.Exception
     monkeypatch.setattr(subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 1, b"", b""))
     with pytest.raises(pytest.skip.Exception, match="no main ref"):
         _git_bytes("rev-parse", "--verify", "--quiet", "main^{commit}", main_probe=True)
@@ -233,8 +243,9 @@ def test_git_launch_errors_only_skip_for_an_absent_executable(monkeypatch):
         _git_bytes("show", "HEAD:note.md", rel="note.md")
     for error in (PermissionError("denied"), subprocess.TimeoutExpired("git", 30)):
         monkeypatch.setattr(subprocess, "run", raises(error))
-        with pytest.raises(pytest.fail.Exception, match="git failed for note.md"):
+        with pytest.raises(BaseException, match="git failed for note.md") as caught:
             _git_bytes("show", "HEAD:note.md", rel="note.md")
+        assert caught.type is pytest.fail.Exception
 
 
 def test_new_text_is_ascii_and_within_120_characters():
@@ -277,22 +288,74 @@ def test_new_text_is_ascii_and_within_120_characters():
     assert not bad, f"new text with a non-ASCII character or a line over {LIMIT} characters: {bad}"
 
 
+def _fixture_git_env(root: Path) -> dict[str, str]:
+    """Keep disposable repositories independent of system and global Git configuration."""
+    empty_config = root / ".empty-gitconfig"
+    empty_config.write_bytes(b"")
+    return {**_git_env(), "GIT_CONFIG_GLOBAL": str(empty_config), "GIT_CONFIG_SYSTEM": str(empty_config)}
+
+
+@pytest.fixture
+def isolated_git(tmp_path, monkeypatch):
+    env = _fixture_git_env(tmp_path)
+    for key in ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"):
+        monkeypatch.setenv(key, env[key])
+
+
 def _fixture_git(root: Path, *args: str) -> bytes:
-    """Run git in a disposable fixture, without depending on global author configuration."""
-    return subprocess.run(
-        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", *args],
-        cwd=root, capture_output=True, check=True, timeout=30,
-    ).stdout
+    """Isolate disposable Git repositories from machine configuration and hooks."""
+    env = _fixture_git_env(root)
+
+    def run(*command):
+        return subprocess.run(
+            ["git", "-c", "core.hooksPath=", *command], cwd=root, env=env,
+            capture_output=True, check=True, timeout=30,
+        ).stdout
+
+    if args[0] == "commit":
+        run("config", "--local", "user.name", "Test")
+        run("config", "--local", "user.email", "test@example.invalid")
+    return run(*args)
 
 
-def test_new_text_skips_outside_a_repository(tmp_path, monkeypatch):
+def test_fixture_git_ignores_machine_configuration(tmp_path, monkeypatch):
+    config = tmp_path / "machine-config"
+    config.write_text('[commit]\n    gpgsign = true\n[core]\n    hooksPath = /unreadable/hooks\n')
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(config))
+    monkeypatch.setenv("BEADS_GATE_TEST_BD", "C:/nonexistent/bd.exe")
+    _fixture_git(tmp_path, "init", "-b", "main")
+    hooks = tmp_path / "hooks"
+    hooks.mkdir()
+    (hooks / "pre-commit").write_text("#!/bin/sh\nexit 1\n", encoding="ascii")
+    _fixture_git(tmp_path, "config", "--local", "core.hooksPath", str(hooks))
+    _fixture_git(tmp_path, "commit", "--allow-empty", "-m", "Initial")
+    assert _fixture_git(tmp_path, "config", "--local", "user.name").strip() == b"Test"
+    assert _fixture_git(tmp_path, "config", "--local", "user.email").strip() == b"test@example.invalid"
+
+
+def test_git_diagnostics_use_a_fixed_locale(monkeypatch):
+    monkeypatch.setenv("LC_ALL", "de_DE.UTF-8")
+    monkeypatch.setenv("LANGUAGE", "de")
+
+    def outside(*args, **kwargs):
+        assert kwargs["env"]["LC_ALL"] == "C"
+        assert kwargs["env"]["LANGUAGE"] == ""
+        return subprocess.CompletedProcess(args, 128, b"", b"fatal: not a git repository")
+
+    monkeypatch.setattr(subprocess, "run", outside)
+    with pytest.raises(pytest.skip.Exception, match="not a git repository"):
+        _git_bytes("rev-parse", "--git-dir", repository_probe=True)
+
+
+def test_new_text_skips_outside_a_repository(tmp_path, monkeypatch, isolated_git):
     monkeypatch.setattr(f"{__name__}.ROOT", tmp_path)
     monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
     with pytest.raises(pytest.skip.Exception, match="not a git repository"):
         test_new_text_is_ascii_and_within_120_characters()
 
 
-def test_new_text_skips_without_main(tmp_path, monkeypatch):
+def test_new_text_skips_without_main(tmp_path, monkeypatch, isolated_git):
     _fixture_git(tmp_path, "init", "-b", "topic")
     _fixture_git(tmp_path, "commit", "--allow-empty", "-m", "Initial")
     monkeypatch.setattr(f"{__name__}.ROOT", tmp_path)
@@ -300,7 +363,7 @@ def test_new_text_skips_without_main(tmp_path, monkeypatch):
         test_new_text_is_ascii_and_within_120_characters()
 
 
-def test_new_text_skips_without_a_merge_base_in_a_shallow_clone(tmp_path, monkeypatch):
+def test_new_text_skips_without_a_merge_base_in_a_shallow_clone(tmp_path, monkeypatch, isolated_git):
     source = tmp_path / "source"
     source.mkdir()
     _fixture_git(source, "init", "-b", "main")
@@ -316,9 +379,10 @@ def test_new_text_skips_without_a_merge_base_in_a_shallow_clone(tmp_path, monkey
         test_new_text_is_ascii_and_within_120_characters()
 
 
-def test_git_missing_file_in_a_repository_fails_with_the_path(tmp_path, monkeypatch):
+def test_git_missing_file_in_a_repository_fails_with_the_path(tmp_path, monkeypatch, isolated_git):
     _fixture_git(tmp_path, "init", "-b", "main")
     _fixture_git(tmp_path, "commit", "--allow-empty", "-m", "Initial")
     monkeypatch.setattr(f"{__name__}.ROOT", tmp_path)
-    with pytest.raises(pytest.fail.Exception, match="git failed for note.md"):
+    with pytest.raises(BaseException, match="git failed for note.md") as caught:
         _git_bytes("show", "HEAD:note.md", rel="note.md")
+    assert caught.type is pytest.fail.Exception

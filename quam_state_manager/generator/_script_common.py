@@ -4,8 +4,10 @@ Imported ONLY by the sibling scripts (``run_build.py``,
 ``run_generate_config.py``) that run under an *external* user-selected
 interpreter: it may use only the Python standard library. The one
 exception to "never imported by ``quam_state_manager``" is the time of
-flight grid rule (``tof_on_grid`` and its two note sentences), which
-``core.output_timing`` re-exports so the build and SM share one rule. The
+flight grid rule and helpers, re-exported by ``core.output_timing``:
+``tof_follows_note``, ``tof_grid_only``, ``tof_kept_note``, ``tof_not_moved_note``, ``tof_on_grid``,
+``tof_reference_not_number_note``, ``tof_reference_note``, ``tof_rounded_note``.
+The build and SM share these rules and sentences. The
 scripts add this directory to ``sys.path`` defensively before importing (CPython normally prepends the
 script's own directory, but ``PYTHONSAFEPATH`` / ``-P`` suppress that).
 
