@@ -56,6 +56,24 @@ t = honest(chips({ status_chip: 'Reproduced with the current analysis code', cli
 assert.deepStrictEqual(t, ['Reproduced with the current analysis code', 'proposed, not applied'], 'a replot keeps its reproduction status'); n++;
 t = honest(chips({ status_chip: 'raw data', clickable: null, display_only_reason: 'this run wrote no state: click-to-apply off' }), 'display only');
 assert.deepStrictEqual(t, ['raw data', 'not verified on this run'], 'a display-only figure is not verified, reason on hover'); n++;
+assert.deepStrictEqual(hints(), ['this run wrote no state: click-to-apply off'], 'no click contract: the hint is the payload own display-only reason, never the verify rule'); n++;
+// a raw map mounted with no contract and its own reason (the raw data viewer)
+const rawReason = 'no node fit to compare; the map shows the stored data';
+chips({ status_chip: 'raw data', display_only_reason: rawReason });
+assert.deepStrictEqual(hints(), [rawReason], 'raw map without a contract shows its reason'); n++;
+assert.ok(!hints().includes(w.MapTools.VERIFY_HINT), 'raw map never promises a verification'); n++;
+t = honest(chips({ status_chip: 'raw data' }), 'no contract, no reason');
+assert.deepStrictEqual(hints(), [], 'no contract and no reason: no hint line at all'); n++;
+chips({ clickable: { n_verified: 0, targets: [{ path: 'qubits.q0.f', evidence_tier: 'applied' }] } });
+assert.deepStrictEqual(hints(), [w.MapTools.VERIFY_HINT], 'a contract with zero writes states the verify rule'); n++;
+chips({ clickable: { n_verified: 1, targets: [{ path: 'qubits.q0.f', evidence_tier: 'applied' }, { path: 'qubits.q0.g', evidence_tier: 'applied' }] } });
+assert.deepStrictEqual(hints(), [w.MapTools.PARTIAL_HINT], 'writes that miss a parameter say only some were saved'); n++;
+chips({ clickable: { n_verified: 1, targets: [{ path: 'qubits.q0.f', evidence_tier: 'applied' }] } });
+assert.deepStrictEqual(hints(), [], 'a remount onto a verified map leaves no hint behind'); n++;
+tile._mapTools.destroy(); delete tile._mapTools;
+chips({ clickable: { verification_note: note } });
+tile._mapTools.destroy(); delete tile._mapTools;
+assert.deepStrictEqual(hints(), [], 'destroy removes the hint'); n++;
 
 // real gated recipe payloads from the server (the Python driver passes them in)
 if (process.argv[2]) {
