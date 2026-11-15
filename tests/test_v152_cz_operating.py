@@ -90,7 +90,7 @@ def test_f4_extrapolated_estimates_are_labelled_and_warnings_coloured(tmp_path):
     (folder / "wiring.json").write_text("{}")
     client = _client(tmp_path, folder)
     html = client.get("/cz-plan").get_data(as_text=True)
-    assert 'czp-warn-text">outside the quadratic range' in html
+    assert 'ui-pill--warn" data-validity-class="warn">outside range</span> <small class="muted" data-validity-words="1">outside the quadratic range' in html
     assert "extrapolated estimate" in html
     s["qubits"]["q0"].update(model_qubit())
     s["qubits"]["q0"]["z"]["operations"] = {"flux": "#/shared/pulse"}

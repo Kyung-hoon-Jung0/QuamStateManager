@@ -1,3 +1,5 @@
+{# The one number format of this page: cells, inputs and the zone summaries all print through it. #}
+{% macro plain_number(v) -%}{%- if v is float and (v | abs >= 1e6 or (0 < v | abs < 1e-3)) -%}{{ '%.6e' | format(v) }}{%- else -%}{{ v }}{%- endif -%}{%- endmacro %}
 {% set modified_map = modified_map | default({}) %}
 {% set focus_path = focus_path | default("") %}
 {% set inspector_type = "pair" %}
@@ -6,10 +8,27 @@
 {% set inspector_inactive = pair.is_active is defined and not pair.is_active %}
 {% include '_inspector_header.html' %}
 <article class="pair-detail">
+    {% include '_gate_status_list.html' %}
 
     {% for section in sections %}
-    <details open class="detail-section">
-        <summary class="section-header">{{ section.name }}</summary>
+    {% set gate = namespace(prefix='', warning=false) %}
+    {% for p in section.props %}
+        {% if p.key.endswith('_amplitude') and not p.key.endswith('_coupler_amplitude') %}{% set gate.prefix = p.key[:-10] %}{% endif %}
+        {% if p.key.endswith('_length') and not p.key.endswith(('_flat_length', '_smoothing_length', '_padding_length')) and not gate.prefix %}{% set gate.prefix = p.key[:-7] %}{% endif %}
+        {% if p.dangling or (p.fid_note and p.fid_note.conflict) %}{% set gate.warning = true %}{% endif %}
+    {% endfor %}
+    <details {% if gate.prefix %}data-detail-zone="{{ gate.prefix }}"{% if gate.warning %} data-detail-warning{% endif %} {% endif %}{% if not gate.prefix or gate.warning %}open {% endif %}class="{% if gate.prefix %}ui-zone ui-zone--fold {% endif %}detail-section">
+        <summary class="{{ 'ui-zone-head' if gate.prefix else 'section-header' }}">
+            {% if gate.prefix %}<h3 class="ui-zone-title">{{ section.name }}</h3>
+            <span class="ui-panel-sum">
+                {% for field, label in [('amplitude', 'Amplitude'), ('length', 'Length')] %}
+                    {% set values = section.props | selectattr('key', 'equalto', gate.prefix ~ '_' ~ field) | list %}
+                    {% set p = values[0] if values else none %}
+                    {{ label }}: {% if p and p.value is number and p.value is not boolean and not p.is_self_ref and not p.dangling %}{% set human = p.value | qty(p.unit_key or p.key, 'full') %}{{ human if human else plain_number(p.value) }}{% else %}not available{% endif %}{% if not loop.last %}; {% endif %}
+                {% endfor %}
+            </span>{% else %}{{ section.name }}{% endif %}
+        </summary>
+        {% if gate.prefix %}<div class="ui-zone-body">{% endif %}
         <table class="prop-table ui-pair-props" role="grid">
             <thead>
                 <tr>
@@ -47,7 +66,7 @@
                               data-inject="chip-freq">
                             <input type="hidden" name="dot_path" value="{{ p.dot_path }}">
                             <input type="text" name="value" autocomplete="off" class="edit-input{% if is_modified %} edit-input-modified{% endif %}"
-                                   value="{% if p.value is none %}{% elif p.value is float and (p.value|abs >= 1e6 or (0 < p.value|abs < 1e-3)) %}{{ '%.6e' | format(p.value) }}{% else %}{{ p.value }}{% endif %}"
+                                   value="{% if p.value is none %}{% else %}{{ plain_number(p.value) }}{% endif %}"
                                    placeholder="{% if p.value is none %}not set{% endif %}"
                                    title="{% if is_modified %}Modified — was: {{ modified_map[p.dot_path] }}{% set _d = modified_map[p.dot_path] | value_delta(p.value) %}{% if _d %} (difference {{ _d.text }}{% if _d.pct_text %}, {{ _d.pct_text }}{% endif %}){% endif %}{% else %}Press Enter to stage this edit (then Save to working state / Apply to live). Current: {{ p.value }}{% if _stored %} (raw {{ _stored }}){% endif %}{% endif %}">
                             <button type="button" class="field-hist-btn" tabindex="-1"
@@ -78,7 +97,7 @@
                         <span class="ptr-inline pointer-badge" title="{{ p.raw }} — resolves to the {{ p.ptr_name }} entity ({{ p.value | length }} fields)">{{ p.raw }}</span>
                         {% else %}<small class="muted">[{{ p.value | length }} items]</small>{% endif %}
                     {% elif p.value is number and p.value is float and (p.value|abs >= 1e6 or (0 < p.value|abs < 1e-3)) %}
-                        {{ "%.6e" | format(p.value) }}
+                        {{ plain_number(p.value) }}
                         {% set _human = p.value | qty(_ukey, 'full') %}
                         {% if _human %}<span class="unit-preview muted">{{ _human }}</span>{% endif %}
                         {% if p.is_pointer %}<span class="ptr-inline pointer-badge" title="{{ p.raw }}">{{ p.raw }}</span>{% endif %}
@@ -95,10 +114,10 @@
             {% endfor %}
             </tbody>
         </table>
+        {% if gate.prefix %}</div>{% endif %}
     </details>
     {% endfor %}
 
-    {% include '_gate_status_list.html' %}
 
     {% if gi %}
     <details open class="detail-section gi-section">

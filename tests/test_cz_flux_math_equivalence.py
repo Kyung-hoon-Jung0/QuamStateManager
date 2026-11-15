@@ -7,6 +7,7 @@ import copy
 import functools
 import json
 import math
+import re
 from pathlib import Path
 import sys
 
@@ -83,7 +84,9 @@ def assert_equivalent(actual, expected, path, hz_abs_tol=0.0):
     elif isinstance(expected, str) and expected.endswith(_OLD_MISSING):
         # the one combined reason now names what is really missing (prefix kept)
         head = expected[:-len(_OLD_MISSING)]
-        assert isinstance(actual, str) and actual.startswith(head)             and actual[len(head):] in _NEW_MISSING, (path, actual, expected)
+        tail = actual[len(head):] if isinstance(actual, str) else None
+        assert isinstance(actual, str) and actual.startswith(head) and (
+            tail in _NEW_MISSING or _LEAF_MISSING.fullmatch(tail)), (path, actual, expected)
     else:
         assert actual == expected, (path, actual, expected)
 
@@ -91,6 +94,9 @@ def assert_equivalent(actual, expected, path, hz_abs_tol=0.0):
 _OLD_MISSING = "f_01 or the operation amplitude is missing"
 _NEW_MISSING = {"f_01 is missing", "the operation amplitude is missing",
                 "f_01 and the operation amplitude are missing"}
+# with f_01 present, an unreadable amplitude names its own leaf
+# (cz_gate_plan.unreadable_amplitude) instead of "the operation amplitude"
+_LEAF_MISSING = re.compile(r"[\w.\-]+\.amplitude is missing or not a number")
 
 
 def test_pre_extraction_fixture_outputs_are_identical():
@@ -146,10 +152,64 @@ def test_pre_extraction_fixture_outputs_are_identical():
                     exp_row["duration_note"] = got_row["duration_note"]
                     if isinstance(exp_plan, dict) and isinstance(got_plan, dict) and "duration_minus_t_p_ns" in exp_plan:
                         exp_plan["duration_minus_t_p_ns"] = got_plan.get("duration_minus_t_p_ns")
+                # A two-flux row with no stored duration now reads its played span:
+                # the longer of the two lines' played lengths. Same rows only; the
+                # duration must be that maximum, as its own note states it.
+                span = re.match(r"(\d+(?:\.\d+)?) ns played span \(control (\d+(?:\.\d+)?) ns, "
+                                r"target (\d+(?:\.\d+)?) ns", str(got_row.get("duration_note")))
+                if (exp_row.get("duration_ns") is None and exp_row.get("kind") == "two-flux"
+                        and str(exp_row.get("duration_note")).startswith("unknown: no play-time duration override")
+                        and span):
+                    total, ctl, tgt = (float(g) for g in span.groups())
+                    assert got_row["duration_ns"] == total == max(ctl, tgt), exp_row["path"]
+                    exp_row["duration_ns"] = got_row["duration_ns"]
+                    exp_row["duration_note"] = got_row["duration_note"]
+                    if isinstance(exp_plan, dict) and isinstance(got_plan, dict) and "duration_minus_t_p_ns" in exp_plan:
+                        exp_plan["duration_minus_t_p_ns"] = got_plan.get("duration_minus_t_p_ns")
                 # The recheck's wording item adds only `words` to the nearest
                 # resonance, recomputed here from the PINNED name and distance in
                 # the frame of the row's single moving line (meaning pinned in
                 # test_gate_inspector); name, delta and distance stay exact.
+                # Each line now flags whether its amplitude leaf holds text (such
+                # an amplitude is named, never played). Every captured fixture
+                # amplitude is numeric, so the flag is pinned False here; its
+                # meaning is pinned in the CZ plan tests.
+                for line in exp_row["lines"]:
+                    line["amplitude_text"] = False
+                # A two-flux row now states each line's played length and the pair's
+                # lengths (meaning pinned in test_cz_plan_d3_d7). Display data only:
+                # taken from the output, but each role's length must be the one its
+                # line states, so the two views cannot disagree.
+                if exp_row.get("kind") == "two-flux" and "two_flux_lengths" not in exp_row \
+                        and "two_flux_lengths" in got_row:
+                    tfl = got_row["two_flux_lengths"]
+                    exp_row["two_flux_lengths"] = tfl
+                    for exp_ln, got_ln in zip(exp_row["lines"], got_row["lines"]):
+                        if "played_length_ns" in got_ln and "played_length_ns" not in exp_ln:
+                            if isinstance(tfl, dict) and exp_ln["role"] in tfl:
+                                assert got_ln["played_length_ns"] == tfl[exp_ln["role"]], exp_row["path"]
+                            exp_ln["played_length_ns"] = got_ln["played_length_ns"]
+                # The two-flux length check adds its own notes (a length mismatch,
+                # an underivable length, a missing or bad sampling rate; meaning pinned
+                # in test_cz_plan_d3_d7 and test_cz_plan_honest_rows). Only those
+                # sentences may be new: with them taken out, every older note stays
+                # exact and in order.
+                if exp_row.get("kind") == "two-flux" and isinstance(exp_row.get("notes"), list):
+                    tfl = got_row.get("two_flux_lengths")
+                    mismatch = tfl.get("mismatch") if isinstance(tfl, dict) else None
+                    names = [ln["name"] for ln in exp_row["lines"]]
+                    length_notes = {"two-flux length check not made: the played length of "
+                                    + " and ".join(sub) + " could not be derived"
+                                    for sub in (names, names[:1], names[1:]) if sub}
+                    length_notes.add("two-flux lengths at the default 1 GS/s; no sampling_rate stored")
+                    length_notes |= {f"two-flux length check not made: {ln['qubit_path']}"
+                                     ".z.opx_output.sampling_rate is not a positive number"
+                                     for ln in exp_row["lines"]}
+                    if mismatch:
+                        length_notes.add(mismatch)
+                    got_notes = list(got_row.get("notes") or [])
+                    if not set(exp_row["notes"]) & length_notes and                             [n for n in got_notes if n not in length_notes] == exp_row["notes"]:
+                        exp_row["notes"] = got_notes
                 exp_near = exp_row.get("nearest")
                 if isinstance(exp_near, dict):
                     movers = [ln["role"] for ln in exp_row["lines"] if ln.get("moves")]
@@ -163,14 +223,16 @@ def test_pre_extraction_fixture_outputs_are_identical():
                 # One per-gate fidelity per macro (query.pair_gate_fidelity) adds only
                 # which key the value came from, its physicality and any disagreeing key;
                 # the value and load id stay pinned. Their meaning is pinned in
-                # test_pair_gate_fidelity.
+                # test_pair_gate_fidelity. The pick's wording (`basis_text`, one
+                # sentence naming why this key was read) is display text only,
+                # pinned in test_cz_gate_plan.
                 exp_fid, got_fid = exp_row.get("fidelity"), got_row.get("fidelity")
                 if isinstance(exp_fid, dict) and isinstance(got_fid, dict):
                     for name, entry in exp_fid.items():
                         got = got_fid.get(name)
                         if isinstance(entry, dict) and isinstance(got, dict):
                             added = set(got) - set(entry)
-                            assert added <= {"key", "physical", "conflict"}, (record["call"], sorted(added))
+                            assert added <= {"key", "physical", "conflict", "basis_text"}, (record["call"], sorted(added))
                             for key in added:
                                 entry[key] = got[key]
         model = None

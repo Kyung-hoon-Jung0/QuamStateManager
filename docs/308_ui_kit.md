@@ -115,7 +115,7 @@ token gradients (`--ui-chevron`), so it follows light, dark and QM.
 | select | `ui_select(options, value, label, id, name, block, disabled, invalid)` / `UI.select(spec)` | the class sits **on the native `<select>`**: `<select class="ui-select">`. No wrapper: the chevron is a background, so `label > select`, form serialisation and every existing select handler keep working. As wide as its longest option + the chevron lane (min `--ui-ctl-min-w`, `max-width: 100%`); `ui-select--block` fills a form column. |
 | input | `ui_input(value, type, label, id, name, num, unit, placeholder, block, disabled, invalid)` / `UI.input(spec)` | `<input class="ui-input">` (text / search / number); `ui-input--num` right-aligns with tabular numbers and hides the spinner; `ui-input--block` fills. A unit sits inside the box: `<span class="ui-input-unit"><input class="ui-input ui-input--num"><span class="ui-input-unit-text">ns</span></span>`; the wrapper also takes `--block`, `--invalid`, `--disabled` (the macro sets them). Numbers are mono and tabular. |
 | field | `ui_field(label, control, hint, error, source, inline, id)` / `UI.field(spec)` | `ui-field` > `ui-field-head` (`ui-field-label` + an optional `ui-badge` source tag such as "copied" / "default") > the control > `ui-field-hint` > `ui-field-error` (`role=alert`). `ui-field--inline` puts the label left in a `--ui-field-label-w` column (property forms). `ui-field-stack` stacks fields; `ui-field-grid` still lays short fields side by side. The older `<label class="ui-field">` markup keeps working. Every field has an id: the control's `id`, else a generated one (`ui_uid()` in Jinja, a counter in `ui.js`). An input or select is named by `<label for>` and described by the hint and the error (`aria-describedby` = `<id>-hint <id>-error`), so they are never part of its name. A group control (segmented, menu, toolbar) is named by the label TEXT (`<span class="ui-field-label" id="<id>-flabel">` + `aria-labelledby`); clicking that text does nothing. |
-| menu | `ui_menu(id, items, label, kind, value, trigger, placeholder, block, end, up)` / `UI.menu(spec)` | `ui-menu` > `button.ui-menu-trigger` + `ui-menu-list` of `ui-option` rows (`ui-option-title`, optional `ui-option-desc`; a disabled row shows its `reason` there). `kind: "pick"` = `aria-haspopup=listbox`, rows `role=option` + `aria-selected`, a check mark (`ui-option-check`), the trigger looks like a select and shows the picked title; it is named by `aria-labelledby` = a hidden label span (`<id>-label`) + the value span (`<id>-value`), so a screen reader hears "Pair, q1-q2". An item without `value` carries no `data-value`. The menu `id` must be a non-empty string without whitespace (it is a token in `aria-labelledby`); the macro and `UI.menu` refuse any other with the same error. `kind: "action"` = `aria-haspopup=menu`, rows `role=menuitem`, the trigger is a `btn-sm` button. `{sep: true}` = `ui-menu-sep`. |
+| menu | `ui_menu(id, items, label, kind, value, trigger, placeholder, block, end, up)` / `UI.menu(spec)` | `ui-menu` > `button.ui-menu-trigger` + `ui-menu-list` of `ui-option` rows (`ui-option-title`, optional `ui-option-desc`; a disabled row shows its `reason` there; an item `note` adds a second `ui-option-desc` line, also under the title). `kind: "pick"` = `aria-haspopup=listbox`, rows `role=option` + `aria-selected`, a check mark (`ui-option-check`), the trigger looks like a select and shows the picked title; it is named by `aria-labelledby` = a hidden label span (`<id>-label`) + the value span (`<id>-value`), so a screen reader hears "Pair, q1-q2". An item without `value` carries no `data-value`. The menu `id` must be a non-empty string without whitespace (it is a token in `aria-labelledby`); the macro and `UI.menu` refuse any other with the same error. `kind: "action"` = `aria-haspopup=menu`, rows `role=menuitem`, the trigger is a `btn-sm` button. `{sep: true}` = `ui-menu-sep`. |
 | toolbar | `ui_toolbar(items, label)` / `UI.toolbar(items, label)` | `<div class="ui-toolbar" role="toolbar">`: inline, small gaps, wraps, nothing stretches; ArrowLeft / ArrowRight / Home / End move focus between its controls (a text field, a select or a radio keeps its own arrow keys; every control stays a Tab stop); items are specs plus `{part: "button", ...}`, `{part: "toolbar-sep"}` (`ui-toolbar-sep`), `{part: "toolbar-spacer"}` (`ui-toolbar-spacer`, pushes the rest right). |
 
 **Where the behaviour lives.** `static/ui-menu.js` is a **core script** of `base.html` (every page,
@@ -156,6 +156,10 @@ Uses: `static/chip-status.js` (the Chip Status metric segmented control), `stati
 `templates/_pulse_gaussian_cz.html` (the CZ pulse shape choice and its action row),
 `static/port-play.js` and the `ui-actions` rows of the diagram, diagnostics, explorer, history and
 bulk-edit templates. One control height across the app is intended.
+
+`ui-segmented-bar` is the one wrapper for a segmented control that sits directly above a list or table (the
+Pulses channel tabs): it keeps the space the older tab rows left below them (`margin: 0 0 var(--ui-gap-3)`, 0.75rem).
+The segmented control itself stays flush (`margin-bottom: 0`), so every other use keeps its spacing.
 
 **Which control when**
 
@@ -301,7 +305,8 @@ down (the test warns with the new maximum). Re-measure with
 | 5 | `window.confirm` / `alert` |
 | 6 | macro and `ui.js` build the same tree for every sample (`tests/ui_kit_selfcheck.cjs`, jsdom) |
 | 7 | token contrast pairs x 3 themes >= AA (4.5:1 text, 3:1 state dots), computed from the theme variables in pico.min.css / style.css; a known failure is frozen by name |
-| 7b | stage-0 boundary: one `:root` block of `--ui-*` names only, no redeclared style.css variable, every other selector starts with `.ui-`, no `:has(` / `[` / `:where(`, no at-rule blocks |
+| priority | `ui-col-secondary` is the sole narrow-column media rule; header and row carry it; values remain in detail (`tests/test_reading_order_small.py`) |
+| 7b | stage-0 boundary: one `:root` block of `--ui-*` names only, no redeclared style.css variable, every other selector starts with `.ui-`, no `:has(` / `[` / `:where(`, only the priority-column media rule |
 | 7c | CSP: `hx-on` and trigger filters per file do not grow; the `attributesToSettle` meta is unchanged; the kit files hold no `hx-on`, `eval(`, `new Function`, `innerHTML` |
 | 9 | dead classes: an element whose literal classes ALL lack a CSS rule; frozen as an explicit class-name list plus a per-file count (no prefix allowances) |
 | 10 | style.css rule and line counts only go down |
@@ -314,3 +319,13 @@ files; dead classes 330 names on 380 elements in 118 files; style.css 5,943 rule
 (app.js 4, auto-apply.js 1), trigger filters 4; one known contrast failure -- light theme,
 `--ui-warn-border` on a card is 1.63:1 against the 3:1 non-text minimum (the warning dot on
 white), to be fixed in the theme variables in a later stage, not here.
+
+### Priority columns
+
+`ui-col-secondary` on the matching header and data cells hides secondary evidence at
+viewport widths of 900 px or less. Primary names keep the released space. Keep the
+values reachable in row detail. Spacer and spanning rows retain their logical colspan.
+Navigation options in `ui_segmented` / `UI.segmented` accept `href` and `attrs`;
+`ui-menu.js` supplies arrow keys, Home, End and selection; a key with Alt, Ctrl or Meta is left to the
+browser. A link option is never underlined and carries `aria-current` when selected; a button option
+carries `aria-pressed`. The group wraps onto further lines at a narrow width instead of clipping.

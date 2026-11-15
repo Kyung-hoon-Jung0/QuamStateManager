@@ -5,6 +5,9 @@
 <div id="czp-root" class="czp-root" data-selected="{{ selected }}">
 <script type="application/json" id="cz-operating-points">{{ operating_points | tojson }}</script>
 {% if fixed_no_flux %}
+<section aria-label="Plan summary" data-plan-summary>
+    <div class="ui-verdict ui-verdict--neutral ui-verdict--strong" role="status" data-plan-verdict><span class="ui-dot" aria-hidden="true"></span><strong class="ui-verdict-key" data-plan-key>No operation is shown.</strong><span class="ui-verdict-why" data-plan-why></span></div>
+</section>
 <p>No flux CZ applies: qubits and couplers are fixed-frequency. Two-qubit gates on this chip are cross-resonance (and, where the environment has it, Stark-induced CZ).</p>
 {% else %}
 {% if unknown_pair is not none %}
@@ -14,6 +17,15 @@
     <h2 class="ui-head-title">CZ gate plan <small class="muted ui-count" data-plan-counts>({{ plan_counts.header }})</small></h2>
     <div class="ui-actions" role="group" aria-label="Gate actions"><button type="button" class="btn-sm outline" data-czg-open="czplan" title="Create a new CZ gate on the selected pair">+ Gate</button></div>
 </div>
+<section id="czp-plan-summary" class="ui-field-stack ui-field-stack--dense" aria-label="Plan summary" data-plan-summary>
+    <div class="ui-verdict ui-verdict--neutral ui-verdict--strong" role="status" data-plan-verdict><span class="ui-dot" aria-hidden="true"></span><strong class="ui-verdict-key" data-plan-key>{% if not rows %}No operation is shown.{% endif %}</strong><span class="ui-verdict-why" data-plan-why></span></div>
+    <div class="ui-stats" role="group" aria-label="Operations by state">
+        <div class="ui-stat" data-plan-tile="in-range"><div class="ui-stat-label">In range</div><p class="ui-stat-value" data-plan-value></p></div>
+        <div class="ui-stat" data-plan-tile="outside"><div class="ui-stat-label">Outside range</div><p class="ui-stat-value" data-plan-value></p></div>
+        <div class="ui-stat" data-plan-tile="unknown"><div class="ui-stat-label">Validity unknown</div><p class="ui-stat-value" data-plan-value></p></div>
+        <div class="ui-stat" data-plan-tile="not-playable"><div class="ui-stat-label">Not playable</div><p class="ui-stat-value" data-plan-value></p></div>
+    </div>
+</section>
 <div class="muted czp-lede">
     Where each CZ operation moves its qubits on the chip, and how lossy those frequencies were when measured.
     {% set has_snz = namespace(v=false) %}{% for r in rows %}{% for ln in (r.lines or []) %}{% if 'SNZ' in (ln.pulse_class or '') %}{% set has_snz.v = true %}{% endif %}{% endfor %}{% endfor %}
@@ -39,9 +51,11 @@
 {% for reason in unavailable %}
 <p class="czp-warn-text">{{ reason }}</p>
 {% endfor %}
+<section class="ui-zone" aria-label="Chip frequency map" data-czp-zone="map">
+<div class="ui-zone-head"><h3 class="ui-zone-title" title="Click a pair on the small chip map to show or hide its frequencies; click a pair in the drawing below the columns to open its operation">Chip frequency map</h3></div>
+<div class="ui-zone-body">
 <section class="czp-map-box" aria-label="Chip frequency map">
     <div class="czp-controls czp-map-head">
-        <h3 class="czp-title" title="Click a pair on the small chip map to show or hide its frequencies; click a pair in the drawing below the columns to open its operation">Chip frequency map</h3>
         <label>Operation
             <select id="czp-map-op" aria-label="Operation drawn for every pair" title="cz per pair: each pair's cz, else its first CZ operation"><option value="">cz per pair</option></select>
         </label>
@@ -59,7 +73,7 @@
     </div>
     {# The small chip map is the pair control: a click (or Enter/Space) on a pair edge hides or
        shows that pair's traces in the frequency map below; a hidden pair's edge is dimmed. #}
-    <div class="czp-map-view">
+    <div class="czp-map-view ui-xscroll" tabindex="0" role="region" aria-label="Chip frequency map">
     {% set cmap_highlight = 'pairs' %}{% set cmap_cell = 46 %}{% set cmap_pick = '1' %}
     {% set cmap_open_key = 'quam_czp_minimap_open' %}{% set cmap_pick_hint = 'Show or hide in the frequency map' %}
     {% set cmap_label = '— click a pair to show or hide it in the frequency map' %}
@@ -80,6 +94,8 @@
             <p id="czp-map-notes" class="czp-map-notes"></p>
         </details>
     </div>
+</section>
+</div>
 </section>
 <details class="czp-coupler-models"><summary>Coupler models ({{ coupler_forms | length }})</summary>
 {% for f in coupler_forms %}
@@ -126,21 +142,23 @@
     <tbody>
     {% for r in rows %}
         {% set missing = "freq_vs_flux_01_quad_term is missing" in (r.reasons | join("; ")) %}
-        <tr class="clickable-row czp-row{% if r.path == selected %} czp-row-selected{% endif %}" data-pair-start="{{ 0 if loop.previtem is defined and loop.previtem.pair == r.pair else 1 }}" data-op="{{ r.path }}" data-opname="{{ r.operation }}" data-pair="{{ r.pair }}" tabindex="0"
+        {% set np = namespace(v=false) %}{% for x in r.reasons %}{% if x and x.startswith('not playable') %}{% set np.v = true %}{% endif %}{% endfor %}
+        {% set finite_nearest = r.nearest and r.nearest.distance_hz is number and r.nearest.distance_hz is not boolean and (r.nearest.distance_hz - r.nearest.distance_hz) == 0 %}{% set finite_detuning = r.detuning_hz is number and r.detuning_hz is not boolean and (r.detuning_hz - r.detuning_hz) == 0 %}{% set plan_state = 'not-playable' if np.v else 'unknown' if (missing or not r.validity or r.validity_class == 'unknown') else 'outside' if r.validity_class == 'warn' else 'in-range' %}
+        <tr class="clickable-row czp-row{% if r.path == selected %} czp-row-selected{% endif %}" data-pair-start="{{ 0 if loop.previtem is defined and loop.previtem.pair == r.pair else 1 }}" data-op="{{ r.path }}" data-opname="{{ r.operation }}" data-pair="{{ r.pair }}" data-plan-state="{{ plan_state }}" tabindex="0"
             {%- set mf = namespace(v=none) %}{% for f in r.freqs %}{% if mf.v is none and f is not none and r.moves[loop.index0] %}{% set mf.v = f %}{% endif %}{% endfor %}
-            data-s-freq="{{ mf.v if mf.v is not none else '' }}" data-s-delta="{{ r.detuning_hz if r.detuning_hz is not none else '' }}"
+            data-s-freq="{{ mf.v if mf.v is not none else '' }}" data-s-delta="{{ r.detuning_hz if finite_detuning else '' }}"
             data-s-amp="{{ r.amp_sort if r.amp_sort is not none else '' }}"
-            data-s-near="{{ (r.nearest.distance_hz | abs) if r.nearest else '' }}" data-s-irb="{{ r.irb if r.irb is not none else '' }}"
+            data-s-near="{{ (r.nearest.distance_hz | abs) if finite_nearest else '' }}" data-s-irb="{{ r.irb if r.irb is not none else '' }}"
             aria-selected="{{ 'true' if r.path == selected else 'false' }}">
             <td class="czp-stick"><strong>{{ r.pair }}</strong>{% if loop.previtem is defined and loop.previtem.pair == r.pair %}<small class="czp-variant" title="Variant of {{ r.pair }}"> ↳</small>{% endif %}</td>
             <td class="czp-stick czp-stick-op">{{ r.operation }}{% if r.warnings %} <span class="czp-help-hover" tabindex="0" title="{{ r.warnings | join('; ') }}">(?)</span>{% endif %}{% if r.alias_of %} <small class="muted" title="{{ r.alias_of }}">alias</small>{% endif %}</td>
             <td>{% set mv = namespace(n=0) %}{% for n in r.names %}{% if r.moves[loop.index0] %}{% if mv.n %} / {% endif %}{% set mv.n = mv.n + 1 %}<span class="czp-mover">{{ n }}</span>{% endif %}{% endfor %} <small class="muted czp-nowrap">{{ r.kind }}</small></td>
             <td class="czp-num" aria-label="{% for p in r.operating_points %}{{ '%.4f' | format(p.y) if p.y is not none else '—' }}{% if not loop.last %} / {% endif %}{% endfor %}">{% for p in r.operating_points %}<span data-pair="{{ p.pair }}" data-op="{{ p.op }}" data-line="{{ p.line }}" {% if r.coupler or p.coupler_frequency_hz is not none %}data-coupler-shift-hz="{{ p.coupler_shift_hz }}" data-shifted-frequency-hz="{{ p.shifted_frequency_hz }}" data-coupler-method="{{ p.coupler_method }}" data-coupler-frequency-hz="{{ p.coupler_frequency_hz }}" {% endif %}data-freq-hz="{{ p.frequency_hz }}" data-method="{{ p.method }}" data-path="{{ p.path }}">{{ '%.4f' | format(p.y) if p.y is not none else '—' }}{% if p.shifted_frequency_hz is not none %} <small class="czp-shifted">shifted {{ '%.4f' | format(p.shifted_frequency_hz / 1e9) }} ({{ p.coupler_method }})</small>{% elif p.coupler_method and "hybridised" in p.coupler_method %} <small>{{ p.coupler_method }}</small>{% endif %}</span>{% if not loop.last %} / {% endif %}{% endfor %}</td>
             <td class="czp-num czp-amp">{% for p in r.operating_points %}<span title="{{ p.amp_title }}" data-value="amplitude" data-pair="{{ p.pair }}" data-op="{{ p.op }}" data-line="{{ p.line }}" {% if r.coupler or p.coupler_frequency_hz is not none %}data-coupler-shift-hz="{{ p.coupler_shift_hz }}" data-shifted-frequency-hz="{{ p.shifted_frequency_hz }}" data-coupler-method="{{ p.coupler_method }}" data-coupler-frequency-hz="{{ p.coupler_frequency_hz }}" {% endif %}data-freq-hz="{{ p.frequency_hz }}" data-method="{{ p.method }}" data-path="{{ p.path }}" data-amplitude-v="{{ p.amplitude_v }}">{{ p.amp_text }}</span>{% if not loop.last %} / {% endif %}{% endfor %}{% if r.coupler %}<br><small class="muted czp-amp-coupler" title="{{ r.coupler.amp_title }}">coupler {{ r.coupler.amp_text }}</small>{% endif %}</td>
-            <td class="czp-num">{{ '%.1f' | format(r.detuning_hz / 1e6) if r.detuning_hz is not none else '—' }}</td>
-            <td>{% if missing %}<span class="czp-tier czp-no-quad" title="{{ r.reasons | join('; ') }}; {{ r.validity }}; history on Last set hover">no quad term</span>{% elif r.nearest %}<span class="czp-nowrap" data-near-words="1" title="{{ r.nearest.name }}: &Delta; {{ '%+.1f' | format(r.nearest.distance_hz / 1e6) }} MHz from the condition (&Delta; = f_control &minus; f_target)">{{ r.nearest.words }}</span>{% if r.nearest.lobe %} <small class="muted">{{ r.nearest.lobe }}</small>{% endif %}{% else %}<span class="muted" title="{{ r.reasons | join('; ') }}">{{ r.reasons[0] if r.reasons else '—' }}</span>{% endif %}</td>
-            <td>{% if missing %}<span title="{{ r.kinds | join('; ') }}">—</span>{% else %}{% for k in r.kinds %}<span class="czp-tier{% if 'quad' in k %} czp-tier-quad{% endif %}">{{ k }}</span>{% if not loop.last %} / {% endif %}{% endfor %}{% endif %}</td>
-            <td class="czp-prose czp-validity">{% if missing %}<span title="{{ r.validity }}">—</span>{% elif r.validity %}<span title="{{ r.validity_title }}" class="{{ 'muted' if r.validity_class == 'ok' else 'czp-warn-text' }}">{{ r.validity }}</span>{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
+            <td class="czp-num">{{ '%.1f' | format(r.detuning_hz / 1e6) if finite_detuning else '\u2014' }}</td>
+            <td>{% if missing %}<span class="czp-tier czp-no-quad" title="{{ r.reasons | join('; ') }}; {{ r.validity }}; history on Last set hover">no quad term</span>{% elif finite_nearest %}<span class="czp-nowrap" data-near-words="1" title="{{ r.nearest.name }}: &Delta; {{ '%+.1f' | format(r.nearest.distance_hz / 1e6) }} MHz from the condition (&Delta; = f_control &minus; f_target)">{{ r.nearest.words }}</span>{% if r.nearest.lobe %} <small class="muted">{{ r.nearest.lobe }}</small>{% endif %}{% elif r.reasons and r.reasons[0].startswith('not playable') %}<span class="ui-pill ui-pill--danger" title="{{ r.reasons | join('; ') }}" data-not-playable="1">not playable</span> <small class="muted">{{ r.reasons[0][12:].lstrip(': ') }}</small>{% else %}<span class="muted" title="{{ r.reasons | join('; ') }}">{{ r.reasons[0] if r.reasons else '\u2014' }}</span>{% endif %}</td>
+            <td>{% if missing %}<span title="{{ r.kinds | join('; ') }}">—</span>{% else %}{% for k in r.kinds %}<span class="czp-tier ui-pill ui-pill--neutral{% if 'quad' in k %} czp-tier-quad{% endif %}">{{ k }}</span>{% if not loop.last %} / {% endif %}{% endfor %}{% endif %}</td>
+            <td class="czp-prose czp-validity">{% if missing %}<span title="{{ r.validity }}">—</span>{% elif r.validity %}<span title="{{ r.validity_title }}" class="ui-pill ui-pill--{{ 'ok' if r.validity_class == 'ok' else 'warn' if r.validity_class == 'warn' else 'neutral' }}" data-validity-class="{{ r.validity_class }}">{{ 'in range' if r.validity_class == 'ok' else 'outside range' if r.validity_class == 'warn' else 'validity unknown' }}</span> {% set vw = r.validity | replace('in range ', '', 1) if r.validity_class == 'ok' else r.validity %}{% if vw and vw not in ('in range', 'validity unknown') %}<small class="muted" data-validity-words="1">{{ vw }}</small>{% endif %}{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
             <td class="czp-num"{% if r.irb_key %} title="from {{ r.irb_key }}{% if r.irb_basis %} ({{ r.irb_basis }}){% endif %}{% if r.irb_conflict %} &#10;{{ r.irb_conflict }}{% endif %}"{% endif %}>{{ '%.4f' | format(r.irb) if r.irb is not none else '—' }}{% if r.irb is not none and r.irb > 1 %} <small class="czp-warn-text" data-fid-unphysical="1">unphysical</small>{% endif %}{% if r.irb_conflict %}<br><span class="ui-badge ui-badge--warn" data-fid-conflict="1">&#9888; {{ r.irb_key }}</span>{% endif %}</td>
             <td class="czp-last czp-prose" data-last="{{ r.path }}"><span class="muted">&hellip;</span></td>
         </tr>
@@ -148,6 +166,9 @@
     </tbody>
 </table>
 </div>
+<section class="ui-zone" aria-label="Selected operation" data-czp-zone="detail">
+<div class="ui-zone-head"><h3 class="ui-zone-title">Selected operation</h3></div>
+<div class="ui-zone-body">
 <section class="czp-detail" aria-live="polite">
     <div class="czp-controls">
         <h3 id="czp-title" class="czp-title">&nbsp;</h3>
@@ -158,6 +179,7 @@
     </div>
     <p id="czp-status" class="czp-status" role="status" hidden></p>
     <p id="czp-match" class="czp-match" role="status" title="Plot detuning is f_control - f_target; the signed resonance follows the pair roles. Difference is required minus stored amplitude."></p>
+    <div id="czp-match-stats" class="ui-stats" role="group" aria-label="Required and stored amplitude" hidden></div>
     <p id="czp-pair-coupler-note" class="czp-caveat" hidden></p>
     <div class="czp-plots">
         <figure class="czp-fig">
@@ -179,6 +201,8 @@
         <summary id="czp-notes-summary" class="ui-disclosure-summary">Notes</summary>
         <ul id="czp-notes" class="zline-notes czp-notes"></ul>
     </details>
+</section>
+</div>
 </section>
 
 

@@ -94,7 +94,16 @@
         var row = t.closest(".ui-option");
         if (row) mPick(m, row);
     });
+    // Modifier rule for every keydown handler below (keys the browser or the OS owns stay theirs):
+    //   browserNav  Alt/Meta + ArrowLeft/ArrowRight is history or line navigation: no handler acts on it.
+    //   arrowMod    any Alt/Ctrl/Meta with an arrow key: the toolbar and the segmented control leave it alone.
+    //   hasMod      any Alt/Ctrl/Meta at all: the segmented control (new, no older behaviour to keep) leaves it alone.
+    // Menus keep what they always did for the rest (Alt+ArrowDown opens, Ctrl+Enter picks).
+    function hasMod(e) { return !!(e.altKey || e.ctrlKey || e.metaKey); }
+    function arrowMod(e) { return hasMod(e) && e.key.indexOf("Arrow") === 0; }
+    function browserNav(e) { return !!(e.altKey || e.metaKey) && (e.key === "ArrowLeft" || e.key === "ArrowRight"); }
     document.addEventListener("keydown", function (e) {
+        if (browserNav(e)) return;
         var m = menuOf(e.target);
         if (!m) return;
         var k = e.key;
@@ -125,6 +134,7 @@
         });
     }
     document.addEventListener("keydown", function (e) {
+        if (arrowMod(e)) return;
         var k = e.key;
         if (k !== "ArrowLeft" && k !== "ArrowRight" && k !== "Home" && k !== "End") return;
         var t = e.target;
@@ -139,7 +149,40 @@
         items[j].focus();
     });
 
+    // Navigation segments preserve their links and request attributes.
+    function selectSegment(option) {
+        var group = option && option.closest('.ui-segmented');
+        if (!group) return;
+        group.querySelectorAll('.ui-segmented-opt').forEach(function (el) {
+            var on = el === option;
+            el.classList.toggle('ui-segmented-on', on);
+            if (el.tagName === 'A') {
+                // a link that navigates carries aria-current; a button that toggles carries aria-pressed
+                el.classList.toggle('active', on);
+                if (on) el.setAttribute('aria-current', 'true'); else el.removeAttribute('aria-current');
+            } else el.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+    }
+    document.addEventListener('keydown', function (e) {
+        if (hasMod(e) || e.shiftKey) return;
+        var option = e.target.closest && e.target.closest('.ui-segmented-opt');
+        if (!option || option.tagName !== 'A') return;
+        var items = Array.from(option.parentElement.querySelectorAll('.ui-segmented-opt'));
+        var i = items.indexOf(option), k = e.key;
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End', ' '].includes(k)) return;
+        e.preventDefault();
+        var j = k === 'Home' ? 0 : k === 'End' ? items.length - 1 :
+            k === ' ' ? i : (i + (k === 'ArrowRight' ? 1 : -1) + items.length) % items.length;
+        items[j].focus();
+        items[j].click();
+    });
+    document.addEventListener('click', function (e) {
+        var option = e.target.closest && e.target.closest('a.ui-segmented-opt');
+        if (option) selectSegment(option);
+    }, true);
+
     window.UIMenu = {
+        selectSegment: selectSegment,
         open: function (root) { mOpen(mParts(root), "first"); },
         close: function (root) { mClose(mParts(root), false); },
     };

@@ -224,7 +224,7 @@
   "templates/_version_count.html": 1,
   "templates/_waveform_plot.html": 1,
   "templates/_wiring.html": 1,
-  "templates/_zline.html": 2,
+  "templates/_zline.html": 1,
   "templates/base.html": 6,
   "templates/calc_window.html": 1
  },
@@ -508,7 +508,6 @@
   "vh-via-hop",
   "waveform-plot-standalone",
   "wf-view-label",
-  "zline-models",
   "zline-root"
  ],
  "inline_styles": {
@@ -709,7 +708,7 @@
   "templates/_waveform_plot.html": 1,
   "templates/_wc_gc_banner.html": 1,
   "templates/_wiring.html": 2,
-  "templates/_zline.html": 4,
+  "templates/_zline.html": 3,
   "templates/base.html": 25,
   "templates/calc_window.html": 1
  }

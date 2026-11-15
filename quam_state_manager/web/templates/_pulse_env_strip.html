@@ -6,6 +6,7 @@
    Self-polls while probing. Env choice is GLOBAL — shared with Generate
    Config (one selected interpreter drives the wizard, diagnostics and this
    form alike). #}
+{%- from '_ui.html' import ui_notice -%}
 {% set _busy = env_card.probing or lab_code_changed %}
 {# hx-sync="this:drop" (final QA P2): the strip's requests -- the 2 s
    after-probe poll, Add/remove module -- synchronise against the STRIP, never
@@ -19,13 +20,14 @@
      hx-swap="outerHTML"{% endif %}>
   {% if not env_card.selected %}
     <span class="pulse-env-badge pulse-env-badge-static">static catalog</span>
-    <span class="muted">no Python environment selected — classes below are
-      SM's built-in list.
+    {#- ui_notice takes its text as markup, so the env link rides inside it. -#}
+    {%- set _env_text -%}SM has no Python environment selected, so the classes below are its built-in list.
       <a href="/generate" hx-get="/generate" hx-target="#table-pane"
          hx-sync="#table-pane:replace" hx-push-url="true"
          data-after-request="closeInspectorOnSuccess">Pick an env in
       Generate Config</a> (conda or a uv/.venv folder) to discover the
-      env's own pulse classes.</span>
+      env's own pulse classes.{%- endset -%}
+    {{ ui_notice('warn', 'Built-in classes only.', _env_text) }}
   {% elif not env_card.selected_exists %}
     <span class="pulse-env-badge pulse-env-badge-warn">env gone</span>
     <span class="pulse-env-err">the selected interpreter no longer exists —

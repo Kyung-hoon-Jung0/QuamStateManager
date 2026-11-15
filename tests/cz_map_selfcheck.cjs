@@ -635,7 +635,7 @@ async function footerPins(only) {
     const s12 = segments(r5).find(s => s.pair === 'q1-2' && near(s.x0, 0.12));
     check(pt5 && pt5.x.some((x, k) => near(x, 0.88) && near(pt5.y[k], s12.y) && pt5.text[k] === '↔ q2'), 'each segment names its partner at its right end, marked ↔ so it never reads as the bar owner');
     S21.width = 900; await S21.w.CzMap.paint(S21.root);
-    check(S21.last().traces.some(t => t.meta === 'partners' && t.text.some(s => /[A-D]\d/.test(s) && !/q[A-D]/.test(s))), 'columns under 40 px: compact partner names');
+    check(S21.last().traces.some(t => t.meta === 'partners' && t.text.length && t.text.every(s => !/[A-D]\d/.test(s) || /q[A-D]/.test(s))), 'narrow columns keep the stored partner names (no compact form)');
     S21.width = 1000; await S21.w.CzMap.paint(S21.root);
     check(S21.last().traces.some(t => t.meta === 'partners'), 'columns of 40 px and more: partner names');
     for (const width of [919, 1237]) {
@@ -658,7 +658,7 @@ async function footerPins(only) {
     S21.width = 1000; await S21.w.CzMap.paint(S21.root);
 
     S21.width = 240; await S21.w.CzMap.paint(S21.root);
-    check(!S21.last().traces.some(t => t.meta === 'partners'), 'a partner name wider than its column stays in hover');
+    check(S21.last().layout.width > 240 && S21.last().traces.some(t => t.meta === 'partners'), 'a narrow box widens the map so partner names keep their column');
     S21.width = 1000; await S21.w.CzMap.paint(S21.root);
 
     function rgb(c) {
@@ -946,6 +946,31 @@ async function footerPins(only) {
     // a dropped name is still in its segment's hover: every pair keeps its name somewhere
     check(segments(rt).every(s => s.text.includes(s.pair)), 'every segment hover names its pair, so a dropped label loses nothing');
     SThm.close(); SNoL.close();
+    }
+    {   // a partner named by a segment but missing from the qubit list has no column of its own
+        const mk = other => {
+            const names = ['q0', 'q1', 'q2', 'q3', 'q4', 'q5', 'q6'], pair = 'q3-' + other;
+            return {ok: true, qubits: names.map((name, i) => ({name, path: 'qubits.' + name, f01_hz: 4e9 + i * 1e7, defects: [], safe: []})),
+                segments: [['q3', 0, 'control'], [other, 1, 'target']].map(([qubit, i, role]) => ({pair, operation: 'cz',
+                    path: 'qubit_pairs.' + pair + '.macros.cz', role, qubit, qubit_path: 'qubits.' + qubit,
+                    frequency_hz: 4e9 + i * 1e8, moves: true, kind: 'estimate'})),
+                refused: [], unavailable: [], missing: [], planned: []};
+        };
+        const longName = 'ext_partner_x', shortName = 'x9';
+        const SO = await page({map: mk(longName), loss: NO_LOSS, width: 320});
+        const ro = SO.last(), po = ro.traces.filter(t => t.meta === 'partners').flatMap(t => t.text).join(' ');
+        const colO = (ro.layout.width - ro.layout.margin.l - ro.layout.margin.r) / 7;
+        check(ro && !po.includes(longName) && !po.includes('undefined') && !po.includes('null'),
+              'a stored partner name wider than its column is not drawn over the neighbouring column');
+        check(ro.traces.filter(t => t.meta === 'partners').every(t => t.text.every(x => x.split('<br>').every(l => SO.w.CzMap.partnerWidth(l) <= 0.76 * colO))),
+              'every drawn partner label fits its column');
+        check(segments(ro).every(x => x.text.includes('q3-' + longName)), 'the dropped partner name stays in the segment hover');
+        check(Array.from(ro.layout.xaxis.ticktext).join(',') === 'q0,q1,q2,q3,q4,q5,q6', 'no column is invented for an off-list partner');
+        SO.close();
+        const SS = await page({map: mk(shortName), loss: NO_LOSS, width: 320});
+        check(SS.last().traces.filter(t => t.meta === 'partners').flatMap(t => t.text).join(' ').includes(shortName),
+              'an off-list partner name that fits is shown as stored');
+        SS.close();
     }
     [S5, S13, S21, SV].forEach(S => S.close());
     {   // the map legend reads the server's one pair count; a pair with no operation is named

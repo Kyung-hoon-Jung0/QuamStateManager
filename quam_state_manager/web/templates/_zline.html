@@ -2,6 +2,7 @@
    (exponential_filter + feedforward_filter) drawn TOGETHER: the ideal step
    and the line's own flux pulses, ideal vs what leaves the DAC. The physics
    and every refusal live in core/zline_filters.py; zline.js only draws. #}
+{%- from '_ui.html' import ui_notice, ui_pill -%}
 <div id="zline-root" class="zline-root" data-selected="{{ selected }}">
 <div class="table-header-row ui-head ui-head--data">
     <h2 class="ui-head-title">Z-line distortion{% if not missing %} <small class="muted ui-count">({{ rows | length }} flux line{{ '' if rows|length == 1 else 's' }})</small>{% endif %}</h2>
@@ -25,6 +26,15 @@
 {% if missing %}
 <p class="zline-missing ui-state ui-state--empty" role="status">{{ missing }}</p>
 {% elif rows %}
+{#- The banner counts the very rows the table renders, with the same test
+    the Notes cell uses (a note above the info level). -#}
+{%- set flagged = [] -%}
+{%- for r in rows if r.notes | selectattr('level', 'ne', 'info') | list -%}{%- set _ = flagged.append(r) -%}{%- endfor -%}
+{%- if flagged %}
+<div data-zline-flagged="{{ flagged | length }}" data-zline-total="{{ rows | length }}">{{ ui_notice('danger' if flagged | selectattr('worst', 'eq', 'block') | list else 'warn',
+    flagged | length ~ ' of ' ~ rows | length ~ ' flux line' ~ ('' if rows | length == 1 else 's') ~ (' needs a look.' if flagged | length == 1 else ' need a look.'),
+    'The Notes column says why for each one (for example a filter outside the documented range).') }}</div>
+{%- endif %}
 <table id="zline-table" class="data-table zline-table" role="grid">
     <thead>
         <tr>
@@ -57,10 +67,10 @@
             </td>
             <td class="zline-row-note">
                 {%- set shown = r.notes | selectattr('level', 'ne', 'info') | list -%}
-                {%- if shown -%}
+                {%- if r in flagged -%}
                 <span class="{{ 'zline-err-text' if r.worst == 'block' else 'zline-warn-text' }}">{{ shown[0].text }}</span>
                 {%- if shown | length > 1 %} <small class="muted">+{{ shown|length - 1 }} more</small>{% endif -%}
-                {%- else -%}<span class="muted">ok</span>{%- endif -%}
+                {%- else -%}{{ ui_pill('ok', 'ok') }}{%- endif -%}
             </td>
         </tr>
     {% endfor %}

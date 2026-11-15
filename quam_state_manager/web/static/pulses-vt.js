@@ -884,9 +884,18 @@ window.PulsesVT = (function () {
         st.scrollEl.addEventListener('scroll', onScroll, { passive: true });
         if (typeof ResizeObserver === 'function') {
             var my = st;
+            var lastWidth = st.scrollEl.clientWidth;
             st.ro = new ResizeObserver(function () {
                 if (st !== my) return;
                 if (!active()) { detach(); return; }
+                var width = st.scrollEl.clientWidth;
+                if (width !== lastWidth) {
+                    lastWidth = width;
+                    st.hmap.clear();
+                    st.measuredOnce = false;
+                    st.preDirty = true;
+                    refreeze();
+                }
                 schedule(false);
             });
             try { st.ro.observe(st.scrollEl); } catch (e) {}

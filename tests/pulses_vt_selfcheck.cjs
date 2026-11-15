@@ -52,7 +52,7 @@ global.requestAnimationFrame = (f) => setTimeout(() => f(Date.now()), 0);
 window.requestAnimationFrame = global.requestAnimationFrame;
 global.IntersectionObserver = class { observe() {} disconnect() {} unobserve() {} };
 window.IntersectionObserver = global.IntersectionObserver;
-global.ResizeObserver = class { observe() {} disconnect() {} unobserve() {} };
+global.ResizeObserver = class { constructor(cb) { this.cb = cb; } observe() {} disconnect() {} unobserve() {} };
 window.ResizeObserver = global.ResizeObserver;
 const processed = [];
 window.htmx = { ajax: () => Promise.resolve(), trigger: () => {}, process: (el) => { processed.push(el); } };
@@ -172,7 +172,8 @@ doc.body.innerHTML =
 // ---- the geometry shim ----------------------------------------------------------
 const pane = doc.getElementById('table-pane');
 const PANE_TOP = 100, PANE_H = 600, ABOVE = 200;
-let scrollTop = 0;
+let scrollTop = 0, paneWidth = 1000;
+Object.defineProperty(pane, 'clientWidth', { get: () => paneWidth });
 function rowH(tr) {
     if (tr.classList.contains('pulse-vpad')) return tr.hidden ? 0 : (parseFloat(tr.firstChild.style.height) || 0);
     return tr.querySelector('.pulse-alias-target') ? 22 : 30;
@@ -250,6 +251,20 @@ function viewportCovered() {
        'sizer rows carry no path, no click, no checkbox');
     ok(doc.querySelectorAll('tr[data-pulse-path]').length === r0.length, 'and are not rows of the table');
     ok(viewportCovered(), 'A: the viewport is covered at the top');
+
+    // Simulated geometry only: a width change invalidates offscreen heights.
+    st.hmap.set('offscreen-height-probe', 99);
+    paneWidth = 700;
+    st.ro.cb();
+    ok(!st.hmap.has('offscreen-height-probe') && !st.measuredOnce && st.preDirty,
+       'resize discards stale heights before computing spacers');
+    await flush();
+    ok(viewportCovered(), 'resize keeps the simulated viewport covered');
+    // a resize event that leaves the width alone (height only) keeps what was measured
+    st.hmap.set('same-width-probe', 77);
+    st.ro.cb();
+    await flush();
+    ok(st.hmap.get('same-width-probe') === 77, 'a resize without a width change keeps the measured heights');
 
     // ---- J: thumbnails ---------------------------------------------------------
     await tick(120); await flush();

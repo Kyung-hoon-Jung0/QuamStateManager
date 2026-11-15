@@ -1,9 +1,11 @@
 ﻿"""Coupler-only CZ package, build, capability and reconstruction contracts."""
+import importlib.util
 import json
 import os
 from pathlib import Path
 import subprocess
 import shutil
+import sys
 
 import pytest
 
@@ -37,9 +39,15 @@ def spec():
 def run(python, code, *args):
     if not python.exists():
         pytest.skip('Selected environment absent')
+    env = {**os.environ, 'PYTHONUTF8': '1'}
+    if python == EXT:
+        # the extension env imports the package from this checkout, so the build
+        # runs this checkout's extension, never a stale or missing install of it
+        env['PYTHONPATH'] = os.pathsep.join(
+            [str(ROOT / 'extensions' / 'qsm_quam_ext')] + [p for p in [env.get('PYTHONPATH')] if p])
     result = subprocess.run([str(python), '-c', code, *map(str, args)],
                             cwd=ROOT, capture_output=True, text=True,
-                            encoding='utf8', env={**os.environ, 'PYTHONUTF8': '1'}, timeout=120)
+                            encoding='utf8', env=env, timeout=120)
     assert result.returncode == 0, result.stdout + result.stderr
     return result.stdout
 
@@ -201,3 +209,49 @@ def test_build_route_blocks_missing_extension(monkeypatch, tmp_path):
     assert r.status_code == 400
     assert [b['id'] for b in r.get_json()['capability_blockers']] == ['pair.coupler_cz']
     assert not out.exists()
+
+
+@pytest.mark.parametrize("preexisting_build", [False, True])
+def test_extension_installs_and_imports_from_target(tmp_path, monkeypatch, preexisting_build):
+    """Exercise package discovery without the checkout on the import path."""
+    for name in ("pip", "setuptools"):
+        if importlib.util.find_spec(name) is None:
+            pytest.skip(f"{name} is unavailable in the test interpreter")
+    source = ROOT / "extensions" / "qsm_quam_ext"
+    if preexisting_build:
+        checkout = tmp_path / "checkout"
+        source_copy = checkout / "extensions" / "qsm_quam_ext"
+        shutil.copytree(source, source_copy, ignore=shutil.ignore_patterns("build", "*.egg-info"))
+        monkeypatch.setitem(globals(), "ROOT", checkout)
+        source = source_copy
+        (source / "build").mkdir()
+        (source / "build" / "keep.txt").write_bytes(b"existing build\n")
+        (source / "existing.egg-info").mkdir()
+    prior_build = (source / "build").exists()
+    prior_egg_info = set(source.glob("*.egg-info"))
+    copied = tmp_path / "source"
+    shutil.copytree(source, copied, ignore=shutil.ignore_patterns("build", "*.egg-info"))
+    target = tmp_path / "site"
+    env = {**os.environ, "PYTHONUTF8": "1", "PYTHONPATH": str(target)}
+    installed = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--no-index", "--no-deps",
+         "--no-build-isolation", "--target", str(target),
+         str(copied)],
+        cwd=tmp_path, env=env, capture_output=True, text=True, encoding="utf8", timeout=120)
+    assert (source / "build").exists() == prior_build
+    assert set(source.glob("*.egg-info")) == prior_egg_info
+    if preexisting_build:
+        assert (source / "build" / "keep.txt").read_bytes() == b"existing build\n"
+    assert installed.returncode == 0, installed.stdout + installed.stderr
+    imported = subprocess.run(
+        [sys.executable, "-c", """
+import sys
+from pathlib import Path
+import qsm_quam_ext
+from qsm_quam_ext import CouplerCZGate, FixedFrequencyTunableCouplerPair, align, wait
+assert Path(qsm_quam_ext.__file__).resolve().is_relative_to(Path(sys.argv[1]).resolve())
+assert CouplerCZGate.__module__ == FixedFrequencyTunableCouplerPair.__module__ == 'qsm_quam_ext'
+assert callable(align) and callable(wait)
+""", str(target)],
+        cwd=tmp_path, env=env, capture_output=True, text=True, encoding="utf8", timeout=120)
+    assert imported.returncode == 0, imported.stdout + imported.stderr

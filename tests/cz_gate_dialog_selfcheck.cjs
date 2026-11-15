@@ -1368,6 +1368,13 @@ function tableWidths(el, sw, cw) {
            && $('#czg-new-body [data-czg-new-save]'),
            'Cancel: no request, the row says nothing was written and offers the save again');
         ok(doc.activeElement === $('#czg-new-body [data-czg-new-save]'), 'Cancel focuses Save the class file');
+        for (const message of ['Class saving is locked while a run is in progress; try again when it ends. <i>Wait</i>', null]) {
+            queue['save-config'].push(() => [409, Object.assign({ ok: false, error: 'scheduler_running' }, message ? { message } : {})]);
+            $('#czg-new-body [data-czg-new-save]').click(); await ready();
+            const line = $('[data-czg-new-problem]');
+            ok(line.textContent === (message || 'scheduler_running') && !line.querySelector('i'),
+               'class save lock shows the message as text or the existing error fallback');
+        }
         queue['save-config'].push(() => [409, { ok: false, confirm: CONFIRM }]);
         $('#czg-new-body [data-czg-new-save]').click();
         await ready();
@@ -1739,6 +1746,110 @@ function tableWidths(el, sw, cw) {
         const waits = fs.readFileSync(__filename, 'utf8').split('// ---- slot gate classes:')[1].split('// the chart component missing')[0];
         ok(!/await\s+settle\s*\(/.test(waits) && /const until = async/.test(waits), 'the slot tests wait on capped conditions without fixed settles');
         unitReach = null;
+        window.CzGate.close();
+        dataOverride = null;
+    }
+
+    // Older class marks and pair notes use quiet text outside folds.
+    {
+        const st = () => window.CzGate.state();
+        const until = async (fn) => {
+            const end = Date.now() + 3000;
+            while (!fn()) { if (Date.now() > end) throw new Error('Condition wait expired: ' + fn); await tick(5); }
+        };
+        const markWords = 'Made by an older version; make it again to update.';
+        const OLD_REASON = 'Needs a newer <b>environment</b> & more.';
+        dataOverride = JSON.parse(JSON.stringify(DATA));
+        dataOverride.classes[0].layout = 'slot';
+        dataOverride.classes[0].older_render = true;
+        dataOverride.classes[1].older_render = true;
+        dataOverride.classes[1].why = OLD_REASON;
+        await window.CzGate.open({ pair: 'q1-2' });
+        await until(() => st() && st().plan);
+        const options = [...doc.querySelectorAll('#czg-class-host [role="option"]')];
+        const markOf = (o) => o.querySelectorAll('[data-czg-older-render]');
+        const mark = options[0].querySelector('[data-czg-older-render]');
+        ok(markOf(options[0]).length === 1, 'older mark: true shows exactly one sign');
+        ok(mark && mark.textContent === markWords && mark.classList.contains('ui-option-desc') && !mark.closest('[aria-hidden="true"]')
+           && mark.parentNode === options[0] && !options[0].querySelector('.ui-option-desc:not([data-czg-older-render])'),
+           'older mark: enabled older class carries the words as its description part, under the title');
+        ok(!markOf(options[2]).length, 'older mark: absent flag shows no sign');
+        ok(!options[2].querySelector('.ui-option-desc'), 'older mark: a class with no flag and no reason has no description part');
+        const dis = [...options[1].querySelectorAll('.ui-option-desc')];
+        ok(options[1].getAttribute('aria-disabled') === 'true' && dis.length === 2 && dis[0].textContent === OLD_REASON
+           && !dis[0].hasAttribute('data-czg-older-render') && dis[1].textContent === markWords && dis[1].hasAttribute('data-czg-older-render'),
+           'older mark: disabled older class shows its reason and the words, each as a description part');
+        ok(dis[0].children.length === 0, 'older mark: reason text with markup characters stays text');
+        const kit = ['ui-option-check', 'ui-option-title', 'ui-option-desc'];
+        ok(options.every((o) => [...o.children].every((ch) => kit.some((k) => ch.classList.contains(k)))),
+           'pick options: every direct child is one of the kit option parts, nothing lands in the check column');
+        const trig = () => $('#czg-class');
+        const trigMarks = () => trig().querySelectorAll('[data-czg-older-render-trigger]');
+        const pickClass = (v) => $('#czg-class-host .ui-menu').dispatchEvent(new window.CustomEvent('ui-menu-pick', { bubbles: true, detail: { value: v, kind: 'pick' } }));
+        ok(trigMarks().length === 1 && trigMarks()[0].textContent === markWords && trigMarks()[0].className === 'ui-text-quiet' && trig().getAttribute('aria-labelledby').split(' ').indexOf(trigMarks()[0].id) >= 0,
+           'older mark: the closed picker says it for the selected older class and names it for screen readers');
+        pickClass('L.TwoFlux');
+        ok(trigMarks().length === 0 && trig().getAttribute('aria-labelledby').indexOf('czg-class-older') < 0, 'older mark: picking another class removes the words from the picker');
+        pickClass('G.CZGate');
+        ok(trigMarks().length === 1, 'older mark: picking the older class again shows the words');
+        type($('#czg-name'), 'cz_keep');
+        ok(trigMarks().length === 1, 'older mark: typing an input keeps the words, they describe the class');
+        const more = $('#czg-more-list input'); more.checked = true; more.dispatchEvent(new window.Event('change', { bubbles: true }));
+        window.clearTimeout(st().timer);
+        const notes = ['Made with an older version.', 'Keep <b>these words</b> as text.'];
+        const withNotes = (j) => { j.pairs.forEach((p) => { p.notes = notes.slice(); }); return j; };
+        const shown = () => [...doc.querySelectorAll('#czg-notes [data-czg-note-pair]')];
+        const exact = () => ['q1-2', 'q2-3'].every((pair) => {
+            const rows = shown().filter((r) => r.getAttribute('data-czg-note-pair') === pair);
+            return rows.length === notes.length && rows.every((r, k) => r.textContent === pair + ': ' + notes[k] && r.querySelector('span').textContent === notes[k]);
+        });
+        queue.plan.push((body) => withNotes(planOk(body)));
+        await window.CzGate._plan();
+        ok(exact(), 'pair notes: plan shows every sentence once for each named pair');
+        ok(!$('#czg-notes').hidden && !$('#czg-notes').closest('details, [hidden]'), 'pair notes: visible outside folds');
+        ok(shown().every((r) => r.className === 'ui-text-quiet') && !$('#czg-notes b'), 'pair notes: quiet literal markup');
+        ok(/can be created/.test($('#czg-more-list').textContent), 'pair notes: ok plan keeps can be created words');
+        type($('#czg-name'), 'cz_notes');
+        ok($('#czg-notes').hidden && !$('#czg-notes').childNodes.length, 'pair notes: typing immediately removes stale notes and space');
+        window.clearTimeout(st().timer);
+        await window.CzGate._plan();
+        ok($('#czg-notes').hidden && !$('#czg-notes').childNodes.length, 'pair notes: plan without notes leaves no box');
+        queue.check.push((body) => withNotes(checkOk(body)));
+        prim().click();
+        await until(() => !st().busy && st().phase === 'create');
+        ok(exact(), 'pair notes: check shows every sentence once for each named pair');
+        ok(!prim().disabled && /^Create 2 gates/.test(prim().textContent) && /can be created/.test($('#czg-more-list').textContent), 'pair notes: ok with notes keeps Create enabled and can be created words');
+        // Create currently returns no notes: retain only the notes of matching checked pairs.
+        prim().click();
+        await until(() => st().phase === 'done');
+        ok(exact(), 'pair notes: create without notes retains checked notes once per created pair');
+        window.CzGate.close();
+        await window.CzGate.open({ pair: 'q1-2' });
+        await until(() => st() && st().plan);
+        window.clearTimeout(st().timer);
+        queue.check.push((body) => withNotes(checkOk(body)));
+        prim().click(); await until(() => !st().busy && st().phase === 'create');
+        $('#czg-class-host .ui-menu').dispatchEvent(new window.CustomEvent('ui-menu-pick', { bubbles: true, detail: { value: 'L.TwoFlux', kind: 'pick' } }));
+        ok($('#czg-notes').hidden && !$('#czg-notes').childNodes.length, 'pair notes: class change removes checked notes');
+        window.clearTimeout(st().timer);
+        await window.CzGate._plan();
+        queue.check.push((body) => withNotes(checkOk(body)));
+        prim().click(); await until(() => !st().busy && st().phase === 'create');
+        // Recheck without editing, so the check renderer itself must replace the old notes.
+        st().phase = 'check';
+        prim().click(); await until(() => !st().busy && st().phase === 'create');
+        ok($('#czg-notes').hidden && !$('#czg-notes').childNodes.length, 'pair notes: second Check without notes removes them');
+        queue.create.push(() => ({ ok: true, created: [{ pair: 'q1-2', gate: 'cz_notes', state: 'verified', paths: ['a'], notes: notes.slice() }], skipped: [], sync: createSync }));
+        prim().click(); await until(() => st().phase === 'done');
+        ok(shown().length === 2 && shown().every((r, k) => r.querySelector('span').textContent === notes[k]) && !$('#czg-notes b'), 'pair notes: create answer notes override checked notes as literal text');
+        // Reopen with another selected class: the picker reflects only the new class.
+        window.CzGate.close();
+        dataOverride = JSON.parse(JSON.stringify(DATA));
+        dataOverride.classes[0].older_render = false;
+        dataOverride.classes[2].older_render = true;
+        await window.CzGate.open({ pair: 'q2-3' });
+        await until(() => st() && st().plan);
+        ok(doc.querySelectorAll('#czg-class [data-czg-older-render-trigger]').length === 0, 'older mark: a new open shows the words only for the newly selected class');
         window.CzGate.close();
         dataOverride = null;
     }

@@ -110,6 +110,9 @@ win.__route = (m, u, b) => {
 };
 win.eval(`window.fetch = function (url, o) {
   o = o || {};
+  if (window.__fetchMode === "reject") return Promise.reject(new TypeError("network down"));
+  if (window.__fetchMode === "null-body") return Promise.resolve({ status: 200, json: function () { return Promise.resolve(null); } });
+  if (window.__fetchMode === "bad-json") return Promise.resolve({ status: 200, json: function () { throw new Error("broken body"); } });
   return Promise.resolve(window.__route(o.method || "GET", url, o.body ? JSON.parse(o.body) : null)).then(function (j) {
     return { status: j.http || 200, json: function () { return Promise.resolve(JSON.parse(JSON.stringify(j.http ? j.body : j))); } };
   });
@@ -469,6 +472,73 @@ function outsideEdit(fields, formula) {
   answer("/pulse-class/save-file", 200, { ok: true, status: "Saved to D:/classes/flat.py, same as draft", backup: null, target: firstConfirm.path });
   $("[data-pce-save-file]").click(); await flush();
   ok($("[data-pce-file-note]").textContent.includes("Saved; no earlier file to back up."), "F7: first save uses plain no-earlier-file wording");
+
+  // Save to file shows that it works: busy while the request is out, one request per press, normal again on every outcome.
+  const sf = $("[data-pce-save-file]");
+  const idle = (b) => !b.hasAttribute("aria-busy") && !b.disabled;
+  ok(idle(sf), "busy: Save to file is idle before a press");
+  hold = { "/pulse-class/save-file": deferred() };
+  const dSave = hold["/pulse-class/save-file"];
+  i0 = calls.length;
+  sf.click(); sf.click(); await flush();
+  ok(sf.getAttribute("aria-busy") === "true" && sf.disabled, "busy: Save to file is busy and disabled while the request is out");
+  win.PulseClassEdit._saveFile(firstConfirm.path); await flush();
+  answer("/pulse-class/save-file", 200, { ok: true, status: "Saved", backup: null, target: firstConfirm.path });
+  dSave.res(); await flush();
+  ok(idle(sf) && since(i0, "/pulse-class/save-file").length === 1, "busy: one request for three presses, and success returns the button to normal");
+  answer("/pulse-class/save-file", 409, { ok: false, error: "scheduler_running", message: "Locked while a run is in progress." });
+  sf.click(); await flush();
+  ok(idle(sf), "busy: a refusal returns the button to normal");
+  answer("/pulse-class/save-file", 409, { ok: false, confirm: firstConfirm });
+  sf.click(); await flush();
+  ok(idle(sf) && dialogOpen(), "busy: the replace question leaves the button normal while the dialog asks");
+  clickChoice("No"); await flush();
+  answer("/pulse-class/save-file", 500, { ok: false, error: "The server failed." });
+  sf.click(); await flush();
+  ok(idle(sf), "busy: a server error returns the button to normal");
+  // Ratchet: every request button of the page ends idle when fetch rejects or a body throws.
+  const requestButtons = ["[data-pce-save]", "[data-pce-apply-form]", "[data-pce-save-file]", "[data-pce-save-config]"];
+  const unhandled = [];
+  const onUnhandled = (e) => unhandled.push(String(e));
+  process.on("unhandledRejection", onUnhandled);
+  for (const mode of ["reject", "bad-json", "null-body"]) {
+    for (const sel of requestButtons) {
+      const b = $(sel);
+      const before = b.disabled;
+      win.__fetchMode = mode;
+      b.click(); await flush();
+      win.__fetchMode = "";
+      ok(!b.hasAttribute("aria-busy") && b.disabled === before, "busy ratchet: " + sel + " ends not busy after " + mode);
+      if (sel === "[data-pce-save-file]" && mode === "null-body") {
+        const err = $("[data-pce-error]");
+        ok(!err.hidden && err.textContent === "The server sent no answer.",
+          "a 200 with a null body tells Save to file the server sent no answer");
+      }
+    }
+  }
+  win.__fetchMode = "";
+  if (dialogOpen()) closeDialog();
+  // a handler that throws after the answer: the button still ends idle
+  const stat = $("[data-pce-status]"), statParent = stat.parentNode, statNext = stat.nextSibling;
+  stat.remove();
+  answer("/pulse-class/save-file", 200, { ok: true, status: "Saved", backup: null, target: firstConfirm.path });
+  sf.click(); await flush();
+  statParent.insertBefore(stat, statNext);
+  ok(idle(sf) && vis("[data-pce-error]") && /failed/.test($("[data-pce-error]").textContent), "busy: a throwing handler ends idle with a message");
+  win.__fetchMode = "reject";
+  sf.click(); await flush();
+  win.__fetchMode = "";
+  ok(vis("[data-pce-error]"), "busy: a failed request shows an honest message");
+  process.off("unhandledRejection", onUnhandled);
+  ok(unhandled.length === 0, "busy: no unhandled rejection (" + unhandled.join("; ") + ")");
+
+  await win.PulseClassEdit._save(); await flush();
+  for (const message of ["Class saving is locked while a run is in progress; try again when it ends. <i>Wait</i>", null]) {
+    answer("/pulse-class/save-config", 409, Object.assign({ ok: false, error: "scheduler_running" }, message ? { message } : {}));
+    $("[data-pce-save-config]").click(); await flush();
+    ok($("[data-pce-error]").textContent === (message || "scheduler_running") && !$("[data-pce-error]").querySelector("i"),
+      "class save lock shows the message as text or the existing error fallback");
+  }
 
   // Merge seam: missing poll status_line is displayed verbatim.
   const gone = "The draft file is gone: D:/draft/FlatTop.py";

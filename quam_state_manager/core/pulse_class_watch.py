@@ -39,6 +39,17 @@ CONFLICT_QUESTION = ("The draft file changed outside SM while this editor has ch
 REPLACE_QUESTION = "A file is already there. Replace it with this draft?"
 SETTLE_PAUSE_S = 0.25
 SETTLE_TRIES = 8
+# Save to file refuses a target that has any ancestor folder with this name
+# (letter case ignored), on the path as typed and on the resolved path.
+PACKAGE_FOLDER_NAME = "quam_config"
+PACKAGE_SENTENCE = ("{parent} is a quam_config folder; use Save to quam_config, "
+                    "which checks the class before it writes the file.")
+PUBLISHED_SENTENCE = ("{target} was saved with Save to quam_config; use Save to quam_config "
+                      "again, which checks the chip with the new code first.")
+NO_DRAFT_SENTENCE = "There is no draft for this class."
+INVALID_TARGET_SENTENCE = "Choose a valid full path for the class file."
+
+
 _KNOWN_MAX = 8
 
 
@@ -345,6 +356,17 @@ def backup_path(t: Path) -> Path:
     raise D.DraftError(f"No free backup name next to {t}")
 
 
+def package_ancestor(*paths: Path) -> Path | None:
+    """The nearest ancestor folder named quam_config (letter case ignored) of
+    the first of *paths* that has one, else None. Only the name decides: the
+    package folder is always called quam_config, wherever it lives."""
+    for path in paths:
+        for parent in path.parents:
+            if parent.name.casefold() == PACKAGE_FOLDER_NAME:
+                return parent
+    return None
+
+
 def save_to_target(instance, scope, class_name, target: str, replace_sha: str | None = None) -> dict:
     """Copy the draft bytes to the class file *target* (an absolute ``.py``
     path in an existing folder) and remember it for the status line.
@@ -355,17 +377,27 @@ def save_to_target(instance, scope, class_name, target: str, replace_sha: str | 
     confirmed exactly that content) or it is SM's own last save there; the
     result is otherwise ``{"ok": False, "confirm": {...}}`` and nothing is
     written. A replaced file is copied next to itself first (``backup``)."""
-    t = check_target(target)
+    try:
+        if "\x00" in target:
+            raise ValueError("embedded null character")
+        t = check_target(target)
+        resolved = t.resolve()
+    except D.DraftError:
+        raise
+    except (ValueError, OSError) as exc:
+        raise D.DraftError(INVALID_TARGET_SENTENCE) from exc
     published = published_record(instance, scope, class_name)
     if published.get("path") == str(t):
-        raise D.DraftError(f"{t} was saved with Save to quam_config; use Save to quam_config "
-                           "again, which checks the chip with the new code first.")
-    if t.parent.name == "quam_config":
-        raise D.DraftError(f"{t.parent} is a quam_config folder; use Save to quam_config, "
-                           "which checks the class before it writes the file.")
+        raise D.DraftError(PUBLISHED_SENTENCE.format(target=t))
+    # The typed path and the resolved path are both tested, so a link named
+    # otherwise that leads into a quam_config folder and a quam_config-named
+    # link that leads elsewhere are both refused.
+    package = package_ancestor(t, resolved)
+    if package is not None:
+        raise D.DraftError(PACKAGE_SENTENCE.format(parent=package))
     data = D.load_draft(instance, scope, class_name)
     if data is None:
-        raise D.DraftError("There is no draft for this class.")
+        raise D.DraftError(NO_DRAFT_SENTENCE)
     why = D.import_check(instance, scope, class_name, data)
     if why:
         raise D.DraftError(why)
