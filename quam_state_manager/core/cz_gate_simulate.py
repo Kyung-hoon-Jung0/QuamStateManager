@@ -66,7 +66,8 @@ LINES = {
 def line(state: str, **kw) -> str:
     """The one user-facing sentence of a state."""
     if state == "not_run":
-        return f"Not simulated: {kw.get('reason') or 'the gate could not be built'}."
+        why = str(kw.get("reason") or "the gate could not be built").rstrip(".")
+        return f"Not simulated: {why}."
     if state == "running":
         where = kw.get("where") or "the simulator"
         phase = kw.get("phase")

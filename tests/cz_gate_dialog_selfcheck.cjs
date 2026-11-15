@@ -1026,6 +1026,41 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
         dataOverride = null;
     }
 
+    // the name tag: the shared vectors (the Python twin reads the same file), then the tag after a
+    // sentence end and after a "<pair>: " prefix, which a strip anchored to the start would miss
+    {
+        const V = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'name_tag_vectors.json'), 'utf8'));
+        const canon = (x) => JSON.stringify(x, (k, v) => (v && typeof v === 'object' && !Array.isArray(v))
+            ? Object.keys(v).sort().reduce((o, kk) => { o[kk] = v[kk]; return o; }, {}) : v);
+        const badR = V.reasons.filter((v) => window.CzGate._plainReason(v.text, v.pairs) !== v.plain).map((v) => v.case);
+        const badA = V.answers.filter((v) => canon(window.CzGate._plainAnswer(v.answer)) !== canon(v.plain)).map((v) => v.case);
+        ok(V.tag === 'name: ' && V.reasons.length >= 10 && !badR.length, 'every shared reason vector reads as cz_gate_build.plain_reason says' + (badR.length ? ': ' + badR.join(', ') : ''));
+        ok(V.answers.length >= 2 && !badA.length, 'every shared answer vector reads as cz_gate_build.plain_reasons says' + (badA.length ? ': ' + badA.join(', ') : ''));
+        const anyTag = (t) => /name: [A-Z]/.test(t);
+        const OP = 'The operation op_q1-2 already exists on q1.z. Pick another gate name.';
+        const TAKEN = 'The pair already has a gate named cz_tagmid. Pick another name.';
+        await window.CzGate.open({ pair: 'q1-2' });
+        await settle();
+        type($('#czg-name'), 'cz_tagjoin');
+        await settle();
+        queue.check.push((b) => { const j = checkOk(b, { refuse: 'q1-2' }); j.pairs[0].verdict.reason = 'name: ' + OP + ' name: ' + TAKEN; return j; });
+        prim().click();
+        await settle();
+        ok(alertText().indexOf(OP + ' ' + TAKEN) >= 0 && !anyTag(alertText()) && !anyTag($('#czg-writes').textContent),
+           'a verdict reason joining two tagged reasons reads plainly in the banner and in What will be written');
+        type($('#czg-name'), 'cz_tagmid');
+        await settle();
+        prim().click();
+        await settle();
+        queue.create.push(() => [400, { ok: false, error: 'No pair can be created: q1-2: name: ' + TAKEN,
+                                        skipped: [{ pair: 'q1-2', reason: 'name: ' + TAKEN }] }]);
+        prim().click();
+        await settle();
+        ok(alertText().indexOf('q1-2: ' + TAKEN) >= 0 && !anyTag(alertText()),
+           'a create where every pair is refused names the pair and its reason without the tag');
+        window.CzGate.close();
+    }
+
     // the chart component missing
     delete window.GateTimeline;
     window.CzGate.open({ pair: 'q1-2' });

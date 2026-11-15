@@ -641,6 +641,74 @@ def _refuse(reasons: list[str]) -> dict[str, Any]:
     return {"error": reasons[0], "refusals": list(reasons)}
 
 
+#: The routing tag on a reason a new gate name fixes: the dialog places such a
+#: reason under Name. No surface shows it: ``plain_reasons`` drops it, and
+#: ``plainAnswer`` in web/static/cz-gate.js is its cross-language twin (one
+#: shared vector file, tests/fixtures/name_tag_vectors.json, pins both).
+NAME_TAG = "name: "
+#: the answer keys whose text carries refusal sentences
+REASON_KEYS = frozenset({"refusals", "class_refusals", "reason", "error", "headline"})
+
+
+def name_reason(text: str) -> str:
+    """*text* tagged as a reason a new gate name fixes."""
+    return NAME_TAG + text
+
+
+def _tag_pattern(pairs) -> "re.Pattern[str]":
+    """Where the code itself puts the tag: at the start of a reason, at the
+    start of the next reason of a space join (after a sentence end), or right
+    after a ``<pair>: `` prefix (the pair at the start or after a space).
+    Nowhere else, so a sentence such as "gate setting name: ..." is kept."""
+    ids = "|".join(re.escape(p) for p in sorted({p for p in pairs if p}, key=len, reverse=True))
+    pair = rf"|(?:^|(?<=\s))(?:{ids}): " if ids else ""
+    return re.compile(rf"(^|(?<=\. ){pair}){re.escape(NAME_TAG)}(?=[A-Z])")
+
+
+def plain_reason(text: Any, pairs=()) -> Any:
+    """*text* without the name tag (see ``_tag_pattern``); *pairs* are the
+    pair ids a ``<pair>: `` prefix may name. A non-string is returned as is."""
+    return _untag(_tag_pattern(pairs), text) if isinstance(text, str) else text
+
+
+def _untag(pat: "re.Pattern[str]", text: str) -> str:
+    return pat.sub(lambda m: m.group(1), text)    # keep the lead, drop the tag
+
+
+def _pairs_of(obj, out: set) -> set:
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k == "pair" and isinstance(v, str):
+                out.add(v)
+            else:
+                _pairs_of(v, out)
+    elif isinstance(obj, list):
+        for v in obj:
+            _pairs_of(v, out)
+    return out
+
+
+def plain_reasons(answer: Any) -> Any:
+    """A copy of a plan / check / create / simulate *answer* with the name tag
+    dropped from every refusal sentence (under ``REASON_KEYS``, at any depth).
+    Every object with a ``refusals`` list also gets ``name_refusals``: its
+    tagged reasons, plainly worded, the ones a new gate name fixes."""
+    pat = _tag_pattern(_pairs_of(answer, set()))
+
+    def walk(obj, under):
+        if isinstance(obj, dict):
+            out = {k: walk(v, under or k in REASON_KEYS) for k, v in obj.items()}
+            if isinstance(obj.get("refusals"), list):
+                out["name_refusals"] = [_untag(pat, r) for r in obj["refusals"]
+                                        if isinstance(r, str) and r.startswith(NAME_TAG)]
+            return out
+        if isinstance(obj, list):
+            return [walk(v, under) for v in obj]
+        return _untag(pat, obj) if under and isinstance(obj, str) else obj
+
+    return walk(answer, False)
+
+
 def _gate_or_alias(macros: dict, name: str, merged: dict, pair_id: str
                    ) -> tuple[dict | None, str | None]:
     """The gate *name* names on the pair, following an alias one hop."""
@@ -819,7 +887,7 @@ def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
     reasons: list[str] = []
     r = name_rule(macros, gate_name)
     if r:
-        reasons.append("name: " + r)
+        reasons.append(name_reason(r))
     lines = _lines(merged, pair_id)
     control, target = lines["_ids"]
     if gate_class in GATE_CLASSES and not (control and target):
@@ -881,8 +949,8 @@ def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
                        f"{path.rsplit('.', 1)[-1]}. Pick another model gate.")
     for path, _ in out["creates"]:
         if path.endswith(".macros.cz"):
-            reasons.append("name: The new gate would replace the pair's cz alias. "
-                           "Pick another gate name.")
+            reasons.append(name_reason("The new gate would replace the pair's cz alias. "
+                                       "Pick another gate name."))
     if reasons:
         return _refuse(reasons)
     out["creates"] = [(path, copy.deepcopy(v)) for path, v in out["creates"]]
@@ -891,8 +959,8 @@ def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
 
 def _check_op(line: tuple, key: str, reasons: list[str]) -> None:
     if key in line[1]:
-        reasons.append(f"name: The operation {key} already exists on {line[2]}. "
-                       "Pick another gate name.")
+        reasons.append(name_reason(f"The operation {key} already exists on {line[2]}. "
+                                   "Pick another gate name."))
 
 
 def _name_problem(key: str, ids: tuple) -> str:
@@ -903,10 +971,10 @@ def _name_problem(key: str, ids: tuple) -> str:
                     "cannot hold (only letters, digits and _ are allowed). "
                     "Rename the qubit in the chip first.")
     if len(key) > 64:
-        return (f"name: The operation name {key} would be longer than 64 characters. "
-                "Pick a shorter gate name.")
-    return (f"name: The operation name {key} is not a valid name (a letter first, then "
-            "letters, digits or _). Pick a plainer gate name.")
+        return name_reason(f"The operation name {key} would be longer than 64 characters. "
+                           "Pick a shorter gate name.")
+    return name_reason(f"The operation name {key} is not a valid name (a letter first, then "
+                       "letters, digits or _). Pick a plainer gate name.")
 
 
 def _plan_known(merged, pair_id, p, gate_name, gate_class, pulses, lines,

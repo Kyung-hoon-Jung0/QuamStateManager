@@ -23,6 +23,7 @@ from flask import make_response
 
 from quam_state_manager import mcp
 from quam_state_manager.core import approvals, class_file_check, limits, working_copy
+from quam_state_manager.core import cz_gate_build as cgb
 from quam_state_manager.core import journal as journal_mod
 from quam_state_manager.core import quam_config_save as Q
 from quam_state_manager.web import agent_api, pulse_class_page
@@ -205,6 +206,23 @@ def test_the_agents_answers_carry_no_name_tag(chip, fake):
     r = chip.c.post(A_CREATE, json={"check_token": j["check_token"], "plan_sig": j["plan_sig"],
                                     "reason": "a square CZ to compare"}, headers=AGENT)
     assert r.get_json()["skipped"][0]["pair"] == "q2-3" and _no_tag(r.get_data(as_text=True))
+    row = p.get_json()["pairs"][1]
+    assert row["name_refusals"] and set(row["name_refusals"]) <= set(row["refusals"])
+    assert p.get_json()["pairs"][0]["name_refusals"] == []
+
+
+def test_an_agent_create_where_every_pair_is_refused_names_the_pair_without_the_tag(chip, fake):
+    """The tag sits mid-sentence, after the "<pair>: " prefix of the joined error."""
+    pre = chip.c.post(CHECK, json=_body(pairs=["q2-3"])).get_json()
+    chip.c.post(CREATE, json={"check_token": pre["check_token"], "plan_sig": pre["plan_sig"]})
+    c = chip.c.post(A_CHECK, json=_body(pairs=["q2-3"]), headers=AGENT).get_json()
+    before = chip.snap()
+    r = chip.c.post(A_CREATE, json={"check_token": c["check_token"], "plan_sig": c["plan_sig"],
+                                    "reason": "a square CZ to compare"}, headers=AGENT)
+    err = r.get_json()["error"]
+    assert r.status_code == 400 and err.startswith("No pair can be created: q2-3: "), err
+    assert _no_tag(r.get_data(as_text=True)) and cgb.NAME_TAG not in err
+    assert chip.snap() == before
 
 
 def test_the_persons_create_route_still_refuses_an_agent(chip, fake):
