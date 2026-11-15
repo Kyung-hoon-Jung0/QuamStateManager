@@ -160,15 +160,15 @@
     row checked) or 'action' (menu of commands). Items: [{value, title,
     desc?, disabled?, reason?}]; a disabled row shows its reason as its
     second line. static/ui.js (UI.menu) owns the behaviour. -#}
-{%- macro ui_menu(id, items, label, kind='pick', value=None, trigger=None, placeholder='Choose', block=False, end=False, up=False, labelledby=None) -%}
+{%- macro ui_menu(id, items, label, kind='pick', value=None, trigger=None, placeholder='Choose', block=False, end=False, up=False, labelledby=None, note=None) -%}
 {{- ui_valid_id(id) -}}
 {%- set value = value if value is defined else none -%}
 {%- set pick = kind != 'action' -%}
 {%- set ns = namespace(title=None) -%}
 {%- for it in items %}{% if pick and value is not none and it.value == value %}{% set ns.title = it.title %}{% endif %}{% endfor -%}
 <div class="ui-menu{% if block %} ui-menu--block{% endif %}" data-ui-menu="{{ 'pick' if pick else 'action' }}"{% if pick and value is not none %} data-value="{{ value }}"{% endif %}>
-<button type="button" id="{{ id }}" class="ui-menu-trigger {{ ('ui-select' ~ (' ui-select--block' if block else '')) if pick else (trigger.cls if trigger and trigger.cls else 'btn-sm secondary') }}" aria-haspopup="{{ 'listbox' if pick else 'menu' }}" aria-expanded="false" aria-controls="{{ id }}-list"{% if pick %} aria-labelledby="{{ labelledby or (id ~ '-label') }} {{ id }}-value"{% endif %}>
-{%- if pick %}{% if not labelledby %}<span class="ui-sr" id="{{ id }}-label">{{ label }}</span>{% endif %}<span id="{{ id }}-value" class="ui-menu-value{% if ns.title is none %} ui-menu-placeholder{% endif %}">{{ ns.title if ns.title is not none else placeholder }}</span>{% else %}{{ trigger.label if trigger and trigger.label else label }}{% endif -%}
+<button type="button" id="{{ id }}" class="ui-menu-trigger {{ ('ui-select' ~ (' ui-select--block' if block else '')) if pick else (trigger.cls if trigger and trigger.cls else 'btn-sm secondary') }}" aria-haspopup="{{ 'listbox' if pick else 'menu' }}" aria-expanded="false" aria-controls="{{ id }}-list"{% if pick %} aria-labelledby="{{ labelledby or (id ~ '-label') }} {{ id }}-value{% if note %} {{ id }}-note{% endif %}"{% endif %}>
+{%- if pick %}{% if not labelledby %}<span class="ui-sr" id="{{ id }}-label">{{ label }}</span>{% endif %}<span id="{{ id }}-value" class="ui-menu-value{% if ns.title is none %} ui-menu-placeholder{% endif %}">{{ ns.title if ns.title is not none else placeholder }}</span>{% if note %}<span id="{{ id }}-note" class="ui-text-quiet ui-menu-note">{{ note }}</span>{% endif %}{% else %}{{ trigger.label if trigger and trigger.label else label }}{% endif -%}
 </button>
 <div class="ui-menu-list{% if pick %} ui-menu-list--pick{% endif %}{% if end %} ui-menu-list--end{% endif %}{% if up %} ui-menu-list--up{% endif %}" id="{{ id }}-list" role="{{ 'listbox' if pick else 'menu' }}" aria-label="{{ label }}" hidden>
 {%- for it in items %}{% if it.sep %}<div class="ui-menu-sep" role="separator"></div>{% else %}<div class="ui-option" role="{{ 'option' if pick else 'menuitem' }}" tabindex="-1" {% if it.value is defined and it.value is not none %} data-value="{{ it.value }}"{% endif %}{% if pick %} aria-selected="{{ 'true' if value is not none and it.value == value else 'false' }}"{% endif %}{% if it.disabled %} aria-disabled="true"{% endif %}>

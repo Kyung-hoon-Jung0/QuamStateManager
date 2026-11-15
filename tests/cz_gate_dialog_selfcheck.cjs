@@ -1647,7 +1647,7 @@ function tableWidths(el, sw, cw) {
         const trig = () => $('#czg-class');
         const trigMarks = () => trig().querySelectorAll('[data-czg-older-render-trigger]');
         const pickClass = (v) => $('#czg-class-host .ui-menu').dispatchEvent(new window.CustomEvent('ui-menu-pick', { bubbles: true, detail: { value: v, kind: 'pick' } }));
-        ok(trigMarks().length === 1 && trigMarks()[0].textContent === markWords && trigMarks()[0].className === 'ui-text-quiet' && trig().getAttribute('aria-labelledby').split(' ').indexOf(trigMarks()[0].id) >= 0,
+        ok(trigMarks().length === 1 && trigMarks()[0].textContent === markWords && trigMarks()[0].className === 'ui-text-quiet ui-menu-note' && trig().getAttribute('aria-labelledby').split(' ').indexOf(trigMarks()[0].id) >= 0,
            'older mark: the closed picker says it for the selected older class and names it for screen readers');
         pickClass('L.TwoFlux');
         ok(trigMarks().length === 0 && trig().getAttribute('aria-labelledby').indexOf('czg-class-older') < 0, 'older mark: picking another class removes the words from the picker');

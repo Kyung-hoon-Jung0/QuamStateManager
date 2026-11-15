@@ -1034,6 +1034,9 @@ _STAGE6_SELECTORS = {
     '.czg-form', '.czg-evidence', '.czg-slots', '.czg-why-line', '.czg-chips',
     '.czg-more-list', '.czg-more-row', '.czg-chart > .ui-note', '.czg-row-acts',
     '.czg .ui-segmented-opt', '.czg .ui-menu-trigger[aria-invalid="true"]',
+    # a closed picker with a note, an open list over its zone (docs/308)
+    '.ui-select.ui-select.ui-menu-trigger:has(> .ui-menu-note)', '.ui-zone:has(.ui-menu-trigger[aria-expanded="true"])',
+    '.topbar.tb-fit-11 .auto-sync-wrap', '.topbar.tb-fit-11 .auto-apply-pill',
     '.czg-form > *', '.czg-evidence > *',
     '.czg:not([data-czg-stacked]) .czg-cols', '.czg:not([data-czg-stacked]) .czg-cols::after',
     '.czg[data-czg-stacked] .czg-form::after', '.czg[data-czg-stacked] .czg-evidence::after',
@@ -1055,7 +1058,7 @@ _STAGE6_SELECTORS = {
     '.gate-status-edit', '.gate-status-activate', '.gate-status-recheck', '.gate-status-delete',
     '.gate-status-delete:hover', '.gate-delete-confirm', '.gate-delete-cancel', '.gate-status-slot:empty', '.gate-status-notice',
     '.gate-status-list.ui-zone--quiet > .ui-zone-body',
-    '.gate-delete-offer', '.gate-delete-list', '.gate-delete-actions',
+    '.gate-delete-offer', '.gate-delete-list', '.gate-delete-list code', '.gate-delete-actions',
     '.gen-rule-allcant',
     '.gen-rule-dim',
     '.gen-rule-grp-mark',
