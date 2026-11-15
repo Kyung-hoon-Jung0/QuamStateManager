@@ -266,7 +266,8 @@ def _reference_walk(merged: dict, path: list[str]) -> dict:
     the walk back to the root with the pointer's keys put in front of that list.
     A cycle is the exact same full state met again: the node holding the
     pointer, the pointer, and every key still to descend. At most _LIMIT
-    pointers are followed in the whole walk.
+    pointers are followed in the whole walk. A key is a whole string, never split
+    or unescaped once read; a list is indexed by the key read as an integer.
     """
     todo = list(path)
     at: list[str] = []
@@ -290,9 +291,16 @@ def _reference_walk(merged: dict, path: list[str]) -> dict:
         if not todo:
             return {"ok": True, "why": "", "at": at, "value": node, "hops": hops, "crossed": crossed}
         key = todo.pop(0)
-        if not isinstance(node, dict) or key not in node:
-            return {"ok": False, "why": "missing", "hops": hops}
-        at, node = at + [key], node[key]
+        if isinstance(node, dict) and key in node:
+            at, node = at + [key], node[key]
+            continue
+        if isinstance(node, list):
+            try:
+                at, node = at + [key], node[int(key)]
+                continue
+            except (ValueError, IndexError):
+                pass
+        return {"ok": False, "why": "missing", "hops": hops}
 
 
 def _agrees(merged: dict, path: list[str]) -> dict:
@@ -303,26 +311,47 @@ def _agrees(merged: dict, path: list[str]) -> dict:
     assert [h["from_path"] for h in got["chain"]] == ref["hops"], case
     if ref["ok"]:
         assert got["resolved_segments"] == ref["at"], case
-        want = ref["value"] if not isinstance(ref["value"], dict) else None
+        want = ref["value"] if not isinstance(ref["value"], (dict, list)) else None
         assert got["resolved_value"] == want, case
     return ref
 
 
-def _random_graph(rng) -> dict:
-    keys = "xyz"
-
+def _random_graph(rng, roots="abc", keys="xyz", lists: bool = False) -> dict:
+    """Small random pointer graph; with *lists* some containers are lists, indexed by "0", "1", ..."""
     def path() -> str:
-        return "#/" + "/".join([rng.choice("abc")] + [rng.choice(keys) for _ in range(rng.randint(0, 3))])
+        return "#/" + "/".join([rng.choice(roots)] + [rng.choice(keys) for _ in range(rng.randint(0, 3))])
 
     def node(depth: int):
         roll = rng.random()
         if depth == 0 or roll < 0.3:
             return path() if rng.random() < 0.6 else 26
+        if lists and rng.random() < 0.2:
+            return [node(depth - 1) for _ in range(rng.randint(1, 2))]
         return {k: node(depth - 1) for k in rng.sample(keys, rng.randint(1, 3))}
 
-    m = {k: node(3) for k in "abc"}
+    m = {k: node(3) for k in roots}
     m["q"] = {"leaf": path()}
     return m
+
+
+# Keys a joined-string cycle key or a pointer string could confuse. Pointers are not escaped (docs/01): a "/" in
+# a key splits when the key is written into a pointer, so a "/" key is reached only from a list path; "~0", "~1",
+# "#", "." and a space are plain keys; "0" is a dict key or, in a list, an index.
+_TRICKY_KEYS = ("x", "y", "x.y", "x/y", "x|y", "x y", "~0", "~1", "#", "0", ".")
+_TRICKY_ROOTS = ("a", "a.x", "a|x", "a x", "a/x")
+_SEPARATORS = (".", "/", "|", " ")
+
+
+def _regroup(rng, keys: list[str], sep: str) -> list[str]:
+    """The same text as *keys* joined by *sep*, cut into keys at other *sep* boundaries (same text, other keys)."""
+    parts = sep.join(keys).split(sep)
+    out = [parts[0]]
+    for part in parts[1:]:
+        if rng.random() < 0.5:
+            out[-1] += sep + part
+        else:
+            out.append(part)
+    return out
 
 
 def _put(m: dict, keys: list[str], value) -> None:
@@ -360,7 +389,7 @@ def _reordered_revisit_graph(rng) -> dict:
     return m
 
 
-def _nested_revisit_graph(rng) -> dict:
+def _nested_revisit_graph(rng, keys="xy", tricky: bool = False) -> tuple[dict, list[str]]:
     """One pointer met twice, each time inside one or two pending walks, the walks split another way.
 
     holder.p points at a root t. The first visit enters holder.p from q.leaf directly, or through a relay
@@ -370,18 +399,21 @@ def _nested_revisit_graph(rng) -> dict:
     first: <second>. It may equal <first> (a true cycle with the walks split differently), or reorder, nest or
     split the same keys. What sits at t.<second> is random. Short keys over a two-letter alphabet make keys
     that lose frame order, key order or frame boundaries collide with the first visit often.
-    """
-    keys = "xy"
 
+    With *tricky* the keys come from _TRICKY_KEYS, half the walks start from a list path (its keys are never
+    split, so a "/" key is walked whole there and split once written into a pointer), and in 40 % of the rest
+    the second visit has the same text as the first joined by one separator, cut into other keys: a cycle key
+    that joins keys into a string calls that state a repeat. Returns the graph and the path to resolve.
+    """
     def run() -> list[str]:
         return [rng.choice(keys) for _ in range(rng.randint(1, 2))]
 
-    def enter(m: dict, relay: str, inner: list[str], outer: list[str]) -> str:
-        """The pointer that reaches holder.p with *inner* inside and *outer* pending in a relay walk."""
+    def enter(m: dict, relay: str, inner: list[str], outer: list[str]) -> list[str]:
+        """The pointer keys that reach holder.p with *inner* inside and *outer* pending in a relay walk."""
         if not outer:
-            return "/".join(["#", holder, p] + inner)
+            return [holder, p] + inner
         m[relay] = {"s": "/".join(["#", holder, p] + inner)}
-        return "/".join(["#", relay, "s"] + outer)
+        return [relay, "s"] + outer
 
     holder, target = rng.sample("abc", 2)
     p = rng.choice("xyz")
@@ -393,15 +425,23 @@ def _nested_revisit_graph(rng) -> dict:
     if len(first) < 2:
         first.append(rng.choice(keys))
         r1 = first[:len(first) - len(r2)]
-    m["q"] = {"leaf": enter(m, "u", r1, r2)}
+    start = enter(m, "u", r1, r2)
+    from_list = tricky and rng.random() < 0.5
+    path = start if from_list else ["q", "leaf"]
+    if not from_list:
+        m["q"] = {"leaf": "/".join(["#"] + start)}
     j = rng.randint(1, len(first) - 1)
     at, rest = first[:j], first[j:]
-    if rng.random() < 0.2:   # the same keys again, split another way: a cycle
+    if tricky and rng.random() < 0.4:   # the same text, cut into other keys
+        again = _regroup(rng, at, rng.choice(_SEPARATORS))
+        cut = rng.randint(1, len(again))
+        s1, s2 = again[:cut], again[cut:]
+    elif rng.random() < 0.2:   # the same keys again, split another way: a cycle
         cut = rng.randint(0, len(at))
         s1, s2 = at[:cut] or at, at[cut:] if cut else []
     else:
         s1, s2 = run(), (run() if rng.random() < 0.5 else [])
-    _put(m[target], at, enter(m, "v", s1, s2))
+    _put(m[target], at, "/".join(["#"] + enter(m, "v", s1, s2)))
     second = s1 + s2 + rest
     clash = second[:len(at)] == at or at[:len(second)] == second
     roll = rng.random()
@@ -409,7 +449,36 @@ def _nested_revisit_graph(rng) -> dict:
         _put(m[target], second, 26)
     elif not clash and roll < 0.9:
         _put(m[target], second, "/".join(["#", holder, p] + run()))
-    return m
+    return m, path
+
+
+def _twin_holder_graph(rng) -> tuple[dict, list[str]]:
+    """Two holders whose keys read the same once joined by one separator, holding the same pointer.
+
+    One holder's keys are single letters, the other's the same text cut at other separator boundaries. The walk
+    meets one of them with keys <rest> still to walk; its pointer leads to a pointer that names the other one
+    with the same <rest>. Two states, so the walk goes on until the first holder's state repeats; a cycle key
+    that joins the holder's keys stops a hop early. A holder whose keys hold a "/" is reached from a list path
+    only. Returns the graph and the path to resolve.
+    """
+    sep = rng.choice(_SEPARATORS)
+    letters = [rng.choice("xy") for _ in range(rng.randint(2, 4))]
+    cut = letters
+    while cut == letters:
+        cut = _regroup(rng, letters, sep)
+    first, second = (cut, letters) if sep == "/" or rng.random() < 0.5 else (letters, cut)
+    m = _random_graph(rng)
+    rest = [rng.choice("xy") for _ in range(rng.randint(0, 2))]
+    inner = [rng.choice("xy") for _ in range(rng.randint(0, 1))]
+    ptr = "/".join(["#", "t"] + inner)
+    _put(m, first, ptr)
+    _put(m, second, ptr)
+    m["t"] = {}
+    _put(m, ["t"] + inner + rest, "/".join(["#"] + second + rest))
+    if sep == "/" or rng.random() < 0.5:
+        return m, first + rest
+    m["q"] = {"leaf": "/".join(["#"] + first + rest)}
+    return m, ["q", "leaf"]
 
 
 def _named_graphs() -> dict:
@@ -438,6 +507,23 @@ def _named_graphs() -> dict:
         "same pointer, frames nested the other way": (
             {"b": {"p": "#/c"}, "c": {"x": {"y": "#/b/p/y/x"}, "y": {"x": {"x": 26}}}, "q": {"leaf": "#/b/p/x/y/x"}},
             26),
+        # h.p met with the one key "b.c" still to walk, then with b, c: two states, lands on t.b.c = 26
+        "a dotted key still to walk": (
+            {"h": {"p": "#/t"}, "t": {"b.c": "#/h/p/b/c", "b": {"c": 26}}, "q": {"leaf": "#/h/p/b.c"}}, 26),
+        # the same pointer held at a."b.c" and at "a.b".c: two holders, so the cycle is t met again, after a.b.c
+        "dotted holders": (
+            {"a": {"b.c": "#/t"}, "a.b": {"c": "#/t"}, "t": "#/a.b/c", "q": {"leaf": "#/a/b.c"}}, None),
+    }
+
+
+def _slashed_graphs() -> dict:
+    """Graphs walked from a list path, whose keys may hold a "/" a pointer would split: (graph, path, value)."""
+    return {
+        # h.p met with the one key "x/y" still to walk, then with x, y: two states, lands on t.x.y = 26
+        "a slashed key still to walk": (
+            {"h": {"p": "#/t"}, "t": {"x/y": "#/h/p/x/y", "x": {"y": 26}}}, ["h", "p", "x/y"], 26),
+        # the same pointer held at "a/b" and at a.b: two holders, so the cycle is t met again, after a.b
+        "slashed holders": ({"a/b": "#/t", "a": {"b": "#/t"}, "t": "#/a/b"}, ["a/b"], None),
     }
 
 
@@ -452,6 +538,21 @@ def test_cross_agrees_with_the_reference_on_named_graphs(name):
     ref = _agrees(merged, ["q", "leaf"])
     if value is not None:
         assert ref["ok"] and ref["value"] == value
+
+
+@pytest.mark.parametrize("name", sorted(_slashed_graphs()))
+def test_cross_agrees_with_the_reference_on_slashed_keys(name):
+    merged, path, value = _slashed_graphs()[name]
+    ref = _agrees(merged, path)
+    assert ref["ok"] is (value is not None) and (value is None or ref["value"] == value)
+
+
+def test_cross_tells_relative_dotted_holders_apart():
+    # a."b.c" and "a.b".c hold the same "#./z": two states, so the walk goes on to "a.b".z = 26
+    merged = {"a": {"b.c": "#./z", "z": "#/a.b/c"}, "a.b": {"c": "#./z", "z": 26}, "q": {"leaf": "#/a/b.c"}}
+    got = resolve_field_target(merged, ["q", "leaf"], cross=True)
+    assert got["resolvable"] and got["resolved_value"] == 26 and got["resolved_segments"] == ["a.b", "z"]
+    assert [h["from_path"] for h in got["chain"]] == ["q.leaf", "a.b.c", "a.z", "a.b.c"]
 
 
 def test_cross_agrees_with_the_reference_near_the_limit():
@@ -495,8 +596,48 @@ def test_cross_agrees_with_the_reference_on_nested_revisits():
     rng = random.Random(20261118)
     why: dict = {}
     for _ in range(1500):
-        ref = _agrees(_nested_revisit_graph(rng), ["q", "leaf"])
+        ref = _agrees(*_nested_revisit_graph(rng))
         kind = ref["why"] or "landed"
         why[kind] = why.get(kind, 0) + 1
     # both verdicts are common, so a cycle key that merges or splits states has walks to disagree on
     assert why.get("landed", 0) >= 300 and why.get("cycle", 0) >= 100, why
+
+
+def test_cross_agrees_with_the_reference_on_tricky_keys():
+    import random
+    rng = random.Random(20261119)
+    why: dict = {}
+    for _ in range(3000):
+        merged = _random_graph(rng, _TRICKY_ROOTS, _TRICKY_KEYS, lists=True)
+        path = ["q", "leaf"]
+        if rng.random() < 0.5:
+            path = [rng.choice(_TRICKY_ROOTS)] + [rng.choice(_TRICKY_KEYS) for _ in range(rng.randint(0, 3))]
+        ref = _agrees(merged, path)
+        kind = ref["why"] or "landed"
+        why[kind] = why.get(kind, 0) + 1
+    # every verdict occurs (cycles are rarer over this many keys), so a key that merges two states can disagree
+    assert why.get("cycle", 0) >= 20 and all(why.get(k, 0) >= 50 for k in ("missing", "landed", "limit")), why
+
+
+def test_cross_agrees_with_the_reference_on_nested_revisits_with_tricky_keys():
+    import random
+    rng = random.Random(20261120)
+    why: dict = {}
+    for _ in range(1500):
+        ref = _agrees(*_nested_revisit_graph(rng, ("x", "y", "x.y", "x/y", "x|y", "x y"), tricky=True))
+        kind = ref["why"] or "landed"
+        why[kind] = why.get(kind, 0) + 1
+    # walks the same text cut into other keys must land or stop where the reference does
+    assert why.get("landed", 0) >= 200 and why.get("cycle", 0) >= 100, why
+
+
+def test_cross_agrees_with_the_reference_on_twin_holders():
+    import random
+    rng = random.Random(20261121)
+    why: dict = {}
+    for _ in range(600):
+        ref = _agrees(*_twin_holder_graph(rng))
+        kind = ref["why"] or "landed"
+        why[kind] = why.get(kind, 0) + 1
+    # nearly every walk reaches both holders and stops at the cycle, so a key that joins holders stops early
+    assert why.get("cycle", 0) >= 500, why
