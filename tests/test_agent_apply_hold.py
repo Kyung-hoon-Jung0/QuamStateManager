@@ -13,6 +13,9 @@ from __future__ import annotations
 
 import json
 
+import pytest
+from flask import request
+
 from quam_state_manager import mcp
 from quam_state_manager.core import approvals, limits
 from tests.test_agent_runs import (  # noqa: F401 -- fixtures by import
@@ -204,6 +207,25 @@ class TestTheWindowStampLivesOneRequest:
                 pass
             assert edit_window_id.get() == "window-b", "a nested context released the outer stamp"
         assert edit_window_id.get() is None
+
+    def test_a_request_that_raises_leaves_no_stamp(self, app):
+        from quam_state_manager.core.loader import edit_window_id
+        from quam_state_manager.web import routes
+        seen = {}
+
+        def _raising_view():
+            seen["stamp"] = edit_window_id.get()
+            seen["environ"] = request.environ
+            raise RuntimeError("view failed")
+
+        # test-only route on this test's own app (no request served yet, so setup is still open)
+        app.add_url_rule("/_test/raising-view", "_test_raising_view", _raising_view, methods=["POST"])
+        client = app.test_client()
+        with pytest.raises(RuntimeError, match="view failed"):
+            client.post("/_test/raising-view", headers={**HUMAN, **WIN_B})
+        assert seen["stamp"] == "window-b", "the stamp was not bound while the view ran"
+        assert edit_window_id.get() is None, "a request that raised left its window stamp on the thread"
+        assert routes._EDIT_WINDOW_TOKEN not in seen["environ"], "the request context still holds the stamp token"
 
 
 def test_the_mcp_bridge_relays_a_held_apply(monkeypatch):
