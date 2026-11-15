@@ -77,3 +77,5 @@ quam_config refuse its own file, nor make gates using the class wait again.
   not here; the publication record (`published.json` next to the draft) carries `path`, `sha`, `qclass`,
   `importable` and `proportional` for that.
 - Undo notice and "not used" in the class list.
+
+An undo never deletes a class file: its notice names the file left on disk when no gate uses it any more, and the class list marks an SM file that no gate of the chip uses as "not used".
