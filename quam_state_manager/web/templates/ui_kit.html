@@ -216,4 +216,11 @@
 </section>
 <script id="ui-kit-specs" type="application/json">{{ specs | map(attribute=2) | list | tojson }}</script>
 </div>
+
+<section class="ui-kit-section ui-generate"><h2 class="ui-kit-section-title">Narrow generation and run diff</h2>
+<select class="ui-select ui-root-select" aria-label="Root class"><option>Automatic</option></select>
+<span class="ui-root-value">Selected root class description</span>
+<table class="ui-run-diff ui-run-diff-compact ui-run-diff-phone"><tbody><tr><td><span class="ui-dot-name">module.&lt;wbr&gt;ClassName</span></td></tr></tbody></table>
+</section>
+
 {% endblock %}

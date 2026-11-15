@@ -1,9 +1,9 @@
-"""The run diff list stays readable at narrow widths: the table scrolls inside
-its own box, dotted names and paths break only at "." and "/", a number never
-splits, and the class row says it has no numeric delta.
+"""The run diff stacks its cells on phones and prefers dot and slash breaks.
 
-jsdom has no layout, so this pins the CSS contract and the markup that give
-the behaviour; the real-width check is a headless Chrome screenshot round."""
+Numbers stay whole, unstructured tokens retain an emergency wrap, and the
+class row says it has no numeric delta. CSS pins complement the jsdom resize
+selfcheck; actual rendering is left to the next Chrome round.
+"""
 import json
 import re
 from pathlib import Path
@@ -43,8 +43,8 @@ def _row(body, key):
     return hit[0]
 
 
-def test_the_table_scrolls_inside_its_own_box(body):
-    assert re.search(r'<div class="ui-xscroll">\s*<table class="diff-wb-list">', body)
+def test_the_existing_scroll_shell_contains_the_responsive_table(body):
+    assert re.search(r'<div class="ui-xscroll">\s*<table class="diff-wb-list ui-run-diff" data-run-diff>', body)
 
 
 def test_dotted_names_break_only_at_their_dots(body):
@@ -79,8 +79,8 @@ def test_path_breaks_filter_keeps_numbers_whole():
     assert str(f("1.5e-3")) == '<span class="ui-cell-nowrap">1.5e-3</span>'
     assert str(f("-0.25")) == '<span class="ui-cell-nowrap">-0.25</span>'
     assert "<wbr>" not in str(f("123,456,789,012"))
-    assert str(f("a/b.c")) == "a/<wbr>b.<wbr>c"
-    assert str(f("<x>.y")) == "&lt;x&gt;.<wbr>y"
+    assert str(f("a/b.c")) == '<span class="ui-dot-name">a/<wbr>b.<wbr>c</span>'
+    assert str(f("<x>.y")) == '<span class="ui-dot-name">&lt;x&gt;.<wbr>y</span>'
 
 
 def _rule(css, sel):
@@ -118,3 +118,87 @@ def test_a_long_token_and_numbers_in_the_value_cells(tmp_path):
     assert '<code class="ui-cell-nowrap">123,456,789,012</code>' in row
     assert '<code class="ui-cell-nowrap">1</code>' in row
     assert "<code>ab</code>" in _row(body, ">label<")
+
+
+def test_joint_wrapper_and_phone_stack(body):
+    app = create_app(testing=True)
+    f = app.jinja_env.filters["path_breaks"]
+    assert str(f("UndottedClass")) == "UndottedClass"
+    assert str(f("quam.components.SquarePulse")) == '<span class="ui-dot-name">quam.<wbr>components.<wbr>SquarePulse</span>'
+    kit = (ROOT / "static/ui-kit.css").read_text(encoding="utf-8")
+    joint = _rule(kit, ".ui-dot-name")
+    assert "word-break: normal" in joint and "overflow-wrap: normal" in joint
+    phone = kit
+    assert "display: block" in _rule(phone, ".ui-run-diff-phone, .ui-run-diff-phone tbody, .ui-run-diff-phone tr, .ui-run-diff-phone td")
+    assert "min-width: 0" in _rule(kit, ".ui-run-diff-compact .diff-list-path, .ui-run-diff-compact .diff-list-a, .ui-run-diff-compact .diff-list-b")
+    for name in ("a", "b", "delta"):
+        assert "content:" in _rule(phone, f".ui-run-diff-phone .diff-list-{name}::before")
+    assert 'diff-wb-list ui-run-diff' in body
+
+
+def test_compact_table_bounds_and_long_segments():
+    kit = (ROOT / "static/ui-kit.css").read_text(encoding="utf-8")
+    compact = _rule(kit, ".ui-run-diff.ui-run-diff-compact")
+    assert "table-layout: fixed" in compact and "width: 100%" in compact
+    assert "overflow-wrap: anywhere" in _rule(kit, ".ui-run-diff-compact .ui-dot-name")
+    delta = _rule(kit, ".ui-run-diff-compact .diff-list-delta, .ui-run-diff-compact .diff-list-delta .val-delta")
+    assert "white-space: normal" in delta and "overflow-wrap: anywhere" in delta
+    assert "width: 2ch" in _rule(kit, ".ui-run-diff-compact th:nth-child(3), .ui-run-diff-compact .diff-list-arrow")
+    assert "white-space: normal" in _rule(kit, ".ui-run-diff-compact .diff-list-take")
+    app = create_app(testing=True)
+    value = "module." + "LongSegment" * 20
+    assert str(app.jinja_env.filters["path_breaks"](value)) == '<span class="ui-dot-name">module.<wbr>' + "LongSegment" * 20 + '</span>'
+
+
+_HIDING = re.compile(
+    r"(display\s*:\s*none|visibility\s*:\s*(hidden|collapse)"
+    r"|(^|;)\s*(max-)?(width|height)\s*:\s*0(px|ch|em|rem|%)?\s*(;|$|!)"
+    r"|(^|;)\s*clip(-path)?\s*:\s*(?!auto|none)|(^|;)\s*opacity\s*:\s*0\s*(;|$|!)"
+    r"|(^|;)\s*font-size\s*:\s*0(px)?\s*(;|$|!))", re.I)
+
+
+def _hiding_selectors(css):
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    found = []
+    for selectors, declarations in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
+        if _HIDING.search(declarations.strip()):
+            found.extend(" ".join(s.split()) for s in selectors.split(",") if s.strip())
+    return found
+
+
+def _cells():
+    tpl = (ROOT / "templates/_diff_workbench.html").read_text(encoding="utf-8")
+    table = tpl.split("data-run-diff>", 1)[1].split("</table>", 1)[0]
+    cells = set(re.findall(r'<td class="(diff-list-[a-z]+)', table))
+    assert {"diff-list-a", "diff-list-b", "diff-list-delta"} <= cells
+    return cells
+
+
+def test_phone_only_hides_header_and_arrow():
+    """No rule, in or out of a media query, under any selector prefix, hides
+    the A, B or delta cell (or the whole table); only the header row and the
+    arrow column are hidden, and only under the phone class."""
+    kit = (ROOT / "static/ui-kit.css").read_text(encoding="utf-8")
+    keep = _cells() - {"diff-list-arrow"}
+    allowed = {".ui-run-diff-phone thead", ".ui-run-diff-phone .diff-list-arrow"}
+    mine = [s for s in _hiding_selectors(kit)
+            if re.search(r"ui-run-diff(?![-\w])", s) or any(c in s for c in keep)
+            or re.search(r"ui-run-diff-(phone|compact)", s)]
+    assert sorted(set(mine) - allowed) == [], mine
+    assert allowed <= set(mine)
+    assert {"diff-list-a", "diff-list-b", "diff-list-delta"} <= keep
+
+
+def test_hiding_scan_catches_the_holes():
+    bad = ["@media (max-width: 480px) { .diff-list-delta { display: none; } }",
+           ".diff-list-b { visibility: hidden; }",
+           ".ui-run-diff .diff-list-a { width: 0; }",
+           ".ui-run-diff-compact .diff-list-delta { display:none }",
+           ".diff-list-delta { DISPLAY: NONE !important; }"]
+    for css in bad:
+        assert _hiding_selectors(css), css
+    good = ["/* .diff-list-delta { display: none; } */",
+            ".diff-list-delta { display: block; }", ".diff-list-a { display: grid; }",
+            ".diff-list-a { width: 20ch; }"]
+    for css in good:
+        assert _hiding_selectors(css) == [], css

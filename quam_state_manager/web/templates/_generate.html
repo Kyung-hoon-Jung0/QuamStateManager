@@ -1,7 +1,7 @@
 {# Generate Config wizard. Shell built in C1; each step's content is filled
    in by phases C2-C8. Step panels carry data-step; generate.js shows one at
    a time and drives Back/Next navigation. #}
-<div id="generate-root" class="generate-root">
+<div id="generate-root" class="generate-root ui-generate">
   {% from '_ui.html' import ui_head_fold %}
   <div class="gen-header ui-head ui-head--page">
     <h2 class="gen-title ui-head-title">{{ 'Modify config' if page == 'regenerate' else 'Generate Configuration Files' }}</h2>

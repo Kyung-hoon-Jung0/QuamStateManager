@@ -451,7 +451,15 @@
         xHint(box);
     }
 
+    function fitLists() {
+        each(document.querySelectorAll('[data-run-diff]'), function (table) {
+            table.classList.toggle('ui-run-diff-compact', window.innerWidth <= 700);
+            table.classList.toggle('ui-run-diff-phone', window.innerWidth <= 480);
+        });
+    }
+    window.addEventListener('resize', fitLists);
     function armAll() {
+        fitLists();
         each(document.querySelectorAll('#diff-panes'), arm);
         each(document.querySelectorAll('#diff-list'), armList);
         each(document.querySelectorAll('[data-xscroll]'), armXScroll);

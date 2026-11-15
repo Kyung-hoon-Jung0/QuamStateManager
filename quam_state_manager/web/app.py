@@ -932,7 +932,10 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
             out.append(escape(ch))
             if ch in "./":
                 out.append(Markup("<wbr>"))
-        return Markup("".join(out))
+        result = Markup("".join(out))
+        if "." in text or "/" in text:
+            return Markup('<span class="ui-dot-name">%s</span>') % result
+        return result
     app.jinja_env.filters["path_breaks"] = _path_breaks_filter
 
     def _run_name_filter(name) -> Markup:

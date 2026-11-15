@@ -41,7 +41,20 @@ function honest(list, label) {
 const note = 'recipe formula, not verified on this run (the node wrote no state)';
 let t = honest(chips({ clickable: { verification_note: note, targets: [{ path: 'qubits.q0.f' }] }}), 'unchecked recipe');
 assert.deepStrictEqual(t, ['not verified on this run'], 'an unchecked recipe says not verified, once'); n++;
-assert.strictEqual(tile.querySelector('.map-tools-chip').title, note, 'the full reason is on hover'); n++;
+assert.strictEqual(tile.querySelector('.map-tools-chip').title, note + ' ' + w.MapTools.VERIFY_HINT, 'the specific note and verify rule are on hover'); n++;
+for (const emptyNote of [undefined, '', '   ']) {
+    chips({ clickable: { verification_note: emptyNote, targets: [{ path: 'qubits.q0.f' }] } });
+    assert.strictEqual(tile.querySelector('.map-tools-chip').title, w.MapTools.VERIFY_HINT, 'no note means only the general hint'); n++;
+}
+chips({ clickable: { verification_note: '  ' + note + ' ' + w.MapTools.VERIFY_HINT + '  ' } });
+assert.strictEqual(tile.querySelector('.map-tools-chip').title, note + ' ' + w.MapTools.VERIFY_HINT, 'an existing hint is not duplicated'); n++;
+const literalNote = '<b title="reason">& missing value</b>';
+chips({ clickable: { verification_note: literalNote } });
+assert.strictEqual(tile.querySelector('.map-tools-chip').title, literalNote + ' ' + w.MapTools.VERIFY_HINT, 'the note stays literal attribute text'); n++;
+assert.strictEqual(tile.querySelector('.map-tools-chip').children.length, 0, 'the note creates no markup'); n++;
+chips({ clickable: { n_verified: 1, verification_note: '  ', targets: [{ path: 'qubits.q0.f', evidence_tier: 'applied' }] } });
+assert.strictEqual(tile.querySelector('.map-tools-chip').textContent, 'verified on this run', 'whitespace is no note for the verdict too'); n++;
+chips({ clickable: { verification_note: note, targets: [{ path: 'qubits.q0.f' }] } });
 const hints = () => Array.from(tile.querySelectorAll('[data-verify-hint]')).map(h => h.textContent);
 assert.deepStrictEqual(hints(), [w.MapTools.VERIFY_HINT], 'a not-verified chip says, once and in words, what would verify it'); n++;
 assert.ok(/node of this run saved a value for each parameter the click sets/.test(hints()[0]), 'the hint states the rule: ' + hints()[0]); n++;
@@ -63,7 +76,7 @@ chips({ status_chip: 'raw data', display_only_reason: rawReason });
 assert.deepStrictEqual(hints(), [rawReason], 'raw map without a contract shows its reason'); n++;
 assert.ok(!hints().includes(w.MapTools.VERIFY_HINT), 'raw map never promises a verification'); n++;
 t = honest(chips({ status_chip: 'raw data' }), 'no contract, no reason');
-assert.deepStrictEqual(hints(), [], 'no contract and no reason: no hint line at all'); n++;
+assert.deepStrictEqual(hints(), ['No click contract was recorded for this map.'], 'missing contract is named without inventing a cause'); n++;
 chips({ clickable: { n_verified: 0, targets: [{ path: 'qubits.q0.f', evidence_tier: 'applied' }] } });
 assert.deepStrictEqual(hints(), [w.MapTools.VERIFY_HINT], 'a contract with zero writes states the verify rule'); n++;
 chips({ clickable: { n_verified: 1, targets: [{ path: 'qubits.q0.f', evidence_tier: 'applied' }, { path: 'qubits.q0.g', evidence_tier: 'applied' }] } });

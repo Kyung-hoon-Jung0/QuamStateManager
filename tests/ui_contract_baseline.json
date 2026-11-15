@@ -620,7 +620,7 @@
   "templates/_diagram_check_slot.html": 1,
   "templates/_diagram_remove.html": 2,
   "templates/_diff_panes.html": 8,
-  "templates/_diff_workbench.html": 4,
+  "templates/_diff_workbench.html": 3,
   "templates/_disk_guard_banner.html": 2,
   "templates/_env_schema_changes.html": 5,
   "templates/_env_schema_verdicts.html": 5,

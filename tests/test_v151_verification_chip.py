@@ -21,6 +21,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _node_env():
     env = dict(os.environ)
+    if any((Path(p) / "jsdom").is_dir() for p in env.get("NODE_PATH", "").split(os.pathsep) if p):
+        return env
     for cand in (ROOT / "node_modules", ROOT.parent / "statemanager" / "node_modules"):
         if (cand / "jsdom").is_dir():
             env["NODE_PATH"] = str(cand)
@@ -62,4 +64,4 @@ def test_one_verification_chip_per_recipe_tile(tmp_path):
     r = subprocess.run(["node", str(ROOT / "tests" / "verification_chip_selfcheck.cjs"), str(out)],
                        capture_output=True, text=True, env=env, encoding="utf-8", timeout=120)
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "verification_chip_selfcheck: 415 assertions passed" in r.stdout, r.stdout
+    assert "verification_chip_selfcheck: 431 assertions passed" in r.stdout, r.stdout
