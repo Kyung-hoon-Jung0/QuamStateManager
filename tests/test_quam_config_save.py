@@ -227,7 +227,9 @@ def test_destination_mismatch_and_override_and_site_packages(setup, monkeypatch)
 def test_gate_class_requires_publication_and_override_remains_blocked(setup):
     instance, folder, source, calls, runner, save = setup
     creates = [("gate", {"__class__": "Gate", "pulse": {"__class__": QCLASS}})]
-    assert "Save FlatPulse" in Q.class_refusal(instance, "scope", creates)
+    assert Q.class_refusal(instance, "scope", creates) == (
+        "Save FlatPulse to quam_config before creating a gate that uses it. "
+        "If FlatPulse is a lab class, rename or delete the draft named FlatPulse.")
     save(confirmed_folder=str(folder.resolve()))
     assert Q.class_refusal(instance, "scope", creates) is None
     assert Q.class_refusal(instance, "scope", [("gate", {"__class__": "Unrelated"})]) is None
@@ -452,7 +454,8 @@ def test_a_draft_named_like_a_lab_class_does_not_block_its_gates(setup):
     assert Q.class_refusal(instance, "scope", classes=[QCLASS], lab_folder=folder) is None
     assert "Save FlatPulse" in Q.class_refusal(instance, "scope", creates)
     lab.write_bytes(source)
-    assert "Save FlatPulse" in Q.class_refusal(instance, "scope", creates, lab_folder=folder)
+    assert Q.class_refusal(instance, "scope", creates, lab_folder=folder) == (
+        "Save FlatPulse to quam_config before creating a gate that uses it.")
     assert Q.lab_package("python") == folder
 
 

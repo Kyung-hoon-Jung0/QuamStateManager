@@ -114,11 +114,11 @@ def lab(tmp_path, monkeypatch):
                     "pulse": {"__class__": QCLASS, "length": 40, "width": 5}},
         "cz": "#./cz_flat"}}}}, {})
 
-    def save(fields=GOOD, source=None, use_store=True):
+    def save(fields=GOOD, source=None, use_store=True, chip=None):
         D.save_draft(instance, "scope", CLASS, source or _source(fields))
         return Q.save_class(sys.executable, instance, "scope", CLASS,
                             confirmed_folder=str(folder.resolve()),
-                            store=store if use_store else None, history_folder=tmp_path / "history")
+                            store=(chip or store) if use_store else None, history_folder=tmp_path / "history")
     return folder, spawned, save
 
 
@@ -152,3 +152,28 @@ def test_a_pulse_class_without_an_amplitude_field_is_refused(lab):
     with pytest.raises(D.DraftError, match="needs an amplitude field"):
         save(source=source, use_store=False)
     assert not (folder / f"{CLASS}.py").exists()
+
+
+def _broken_chip():
+    return QuamStore.from_dicts({"__class__": "quam_config.Quam", "qubit_pairs": {"pair": {"macros": {
+        "cz_flat": {"__class__": "quam_config.Gate",
+                    "pulse": {"__class__": QCLASS, "length": 40, "extra": 1.0}}}}}}, {})
+
+
+def test_a_chip_that_fails_with_the_old_file_is_saved_with_the_old_load_error(lab):
+    folder, spawned, save = lab
+    assert save(use_store=False)["ok"]
+    result = save(fields=[("amplitude", "float", 0.1), ("length", "int", 44)], chip=_broken_chip())
+    assert result["ok"], result
+    assert "does not load with the old class file either" in result["chip_warning"]
+    assert "Unexpected attribute extra" in result["chip_warning"]
+    assert "length: int = 44" in (folder / f"{CLASS}.py").read_text(encoding="utf-8")
+
+
+def test_a_draft_that_repairs_a_chip_that_fails_with_the_old_file_is_saved_with_a_note(lab):
+    folder, spawned, save = lab
+    assert save(use_store=False)["ok"]
+    result = save(fields=[*GOOD[:2], ("extra", "float", 0.0)], chip=_broken_chip())
+    assert result["ok"], result
+    assert "loads with this draft" in result["chip_warning"]
+    assert "Unexpected attribute extra" in result["chip_warning"]

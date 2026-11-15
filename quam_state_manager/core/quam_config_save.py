@@ -291,7 +291,10 @@ def class_refusal(instance, scope, creates=(), classes=(), lab_folder=None):
         if not target and lab_folder and _lab_made(Path(lab_folder) / f"{folder.name}.py"):
             continue
         if not target or not Path(target).is_file():
-            return f"Save {folder.name} to quam_config before creating a gate that uses it."
+            text = f"Save {folder.name} to quam_config before creating a gate that uses it."
+            if not target and not lab_folder:
+                text += f" If {folder.name} is a lab class, rename or delete the draft named {folder.name}."
+            return text
         if receipt.get("importable") is not True:
             return "The selected environment does not import this class file. Save it to its quam_config folder first."
     return None
