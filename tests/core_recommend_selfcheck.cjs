@@ -51,6 +51,7 @@ window.eval(`
       if (window.__coreMode === 'nobody') return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ ok: false }); } });
       if (window.__coreMode === 'badjson') return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.reject(new SyntaxError('bad json')); } });
       if (window.__defer) return new Promise(function (res) { window.__pending.push(function (f) {
+        if (f === 'FAIL') return res({ ok: false, status: 500, json: function () { return Promise.resolve({ ok: false }); } });
         res({ ok: true, status: 200, json: function () { return Promise.resolve({ ok: true, findings: f }); } }); }); });
       return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ ok: true, findings: window.__findingsAfter }); } });
     }
@@ -225,6 +226,66 @@ const CR = window.CoreRecommend;
   await until(() => allRR().length > 0);
   await wait(30);
   ok(allRR().length === 1, 'two events in a row: one line, not two');
+  window.__defer = false;
+
+  // The event x read-outcome table (one row per case; the slot is re-rendered
+  // only by a read that succeeds, and every read settles before the next row).
+  window.__pending = []; window.__defer = true;
+  const pvOpen = () => { const b = slotNow().querySelector('[data-core-rec]'); return !!b && !b.querySelector('[data-core-rec-preview]').hidden; };
+  const settle = async (n) => { await until(() => window.__pending.length === n); };
+  const rows = [
+    { name: 'two events (ok, fail)', seq: [[FINDING], 'FAIL'], lines: 1, open: false },
+    { name: 'two events (fail, ok)', seq: ['FAIL', [FINDING]], lines: 1, open: false },
+    { name: 'two events (fail, fail)', seq: ['FAIL', 'FAIL'], lines: 0, open: true },
+  ];
+  for (const row of rows) {
+    CR.mountAfter(tiles, [FINDING]);
+    await openIn(slotNow());
+    const r1 = window.__reads;
+    fire(); fire();
+    await settle(1);
+    window.__pending.shift()(row.seq[0]);
+    await settle(1);
+    window.__pending.shift()(row.seq[1]);
+    await until(() => window.__reads === r1 + 2 && window.__pending.length === 0
+      && (row.lines ? allRR().length === row.lines : true));
+    await wait(30);
+    ok(allRR().length === row.lines && pvOpen() === row.open, row.name + ': ' + row.lines + ' line(s), preview ' + (row.open ? 'open' : 'closed'));
+  }
+  // Three events, the failure in the middle: (ok, fail) chained after a first fail.
+  CR.mountAfter(tiles, [FINDING]);
+  await openIn(slotNow());
+  fire(); fire();
+  await settle(1); window.__pending.shift()('FAIL');
+  await settle(1); fire(); window.__pending.shift()([FINDING]);
+  await settle(1); window.__pending.shift()('FAIL');
+  await until(() => allRR().length === 1);
+  await wait(30);
+  ok(allRR().length === 1 && !pvOpen(), 'three events (fail, ok, fail): one line, preview closed');
+  // Preview reopened after the first re-render, before a failing second read
+  // (a third event lands while it is open): one line, the reopened preview stays.
+  CR.mountAfter(tiles, [FINDING]);
+  await openIn(slotNow());
+  fire(); fire();
+  await settle(1); window.__pending.shift()([FINDING]);
+  await settle(1);
+  await openIn(slotNow());
+  fire();
+  window.__pending.shift()('FAIL');
+  await settle(1); window.__pending.shift()('FAIL');
+  await until(() => allRR().length === 1);
+  await wait(30);
+  ok(allRR().length === 1 && pvOpen(), 'reopened before a failing read: one line, the reopened preview stays open');
+  // Slot swapped off the page between the event and the read: no throw, no line on the new page.
+  CR.mountAfter(tiles, [FINDING]);
+  await openIn(slotNow());
+  fire();
+  await settle(1);
+  const gone = slotNow(); gone.remove();
+  CR.mountAfter(tiles, [FINDING]);
+  window.__pending.shift()([FINDING]);
+  await until(() => gone.querySelector('[data-core-rec-reread]') !== null);
+  ok(allRR().length === 0 && slotNow() !== gone, 'slot swapped before the read: no line on the new page');
   window.__defer = false;
 
   // Slot gone: the event sends nothing.

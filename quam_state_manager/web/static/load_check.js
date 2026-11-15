@@ -263,7 +263,7 @@ window.CoreRecommend = (function () {
        One request at a time: a call while one is in flight asks for one more
        read after it, so answers cannot cross and the newest state always lands
        last. */
-    var inFlight = null, readAgain = false;
+    var inFlight = null, readAgain = false, renders = 0;
     function refresh() {
         if (inFlight) { readAgain = true; return inFlight; }
         inFlight = fetch('/diagnostics/core-findings', { headers: { 'Accept': 'application/json' } })
@@ -271,6 +271,7 @@ window.CoreRecommend = (function () {
             .then(function (d) {
                 if (!d || !Array.isArray(d.findings)) throw new Error('bad body');
                 var list = d.findings;
+                renders++;
                 refreshers.forEach(function (fn) { try { fn(list); } catch (e) { /* one surface only */ } });
                 return list;
             })
@@ -293,8 +294,10 @@ window.CoreRecommend = (function () {
     var REREAD_NONE = 'The chip changed while the preview was open; no core layout finding remains.';
     function onChanged() {
         if (!mounted()) return;
-        /* Only the slots whose preview was open get the line, once each; a
-           failed read (null) changes nothing, so the open preview stays. */
+        /* The one rule: a slot whose preview was open at this event gets exactly
+           one line when a re-render happened after the event (it closed the
+           preview), whatever a later coalesced read did; no re-render after the
+           event means no line and the preview stays. */
         var openSlots = [];
         document.querySelectorAll('[data-core-rec-slot], [data-loadcheck-core]').forEach(function (slot) {
             var hit = Array.prototype.some.call(slot.querySelectorAll('[data-core-rec-preview]'), function (pv) {
@@ -302,12 +305,14 @@ window.CoreRecommend = (function () {
             });
             if (hit) openSlots.push(slot);
         });
+        var seen = renders;
         var p = refresh();
         if (!openSlots.length || !p || !p.then) return;
-        p.then(function (list) {
-            if (list === null) return;
+        p.then(function () {
+            if (renders === seen) return;
             openSlots.forEach(function (slot) {
-                if (!slot.isConnected) return;
+                /* A slot an htmx swap took off the page meanwhile gets its line
+                   off the page too, where nobody sees it; the new slot gets none. */
                 var old = slot.querySelectorAll('[data-core-rec-reread]');
                 Array.prototype.forEach.call(old, function (n) { n.remove(); });
                 var line = document.createElement('p');

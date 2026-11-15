@@ -709,8 +709,9 @@ be read. Unreadable ports are named, not placed.
   reload. One document listener (capture phase), inert when no slot is mounted; one read at a time, a call during
   a read asks for one more read after it, so answers never cross. A preview open at that moment is closed by the
   re-render with one line, once, in that slot only, saying the recommendation was read again (or that no core layout
-  finding remains); the event of the user's own Stage press is exempt. A failed read (rejected, non-200, bad JSON or
-  no findings list) shows no line and leaves the open preview as it was.
+  finding remains); the event of the user's own Stage press is exempt. The rule is "a re-render happened after the
+  event": when any read of the coalesced chain succeeded, the slot gets its one line even if a later read failed; when
+  every read failed (rejected, non-200, bad JSON or no findings list), no line and the open preview stays as it was.
 - The Diagnostics page only points to the button: its fix line names Load check and Chip Status
   (`FIX_DIAGNOSTICS`), the finding carries no fix items there (`core_layout.page_findings`), no per-item button and
   no "Set all".
