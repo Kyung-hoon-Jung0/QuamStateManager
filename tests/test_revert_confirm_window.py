@@ -1,4 +1,4 @@
-"""gl-17y: "Revert last apply" in the sync panel keeps its two-press window.
+"""The "Revert last apply" in the sync panel keeps its two-press window.
 
 The confirm is client-side only (the stage route has no time window of its
 own), so the window the button and the toast state (5 s) is the only one.

@@ -684,10 +684,14 @@ WRITE_TOOLS = frozenset({"state_edit", "apply_to_live", "undo", "take_live", "no
                          "cz_gate_create", "class_file_save"})
 # propose_additions / propose_card are NOT write tools: they write nothing a
 # chip reads, only a holding area a person accepts from in the wizard.
+# They and cz_gate_plan still POST, and SM refuses every POST of a read-only
+# bridge, so a read-only bridge does not offer a tool that can only be refused.
+POST_ONLY_TOOLS = frozenset({"cz_gate_plan", "propose_additions", "propose_card"})
 
 
 def _visible_tools() -> dict:
-    return {n: t for n, t in TOOLS.items() if not (READ_ONLY and n in WRITE_TOOLS)}
+    hidden = WRITE_TOOLS | POST_ONLY_TOOLS if READ_ONLY else frozenset()
+    return {n: t for n, t in TOOLS.items() if n not in hidden}
 
 
 TOOLS: dict[str, tuple[dict, Any]] = {

@@ -523,7 +523,11 @@ def test_readonly_mcp_hides_the_writing_gate_tools(monkeypatch):
     assert "cz_gate_plan" in mcp.TOOLS and "cz_gate_plan" not in mcp.WRITE_TOOLS
     monkeypatch.setattr(mcp, "READ_ONLY", True)
     visible = set(mcp._visible_tools())
-    assert not (names & visible) and "cz_gate_plan" in visible
+    # the plan writes nothing, but it is a POST and a read-only bridge's POST
+    # is always refused: it is not offered there either
+    assert not (names & visible) and "cz_gate_plan" not in visible
+    monkeypatch.setattr(mcp, "READ_ONLY", False)
+    assert names | {"cz_gate_plan"} <= set(mcp._visible_tools())
 
 
 def test_the_door_answer_helper_reads_a_tuple_and_a_response(chip):

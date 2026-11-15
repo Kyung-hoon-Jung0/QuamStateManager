@@ -1,9 +1,15 @@
-# CodeMirror 6 bundle (vendored)
+# CodeMirror 6 bundles (vendored)
 
-One pre-built, minified IIFE (`cm6.min.js`) exposing `window.SmCodeMirror`
-for the Json Tree "Edit as JSON" editor. Loaded only as the `cm6` page bundle
-on the Json Tree page (`page_bundles['explorer']` in `base.html`), never as a
-core script. All bundled packages are MIT; their licenses are in `LICENSE`.
+Two pre-built, minified IIFEs. All bundled packages are MIT; their licenses
+are in `LICENSE`. Neither is a core script.
+
+- `cm6.min.js` exposes `window.SmCodeMirror` for the Json Tree "Edit as JSON"
+  editor. Loaded only as the `cm6` page bundle on the Json Tree page
+  (`page_bundles['explorer']` in `base.html`).
+- `cm6-python.min.js` is the same editor with the Python language, for the
+  pulse class editor. Loaded only in the `pulseclass` page bundle. Built from
+  `tools/cm6/entry-python.js`; its packages and versions are the ones in
+  `tools/cm6/package-lock.json`.
 
 ## Versions (exact, from `tools/cm6/package-lock.json`)
 
@@ -42,6 +48,8 @@ openSearch, focus, destroy}`; `EditorView`, `EditorState`, `Compartment`,
 
 ## Size
 
+`cm6.min.js`:
+
 - raw: 374,429 bytes
 - gzip -9: 121,353 bytes
 
@@ -50,8 +58,9 @@ openSearch, focus, destroy}`; `EditorView`, `EditorState`, `Compartment`,
 ```
 cd tools/cm6
 npm ci
-node build.mjs          # writes dist/cm6.min.js
+node build.mjs          # writes dist/cm6.min.js and dist/cm6-python.min.js
 copy dist\cm6.min.js ..\..\quam_state_manager\web\static\vendor\cm6\
+copy dist\cm6-python.min.js ..\..\quam_state_manager\web\static\vendor\cm6\
 ```
 
 Do not commit `node_modules` or `dist`.

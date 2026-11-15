@@ -295,9 +295,10 @@ class TestMcpTools:
         assert "NEVER set a calibration value" in d["description"]
         assert mcp.TOOLS["propose_card"][0]["inputSchema"]["required"] == ["card", "reason"]
 
-    def test_the_read_only_session_may_propose(self):
+    def test_the_read_only_session_reads_the_roles_and_is_not_offered_a_refused_proposal(self):
         from quam_state_manager.core import agent_backend
-        assert {"generate_roles", "propose_additions", "propose_card"} <= set(agent_backend.READ_TOOLS)
+        assert "generate_roles" in agent_backend.READ_TOOLS
+        assert not ({"propose_additions", "propose_card"} & set(agent_backend.READ_TOOLS))
 
 
 # --------------------------------------------------------------- regen
