@@ -30,6 +30,8 @@ from pathlib import Path
 from typing import Any
 
 from quam_state_manager.core import doc_cache, json_pieces, path_match, safe_io, live_press
+from quam_state_manager.core import class_file_check
+from quam_state_manager.core.class_file_check import ClassFileRefusedError  # noqa: F401 (doors catch it here)
 from quam_state_manager.core.history import chip_name_for
 
 logger = logging.getLogger(__name__)
@@ -1078,6 +1080,21 @@ def _same_backed_content(before: tuple, now: tuple, backup_check) -> bool:
         return False
 
 
+def _check_class_files(wc: WorkingCopy, payload: dict) -> None:
+    """Refuse (``ClassFileRefusedError``: nothing written, nothing recorded) a
+    write that adds or activates a gate whose class files are not in place
+    (:mod:`class_file_check`). The live state is read only when the payload
+    holds such a gate; an unreadable or missing live chip counts every such
+    gate as added."""
+    if not class_file_check.has_class_files(payload):
+        return
+    try:
+        live = read_live_shared(wc).state
+    except (OSError, ValueError):
+        live = None
+    class_file_check.check_payload(wc.live_folder, payload, live)
+
+
 @live_press.marked(lambda wc: wc)
 def apply_to_live(wc: WorkingCopy, *, force: bool = False,
                   expect_live_hash: str | None = None, expect_replaced_hash: str | None = None,
@@ -1232,6 +1249,7 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
     applied_hash = _wpair.content_hash()
     if expected_fp is not None and written_fp != expected_fp:
         raise WorkingCopyChangedError(SHARED_WORKING_MSG)
+    _check_class_files(wc, _wpair.state)
     if record is not None:
         # the heavy part, BEFORE the re-check: nothing here widens the window
         record.prepare(post_state=(state_b, wiring_b), post_hash=applied_hash,

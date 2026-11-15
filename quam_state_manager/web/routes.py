@@ -28,6 +28,7 @@ import json
 import logging
 import math
 import os
+import weakref
 import re
 import shutil
 import subprocess
@@ -36024,7 +36025,13 @@ def _live_write_failure_text(ctx, exc, what: str = "Apply to live", outcome: str
     *outcome* (:func:`_write_outcome`, v1.5.1 M1): a write that LANDED and
     then failed its read-back or bookkeeping is not "failed" -- it says so,
     and proves the folder writable (the pill goes); one nobody can verify
-    says that."""
+    says that.
+
+    A class-file refusal (``working_copy.ClassFileRefusedError``) wrote
+    nothing; its own reason is the message."""
+    if isinstance(exc, working_copy.ClassFileRefusedError):
+        g._merge_failure = exc
+        return f"{what} refused. {exc}"
     if outcome == "landed":
         _live_write_landed(ctx)
         return (f"{what} is UNVERIFIED: the write reached the live chip, but SM could "
@@ -36131,6 +36138,44 @@ def _live_write_failure_response(ctx, message: str, code: str, *, auto=None,
     if auto is not None:
         resp.headers["HX-Trigger"] = json.dumps({"autoApplyDisarm": {"reason": "error"}})
     return resp
+
+
+#: Every app this blueprint was registered on, so a live write from a thread
+#: with no app context (the Auto Calibrate writer) still finds its chip.
+_CLASS_FILE_APPS: "weakref.WeakSet" = weakref.WeakSet()
+
+
+@bp.record_once
+def _remember_app_for_class_file_env(state) -> None:
+    _CLASS_FILE_APPS.add(state.app)
+
+
+def _class_file_env(live_folder) -> str | None:
+    """The environment of the open chip whose live folder is *live_folder*
+    (the env its QUAlibrate project runs with), for the class-file check of
+    a live write. None when that chip has no env chosen. Works with or
+    without an app context; when no open chip writes *live_folder*, or the
+    lookup fails, it raises ``ClassFileRefusedError`` naming that cause."""
+    from flask import has_app_context
+    from quam_state_manager.core import project_env
+    target = os.path.normcase(os.path.abspath(str(live_folder)))
+    try:
+        apps = [current_app._get_current_object()] if has_app_context() else list(_CLASS_FILE_APPS)
+        for app in apps:
+            with app.app_context():
+                for ctx in list((app.config.get("contexts") or {}).values()):
+                    wc = (ctx or {}).get("working_copy")
+                    if wc is not None and os.path.normcase(os.path.abspath(str(wc.live_folder))) == target:
+                        return project_env.run_env(app.instance_path, ctx.get("qualibrate_project"))
+    except Exception as exc:  # noqa: BLE001 (an unknown env refuses the write, never a crash)
+        logger.warning("finding the chip's environment failed", exc_info=True)
+        raise working_copy.ClassFileRefusedError(
+            f"SM could not look up which environment this chip uses ({exc})") from exc
+    raise working_copy.ClassFileRefusedError(
+        f"SM cannot tell which environment the chip at {live_folder} uses from here")
+
+
+working_copy.class_file_check.set_env_source(_class_file_env)
 
 
 def _snapshot_content_hash(hm, path, ts) -> str | None:

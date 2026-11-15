@@ -100,6 +100,23 @@ quam_config refuse its own file, nor make gates using the class wait again.
   hashes are taken the same way as at create (before the check, read again after it); a class that is no longer
   published, or a file that changed during the check, refuses without writing.
 
-## Seams left for the next piece
+## The live-write check
 
-- The live-write check before Apply belongs inside `working_copy.apply_to_live`; this door does not write live.
+`working_copy.apply_to_live` is the one place a live write checks class files (`core/class_file_check.py`), so every
+door that writes the chip gets it: Apply, the sync panel's apply, Ctrl+Z / Ctrl+Shift+Z that write live, the dataset
+chip apply, version restore to live, an armed Auto-Sync and the agent's apply. When the content to write adds a gate
+macro carrying `extras.sm_class_files`, or makes such a gate the pair's active gate (its `cz` alias moves to it), each
+listed file must be in the folder the chip's environment imports `quam_config` from (asked without SM's lab folder in
+front, the folder Save to quam_config resolves) and its bytes must hash to the recorded sha256. A missing file, a changed file, or an
+unknown environment (none selected, or the folder cannot be asked) refuses the write before it is recorded: the live
+files stay as they were and the door's message names the gate and the file. Auto-Sync classifies the refusal as
+permanent and turns off with that reason. Gates without the key, a gate already active on the chip, and edits that
+touch neither are written as before; a chip with no such gate never reads live or asks the environment for this. A
+gate re-made under a name already on the chip (another file list) counts as added, every listed file of every such gate
+is checked (qubit macros included), and when live state.json is missing or unreadable every such gate counts as added,
+so a forced push (Keep mine) is checked too. The web layer tells the check which environment a live folder belongs to
+(`class_file_check.set_env_source`): the QUAlibrate project env of the open chip writing that folder, found also from
+a thread with no app context (the Auto Calibrate writer); when no open chip writes the folder the refusal says SM cannot
+tell which environment the chip uses, never that none is selected.
+Tests: `tests/test_class_file_live_check.py`.
+

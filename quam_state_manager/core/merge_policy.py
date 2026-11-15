@@ -27,6 +27,10 @@ def classify_failure(reason, *, code=""):
         seen.add(id(exc))
         chain.append(exc)
         exc = exc.__cause__ or exc.__context__
+    # A gate's class file missing or changed does not fix itself: retrying
+    # would push the same refused content again.
+    if any(type(e).__name__ == "ClassFileRefusedError" for e in chain):
+        return "permanent"
     # safe_io wraps the original OS error. A positive permission denial must
     # survive that wrapper, while replace's Windows access-denied stays retryable.
     if any(getattr(e, "winerror", None) in (5, 32, 33, 1175, 1176, 1177) for e in chain):
