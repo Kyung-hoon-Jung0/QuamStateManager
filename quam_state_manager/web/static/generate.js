@@ -1682,6 +1682,11 @@
       });
       pop.options.tof_defaults = ntd;
     }
+    if (pop.options && pop.options.tof_unrecorded) {
+      pop.options.tof_unrecorded = pop.options.tof_unrecorded.map(function (qid) {
+        return map[qid] || qid;
+      });
+    }
     // The auto-prefill record follows a rename, so a renamed row is not
     // mistaken for a new one (QA generate-r2-05).
     var apr = state.autoPresetRows;
@@ -5044,13 +5049,22 @@
     (t.mw || []).forEach(function (m) {
       row("MW" + (m.band != null ? " band " + m.band : ""), m.label, m.delay);
     });
-    (t.flux || []).forEach(function (f) { row("Flux " + f.of, f.label, f.delay); });
+    (t.flux || []).forEach(function (f) {
+      row((f.kind === "lf" ? "LF output " : "Flux ") + f.of, f.label, f.delay);
+    });
     wrap.appendChild(table);
+    function quiet(text) {
+      var p = document.createElement("p");
+      p.className = "ui-note";
+      p.textContent = text;
+      wrap.appendChild(p);
+    }
     // One line per group, never one identical sentence per qubit: the moved
     // defaults by (shift, new value), the values the user set by shift.
     var groups = [], byKey = {};
     (t.tof || []).forEach(function (x) {
-      var k = (x.moved ? "m|" + x.value : "k") + "|" + x.shift;
+      var k = (x.moved ? "m|" + x.value + "|" + (typeof x.from === "number" ? x.from : "") : "k") +
+        "|" + x.shift;
       if (!byKey[k]) { byKey[k] = { x: x, q: [] }; groups.push(byKey[k]); }
       byKey[k].q.push(x.qubit);
     });
@@ -5059,13 +5073,30 @@
       p.className = "ui-note";
       var x = g.x, one = g.q.length === 1;
       p.textContent = x.moved
-        ? "time of flight moved from " + (x.value - x.shift) + " to " + x.value + " ns with " +
+        ? "time of flight moved from " + (typeof x.from === "number" ? x.from : x.value - x.shift) +
+          " to " + x.value + " ns with " +
           (one ? "its" : "their") + " readout output: " + g.q.join(", ") + "."
         : "time of flight left as you set it on " + g.q.join(", ") + "; " +
           (one ? "its" : "their") + " readout output is delayed by " + x.shift +
           " ns: measure time of flight again.";
       wrap.appendChild(p);
     });
+    if ((t.tof_unrecorded || []).length) {
+      quiet("This draft does not record which time of flight values were pre-filled, so the " +
+        "time of flight of " + t.tof_unrecorded.join(", ") + " was kept while the readout " +
+        "output is delayed: measure time of flight again.");
+    }
+    if ((t.tof_unchanged || []).length) {
+      quiet("Readout output delays are the same as on the source chip, so no time of flight " +
+        "moved: " + t.tof_unchanged.join(", ") + ".");
+    }
+    if ((t.tof_check || []).length) {
+      var oneC = t.tof_check.length === 1;
+      quiet("The readout output delay of " + t.tof_check.join(", ") + " differs from the source " +
+        "chip and " + (oneC ? "its" : "their") + " time of flight was not moved: measure time " +
+        "of flight again.");
+    }
+    if (t.note) quiet(t.note);
     return wrap;
   }
 
@@ -10426,6 +10457,21 @@
   function forgetTofDefault(rid) {
     var d = tofDefaults(false);
     if (d && Object.prototype.hasOwnProperty.call(d, rid)) delete d[rid];
+    var opts = (state.spec.populate || {}).options || {};
+    var u = opts.tof_unrecorded;
+    if (u && u.indexOf(rid) >= 0) {
+      u.splice(u.indexOf(rid), 1);
+      if (!u.length) delete opts.tof_unrecorded;
+    }
+  }
+  // Starting the record on a draft saved before it existed: the times of
+  // flight that draft already held have no known source; list them so the
+  // build keeps them under one grouped line instead of calling them typed.
+  function startTofRecord(preTof) {
+    var opts = (state.spec.populate || (state.spec.populate = {})).options;
+    if (opts && opts.tof_defaults) return;
+    tofDefaults(true);
+    if (preTof.length) state.spec.populate.options.tof_unrecorded = preTof.slice();
   }
   function autoApplyStandardDefaults() {
     // Regenerate shows a REAL chip's values — auto-filling blanks with the
@@ -10466,11 +10512,15 @@
           var v = (rr[q] || {}).time_of_flight;
           if (v == null || v === "") emptyTof[q] = 1;
         });
+        var preTof = Object.keys(rr).filter(function (q) {
+          var v = (rr[q] || {}).time_of_flight;
+          return v != null && v !== "";
+        });
         var report = applyPreset(p, false, { q: freshQ, pairs: freshP });
         var rrAfter = (state.spec.populate || {}).resonator || {};
         Object.keys(emptyTof).forEach(function (q) {
           var v = (rrAfter[q] || {}).time_of_flight;
-          if (v != null && v !== "") tofDefaults(true)[q] = v;
+          if (v != null && v !== "") { startTofRecord(preTof); tofDefaults(true)[q] = v; }
         });
         // Recorded only once the preset arrived — an offline visit retries.
         Object.keys(freshQ).forEach(function (q) { rec.q[q] = 1; });

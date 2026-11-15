@@ -50201,8 +50201,7 @@ def generate_build():
                 config_generator.annotate_unplayable(outcome, _st, _wr)
                 config_generator.annotate_core_layout(outcome, _st, _wr)
                 from quam_state_manager.core import output_timing
-                output_timing.annotate(outcome, _st, _wr,
-                                       tof_typed=output_timing.typed_tof(spec))
+                output_timing.annotate(outcome, _st, _wr, spec=spec)
             except (OSError, ValueError) as exc:
                 logger.warning("frequency check skipped: %s", exc)
 
@@ -50813,7 +50812,10 @@ def regenerate_build():
                 from quam_state_manager.core import output_timing
                 output_timing.annotate(
                     outcome, *safe_io.read_state_wiring(Path(output_path)),
-                    tof_moved=[i["qubit"] for i in (_plan or {}).get("tof", [])])
+                    tof_moved={i["qubit"]: i.get("old")
+                               for i in (_plan or {}).get("tof", [])},
+                    source=(tuple(unsaved[:2]) if unsaved
+                            else safe_io.read_state_wiring(src_p)))
             except (OSError, ValueError) as exc:
                 logger.warning("output timing summary skipped: %s", exc)
             if note:

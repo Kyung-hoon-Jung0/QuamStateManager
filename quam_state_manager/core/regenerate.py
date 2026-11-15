@@ -95,6 +95,20 @@ def _keep_source_cores(spec: dict) -> None:
     opts["pin_cores"] = False
 
 
+def _build_spec(spec):
+    """The spec the fresh build runs on: ``spec`` with
+    ``populate.options.tof_follows_source`` set. The merge then carries the
+    source chip's port delays and times of flight over the build's, so the
+    build's own time of flight lines would speak of values the result no
+    longer holds; the route reports the result against the source instead
+    (``output_timing.summary`` with ``source``). ``spec`` itself is unchanged."""
+    if not isinstance(spec, dict):
+        return spec
+    pop = dict(spec.get("populate") or {})
+    pop["options"] = {**(pop.get("options") or {}), "tof_follows_source": True}
+    return {**spec, "populate": pop}
+
+
 def source_drift(
     folder: Path | str,
     baseline_hash: str,
@@ -801,7 +815,7 @@ def run_regenerate(
                 "merge": None}
 
     outcome = config_generator.run_generator(
-        python_path, "build", spec, out_dir, timeout=timeout)
+        python_path, "build", _build_spec(spec), out_dir, timeout=timeout)
     if not outcome.get("ok"):
         outcome["merge"] = None
         return outcome

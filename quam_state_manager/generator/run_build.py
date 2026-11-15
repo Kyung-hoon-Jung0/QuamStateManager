@@ -756,10 +756,12 @@ def _coupled_band_errors(state, qop_version=None):
     return bad
 
 
-# OPX1000 LF-FEM analog outputs need a delay to align with MW-FEM outputs
-# (the MW-FEM stage adds 141 ns of processing for bands 1 + 3, and 161 ns
-# for band 2). We assign per-port at build time from the paired qubit's xy
-# band; researchers can override later via the qubit / pair detail page.
+# OPX1000 LF-FEM analog outputs need a delay to align with MW-FEM outputs.
+# Where these numbers come from is not recorded in this repository. The docs
+# (``Guides/opx1000_fems.md``) give different absolute values (about 155 ns
+# for bands 1 / 3 and 175 ns for band 2, relative to an LF-FEM output); only
+# the 20 ns difference between band 2 and bands 1 / 3 is confirmed by both.
+# The absolute flux-to-microwave offset must be measured on the device.
 _BAND_TO_DELAY_NS = {1: 141, 2: 161, 3: 141}
 
 
@@ -866,25 +868,73 @@ def _is_mw_output(port):
     return "MWFEM" in name and "Output" in name
 
 
-def _mw_output_ports(machine):
-    """Every MW-FEM analog output port the chip uses, in a stable order.
+def _used_port_paths(doc, prefix):
+    """Paths (``ports/...``) of every port under ``prefix`` that an element
+    uses: an ``opx_output*`` reference outside ``ports`` / ``wiring`` that
+    resolves (through ``#/`` pointer chains, wiring included) to that port.
 
-    Read from the machine's ports container (``ports.mw_outputs``, nested
-    controller / slot / port), which holds exactly the ports the wiring made.
-    "In use" means: an element's output reference resolves to the port. A
-    fresh build's container holds only such ports; the stored-state reading
-    (``core/output_timing.py`` ``mw_outputs_in_use``) follows the references
-    to apply the same rule to a chip that may keep unwired port objects."""
-    ports = getattr(machine, "ports", None)
-    tree = getattr(ports, "mw_outputs", None) or {}
-    found = []
+    The one "in use" rule for output timing: the build reads it from the
+    machine's ``to_dict()``, the stored-chip reading (``core/output_timing.py``)
+    from state + wiring. A port no element plays cannot need alignment.
+    Plain dicts only; integer and string keys both resolve."""
+    def resolve(value):
+        path, depth = None, 0
+        while isinstance(value, str) and value.startswith("#/") and depth < 12:
+            path, node = value[2:], doc
+            for part in path.split("/"):
+                if isinstance(node, dict) and part in node:
+                    node = node[part]
+                elif isinstance(node, dict) and part.isdigit() and int(part) in node:
+                    node = node[int(part)]
+                else:
+                    return None
+            value, depth = node, depth + 1
+        return path if isinstance(value, dict) else None
+
+    refs = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if isinstance(k, str) and k.startswith("opx_output"):
+                    refs.append(v)
+                else:
+                    walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk({k: v for k, v in (doc or {}).items() if k not in ("ports", "wiring")})
+    return sorted({p for p in (resolve(r) for r in refs) if p and p.startswith(prefix)})
+
+
+def _container_ports(machine, kind):
+    """``{"ports/<kind>/con/fem/port": port}`` from the machine's ports container."""
+    tree = getattr(getattr(machine, "ports", None), kind, None) or {}
+    found = {}
     for con in tree:
         for fem in tree[con] or {}:
             for pid in tree[con][fem] or {}:
-                port = tree[con][fem][pid]
-                if _is_mw_output(port):
-                    found.append(port)
+                found[f"ports/{kind}/{con}/{fem}/{pid}"] = tree[con][fem][pid]
     return found
+
+
+def _ports_in_use(machine, kind):
+    """The ports of ``ports.<kind>`` an element uses (``_used_port_paths``
+    over ``machine.to_dict()``), in a stable order. A machine without a dict
+    form (a test stand-in) counts every port of its container."""
+    found = _container_ports(machine, kind)
+    try:
+        doc = machine.to_dict()
+    except Exception:   # noqa: BLE001 (no dict form: every container port counts)
+        return list(found.values())
+    used = set(_used_port_paths(doc, f"ports/{kind}/"))
+    return [port for path, port in found.items() if path in used]
+
+
+def _mw_output_ports(machine):
+    """Every MW-FEM analog output port an element of the chip uses."""
+    return [p for p in _ports_in_use(machine, "mw_outputs") if _is_mw_output(p)]
 
 
 def _output_timing_plan(bands):
@@ -894,8 +944,9 @@ def _output_timing_plan(bands):
     "Relative to an LF-FEM analog output port, the additional delay of an
     MW-FEM analog output port is approximately: `155 ns` for Bands 1 and 3,
     `175 ns` for Band 2 ... Band 2 is delayed by an additional `20 ns`
-    compared to Bands 1 and 3." The latencies used are the measured ones in
-    ``_BAND_TO_DELAY_NS``; both agree on the 20 ns difference.
+    compared to Bands 1 and 3." The latencies used are those of
+    ``_BAND_TO_DELAY_NS``, whose source is not recorded; both agree only on
+    the 20 ns difference.
 
     Returns ``(target, {band: mw_delay})`` or ``(None, {})`` when no known
     band is used: ``target`` is the largest latency in use, an MW port of
@@ -920,28 +971,127 @@ def _set_delay(port, value):
     return True
 
 
-def _user_set_tof(spec):
-    """Qubits whose time of flight the user set in the populate step.
+def _tof_provenance(spec):
+    """``(typed, unrecorded)``: qubits whose provided time of flight the user
+    set, and qubits whose provided time of flight has no record of where it
+    came from.
 
-    A provided ``populate.resonator[qid].time_of_flight`` is the user's
-    unless ``populate.options.tof_defaults`` (``{qid: value}``, written by
-    the wizard for the cells it pre-filled with the standard defaults) holds
-    the same value for that qubit: then it is a default and moves with its
-    readout output's delay. A spec without ``tof_defaults`` (an older draft,
-    the agent API) treats every provided value as the
-    user's. Mirrored by ``core.output_timing.typed_tof``."""
+    The wizard writes ``populate.options.tof_defaults`` (``{qid: value}``) for
+    the cells it pre-filled with the standard defaults; a cell still holding
+    its recorded value is a default (neither set). A spec without that record
+    (a draft saved before it existed, the agent API) cannot tell, so every
+    provided value is unrecorded; ``populate.options.tof_unrecorded`` lists
+    the cells an older draft already held when the record was started.
+    Mirrored by ``core.output_timing.tof_provenance``."""
     pop = (spec or {}).get("populate") or {}
-    defaults = (pop.get("options") or {}).get("tof_defaults") or {}
-    if not isinstance(defaults, dict):
-        defaults = {}
-    out = set()
+    opts = pop.get("options") or {}
+    has_record = isinstance(opts.get("tof_defaults"), dict)
+    defaults = opts.get("tof_defaults") if has_record else {}
+    old = set(opts.get("tof_unrecorded") or ()) if has_record else None
+    typed, unrecorded = set(), set()
     for qid, v in (pop.get("resonator") or {}).items():
         if not isinstance(v, dict) or "time_of_flight" not in v:
             continue
-        if qid in defaults and defaults[qid] == v["time_of_flight"]:
+        if qid in defaults and _same_number(defaults[qid], v["time_of_flight"]):
             continue
-        out.add(qid)
-    return out
+        (unrecorded if old is None or qid in old else typed).add(qid)
+    return typed, unrecorded
+
+
+def _same_number(a, b):
+    """``a == b``, a number and its text form counting as equal ("200" and
+    200: a form cell may hold either)."""
+    if a == b:
+        return True
+    try:
+        return float(a) == float(b)
+    except (TypeError, ValueError):
+        return False
+
+
+def _output_key(port):
+    """One key per physical output: ``(kind, controller, slot, port)`` when the
+    port names them, else the object itself. Two objects for one port (a
+    container entry and an element's reference) share the key."""
+    ids = tuple(getattr(port, a, None) for a in ("controller_id", "fem_id", "port_id"))
+    if ids[0] is None or ids[2] is None:
+        return ("object", id(port))
+    return (type(port).__name__,) + ids
+
+
+def _readout_delay(value, old):
+    """``(delay, clamped)``: the delay a readout output gets when the time base
+    asks ``value``. The change from ``old`` is kept a multiple of 4 ns, so the
+    time of flight that moves by that change keeps its 4 ns step; a change off
+    that step is rounded toward the smaller absolute change (162 from 0 gives
+    160, not 164: both are 2 ns off). A result below 0 is raised to the
+    smallest non-negative value on that step and ``clamped`` is True.
+    Provisional [derived]: the QM docs do not state a 4 ns rule for the time
+    of flight. Introduction/config.md line 93 says only that "some" config time
+    values "are required to be divisible by 4" (pulse length, integration
+    weights), and a port delay is set in 1 ns steps (Guides/features.md line
+    1283), so this step is a precaution, and the readout output then runs
+    ``delay - value`` ns off the other outputs, which the build names."""
+    change = value - old
+    step = 4 * int(change / 4.0)          # int() truncates toward 0
+    out = old + step
+    if out < 0:
+        return old + 4 * math.ceil(-old / 4.0), True
+    return out, False
+
+
+def _user_set_tof(spec):
+    """Qubits whose time of flight stays as provided: the user's and the
+    unrecorded ones (``_tof_provenance``)."""
+    typed, unrecorded = _tof_provenance(spec)
+    return typed | unrecorded
+
+
+def _undo_readout(port, old, value, qid, undo):
+    """Put a readout back after its time of flight could not move: every time
+    of flight moved so far, then the port delay, each guarded and read back.
+    Returns the failure line; it starts with "UNDO " when a step back failed
+    (the line then names what each failed item now holds)."""
+    bad = []
+    for rq, r, t in undo:
+        try:
+            r.time_of_flight = t
+        except Exception:   # noqa: BLE001 - a failed step back is named, never raised
+            pass
+        now = getattr(r, "time_of_flight", None)
+        if not _same_number(now, t):
+            bad.append(f"the time of flight of {rq} on {_out_label(port)} holds {now} "
+                       f"(was {t:g})")
+    try:
+        _set_delay(port, old)
+    except Exception:   # noqa: BLE001 - named below through the read-back
+        pass
+    now = getattr(port, "delay", None)
+    if not _same_number(now, old):
+        bad.append(f"the delay of {_out_label(port)} holds {now} ns (was {old:g} ns, "
+                   f"asked {value:g} ns) after the time of flight of {qid} could not move")
+    if bad:
+        return "UNDO " + "; ".join(bad)
+    return (f"the time of flight of {qid}, so the delay of "
+            f"{_out_label(port)} stays {old:g} ns (asked {value:g} ns)")
+
+
+def _lf_output_ports(machine):
+    """Every LF-FEM analog output an element uses (qubit z, coupler, and any
+    other kind: a drive, a readout, a TWPA pump on an LF output), plus the z
+    and coupler outputs reached through the elements (a machine without a
+    ports container), each once."""
+    found = {_output_key(p): p for p in _ports_in_use(machine, "analog_outputs")
+             if _is_lf_output(p)}
+    for q in (getattr(machine, "qubits", None) or {}).values():
+        p = getattr(getattr(q, "z", None), "opx_output", None)
+        if _is_lf_output(p):
+            found.setdefault(_output_key(p), p)
+    for pair in (getattr(machine, "qubit_pairs", None) or {}).values():
+        p = getattr(getattr(pair, "coupler", None), "opx_output", None)
+        if _is_lf_output(p):
+            found.setdefault(_output_key(p), p)
+    return list(found.values())
 
 
 def _align_output_timing(machine, spec=None):
@@ -951,13 +1101,21 @@ def _align_output_timing(machine, spec=None):
     ``_fix_coupled_bands``) and owns all three assignments:
     - every used MW-FEM analog output gets ``target - latency(its band)``
       (20 ns for a band 1 / 3 port on a chip that also uses band 2, else 0);
-    - every LF-FEM output carrying a flux line (qubit z, coupler) gets
-      ``target``;
-    - a resonator whose readout output got a delay ``s`` gets its time of
-      flight moved by ``s``: its pulse leaves ``s`` later in program time,
-      so the acquisition starts ``s`` later. A time of flight the user set
-      (see ``_user_set_tof``) stays as set and one warning names those
-      qubits and asks to measure it again.
+    - every used LF-FEM analog output gets ``target`` (flux, coupler, and any
+      other element kind on an LF output, ``_lf_output_ports``);
+    - a resonator whose readout output's delay really changed by ``ds`` gets
+      its time of flight moved by ``ds`` [derived; simulator check in the
+      build notes]: the pulse leaves ``ds`` later in program time, so the
+      acquisition starts ``ds`` later. A readout output's delay is kept on
+      the 4 ns time of flight grid (``_readout_delay``), for LF and MW alike.
+      A delay that could not be set moves nothing and is named; a time of
+      flight that could not be moved puts its port's delay back, so the next
+      call repairs it. A time of flight the user set stays as set and one
+      warning names those qubits; values with no record of their source
+      (``_tof_provenance``) stay too, under one grouped line. A Re-generate
+      (``tof_follows_source``) gets the source chip's values from the merge,
+      so neither line is written then.
+    A physical port reached twice (``_output_key``) is set once.
     Idempotent: the time of flight moves by the change of its readout port's
     delay in this call (``new - old``), so a second call moves nothing.
     A chip with no MW output of known band keeps the per-pair coupler rule
@@ -967,42 +1125,101 @@ def _align_output_timing(machine, spec=None):
     target, by_band = _output_timing_plan({getattr(p, "band", None) for p in mw})
     if target is None:
         return _align_coupler_delays(machine)
-    typed = _user_set_tof(spec)
-    moved = {}
-    for p in mw:
-        s = by_band.get(getattr(p, "band", None))
-        if s is None:
-            continue
-        old = getattr(p, "delay", 0)
-        old = old if isinstance(old, (int, float)) and not isinstance(old, bool) else 0
-        _set_delay(p, s)
-        moved[id(p)] = (s, s - old)
-    warnings, kept = [], {}
-    for qid, q in (getattr(machine, "qubits", None) or {}).items():
-        z_out = getattr(getattr(q, "z", None), "opx_output", None)
-        if _is_lf_output(z_out):
-            _set_delay(z_out, target)
+    typed, unrecorded = _tof_provenance(spec)
+    carried = bool(((spec or {}).get("populate") or {}).get("options", {}).get(
+        "tof_follows_source"))
+    qubits = getattr(machine, "qubits", None) or {}
+    readers = {}   # readout port key -> [(qid, resonator)]
+    for qid, q in qubits.items():
         rr = getattr(q, "resonator", None)
-        s, ds = moved.get(id(getattr(rr, "opx_output", None)), (0, 0)) if rr is not None else (0, 0)
-        tof = getattr(rr, "time_of_flight", None) if rr is not None else None
-        if not s or tof is None:
-            continue
-        if qid in typed:
-            kept.setdefault(s, []).append(qid)
-        elif ds:
+        if rr is not None and getattr(rr, "opx_output", None) is not None:
+            readers.setdefault(_output_key(rr.opx_output), []).append((qid, rr))
+    moved, failed, rounded, done = {}, [], [], set()
+
+    def assign(port, value):
+        key = _output_key(port)
+        if key in done:          # one physical port, reached twice
+            return
+        done.add(key)
+        old = getattr(port, "delay", 0)
+        old = old if isinstance(old, (int, float)) and not isinstance(old, bool) else 0
+        if key in readers:
+            asked, (value, clamped) = value, _readout_delay(value, old)
+            if value != asked:
+                off = value - asked
+                line = (f"{_out_label(port)} {value:g} ns (asked {asked:g}"
+                        + (", a delay cannot be negative" if clamped else "")
+                        + f"), so it runs {abs(off):g} ns "
+                        + ("later" if off > 0 else "earlier") + " than the other outputs")
+                drives = sorted(qid for qid, q in qubits.items()
+                                if _output_key(getattr(getattr(q, "xy", None),
+                                                       "opx_output", None)) == key)
+                if drives:
+                    line += (f"; this output also drives {len(drives)} "
+                             + ("qubit" if len(drives) == 1 else "qubits")
+                             + f" ({', '.join(drives)}): their drive is {abs(off):g} ns "
+                             "off the band alignment")
+                rounded.append(line)
+        if not (_set_delay(port, value) or getattr(port, "delay", None) == value):
+            failed.append(f"the delay of {_out_label(port)} (asked {value:g} ns, "
+                          f"kept {old:g} ns)")
+            return
+        ds = value - old
+        if not ds:
+            return
+        # the time of flight moves with the delay, or the delay goes back:
+        # never a new delay beside an old time of flight
+        undo = []
+        for qid, rr in readers.get(key, ()):
+            tof = getattr(rr, "time_of_flight", None)
+            if tof is None or qid in unrecorded or qid in typed:
+                continue
             try:
                 rr.time_of_flight = tof + ds
+                undo.append((qid, rr, tof))
             except (ValueError, TypeError):
-                pass
-    for s, qids in sorted(kept.items()):
+                failed.append(_undo_readout(port, old, value, qid, undo))
+                return
+        moved[key] = ds
+
+    for p in mw:
+        s = by_band.get(getattr(p, "band", None))
+        if s is not None:
+            assign(p, s)
+    for p in _lf_output_ports(machine):
+        if hasattr(p, "delay"):
+            assign(p, target)
+    warnings, kept, quiet = [], {}, []
+    for qid, q in qubits.items():
+        rr = getattr(q, "resonator", None)
+        ds = moved.get(_output_key(getattr(rr, "opx_output", None)), 0) if rr is not None else 0
+        if not ds or getattr(rr, "time_of_flight", None) is None or carried:
+            continue
+        if qid in unrecorded:
+            quiet.append(qid)
+        elif qid in typed:
+            kept.setdefault(ds, []).append(qid)
+    if any(f.startswith("UNDO ") for f in failed):
+        # a step back failed: the chip is half moved, the build is not clean
+        warnings.append("output timing left a readout half moved: " + "; ".join(
+            f[5:] for f in failed if f.startswith("UNDO ")) + ".")
+        failed = [f for f in failed if not f.startswith("UNDO ")]
+    if failed:
+        warnings.append("output timing could not set " + "; ".join(failed) + ".")
+    if rounded:
+        warnings.append("readout output delay kept on the 4 ns time of flight grid: "
+                        + "; ".join(rounded) + ".")
+    for ds, qids in sorted(kept.items()):
         warnings.append(
             f"time of flight left as you set it on {', '.join(qids)}; "
             f"{'its' if len(qids) == 1 else 'their'} readout output is delayed by "
-            f"{s:g} ns: measure time of flight again.")
-    for pair in (getattr(machine, "qubit_pairs", None) or {}).values():
-        c_out = getattr(getattr(pair, "coupler", None), "opx_output", None)
-        if _is_lf_output(c_out):
-            _set_delay(c_out, target)
+            f"{ds:g} ns: measure time of flight again.")
+    if quiet:
+        warnings.append(
+            "this draft does not record which time of flight values were pre-filled, so "
+            "the time of flight of " + ", ".join(quiet) + " was kept while "
+            + ("its" if len(quiet) == 1 else "their") + " readout output is delayed: "
+            "measure time of flight again.")
     return warnings
 
 
