@@ -84,7 +84,8 @@ def test_path_breaks_filter_keeps_numbers_whole():
 
 
 def _rule(css, sel):
-    m = re.search(re.escape(sel) + r"\s*\{([^}]*)\}", css)
+    # The selector as written, never the tail of a longer one.
+    m = re.search(r"(?<![\w.#-])" + re.escape(sel) + r"\s*\{([^}]*)\}", css)
     assert m, sel
     return m.group(1)
 
