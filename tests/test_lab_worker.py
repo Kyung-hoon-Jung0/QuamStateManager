@@ -66,7 +66,7 @@ def test_worker_reuses_then_retires_within_its_kind(tmp_path):
             w.kill()
 
 
-def test_idle_expiry_and_global_env_lock(tmp_path):
+def test_idle_expiry_and_global_machine_lock(tmp_path):
     script = tmp_path / "idle.py"
     script.write_text('import sys\nfor line in sys.stdin:\n print(\'@{"status":"ok"}\',flush=True)\n')
     with lab_worker.machine_lock:
@@ -79,7 +79,7 @@ def test_idle_expiry_and_global_env_lock(tmp_path):
                 break
             time.sleep(.02)
         assert w.proc.poll() is not None
-        assert lab_waveform._env_lock("a") is lab_waveform._env_lock("b") is lab_worker.machine_lock
+        assert lab_waveform._machine_lock("a") is lab_waveform._machine_lock("b") is lab_worker.machine_lock
     finally:
         w.kill()
 
@@ -386,3 +386,152 @@ def test_another_process_keeps_my_other_kind_unless_its_env_differs(tmp_path):
             assert w.proc.poll() is not None, "another env: it is retired"
     finally:
         w.kill()
+
+
+def _thread_probe(lock):
+    import threading
+    out = []
+    def probe():
+        got = lock.acquire(blocking=False)
+        out.append(got)
+        if got:
+            lock.release()
+    t = threading.Thread(target=probe)
+    t.start()
+    t.join(3)
+    assert not t.is_alive()
+    return out == [True]
+
+
+def test_machine_lock_never_reads_a_locked_byte_and_cleans_failed_init(tmp_path, monkeypatch):
+    from pathlib import Path
+    lk = lab_worker._MachineLock()
+    lk.path = tmp_path / "lock"
+    opened = []
+    real_open = Path.open
+    class Handle:
+        def __init__(self, fh):
+            self.fh = fh
+        def __getattr__(self, key):
+            return getattr(self.fh, key)
+        def read(self, *args):
+            raise PermissionError("locked byte")
+    def guarded_open(path, *args, **kw):
+        fh = Handle(real_open(path, *args, **kw))
+        opened.append(fh)
+        return fh
+    # The repro's failing read is never called, even on an empty file.
+    if os.name == "nt":
+        monkeypatch.setattr(Path, "open", guarded_open)
+    assert lk.acquire()
+    assert lk.acquire()  # same-thread re-entrancy
+    lk.release()
+    assert not _thread_probe(lk)
+    lk.release()
+    assert _thread_probe(lk)
+    if opened:
+        assert all(f.closed for f in opened)
+    real_stat = os.stat
+    def bad_stat(path, *args, **kw):
+        if str(path) == str(lk.path):
+            raise PermissionError("initialisation failed")
+        return real_stat(path, *args, **kw)
+    unlocks = []
+    real_unlock = lk._os_unlock
+    def unlock(fh):
+        assert not fh.closed
+        unlocks.append(fh)
+        real_unlock(fh)
+    with monkeypatch.context() as m:
+        m.setattr(lk, "_os_unlock", unlock)
+        m.setattr(os, "stat", bad_stat)
+        with pytest.raises(PermissionError, match="initialisation failed"):
+            lk.acquire()
+    assert len(unlocks) == 1 and unlocks[0].closed
+    assert all(f.closed for f in opened)
+    assert _thread_probe(lk), "an exception must not leave the request thread owning the RLock"
+
+
+def test_machine_lock_holder_checker_recovers_and_does_not_hold_thread_lock(tmp_path):
+    import subprocess
+    import threading
+    from pathlib import Path
+    lk = lab_worker._MachineLock()
+    lk.path = tmp_path / "shared.lock"
+    ready, stop = tmp_path / "ready", tmp_path / "stop"
+    code = """import sys,time
+from pathlib import Path
+from quam_state_manager.core.lab_worker import _MachineLock
+lock=_MachineLock()
+lock.path=Path(sys.argv[1])
+with lock:
+ Path(sys.argv[2]).touch()
+ while not Path(sys.argv[3]).exists(): time.sleep(.01)
+"""
+    proc = subprocess.Popen([sys.executable, "-B", "-c", code, str(lk.path), str(ready), str(stop)],
+                            cwd=Path(__file__).resolve().parents[1])
+    waiting, acquired = threading.Event(), threading.Event()
+    def checker():
+        waiting.set()
+        with lk:
+            acquired.set()
+    t = None
+    try:
+        deadline = time.monotonic() + 10
+        while not ready.exists() and time.monotonic() < deadline:
+            assert proc.poll() is None
+            time.sleep(.02)
+        assert ready.exists()
+        assert not lk.acquire(blocking=False)
+        t = threading.Thread(target=checker)
+        t.start()
+        assert waiting.wait(2)
+        time.sleep(.15)
+        assert not acquired.is_set(), "lab jobs must not overlap across processes"
+        assert lk.local.acquire(blocking=False), "OS retries must not hold the thread RLock"
+        lk.local.release()
+        stop.touch()
+        proc.wait(timeout=5)
+        t.join(5)
+        assert acquired.is_set() and not t.is_alive()
+        assert _thread_probe(lk), "checks recover after the holder exits"
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=5)
+        if t is not None:
+            t.join(5)
+
+
+@pytest.mark.parametrize("kind", ["draw", "background", "warm"])
+def test_waveform_jobs_answer_busy_within_deadline(tmp_path, monkeypatch, kind):
+    import threading
+    lk = lab_worker._MachineLock()
+    lk.path = tmp_path / "busy.lock"
+    monkeypatch.setattr(lab_waveform, "_machine_lock", lambda p: lk)
+    monkeypatch.setattr(lab_waveform, "cached", lambda *args: None)
+    monkeypatch.setattr(lab_waveform, "WARM", True)
+    def unexpected_run(*args, **kwargs):
+        raise AssertionError("a busy lab job must not start a runner")
+    monkeypatch.setattr(lab_waveform, "_run", unexpected_run)
+    monkeypatch.setattr(lab_waveform, "_run_warm", unexpected_run)
+    entered, leave = threading.Event(), threading.Event()
+    def holder():
+        with lk:
+            entered.set()
+            leave.wait(5)
+    t = threading.Thread(target=holder)
+    t.start()
+    try:
+        assert entered.wait(2)
+        begin = time.monotonic()
+        if kind == "warm":
+            out = lab_waveform.warm_config(sys.executable, str(tmp_path), lock_wait=.08)
+        else:
+            out = lab_waveform.draw(sys.executable, [("Fake.Pulse", {})],
+                                    background=kind == "background", lock_wait=.08)[0]
+        assert time.monotonic() - begin < .6
+        assert out["reason"] == "busy" and out["error"] == lab_waveform.LAB_BUSY
+    finally:
+        leave.set()
+        t.join(5)

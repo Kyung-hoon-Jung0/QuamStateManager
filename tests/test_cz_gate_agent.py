@@ -15,6 +15,7 @@ as in the person's tests; the chip copies, tokens and doors are real."""
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,7 @@ from flask import make_response
 
 from quam_state_manager import mcp
 from quam_state_manager.core import approvals, class_file_check, limits, working_copy
+from quam_state_manager.core import cz_gate_build as cgb
 from quam_state_manager.core import journal as journal_mod
 from quam_state_manager.core import quam_config_save as Q
 from quam_state_manager.web import agent_api, pulse_class_page
@@ -182,6 +184,47 @@ def test_a_broken_create_is_refused_with_the_persons_words(chip, fake, breakage,
     ra = chip.c.post(A_CREATE, json=payloads[1], headers=AGENT)
     assert rp.status_code == ra.status_code == 409
     assert rp.get_json()["error"] == ra.get_json()["error"] == words
+    assert chip.snap() == before
+
+
+def _no_tag(text: str) -> bool:
+    """No refusal sentence starts with "name: " (no routing word in the text)."""
+    return re.search(r"(^|[\s\"])name: [A-Z]", text) is None
+
+
+def test_the_rows_mark_name_refusals_and_keep_the_words(chip, fake):
+    """The person's and the agent's plan rows hold the same words, and each
+    carries ``name_refusals`` (the reasons a new gate name fixes) as a field."""
+    pre = chip.c.post(CHECK, json=_body(pairs=["q2-3"])).get_json()
+    chip.c.post(CREATE, json={"check_token": pre["check_token"], "plan_sig": pre["plan_sig"]})
+    body = _body(pairs=["q1-2", "q2-3"])
+    person = chip.c.post(PLAN, json=body)
+    p = chip.c.post(A_PLAN, json=body, headers=AGENT)
+    assert _no_tag(person.get_data(as_text=True)) and _no_tag(p.get_data(as_text=True))
+    for rows in (person.get_json()["pairs"], p.get_json()["pairs"]):
+        assert rows[1]["refusals"] and rows[1]["name_refusals"] == rows[1]["refusals"], rows
+        assert rows[0]["name_refusals"] == []
+    assert person.get_json()["pairs"] == p.get_json()["pairs"]
+    for url, h in ((CHECK, {}), (A_CHECK, AGENT)):
+        c = chip.c.post(url, json=body, headers=h)
+        assert _no_tag(c.get_data(as_text=True))
+        assert c.get_json()["pairs"][1]["name_refusals"] == c.get_json()["pairs"][1]["refusals"]
+    j = chip.c.post(A_CHECK, json=body, headers=AGENT).get_json()
+    r = chip.c.post(A_CREATE, json={"check_token": j["check_token"], "plan_sig": j["plan_sig"],
+                                    "reason": "a square CZ to compare"}, headers=AGENT)
+    assert r.get_json()["skipped"][0]["pair"] == "q2-3" and _no_tag(r.get_data(as_text=True))
+
+
+def test_an_agent_create_where_every_pair_is_refused_names_the_pair_and_its_reason(chip, fake):
+    pre = chip.c.post(CHECK, json=_body(pairs=["q2-3"])).get_json()
+    chip.c.post(CREATE, json={"check_token": pre["check_token"], "plan_sig": pre["plan_sig"]})
+    c = chip.c.post(A_CHECK, json=_body(pairs=["q2-3"]), headers=AGENT).get_json()
+    why = c["pairs"][0]["refusals"]
+    before = chip.snap()
+    r = chip.c.post(A_CREATE, json={"check_token": c["check_token"], "plan_sig": c["plan_sig"],
+                                    "reason": "a square CZ to compare"}, headers=AGENT)
+    err = r.get_json()["error"]
+    assert r.status_code == 400 and err == "No pair can be created: q2-3: " + " ".join(why), err
     assert chip.snap() == before
 
 

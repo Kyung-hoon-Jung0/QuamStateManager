@@ -91,7 +91,8 @@ behavior are unchanged. Existing WAL pins verify those behaviors.
 
 ## Pins and mutations
 
-`tests/test_ram_connection_lifecycle.py` adds ten collected pins. Event-gated
+The test file test_ram_connection_lifecycle.py added ten collected pins (the file was removed on
+2026-10-10 with the reader pool it pinned, commit 3962c924). Event-gated
 fake executes expose close attempts without calling native SQLite on an
 unsafe schedule. Observed entry locks signal when retirement reaches a
 held reader. Worker exceptions propagate to the test, joins have deadlines,

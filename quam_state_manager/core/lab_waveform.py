@@ -60,8 +60,29 @@ TIMEOUT_S = 90
 MACRO_PREFIX = "@macro:"
 
 
-def _env_lock(python_path: str) -> threading.Lock:
+def _machine_lock(python_path: str):
+    """The machine-wide lab lock, shared by all environments and SM processes."""
     return lab_worker.machine_lock
+
+
+LAB_BUSY = "the lab environment is busy with another check; try again"
+
+
+def _wait_machine_lock(lock, python_path, lock_wait, *, background=False):
+    if not background:
+        _fg_add(python_path, 1)
+    try:
+        deadline = time.monotonic() + lock_wait
+        while True:
+            if lock.acquire(blocking=False):
+                return True
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return False
+            time.sleep(min(.1, left))
+    finally:
+        if not background:
+            _fg_add(python_path, -1)
 
 
 def _canon(params: dict) -> str:
@@ -295,7 +316,7 @@ def _prewarm_run(python_path: str, classes: list[str], token, wait) -> None:
         if not Path(python_path).is_file():
             log["state"] = "no-env"
             return
-        lk = _env_lock(python_path)
+        lk = _machine_lock(python_path)
         if not lk.acquire(blocking=False):
             # a check holds the env: it starts (or already has) the worker
             log["state"] = "check-running"
@@ -381,7 +402,7 @@ _TL = threading.local()
 
 def _run_warm(python_path: str, items: list[dict]) -> dict | None:
     """``_run``'s answer from the warm worker, or None (caller runs cold).
-    Called under ``_env_lock(python_path)``: one request at a time per env.
+    Called under ``_machine_lock(python_path)``: one request at a time across this machine.
     A pre-warm whose imports timed out while this caller waited for that
     lock answers it with the timeout (``_TL.waited_since``), instead of a
     second full ``TIMEOUT_S`` on a fresh worker."""
@@ -511,7 +532,8 @@ def yield_to_foreground(python_path: str | None, max_s: float = 120.0) -> float:
 
 
 def draw(python_path: str | None, items: list[tuple[str, dict]], *,
-         spawn: bool = True, background: bool = False) -> list[dict]:
+         spawn: bool = True, background: bool = False,
+         lock_wait: float = 30) -> list[dict]:
     """Drawings for ``[(qclass, params), ...]`` in the same order.
 
     Every entry is ``{"ok", "error", "i", "q", "iq", "kind", "length",
@@ -543,15 +565,12 @@ def draw(python_path: str | None, items: list[tuple[str, dict]], *,
         return results  # type: ignore[return-value]
 
     _TL.waited_since = time.monotonic()
-    lock = _env_lock(python_path)
-    if background:
-        lock.acquire()
-    else:
-        _fg_add(python_path, 1)
-        try:
-            lock.acquire()
-        finally:
-            _fg_add(python_path, -1)
+    lock = _machine_lock(python_path)
+    got = _wait_machine_lock(lock, python_path, lock_wait, background=background)
+    if not got:
+        for n in todo:
+            results[n] = {"ok": False, "reason": "busy", "error": LAB_BUSY}
+        return results
     try:
         # a concurrent request may have drawn these while we waited
         for n in todo:
@@ -599,7 +618,8 @@ def draw(python_path: str | None, items: list[tuple[str, dict]], *,
 CONFIG_ITEM = "@config"
 
 
-def warm_config(python_path: str | None, state_folder: str) -> dict | None:
+def warm_config(python_path: str | None, state_folder: str, *,
+                lock_wait: float = 30) -> dict | None:
     """Load the chip in *state_folder* (strict, its own ``__class__``) and
     ``generate_config()`` it on the WARM worker; ``{"ok", "error", "config"}``
     or None when no warm worker can answer (the caller then runs cold).
@@ -607,12 +627,9 @@ def warm_config(python_path: str | None, state_folder: str) -> dict | None:
     if not (WARM and python_path and Path(python_path).is_file()):
         return None
     _TL.waited_since = time.monotonic()
-    lock = _env_lock(python_path)
-    _fg_add(python_path, 1)
-    try:
-        lock.acquire()
-    finally:
-        _fg_add(python_path, -1)
+    lock = _machine_lock(python_path)
+    if not _wait_machine_lock(lock, python_path, lock_wait):
+        return {"ok": False, "reason": "busy", "error": LAB_BUSY, "config": None}
     try:
         ran = _run_warm(python_path, [{"qclass": CONFIG_ITEM,
                                         "params": {"state_folder": state_folder}}])
@@ -658,19 +675,11 @@ def run_gate_check(python_path: str | None, before: str, after: str,
     item = {"qclass": GATE_CHECK_ITEM, "params": {
         "before": str(before), "after": str(after), "macros": list(macros),
         "lab_dir": lab_worker._lab_dir(python_path), "root_class": root_class}}
-    lock = _env_lock(python_path)
-    _fg_add(python_path, 1)
-    try:
-        deadline = time.monotonic() + lock_wait
-        got = lock.acquire(blocking=False)
-        while not got and time.monotonic() < deadline:
-            time.sleep(0.1)
-            got = lock.acquire(blocking=False)
-    finally:
-        _fg_add(python_path, -1)
+    lock = _machine_lock(python_path)
+    got = _wait_machine_lock(lock, python_path, lock_wait)
     if not got:
         return {"status": "busy", "data": None,
-                "error": "the lab environment is busy with another check; try again"}
+                "error": LAB_BUSY}
     try:
         ran = _run_cold(python_path, [item], timeout=timeout,
                         env_extra={"QUAM_STATE_PATH": str(after)})

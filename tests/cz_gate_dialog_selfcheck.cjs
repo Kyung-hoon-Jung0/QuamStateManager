@@ -96,11 +96,13 @@ let planExtra = null;               // a test's own refusals: [reason, aboutClas
 function planOk(body) {
     if (!body.gate_class) return { ok: true, plan_sig: 'none', pairs: body.pairs.map((p) => ({ pair: p, ok: false, refusals: [NO_CLASS], class_refusals: [NO_CLASS] })) };
     if (planExtra) return { ok: true, plan_sig: 'x', pairs: body.pairs.map((p) => ({ pair: p, ok: false,
-        refusals: planExtra.map((r) => r[0]), class_refusals: planExtra.filter((r) => r[1]).map((r) => r[0]) })) };
+        refusals: planExtra.map((r) => r[0]), class_refusals: planExtra.filter((r) => r[1]).map((r) => r[0]),
+        name_refusals: planExtra.filter((r) => r[2]).map((r) => r[0]) })) };
     if (body.gate_class === 'L.TwoFlux') return planCopied(body);
     return { ok: true, plan_sig: 'sig-' + JSON.stringify(body.pulses) + body.gate_name + body.pairs.join(','),
              pairs: body.pairs.map((p) => p === 'q9-9' ? { pair: p, ok: false, refusals: ['No such pair.'] } : {
                  pair: p, ok: /^cz_/.test(body.gate_name), refusals: /^cz_/.test(body.gate_name) ? [] : ['The gate name must start with cz_.'],
+                 name_refusals: /^cz_/.test(body.gate_name) ? [] : ['The gate name must start with cz_.'],
                  creates: 2, paths: ['qubit_pairs.' + p + '.macros.' + body.gate_name, 'qubits.q1.z.operations.x'],
                  layout: 'known', operations: { flux_pulse_qubit: { key: 'op_' + p, channel: 'q1.z' } },
                  fields: { flux_pulse_qubit: { length: 'default', amplitude: ((body.pulses.flux_pulse_qubit || {}).fields || {}).amplitude !== undefined ? 'given' : 'default' } },
@@ -309,7 +311,8 @@ function tableWidths(el, sw, cw) {
        && $('#czg-empty').classList.contains('ui-zone-empty') && !$('#czg-zone-result').contains($('#czg-alert'))
        && !$('#czg-zone-result').contains($('#czg-pairs')),
        'before a check the Result zone is quiet with its one line; the banner and pair switch sit above it');
-    ok(/^1 line|lines play together$/.test($('#czg-zone-pulses .ui-zone-sum').textContent), 'the Pulses line count is the zone summary');
+    ok(/^(1 line|\d+ lines)$/.test($('#czg-zone-pulses .ui-zone-sum').textContent),
+       'the Pulses line count is the zone summary');
     ok($('.ui-slot.ui-line-1') && /^Qubit flux pulse/.test($('.ui-slot-head').textContent) && $('.ui-slot-chip').textContent === 'q1.z' && $('.ui-slot-head .ui-text-quiet').textContent === 'flux_pulse_qubit', 'slot: words, this pair\'s channel chip, line colour 1, field name quiet');
     ok(/control q1 \u2192 target q2/.test($('#czg-chips').textContent) && /moving qubit q1/.test($('#czg-chips').textContent), 'the head carries the pair as chips');
     ok(!$('#czg-chips').querySelector('input, select'), 'the mover is not an input');
@@ -391,11 +394,29 @@ function tableWidths(el, sw, cw) {
     box.dispatchEvent(new window.Event('change', { bubbles: true }));
     await settle();
     ok(sent[sent.length - 1].body.pairs.join() === 'q1-2,q2-3' && /can be created/.test($('#czg-more-list').textContent), 'other pairs join the plan and say so');
+    // a second pair's name refusal (marked in name_refusals) shows on its own row, in the server's words
+    {
+        const TAGGED = 'The pair q2-3 already has a gate named this way. Pick another gate name.';
+        const amp = $('input[data-czg-name="amplitude"]');
+        const was = amp.value;
+        queue.plan.push((b) => { const j = planOk(b); j.pairs[1].ok = false;
+            j.pairs[1].refusals = [TAGGED]; j.pairs[1].name_refusals = [TAGGED]; return j; });
+        type(amp, was);
+        await settle();
+        const why = $('#czg-more-list [data-czg-more-row] input[value="q2-3"]').closest('[data-czg-more-row]')
+            .querySelector('[data-czg-more-why]');
+        ok(why.textContent === TAGGED && $('#czg-name-why').hidden,
+           "the second pair name refusal shows in its row in the server's words, not under the first pair's Name");
+        type(amp, was);
+        await settle();
+    }
     queue.check.push((b) => checkOk(b, { refuse: 'q2-3' }));
     prim().click();
     await settle();
     if (process.env.CZG_DEBUG) console.log('DBG', prim().textContent, '|', alertText(), '|', $('#czg-status').textContent, sent.slice(-2).map(s => s.kind));
     ok(prim().textContent === 'Create gate' && /1 of 2 cannot be created: q2-3/.test(alertText()) && /can still be created/.test(alertText()) && /A gate named so exists/.test(alertText()), 'one pair refused: named in the banner, the rest can still be created');
+    ok(/A gate named so exists/.test($('#czg-writes').textContent),
+       'a refused verdict reason is named in What will be written');
     ok(!$('#czg-pairs').hidden && $('#czg-pairs').querySelectorAll('[data-czg-pair-idx]').length === 2 && $('#czg-pairs .ui-segmented-on').textContent.indexOf('q2-3') === 0 && $('#czg-pairs .ui-badge--danger'), 'pair switch: one option per pair with its mark, the failing pair shown first');
     ok(!$('#czg-zone-result').classList.contains('ui-zone--quiet') && $('#czg-empty').hidden, 'after a check answer the Result zone is not quiet');
     ok([...$('#czg-pairs').querySelectorAll('[data-czg-pair-idx]')].every((b) => ![...b.childNodes].some((n) => n.nodeType === 3 && /^\s*$/.test(n.textContent))),
@@ -760,7 +781,7 @@ function tableWidths(el, sw, cw) {
     type($('#czg-name'), 'cz_r12b');
     await settle();
     // the shared cases: the banner and the summary read the server's outcome
-    for (const name of ['partly', 'checked']) {
+    for (const name of ['partly', ...Object.keys(OUTCOME_CASES).filter((n) => n !== 'partly')]) {
         const cs = OUTCOME_CASES[name];
         if (name !== 'partly') { type($('#czg-name'), 'cz_oc_' + name); await settle(); }
         const scrolled = [];
@@ -769,10 +790,21 @@ function tableWidths(el, sw, cw) {
             x.checks = Object.entries(cs.result.gates[0].checks).map(([n, c]) => ({ name: n, status: c.status, message: c.message })); }); return j; });
         prim().click();
         await settle();
+        const chips = [...$('#czg-checks').querySelectorAll('.ui-result')].map((c) => ({
+            state: c.classList.contains('ui-result--skip') ? 'skip'
+                : c.classList.contains('ui-result--fail') ? 'fail' : 'pass',
+            text: c.textContent,
+        }));
+        require('assert').deepStrictEqual(chips, cs.display.chips);
+        ok(true, 'shared case chips match the fixture: ' + name);
+        ok($('#czg-checks-sum').textContent === cs.display.summary,
+            'shared case summary matches the fixture: ' + name);
+        const lines = [...$('#czg-checks').querySelectorAll('p.ui-text-quiet')].map((p) => p.textContent);
+        require('assert').deepStrictEqual(lines, cs.display.quiet_lines);
+        ok(true, 'shared case quiet lines match the fixture: ' + name);
         if (name === 'partly') {
             ok(/Ready to create/.test(alertText()) && /5 checks passed, 1 could not run: preview comparison \(no preview for this pulse class\)\./.test(alertText())
                && !/every check passed/.test(alertText()) && !/not checked/i.test(alertText()), 'shared case partly: 5 passed, 1 could not run, with the reason; never every check passed');
-            ok(/^5 of 6 passed, 1 could not run$/.test($('#czg-checks-sum').textContent), 'shared case partly: the summary counts 5 of 6, 1 could not run');
             ok(prim().textContent === 'Create gate', 'shared case partly: it may be created');
             { const cols = $('#czg-dialog .czg-cols'); const was = Object.getOwnPropertyDescriptor(window.HTMLElement.prototype, 'clientWidth');
               Object.defineProperty(cols, 'clientWidth', { configurable: true, get: () => 900 }); window.dispatchEvent(new window.Event('resize'));
@@ -780,9 +812,43 @@ function tableWidths(el, sw, cw) {
               Object.defineProperty(cols, 'clientWidth', { configurable: true, get: () => 1300 }); window.dispatchEvent(new window.Event('resize'));
               ok(narrow && !$('#czg-dialog').hasAttribute('data-czg-stacked') && was !== null, 'a narrow dialog is marked stacked (banner above the form), a wide one is not'); }
             ok(scrolled.indexOf('czg-alert') >= 0, 'after a check answer the banner is scrolled into view (stacked: it sits above the form)');
-        } else {
-            ok(/every check passed/.test(alertText()) && /^6 of 6 passed$/.test($('#czg-checks-sum').textContent), 'shared case checked: every check passed, 6 of 6');
+        } else if (name === 'checked') {
+            ok(/every check passed/.test(alertText()),
+               'shared case checked: every check passed, 6 of 6');
         }
+    }
+    type($('#czg-name'), 'cz_old_outcome');
+    await settle();
+    queue.check.push((b) => { const j = checkOk(b); j.pairs.forEach((x) => {
+        x.outcome = { ...OUTCOME_CASES.failed.outcome }; delete x.outcome.not_run;
+    }); return j; });
+    prim().click();
+    await settle();
+    ok($('#czg-checks-sum').textContent === OUTCOME_CASES.failed.display.summary,
+        'old failure without not_run still renders');
+    // Length and general refusals keep Name reserved for name errors.
+    queue.plan.push((b) => { const j = planOk(b); j.pairs[0].ok = false;
+        j.pairs[0].refusals = ['flux_pulse_qubit.length: The pulse length 18 ns must be a multiple of 4 ns.',
+            'The selected port is unavailable.']; return j; });
+    type($('#czg-name'), 'cz_lengths');
+    await settle();
+    { const i = doc.querySelector('[data-czg-field="flux_pulse_qubit"][data-czg-name="length"]');
+      ok(i.getAttribute('aria-invalid') === 'true' && /multiple of 4/.test(i.closest('.ui-field').textContent),
+         'length refusal reaches Length');
+      ok(prim().disabled, 'a length refusal disables Check');
+      ok($('#czg-name-why').hidden && !$('#czg-name').hasAttribute('aria-invalid'),
+         'length and general refusals leave Name clean');
+      ok(/port is unavailable/.test($('#czg-refusals').textContent) && !$('#czg-refusals').hidden,
+         'unrouted refusal has a general line'); }
+    for (const [idx, message] of ['The gate name cz bad is not a valid name. Use letters.',
+        'The pair already has a gate named cz_used. Pick another name.',
+        'The operation cz_used_pulse already exists on the line. Pick another gate name.'].entries()) {
+        queue.plan.push((b) => { const j = planOk(b); j.pairs[0].ok = false;
+            j.pairs[0].refusals = [message]; j.pairs[0].name_refusals = [message]; return j; });
+        type($('#czg-name'), 'cz_name_refusal_' + idx);
+        await settle();
+        ok($('#czg-name-why').textContent === message && $('#czg-name').getAttribute('aria-invalid') === 'true',
+           'invalid and existing names still show under Name');
     }
     // E a value the server refuses goes on its field (mutation: splitRefusals returns every refusal as rest)
     queue.plan.push((b) => { const j = planOk(b); j.pairs[0].ok = false; j.pairs[0].refusals = ['flux_pulse_qubit.amplitude: Type a number.']; return j; });
@@ -815,6 +881,36 @@ function tableWidths(el, sw, cw) {
        'script hooks are data attributes; no class without a kit rule');
     window.CzGate.close();
 
+    dataOverride = JSON.parse(JSON.stringify(DATA));
+    dataOverride.classes[0].slots.push(Object.assign({}, DATA.classes[0].slots[0],
+        { field: 'coupler_flux_pulse', line: 'coupler' }));
+    await window.CzGate.open({ pair: 'q1-2' });
+    await settle();
+    type($('#czg-name'), 'cz_timing');
+    await settle();
+    queue.check.push((b) => { const j = checkOk(b);
+        j.pairs[0].tiles = [{ key: 'timing', value: '61', unit: 'ns', label: 'Timing',
+            note: 'gap, no overlap', tone: 'warn' }];
+        return j; });
+    prim().click();
+    await settle();
+    ok(/61 ns gap with no overlap/.test(alertText()) && /port delays/.test(alertText()),
+       'server gap appears in verdict warning');
+    ok(!prim().disabled && /Create/.test(prim().textContent),
+       'the gap warning does not block an intentionally ordered gate');
+    ok(/^2 lines$/.test($('#czg-pulses-sum').textContent), 'two-lane gap header does not claim together');
+    type($('#czg-name'), 'cz_overlap');
+    await settle();
+    queue.check.push((b) => { const j = checkOk(b);
+        j.pairs[0].tiles = [{ key: 'timing', value: '0', unit: 'ns', label: 'Timing',
+            note: 'same start', tone: 'neutral' }];
+        return j; });
+    prim().click();
+    await settle();
+    ok(!/gap with no overlap/.test(alertText()), 'overlapping check has no gap warning');
+    window.CzGate.close();
+
+    dataOverride = null;
     // the slot takes the server's lane colour (mutation: drop recolourSlots()); no Pico spinner after Create (mutation: set aria-busy again)
     await window.CzGate.open({ pair: 'q1-2' });
     await settle();
@@ -890,7 +986,7 @@ function tableWidths(el, sw, cw) {
         await settle();
         ok(st().klass === 'G.CouplerCZ' && classWhy().hidden, 'pair change: a hand-picked class that runs on the new pair is kept');
         // 5. a name error and a class error at once: each under its own field
-        planExtra = [['The gate name must start with cz_.', false], [NOZ, true]];
+        planExtra = [['The gate name must start with cz_.', false, true], [NOZ, true]];
         type($('#czg-name'), 'cz_both');
         await settle();
         ok(/must start with cz_/.test(nameWhy().textContent) && !/no flux line/.test(nameWhy().textContent), 'name error stays under Name');
@@ -955,6 +1051,23 @@ function tableWidths(el, sw, cw) {
         type(fld('q4', 'level'), '-0.03');
         await settle();
         ok(!errOf(fld('q3', 'level')) && !prim().disabled, 'valid levels: no error, Check enabled');
+        // a spectator operation that already exists is fixed by another gate name: once, under Name, untagged
+        {
+            const SP_HIT = 'The operation cz_sp_spectator_pulse_q1_q2 already exists on q3.z. Pick another gate name.';
+            const before = $('#czg-name').value;
+            queue.plan.push((b) => { const j = spectPlan(b, planOk(b)); j.pairs[0].ok = false;
+                j.pairs[0].refusals = [SP_HIT]; j.pairs[0].name_refusals = [SP_HIT]; return j; });
+            type($('#czg-name'), 'cz_sp');
+            await settle();
+            const hits = [...doc.querySelectorAll('#czg-form *')]
+                .filter((n) => n.children.length === 0 && n.textContent.indexOf(SP_HIT) >= 0);
+            ok($('#czg-name-why').textContent === SP_HIT && $('#czg-name').getAttribute('aria-invalid') === 'true'
+               && hits.length === 1 && $('#czg-name-why').contains(hits[0])
+               && $('#czg-spect-body').textContent.indexOf('already exists') < 0,
+               'a spectator operation collision is said once in the form, under Name, not in the spectator panel');
+            type($('#czg-name'), before);
+            await settle();
+        }
         ok(JSON.stringify(last().spectators) === JSON.stringify({ 'q1-2': [{ qubit: 'q3', length: 48, level: 0.05 }, { qubit: 'q4', length: 32, level: -0.03 }] }),
            'one pair: the spectators field equals the server contract\'s example');
         ok(/q3\.z will hold 1 spectator operation, q4\.z will hold 2 spectator operations/.test($('[data-czg-spect-ops="q1-2"]').textContent)
@@ -1060,6 +1173,49 @@ function tableWidths(el, sw, cw) {
            'not offered: the panel stays, quiet, with the server\'s why, no inputs');
         window.CzGate.close();
         dataOverride = null;
+    }
+
+    // the display vectors (tests/test_cz_gate_name_refusals.py reads the same file): every reason
+    // shows byte-identical, under Name when the row's name_refusals lists it, else as a general line
+    {
+        const V = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'refusal_display_vectors.json'), 'utf8'))
+            .reasons;
+        await window.CzGate.open({ pair: 'q1-2' });
+        await settle();
+        const bad = [];
+        for (const [i, v] of V.entries()) {
+            queue.plan.push((b) => { const j = planOk(b); j.pairs[0].ok = false; j.pairs[0].refusals = [v.text];
+                                     j.pairs[0].name_refusals = v.name ? [v.text] : []; return j; });
+            type($('#czg-name'), 'cz_vec_' + i);
+            await settle();
+            const shown = v.name ? (!$('#czg-name-why').hidden && $('#czg-name-why').textContent === v.text)
+                : ($('#czg-name-why').hidden && [...$('#czg-refusals').children].some((n) => n.textContent === v.text));
+            if (!shown) bad.push(v.case);
+        }
+        ok(V.length >= 12 && !bad.length,
+           'every display vector shows byte-identical in its place' + (bad.length ? ': ' + bad.join(', ') : ''));
+        const ECHO = V[0].text;
+        const TAKEN = 'The pair already has a gate named cz_x. name: Foo. Pick another name.';
+        type($('#czg-name'), 'cz_vecjoin');
+        await settle();
+        queue.check.push((b) => { const j = checkOk(b, { refuse: 'q1-2' });
+            j.pairs[0].verdict.reason = ECHO + ' ' + TAKEN; return j; });
+        prim().click();
+        await settle();
+        ok(alertText().indexOf(ECHO + ' ' + TAKEN) >= 0
+           && $('#czg-writes').textContent.indexOf(ECHO + ' ' + TAKEN) >= 0,
+           'a joined verdict reason shows byte-identical in the banner and in What will be written');
+        type($('#czg-name'), 'cz_vecmid');
+        await settle();
+        prim().click();
+        await settle();
+        queue.create.push(() => [400, { ok: false, error: 'No pair can be created: q1-2: ' + TAKEN,
+                                        skipped: [{ pair: 'q1-2', reason: TAKEN }] }]);
+        prim().click();
+        await settle();
+        ok(alertText().indexOf('No pair can be created: q1-2: ' + TAKEN) >= 0,
+           "a create where every pair is refused shows the server's error byte-identical");
+        window.CzGate.close();
     }
 
     // ---- slot gate classes: the new-class row, its two-step save, the unit method

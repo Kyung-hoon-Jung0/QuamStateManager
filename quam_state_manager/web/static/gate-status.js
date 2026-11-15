@@ -287,5 +287,28 @@
         if (first && first.focus) first.focus();
     });
 
-    window.GateStatus = { closeOffer: closeOffer, offerOpen: offerOpen };
+    var activating = new Set();
+    document.addEventListener('htmx:beforeRequest', function (ev) {
+        var b = (ev.detail || {}).elt;
+        if (!b || !b.classList || !b.classList.contains('gate-status-activate')) return;
+        if (activating.size) { ev.preventDefault(); return; }
+    });
+    // A swap may remove the button; the request still owns its completion.
+    document.addEventListener('htmx:beforeSend', function (ev) {
+        var d = ev.detail || {}, b = d.elt, xhr = d.xhr;
+        if (!b || !b.classList || !b.classList.contains('gate-status-activate') || !xhr) return;
+        activating.add(xhr);
+        b.disabled = true;
+        b.setAttribute('aria-busy', 'true');
+        xhr.addEventListener('loadend', function () {
+            activating.delete(xhr);
+            if (!b.isConnected) return;
+            b.disabled = false;
+            b.removeAttribute('aria-busy');
+        }, { once: true });
+    });
+
+    window.GateStatus = {
+        busy: function () { return activating.size > 0; }, closeOffer: closeOffer, offerOpen: offerOpen
+    };
 })();

@@ -117,10 +117,10 @@ comes from an armed session only): 7/7 RED.
 
 ## One existing pin superseded
 
-`test_chat_api.py::TestLimits::test_a_failed_tool_counts_as_a_failure`
+A former test of `TestLimits` in test_chat_api.py, "a failed tool counts as a failure",
 pinned exactly the behavior C-10 reports as the bug (an MCP tool error,
 here "no chip", counted as a failure). It is replaced by
-`test_a_failed_tool_is_in_the_feed_not_the_failure_count`: the failed
+`test_chat_api.py::TestLimits::test_a_failed_tool_is_in_the_feed_not_the_failure_count`: the failed
 event is still in the feed with its error, and `failures_today` stays 0.
 The MCP module docstring's tool count moved from 25 to 26
 (`test_mcp_bridge_p2.py::test_module_docstring_tool_count`).

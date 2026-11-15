@@ -84,6 +84,30 @@ Doors (fix 3 report): refuse — `/field/edit`, `/field/edit-batch`, `/pulse/edi
 `_replay_updates`, extras writes, type-fix, diagnostics fix, quam_builder gate writes,
 duplicate/copy/rename/delete (rename/delete reopened in Round 3).
 
+### Machine-wide lab lock
+
+The waveform lock is machine-wide across environments and SM processes. Each failed OS-lock attempt closes its
+handle and releases the thread RLock before retrying. File initialisation happens only after acquiring the OS lock,
+using the file size rather than reading the locked byte. If initialisation fails, the OS lock is explicitly released
+before closing the handle; the thread lock is released even if cleanup fails. Draw, warm-config and gate checks wait
+at most 30 seconds by default, then answer that the lab environment is busy; no lab job starts on that path.
+
+Code: `core/lab_worker.py` `machine_lock`; the bounded wait is `core/lab_waveform.py` `_wait_machine_lock`
+(`GATE_CHECK_LOCK_WAIT_S` for gate checks, answer `LAB_BUSY`).
+Pins (release on a failed OS unlock): `tests/test_lab_lock_release.py` (every test in it).
+Pins (failed attempt, init, busy answer):
+`tests/test_lab_worker.py::test_machine_lock_never_reads_a_locked_byte_and_cleans_failed_init`,
+`tests/test_lab_worker.py::test_machine_lock_holder_checker_recovers_and_does_not_hold_thread_lock`,
+`tests/test_lab_worker.py::test_waveform_jobs_answer_busy_within_deadline`,
+`tests/test_lab_worker.py::test_idle_expiry_and_global_machine_lock`,
+`tests/test_gate_check.py::test_busy_lock_is_a_typed_result`.
+Pins (the 30 s default wait, and no caller passes another):
+`tests/test_gate_check.py::test_lab_jobs_wait_for_the_lock_as_long_as_the_docs_say`.
+Pins (gate check waits for a slow replay): `tests/test_machine_lock_wait.py`.
+Pins (a waiting foreground draw, a result another process made while this one waited):
+`tests/test_lab_prewarm.py::test_a_background_batch_waits_while_a_check_waits`,
+`tests/test_interactive_job.py::test_a_second_process_result_is_picked_up_after_the_lab_lock`.
+
 ## 4. Found by the independent verification and fixed
 
 **w7/adaptive.** Verifier at `3326bf5`: P2 module named during a running probe stuck "not read yet"; P2

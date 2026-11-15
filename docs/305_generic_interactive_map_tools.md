@@ -362,3 +362,6 @@ archive result, not a claim that all node estimates or SM estimates are correct.
 Final-review evidence and unresolved suspicions are recorded outside the
 repository in the release QA notes. See also [plot provenance](306_plot_provenance.md)
 and [the original reproduction path](46_interactive_replot.md).
+
+The lab waveform lock (one per machine; bounded wait, then a busy answer) is described in
+[docs/218 section 3](218_lab_pulse_classes_and_new_pulse.md#machine-wide-lab-lock).

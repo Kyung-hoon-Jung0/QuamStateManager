@@ -22,6 +22,7 @@ from __future__ import annotations
 import copy
 import math
 import re
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
@@ -743,7 +744,67 @@ def _fields_for_model(model_pulse: dict, given: dict,
 
 
 def _refuse(reasons: list[str]) -> dict[str, Any]:
-    return {"error": reasons[0], "refusals": list(reasons)}
+    """``name_refusals`` is the machine field: the refusals a new gate name
+    fixes (``name_reason``), the same sentences, unchanged."""
+    return {"error": reasons[0], "refusals": list(reasons),
+            "name_refusals": name_refusals(reasons)}
+
+
+class NameReason(str):
+    """A refusal sentence a new gate name fixes. Its text is the plain
+    sentence people read, never changed; the type is the machine mark."""
+    __slots__ = ()
+
+
+_NAMED: ContextVar["set[str] | None"] = ContextVar("cz_gate_named_reasons", default=None)
+
+
+def name_reason(text: str) -> NameReason:
+    """*text*, marked (not reworded) as a reason a new gate name fixes. Inside
+    ``collect_names`` the sentence is also recorded for the web doors, whose
+    rows copy only the words."""
+    r = NameReason(text)
+    seen = _NAMED.get()
+    if seen is not None:
+        seen.add(str(r))
+    return r
+
+
+def name_refusals(reasons) -> list[str]:
+    """The reasons of *reasons* a new gate name fixes, in order."""
+    return [str(r) for r in reasons if isinstance(r, NameReason)]
+
+
+def collect_names() -> tuple[set, Any]:
+    """Start recording the name reasons this context produces:
+    ``(the set, the token for release_names)``."""
+    seen: set = set()
+    return seen, _NAMED.set(seen)
+
+
+def release_names(token) -> None:
+    _NAMED.reset(token)
+
+
+def with_name_refusals(answer: Any, named) -> Any:
+    """A copy of a plan / check *answer* in which every object with a
+    ``refusals`` list also has ``name_refusals``: those of its refusals the
+    planner produced as name reasons (*named*, from ``collect_names``). No
+    text is read or changed."""
+    named = set(named or ())
+
+    def walk(obj):
+        if isinstance(obj, dict):
+            out = {k: walk(v) for k, v in obj.items()}
+            if isinstance(obj.get("refusals"), list):
+                out["name_refusals"] = [r for r in obj["refusals"]
+                                        if isinstance(r, str) and r in named]
+            return out
+        if isinstance(obj, list):
+            return [walk(v) for v in obj]
+        return obj
+
+    return walk(answer)
 
 
 def _gate_or_alias(macros: dict, name: str, merged: dict, pair_id: str
@@ -836,7 +897,9 @@ def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
     Returns ``{"creates": [(path, value)], "direction", "pulse_directions",
     "model_gate", "fields": {slot: {field: given|copied|default}, "macro":
     {key: copied from the model gate}}, "sources": {...}}`` or ``{"error":
-    str, "refusals": [str]}``. Every created value is a fresh copy.
+    str, "refusals": [str], "name_refusals": [str]}`` (``name_refusals``: the
+    refusals a new gate name fixes, the same sentences). Every created value
+    is a fresh copy.
 
     ``spectators`` (official class only, see :func:`spectator_refusal`):
     ``[{"qubit", "length" (ns), "level" (V)}]``; each becomes a square pulse
@@ -860,7 +923,9 @@ def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
         if "refusals" in out:
             names = _echoed_names(pair_id, gate_name, gate_class, pulses, copy_from,
                                   model_gate, macro_fields) + _spectator_names(spectators)
-            out = _refuse([cap_names(r, names) for r in out["refusals"]])
+            # a capped name keeps the reason's mark (name_refusals)
+            out = _refuse([name_reason(cap_names(r, names)) if isinstance(r, NameReason)
+                           else cap_names(r, names) for r in out["refusals"]])
         return out
     except Exception as exc:  # noqa: BLE001 -- the last net: plan never raises
         return _refuse([f"SM could not plan this gate ({type(exc).__name__}). "
@@ -938,7 +1003,7 @@ def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
     reasons: list[str] = []
     r = name_rule(macros, gate_name)
     if r:
-        reasons.append(r)
+        reasons.append(name_reason(r))
     lines = _lines(merged, pair_id)
     control, target = lines["_ids"]
     desc = _desc(gate_class, gate_desc)
@@ -1002,8 +1067,8 @@ def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
                        f"{path.rsplit('.', 1)[-1]}. Pick another model gate.")
     for path, _ in out["creates"]:
         if path.endswith(".macros.cz"):
-            reasons.append("The new gate would replace the pair's cz alias. "
-                           "Pick another gate name.")
+            reasons.append(name_reason("The new gate would replace the pair's cz alias. "
+                                       "Pick another gate name."))
     if reasons:
         return _refuse(reasons)
     out["creates"] = [(path, copy.deepcopy(v)) for path, v in out["creates"]]
@@ -1012,8 +1077,8 @@ def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
 
 def _check_op(line: tuple, key: str, reasons: list[str]) -> None:
     if key in line[1]:
-        reasons.append(f"The operation {key} already exists on {line[2]}. "
-                       "Pick another gate name.")
+        reasons.append(name_reason(f"The operation {key} already exists on {line[2]}. "
+                                   "Pick another gate name."))
 
 
 def _name_problem(key: str, ids: tuple) -> str:
@@ -1024,10 +1089,10 @@ def _name_problem(key: str, ids: tuple) -> str:
                     "cannot hold (only letters, digits and _ are allowed). "
                     "Rename the qubit in the chip first.")
     if len(key) > 64:
-        return (f"The operation name {key} would be longer than 64 characters. "
-                "Pick a shorter gate name.")
-    return (f"The operation name {key} is not a valid name (a letter first, then "
-            "letters, digits or _). Pick a plainer gate name.")
+        return name_reason(f"The operation name {key} would be longer than 64 characters. "
+                           "Pick a shorter gate name.")
+    return name_reason(f"The operation name {key} is not a valid name (a letter first, then "
+                       "letters, digits or _). Pick a plainer gate name.")
 
 
 def _plan_known(merged, pair_id, p, gate_name, gate_class, pulses, lines,
@@ -1106,7 +1171,7 @@ def _plan_known(merged, pair_id, p, gate_name, gate_class, pulses, lines,
         provenance[s.field] = prov
         r = length_rule(pulse)
         if r:
-            reasons.append(r)
+            reasons.append(f"{s.field}.length: {r}")
         try:
             key = operation_name(gate_name, s.role, control, target)
         except ValueError:
@@ -2020,7 +2085,7 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
         provenance[f] = prov
         r = length_rule(pulse)
         if r:
-            reasons.append(r)
+            reasons.append(f"{f}.length: {r}")
         if isinstance(model.get(f), dict):
             directions[f] = MACRO_OWNS
             owned = norm(pulse)

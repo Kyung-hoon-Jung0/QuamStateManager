@@ -82,6 +82,7 @@
      },
      "layout": "known",
      "model_gate": null,
+     "name_refusals": [],
      "notes": [],
      "ok": true,
      "operations": {
@@ -258,6 +259,7 @@
      },
      "layout": "known",
      "model_gate": null,
+     "name_refusals": [],
      "notes": [],
      "ok": true,
      "operations": {
@@ -393,6 +395,7 @@
      },
      "layout": "known",
      "model_gate": null,
+     "name_refusals": [],
      "notes": [],
      "ok": true,
      "operations": {
@@ -526,6 +529,7 @@
      },
      "layout": "known",
      "model_gate": null,
+     "name_refusals": [],
      "notes": [],
      "ok": true,
      "operations": {

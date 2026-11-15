@@ -359,7 +359,7 @@ def test_dialog_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):
     r = subprocess.run([node, str(root / "tests" / "cz_gate_dialog_selfcheck.cjs")], env=env,
                        capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
-    assert "ok cz_gate_dialog_selfcheck (373 assertions)" in r.stdout
+    assert "ok cz_gate_dialog_selfcheck (405 assertions)" in r.stdout
 
 
 def test_simulate_client_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):
@@ -675,6 +675,196 @@ def test_tunable_refusals_carry_no_class_field(chip):
     assert ok["ok"] and "class_refusals" not in ok
 
 
+def test_the_kit_gate_example_says_what_the_dialog_says():
+    """The UI kit's gate-dialog example writes the Pulses summary the way the
+    dialog does (a line count), shows the Key numbers tiles the dialog shows
+    for the example's lines, and never claims the lines play together next to
+    a Timing tile that shows a gap."""
+    from quam_state_manager.web import ui_kit_fixtures as kit
+    js = (Path(__file__).resolve().parents[1] / "quam_state_manager/web/static/cz-gate.js").read_text(encoding="utf-8")
+    assert "nl === 1 ? '1 line' : nl + ' lines'" in js
+    words = (kit.line_count_words(1), kit.line_count_words(2), kit.line_count_words(3))
+    assert words == ("1 line", "2 lines", "3 lines")
+    for state in ("ok", "danger"):
+        pulses = [z for z in kit.reading_form(state) if z.get("title") == "Pulses"]
+        assert len(pulses) == 1
+        slots = [b for b in pulses[0]["body"] if b.get("part") == "slot"]
+        assert pulses[0]["summary"] == [kit.line_count_words(len(slots))]
+        body = kit.reading_evidence(state)[0]["body"]
+        stats = [b for b in body if b.get("part") == "stats"]
+        assert len(stats) == 1
+        lanes = kit.example_lanes(over=state == "danger")
+        assert stats[0]["tiles"] == _dialog_tiles(lanes)
+        tiles = {t["label"]: t for t in stats[0]["tiles"]}
+        assert tiles["Lines"]["value"] == str(len(slots))
+        assert tiles["Largest level"]["tone"] == ("danger" if state == "danger" else None)
+        # the Timing tile and the note under the verdict follow the dialog's rule
+        _assert_timing_as_the_dialog(tiles["Timing"], lanes, [b["text"] for b in body if b.get("part") == "note"])
+    assert "together" not in json.dumps([kit.specs(), kit.reading_form("ok"), kit.reading_form("danger"),
+                                         kit.reading_evidence("ok"), kit.reading_evidence("danger")])
+
+
+def _dialog_tiles(lanes):
+    """What the dialog shows for *lanes*: gate_timeline_view.tiles, with the
+    tones cz-gate.js renderTiles keeps (warn, danger) and an empty unit as none."""
+    from quam_state_manager.core import gate_timeline_view as gtv
+    js = (Path(__file__).resolve().parents[1] / "quam_state_manager/web/static/cz-gate.js").read_text(encoding="utf-8")
+    assert "unit: t.unit || null," in js
+    assert "tone: t.tone === 'warn' || t.tone === 'danger' ? t.tone : null" in js
+    assert "if (ts[k].note) d.appendChild(el('p', 'ui-text-quiet', ts[k].note));" in js
+    return [{"label": t["label"], "value": t["value"], "unit": t["unit"] or None, "note": t["note"],
+             "tone": t["tone"] if t["tone"] in ("warn", "danger") else None} for t in gtv.tiles({"lanes": lanes})]
+
+
+def _assert_timing_as_the_dialog(tile, lanes, notes):
+    """*tile* is what gate_timeline_view.tiles gives for *lanes*, with the tone
+    the dialog keeps, and *notes* hold the dialog's gap line exactly when that
+    tile is a gap."""
+    from quam_state_manager.core import gate_timeline_view as gtv
+    rule = next(t for t in gtv.tiles({"lanes": lanes}) if t["key"] == "timing")
+    assert (tile["label"], tile["value"], tile["unit"], tile["note"]) == (
+        rule["label"], rule["value"], rule["unit"], rule["note"])
+    assert tile["tone"] == (rule["tone"] if rule["tone"] in ("warn", "danger") else None)
+    js = (Path(__file__).resolve().parents[1] / "quam_state_manager/web/static/cz-gate.js").read_text(encoding="utf-8")
+    assert "t.key === 'timing' && t.tone === 'warn'" in js
+    assert "'The gate lines have a ' + t.value + ' ns gap with no overlap. Check the port delays.'" in js
+    gap = "The gate lines have a %s ns gap with no overlap. Check the port delays." % rule["value"]
+    assert notes == ([gap] if rule["tone"] == "warn" else [])
+    # the example's lines do not meet: the tile must look like a gap
+    assert rule["tone"] == "warn" and tile["tone"] == "warn"
+
+
+def test_every_kit_timing_tile_follows_the_dialog_rule():
+    """Every Timing tile anywhere in the kit is the dialog's tile for the
+    example's lines, so a gap is never shown without the warn tone, and the
+    stats group holding it is the dialog's whole tile list for those lines."""
+    from quam_state_manager.web import ui_kit_fixtures as kit
+    found = []
+    rules = [_dialog_tiles(kit.example_lanes()), _dialog_tiles(kit.example_lanes(over=True))]
+
+    def walk(o):
+        if isinstance(o, dict):
+            if o.get("part") == "stats" and any(t.get("label") == "Timing" for t in o["tiles"]):
+                assert o["tiles"] in rules, o["tiles"]
+                found.extend(t for t in o["tiles"] if t.get("label") == "Timing")
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, (list, tuple)):
+            for v in o:
+                walk(v)
+    walk([kit.specs(), kit.reading_evidence("ok"), kit.reading_evidence("danger")])
+    assert len(found) >= 3
+    for t in found:
+        _assert_timing_as_the_dialog(t, kit.example_lanes(), ["The gate lines have a %s ns gap with no overlap. "
+                                                              "Check the port delays." % t["value"]])
+
+
+def _cell_number(cell, unit):
+    text = cell["text"] if isinstance(cell, dict) else cell
+    assert text.endswith(" " + unit), text
+    return float(text[:-len(unit) - 1])
+
+
+def test_the_kit_example_lanes_match_its_table_form_and_words():
+    """The example's lanes (spans, levels) are the numbers its form, table,
+    banners and checks show: an edit to one copy alone turns this red."""
+    from quam_state_manager.web import ui_kit_fixtures as kit
+    spans = {k: (a, b) for k, a, b in kit.EXAMPLE_SPANS}
+    for state in ("ok", "danger"):
+        level = dict(kit.EXAMPLE_PEAKS, **(kit.EXAMPLE_OVER if state == "danger" else {}))
+        pulses = next(z for z in kit.reading_form(state) if z.get("title") == "Pulses")
+        slots = {s["line"]: s for s in pulses["body"] if s.get("part") == "slot"}
+        assert sorted(s["chip"] for s in slots.values()) == sorted(spans)
+        for s in slots.values():
+            fields = {f["label"]: f["control"]["value"] for f in s["body"][0]["items"]}
+            a, b = spans[s["chip"]]
+            assert float(fields["Length"]) == b - a, s["chip"]
+            assert float(fields["Amplitude"]) == level[s["chip"]], s["chip"]
+        body = kit.reading_evidence(state)[0]["body"]
+        table = next(p for p in body if p.get("title") == "Entered and actual")["body"][0]
+        assert table["columns"] == kit.INTENT_COLUMNS
+        assert len(table["rows"]) == len(spans)
+        for name, length, built, amp, peak, start in table["rows"]:
+            line = slots[name["line"]]["chip"]
+            a, b = spans[line]
+            assert (_cell_number(length, "ns"), _cell_number(built, "ns")) == (b - a, b - a), line
+            assert _cell_number(start, "ns") == a, line
+            assert _cell_number(amp, "V") == _cell_number(peak, "V") == level[line], line
+    # the port limit is the check's own range, and the example's levels sit on the right side of it
+    from quam_state_manager.core import gate_timeline_view as gtv
+    lim = kit.example_limit_v()
+    assert all(abs(v) <= lim for v in kit.EXAMPLE_PEAKS.values())
+    assert all(abs(v) > lim for v in kit.EXAMPLE_OVER.values())
+    assert kit.range_check()["status"] == "pass" and kit.range_check(over=True)["status"] == "fail"
+    danger = kit.reading_evidence("danger")[0]["body"]
+    table = next(p for p in danger if p.get("title") == "Entered and actual")["body"][0]
+    notes = [c["note"] for row in table["rows"] for c in row if isinstance(c, dict) and c.get("tone") == "danger"]
+    assert notes == ["limit %s V" % gtv.fmt_num(lim)] * len(kit.EXAMPLE_OVER)
+
+
+def test_the_kit_banners_and_checks_are_the_dialogs_own_sentences():
+    """Every kit banner and failed-check sentence is one the gate dialog can
+    show: the server's rules (range check, headline, may_create) on the
+    example's lines, inside the dialog's own words, which cz-gate.js holds."""
+    from quam_state_manager.core import cz_gate_create, gate_timeline_view as gtv
+    from quam_state_manager.web import ui_kit_fixtures as kit
+    js = (Path(__file__).resolve().parents[1] / "quam_state_manager/web/static/cz-gate.js").read_text(encoding="utf-8")
+    for piece in ("' Change the inputs and check again.'", "'Cannot be created yet'", "'Ready to create'",
+                  "'Not checked with the lab\\'s code'", "' You can still create '", "'; the record says '",
+                  "'it was'", "' not checked.'", "'The lab\\'s code built '", "'this gate'",
+                  "' on a copy of the chip and every check passed.'", "v.headline || v.reason",
+                  "'limit '", "' over the limit'"):
+        assert piece in js, piece
+    assert kit.DANGER_TAIL == " Change the inputs and check again."
+    assert kit.WARN_TAIL == " You can still create it; the record says it was not checked."
+    assert kit.OK_WHY == "The lab's code built this gate on a copy of the chip and every check passed."
+    lim = kit.example_limit_v()
+    check = kit.range_check(over=True)
+    said = []
+    for k, v in kit.EXAMPLE_OVER.items():
+        lane = next(ln for ln in kit.example_lanes(over=True) if ln["key"] == k)
+        said.append(czr.range_sentence(lane, v))
+        assert "%s V" % gtv.fmt_num(lim) in said[-1] and "%s V" % gtv.fmt_num(v) in said[-1]
+        assert "%s: %s V is above this port's limit of %s V" % (
+            "/".join(str(x) for x in kit.EXAMPLE_PORTS[k]), gtv.fmt_num(v), gtv.fmt_num(lim)) \
+            in check["message"]
+    danger_why = " ".join(said) + kit.DANGER_TAIL
+    _ok, _st, busy = cz_gate_create.may_create({"status": "busy"}, None, gate_class=next(iter(cgb.GATE_CLASSES)),
+                                               layout="known")
+    want = {"ok": ("Ready to create", kit.OK_WHY),
+            "warn": ("Not checked with the lab's code", busy + kit.WARN_TAIL),
+            "danger": ("Cannot be created yet", danger_why)}
+
+    def verdicts(o):
+        if isinstance(o, dict):
+            if o.get("part") == "verdict" and o.get("tone") in want and o.get("key") != "FREE":
+                yield o
+            for v in o.values():
+                yield from verdicts(v)
+        elif isinstance(o, (list, tuple)):
+            for v in o:
+                yield from verdicts(v)
+
+    def fails(o):
+        if isinstance(o, dict):
+            if o.get("name") == "Output range" and o.get("state") == "fail":
+                yield o["why"]
+            for v in o.values():
+                yield from fails(v)
+        elif isinstance(o, (list, tuple)):
+            for v in o:
+                yield from fails(v)
+
+    sec = [spec for spec in kit.specs() if spec[0] == "Reading order"]
+    every = [sec, kit.reading_evidence("ok"), kit.reading_evidence("danger")]
+    seen = [(b["tone"], b["key"], b["why"]) for b in verdicts(every)]
+    assert sorted({t for t, _k, _w in seen}) == ["danger", "ok", "warn"]
+    for tone, key, why in seen:
+        assert (key, why) == want[tone], (tone, key, why)
+    out = list(fails(every))
+    assert len(out) == 2 and set(out) == {check["message"]}
+
+
 def _rule(css, sel):
     m = re.search(r"(?<![\w.#-])" + re.escape(sel) + r"\s*\{([^}]*)\}", css)
     assert m, sel
@@ -694,3 +884,143 @@ def test_dialog_tables_scroll_and_hint_has_a_gap():
     assert _decls(_rule(css, ".ui-xscroll-table"))["min-width"] == "0"
     mt = (base / "map-tools.css").read_text(encoding="utf-8")
     assert _decls(_rule(mt, "[data-verify-hint]"))["margin-inline-start"] == "var(--ui-gap-2)"
+
+
+#: the attributes a reader gets (a screen reader, a hover, an empty field, a missing image)
+READER_ATTRS = ("aria-label", "title", "placeholder", "alt")
+
+
+def _kit_example_text_nodes(over_html=None):
+    """Every text the reader gets from the kit's gate-dialog example on /ui-kit: the visible text nodes
+    and the reader-visible attributes (``aria-label``, ``title``, ``placeholder``, ``alt``, a button's
+    ``value``) of the reading-order dialog body (form and result columns) and of the reading-order specs
+    that stand for the dialog's parts. An input's ``value`` is example data, not read."""
+    from html.parser import HTMLParser
+    from quam_state_manager.web import ui_kit_fixtures as kit
+    if over_html is None:
+        app = create_app(testing=True, instance_path=tempfile.mkdtemp())
+        over_html = app.test_client().get("/ui-kit").get_data(as_text=True)
+    dialog_parts = {"Banner ok", "Banner warn", "Banner danger", "Stats, a danger and a warn tile",
+                    "Checks, one failed and one skipped", "Panel folded, summary still visible"}
+    ids = {"uk-m-%d" % i for i, s in enumerate(kit.specs()) if s[0] == "Reading order" and s[1] in dialog_parts}
+    assert len(ids) == len(dialog_parts)
+    void = {"input", "br", "img", "meta", "link", "hr", "col", "source", "wbr"}
+
+    class Nodes(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.stack, self.out, self.roots = [], [], 0
+
+        def handle_starttag(self, tag, attrs):
+            a = dict(attrs)
+            inside = a.get("id") in ids or "ui-kit-reading" in (a.get("class") or "").split()
+            if inside or any(self.stack):
+                shown = list(READER_ATTRS)
+                if tag == "button" or (tag == "input" and a.get("type") in ("button", "submit", "reset")):
+                    shown.append("value")
+                self.out.extend(a[k].strip() for k in shown if (a.get(k) or "").strip())
+            if tag in void:
+                return
+            self.roots += inside
+            self.stack.append(inside)
+
+        def handle_endtag(self, tag):
+            if tag not in void and self.stack:
+                self.stack.pop()
+
+        def handle_data(self, data):
+            if any(self.stack) and data.strip():
+                self.out.append(data.strip())
+    p = Nodes()
+    p.feed(over_html)
+    assert p.roots == len(ids) + 3  # the six dialog parts and the before / passed / failed bodies
+    return p.out
+
+
+def _dialog_says(node):
+    """True when *node* is written whole in the dialog's own code: a string literal of cz-gate.js or
+    ui.js, or a literal or text of the dialog template or the UI kit parts it renders through."""
+    web = Path(__file__).resolve().parents[1] / "quam_state_manager/web"
+    for rel in ("static/cz-gate.js", "static/ui.js", "templates/_cz_gate_dialog.html", "templates/_ui.html"):
+        src = (web / rel).read_text(encoding="utf-8")
+        if "'%s'" % node.replace("'", "\\'") in src or '"%s"' % node in src:
+            return True
+        if rel.endswith(".html") and re.search(r">\s*%s\s*<" % re.escape(node), src):
+            return True
+    return False
+
+
+def test_every_word_of_the_kit_dialog_example_is_the_dialogs():
+    """Ratchet: every visible text node of the kit's gate-dialog example is a string the dialog's own
+    code holds, a sentence the server sends it, one of the dialog's formats (each tied to the JS that
+    builds it) or a name from the example's data. An invented word, note or count turns this red."""
+    from quam_state_manager.core import gate_timeline_view as gtv, pulse_catalog
+    from quam_state_manager.web import ui_kit_fixtures as kit
+    js = (Path(__file__).resolve().parents[1] / "quam_state_manager/web/static/cz-gate.js").read_text(encoding="utf-8")
+    corpus = set()
+    # sentences the server sends the dialog (each pinned to its server rule in the tests above)
+    corpus |= {kit.OK_WHY, kit.warn_why(), kit.danger_why(), kit.range_check(over=True)["message"]}
+    corpus |= set(czr._CLASS_LABELS.values())
+    for over in (False, True):
+        for t in gtv.tiles({"lanes": kit.example_lanes(over=over)}):
+            corpus |= {str(t[k]) for k in ("label", "value", "unit", "note") if t.get(k)}
+        corpus.add(kit.gap_note(kit.timing_tile(kit.example_lanes(over=over))))
+    corpus |= {p.label for p in pulse_catalog.PULSE_CATALOG["SquarePulse"].params}
+    # names from the example's data: its operations, lines and the other pair
+    corpus |= set(kit.EXAMPLE_OPS) | set(kit.EXAMPLE_OPS.values()) | {kit.EXAMPLE_OTHER_PAIR}
+    check_names = set(kit.dialog_words("CHECK_WORDS").values())
+    # (format, the cz-gate.js pieces that build it)
+    formats = [(r"-?\d+(\.\d+)? (ns|V)", ["function num(v, unit)"]),
+               (r"-?\d+(\.\d+)?", ["function num(v, unit)"]),  # a tile value or step number alone
+               (r"\d+ over the limit", ["over + ' over the limit'"]),
+               (r"limit -?\d+(\.\d+)? V", ["'limit ' + num("]),
+               (r"\d+ failed, \d+ passed", ["' failed, ' + "]),
+               (r"\d+ of \d+ passed", ["' of ' + "]),
+               (r"\d+ lines", ["nl + ' lines'"]),
+               (r"\d+ objects", ["' objects'"]),
+               (r"only " + re.escape(kit.EXAMPLE_PAIR), ["'only ' + "])]
+    ui = (Path(__file__).resolve().parents[1] / "quam_state_manager/web/templates/_ui.html").read_text(encoding="utf-8")
+    # the screen-reader state word before each check, as ui_checks writes it
+    assert "{{ {'pass': 'passed', 'fail': 'failed', 'skip': 'skipped'}[c.state] }}: </span>" in ui
+    formats.append((r"(passed|failed|skipped):", []))
+    for _f, pieces in formats:
+        for piece in pieces:
+            assert piece in js, piece
+    # the one kit-only text: where the dialog draws its chart the kit draws none (a placeholder)
+    allow = {kit.WAVE_PLACEHOLDER}
+    bad = []
+    for node in _kit_example_text_nodes():
+        if node in corpus or node in allow or _dialog_says(node) or any(re.fullmatch(f, node) for f, _p in formats):
+            continue
+        if node.endswith(".") and node[:-1] in check_names:  # a failed check's name, as ui_checks writes it
+            continue
+        bad.append(node)
+    assert not bad, bad
+
+
+def test_the_kit_example_counts_are_its_own_rows():
+    """Every count the kit example writes is counted from its own rows, in the dialog's formats:
+    the cells over the limit, and the failed, passed and total checks (the spectator note is
+    listed but not counted, gate_check_log ``_counted``)."""
+    from quam_state_manager.core import gate_check
+    from quam_state_manager.web import ui_kit_fixtures as kit
+    note = kit.dialog_words("CHECK_WORDS").get(gate_check.OWN_CHECK, gate_check.OWN_CHECK)
+    for state in ("ok", "danger"):
+        body = kit.reading_evidence(state)[0]["body"]
+        table = next(p for p in body if p.get("title") == "Entered and actual")
+        over = sum(1 for r in table["body"][0]["rows"] for c in r
+                   if isinstance(c, dict) and c.get("tone") == "danger")
+        assert over == (len(kit.EXAMPLE_OVER) if state == "danger" else 0)
+        assert table["summary"][0]["text"] == (str(over) + " over the limit" if over else "all as entered")
+        chk = next(p for p in body if p.get("title") == "Checks")
+        rows = chk["body"][0]["checks"]
+        counted = [c for c in rows if c["name"] != note]
+        assert len(counted) == len(rows) - 1, rows
+        failed = sum(1 for c in counted if c["state"] == "fail")
+        passed = sum(1 for c in counted if c["state"] == "pass")
+        assert failed == (1 if state == "danger" else 0)
+        said = chk["summary"][0]["text"]
+        if failed:
+            assert said == "%d failed, %d passed" % (failed, passed), said
+        else:
+            assert said == "%d of %d passed" % (passed, len(counted)), said

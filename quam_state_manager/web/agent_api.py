@@ -3149,18 +3149,31 @@ def _answer_of(resp):
     return out.get_json(silent=True) or {}, out.status_code
 
 
+def _named_answer(door):
+    """*door*'s answer with ``name_refusals`` (the reasons a new gate name
+    fixes) on each row, as the planner recorded them while the door ran
+    (``cz_gate_build.collect_names``). The words are the person's, unchanged."""
+    from quam_state_manager.core import cz_gate_build
+    seen, token = cz_gate_build.collect_names()
+    try:
+        payload, code = _answer_of(door())
+    finally:
+        cz_gate_build.release_names(token)
+    return jsonify(cz_gate_build.with_name_refusals(payload, seen)), code
+
+
 @agent_bp.route("/cz-gate/plan", methods=["POST"])
 def cz_gate_plan():
     """The gate dialog's plan, for an agent. Writes nothing."""
     from quam_state_manager.web import cz_gate_routes as czr
-    return czr.plan_answer()
+    return _named_answer(czr.plan_answer)
 
 
 @agent_bp.route("/cz-gate/check", methods=["POST"])
 def cz_gate_check():
     """The gate dialog's check, for an agent: the same token as a person's."""
     from quam_state_manager.web import cz_gate_routes as czr
-    return czr.check_answer()
+    return _named_answer(czr.check_answer)
 
 
 #: what the create card says about the way to the chip, by apply mode

@@ -232,3 +232,10 @@ def test_a_malformed_row_becomes_a_cannot_draw_statement():
                                 "constant": "high", "scale": 1}], "notes": [], "cannot_draw": None}}
     data = timeline_data(e, control="q1", target="q2")
     assert data["lanes"] == [] and data["cannot_draw"].startswith("cannot draw: a timeline row")
+
+
+@pytest.mark.parametrize("delay,gap", [(161, "61"), (0, None)])
+def test_port_delay_gap_comes_from_the_server_timeline(delay, gap):
+    data = {"lanes": [_lane("moving.z", delay, delay + 100), _lane("coupler", 0, 100)]}
+    t = _tile(tiles(data), "timing")
+    assert (t["value"] if t["tone"] == "warn" else None) == gap

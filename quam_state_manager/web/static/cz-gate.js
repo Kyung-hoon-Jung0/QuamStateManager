@@ -486,9 +486,14 @@
         var range = typeof c.range === 'number' ? 'range ±' + fmt(c.range) + ' V' : 'range not known';
         return (port ? 'port ' + port : 'port not known') + ', ' + range;
     }
+    /* A reason a new gate name fixes goes under Name, even when it names a
+       spectator operation. */
     function spectRefusals(pair) {
         var pr = planRow(pair);
-        return ((pr && !pr.ok && pr.refusals) || []).filter(function (r) { return /spectator/i.test(r); });
+        var named = (pr && pr.name_refusals) || [];
+        return ((pr && !pr.ok && pr.refusals) || []).filter(function (r) {
+            return /spectator/i.test(r) && named.indexOf(r) < 0;
+        });
     }
     /* The unit method's cells of one ticked row: the unit amplitude (typed when the
        line has no unit operation) and the read-only allowed range. The range is the
@@ -726,7 +731,7 @@
                 .map(function (s) { return slotChannel(s.field, s.line, fp); })
             : Object.keys((fp && fp.ok && fp.pulses) || {}).map(function (f) { return slotChannel(f, null, fp); });
         var sum = $('czg-pulses-sum');
-        if (sum) { var nl = S.slotChannels.length; sum.textContent = nl === 1 ? '1 line' : nl + ' lines play together'; }
+        if (sum) { var nl = S.slotChannels.length; sum.textContent = nl === 1 ? '1 line' : nl + ' lines'; }
         if (slotted(c)) {
             (c.slots || []).forEach(function (s) {
                 var b = slotBlock(s.field, slotChannel(s.field, s.line, fp), '');
@@ -1234,8 +1239,17 @@
         var why = clear($('czg-name-why'));
         var aboutClass = fp && !fp.ok ? (fp.class_refusals || []) : [];
         var aboutSpect = fp ? spectRefusals(fp.pair) : [];
-        var split = splitRefusals(fp && !fp.ok ? (fp.refusals || []).filter(function (r) { return aboutClass.indexOf(r) < 0 && aboutSpect.indexOf(r) < 0; }) : []);
-        var bad = split.rest;
+        var others = fp && !fp.ok ? (fp.refusals || []).filter(function (r) {
+            return aboutClass.indexOf(r) < 0 && aboutSpect.indexOf(r) < 0;
+        }) : [];
+        var split = splitRefusals(others,
+                                  fp && !fp.ok ? (fp.name_refusals || []) : []);
+        var bad = split.names;
+        var general = clear($('czg-refusals'));
+        split.rest.forEach(function (r) {
+            general.appendChild(el('p', 'ui-note', r));
+        });
+        general.hidden = !general.childNodes.length;
         renderClassWhy(S.noClass ? [] : aboutClass);
         bad.forEach(function (r) { why.appendChild(el('span', 'czg-why-line', r)); });
         why.hidden = !bad.length;
@@ -1281,17 +1295,21 @@
         try { again.setSelectionRange(Math.min(a, again.value.length), Math.min(b, again.value.length)); } catch (e) { /* not a text input */ }
     }
     /* The server names a refused value by "<slot>.<field>: <sentence>" or
-       "gate setting <key>: <sentence>": those go on the field they name. */
-    function splitRefusals(list) {
-        var fields = [], rest = [];
+       "gate setting <key>: <sentence>": those go on the field they name.
+       A reason the server lists in the row's name_refusals (a reason a new
+       gate name fixes) belongs under Name, independent of its wording; its
+       text is shown as the server sent it. */
+    function splitRefusals(list, named) {
+        var fields = [], rest = [], names = [];
         list.forEach(function (r) {
+            if ((named || []).indexOf(r) >= 0) { names.push(r); return; }
             var m = /^gate setting (.+?): (Type .+)$/.exec(r);
             if (m && findField('@settings', m[1])) { fields.push({ field: '@settings', name: m[1], why: m[2] }); return; }
-            m = /^([^.:\s]+)\.([^:]+): (Type .+)$/.exec(r);
+            m = /^([^.:\s]+)\.([^:]+): (.+)$/.exec(r);
             if (m && findField(m[1], m[2])) { fields.push({ field: m[1], name: m[2], why: m[3] }); return; }
             rest.push(r);
         });
-        return { fields: fields, rest: rest };
+        return { fields: fields, rest: rest, names: names };
     }
     function syncLine(sync) {
         if (sync && sync.auto_push) return 'In the working copy; Auto-Sync also writes the chip.';
@@ -1476,13 +1494,23 @@
         if (!p.ok) { (p.refusals || []).forEach(function (r) { host.appendChild(el('p', 'ui-text-quiet', r)); }); return; }
         if (allSkippedReason(p)) { if (sum) sum.textContent = ''; return; }
         var cs = p.checks || [];
-        var list = cs.map(function (c) { return { name: CHECK_WORDS[c.name] || c.name, state: CHECK_STATE[c.status] || 'skip', why: c.message }; });
+        var oc = p.outcome;
+        var notRun = (oc && oc.not_run) || [];
+        var list = cs.map(function (c) {
+            var skipped = notRun.some(function (x) { return x.check === c.name; });
+            return { name: CHECK_WORDS[c.name] || c.name,
+                state: skipped ? 'skip' : CHECK_STATE[c.status] || 'skip', why: c.message };
+        });
         var w = U.checks(list, 'Checks');
-        Array.prototype.slice.call(w.querySelectorAll('.ui-result')).forEach(function (li, k) { li.setAttribute('data-check', cs[k].name); });
-        // skipped checks are not failures: one quiet line per reason, naming them
+        Array.prototype.slice.call(w.querySelectorAll('.ui-result')).forEach(function (li, k) {
+            li.setAttribute('data-check', cs[k].name);
+        });
+        // checks that could not run: one quiet line per reason, naming them
         var byWhy = {}, order = [];
         list.forEach(function (c) {
-            if (c.state !== 'skip') return;
+            if (c.state !== 'skip' && !notRun.some(function (x) {
+                return (CHECK_WORDS[x.check] || x.check) === c.name;
+            })) return;
             var why = c.why || '';
             if (!byWhy[why]) { byWhy[why] = []; order.push(why); }
             byWhy[why].push(c.name);
@@ -1500,9 +1528,11 @@
         var nf = list.filter(function (c) { return c.state === 'fail'; }).length;
         var np = list.filter(function (c) { return c.state === 'pass'; }).length;
         var ns = list.length - nf - np;
-        var oc = p.outcome;
-        if (sum && oc && oc.kind !== 'none') sum.textContent = oc.failed.length ? oc.failed.length + ' failed, ' + oc.passed + ' passed'
-            : oc.passed + ' of ' + oc.total + ' passed' + (oc.not_run.length ? ', ' + oc.not_run.length + ' could not run' : '');
+        if (sum && oc && oc.kind !== 'none') {
+            sum.textContent = (oc.failed.length ? oc.failed.length + ' failed, ' + oc.passed + ' passed'
+                : oc.passed + ' of ' + oc.total + ' passed')
+                + (notRun.length ? ', ' + notRun.length + ' could not run' : '');
+        }
         else if (sum) sum.textContent = nf ? nf + ' failed, ' + np + ' passed' : np + ' of ' + list.length + ' passed' + (ns ? ', ' + ns + ' not checked' : '');
         var ranNot = cs.some(function (c) { return c.name === 'ops' && c.status === 'fail'; });
         var pv = p.previews_skipped || [];
@@ -1663,6 +1693,14 @@
                     : 'The lab\'s code built ' + (many ? 'these gates' : 'this gate') + ' on a copy of the chip. '
                       + line.charAt(0).toUpperCase() + line.slice(1)), 'verdict');
         }
+        pairs.forEach(function (p) {
+            (p.tiles || []).filter(function (t) {
+                return t.key === 'timing' && t.tone === 'warn';
+            }).forEach(function (t) {
+                $('czg-alert').appendChild(el('p', 'ui-note', (many ? p.pair + ': ' : '')
+                    + 'The gate lines have a ' + t.value + ' ns gap with no overlap. Check the port delays.'));
+            });
+        });
         // a stacked dialog has the banner above the form: bring it into view
         var al = $('czg-alert');
         if (al && al.scrollIntoView) { try { al.scrollIntoView({ block: 'nearest' }); } catch (e) { /* old engine */ } }

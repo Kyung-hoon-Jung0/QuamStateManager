@@ -54,12 +54,89 @@ def test_the_shared_cases_come_to_their_outcome(name):
     assert _oc(name) == CASES[name]["outcome"]
 
 
+@pytest.mark.parametrize("name", sorted(CASES))
+def test_shared_display_counts_match_the_kit_and_outcome(name):
+    from quam_state_manager.web.ui_kit_fixtures import checks_summary
+    case, oc = CASES[name], _oc(name)
+    display = case["display"]
+    assert checks_summary(oc) == display["summary"]
+    states = [c["state"] for c in display["chips"]]
+    if oc["kind"] == log.KIND_NONE:
+        assert states == display["quiet_lines"] == []
+    else:
+        assert states.count("pass") == oc["passed"]
+        assert states.count("fail") == len(oc["failed"])
+        assert states.count("skip") == len(oc["not_run"])
+        checks = case["result"]["gates"][0]["checks"]
+        reasons = {checks[c["check"]]["message"] for c in oc["not_run"]}
+        assert len(display["quiet_lines"]) == len(reasons)
+
+
 def test_outcome_wording_for_the_three_cases():
     assert _oc("checked")["summary"] == "every check passed."
     assert _oc("partly")["summary"] == ("5 checks passed, 1 could not run: preview comparison "
                                         "(no preview for this pulse class).")
     assert _oc("failed")["kind"] == log.KIND_FAILED
     assert _oc("none")["kind"] == log.KIND_NONE
+
+
+def test_a_failed_check_still_counts_the_checks_that_passed():
+    """One failing of six: "1 failed, 5 passed", never "1 failed, 0 passed"."""
+    oc = _oc("failed")
+    assert (len(oc["failed"]), oc["passed"], oc["total"]) == (1, 5, 6)
+    # a check that could not run beside the failure is not counted as passed
+    c = json.loads(json.dumps(CASES["failed"]))
+    gate = c["result"]["gates"][0]
+    gate["unchecked"] = ["preview"]
+    oc = log.outcome(c["result"], gate)
+    assert (len(oc["failed"]), oc["passed"]) == (1, 4)
+
+
+def test_a_failed_check_counts_a_note_but_not_a_check_that_did_not_run_in_full():
+    """Beside the failure: length, load_config pass and timeline note count (3);
+    ops ``partly`` and preview ``not_run`` do not: 2 could not run, of 6."""
+    oc = _oc("failed_beside_note_and_unrun")
+    assert (oc["kind"], len(oc["failed"]), oc["passed"], oc["total"]) == (log.KIND_FAILED, 1, 3, 6)
+    assert [x["check"] for x in oc["not_run"]] == ["ops", "preview"]
+    assert len(oc["not_run"]) == 2
+    checks = CASES["failed_beside_note_and_unrun"]["result"]["gates"][0]["checks"]
+    assert checks["timeline"]["status"] == "note"
+    assert checks["ops"].get("partly") and checks["preview"].get("not_run")
+
+
+def test_every_shared_case_accounts_for_every_check():
+    for name, case in CASES.items():
+        oc = _oc(name)
+        assert len(oc["failed"]) + oc["passed"] + len(oc["not_run"]) == len(
+            case["result"]["gates"][0]["checks"]), name
+
+
+def test_a_check_named_only_in_partly_checked_did_not_run_in_full():
+    for name in ("checked", "failed"):
+        case = json.loads(json.dumps(CASES[name]))
+        gate = case["result"]["gates"][0]
+        gate["partly_checked"] = ["timeline"]
+        assert not gate["checks"]["timeline"].get("partly")
+        oc = log.outcome(case["result"], gate)
+        assert oc["passed"] == (5 if name == "checked" else 4)
+        assert oc["not_run"] == [{"check": "timeline", "label": "timeline", "reason": "passed"}]
+
+
+def test_one_rule_says_a_check_counts_as_passed():
+    """The failed and partly outcomes count with the same rule, clause by clause."""
+    rule = log._counts_as_passed
+    assert rule("t", {"status": "pass"}, set()) and rule("t", {"status": "note"}, set())
+    assert not rule("t", {"status": "fail"}, set())
+    assert not rule("t", {"status": "skipped"}, set())
+    assert not rule("t", {"status": "pass"}, {"t"})
+    assert not rule("t", {"status": "pass", "not_run": True}, set())
+    assert not rule("t", {"status": "note", "partly": True}, set())
+    assert not rule("t", "pass", set())
+    # the partly outcome counts a note beside a check that could not run
+    c = json.loads(json.dumps(CASES["partly"]))
+    gate = c["result"]["gates"][0]
+    gate["checks"]["timeline"] = {"message": "Shown for reading.", "status": "note"}
+    assert log.outcome(c["result"], gate, reasons=c["reasons"])["passed"] == 5
 
 
 def test_result_of_a_check():

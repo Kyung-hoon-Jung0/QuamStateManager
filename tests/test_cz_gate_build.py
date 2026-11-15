@@ -258,6 +258,7 @@ def test_existing_operation_is_never_overwritten():
     s = _chip()
     s["qubits"]["q1"]["z"]["operations"]["cz_new_pulse_q1_q2"] = {"amplitude": 1}
     res = _plan(s)
+    assert res["error"].startswith("The operation") and res["name_refusals"] == [res["error"]]
     assert "already exists" in res["error"]
 
 
@@ -293,6 +294,7 @@ def test_explicit_length_multiple_of_four_and_at_least_sixteen(length, ok):
     res = _plan(_chip(), pulses=_square(length=length))
     assert ("creates" in res) is ok
     if not ok:
+        assert "flux_pulse_qubit.length: The pulse length" in res["error"]
         assert "multiple of 4 ns" in res["error"]
 
 
@@ -2068,7 +2070,9 @@ def _digest(value):
 
 
 def _frozen_answers():
-    plans = {k: _digest(cgb.plan(copy.deepcopy(s), pid, **kw))
+    # the digests are of the words: ``name_refusals`` is pinned by itself below
+    plans = {k: _digest({f: v for f, v in cgb.plan(copy.deepcopy(s), pid, **kw).items()
+                         if f != "name_refusals"})
              for k, (s, pid, kw) in _frozen_plan_cases().items()}
     problems = {k: cgb.class_problem(copy.deepcopy(s), pid, cls)
                 for k, (s, pid, cls) in _frozen_class_cases().items()}
@@ -2138,6 +2142,15 @@ def test_answers_without_a_descriptor_are_the_frozen_ones():
                  for s, pid, kw in cases.values() if kw["gate_class"] == cls}
         assert kinds == {True, False}, cls
     assert {v is None for v in problems.values()} == {True, False}
+    # every refusal, and only a refusal, says which of its reasons a new gate name fixes
+    named = {}
+    for k, (s, pid, kw) in cases.items():
+        res = cgb.plan(copy.deepcopy(s), pid, **kw)
+        assert ("name_refusals" in res) == ("error" in res), k
+        if res.get("name_refusals"):
+            named[k] = (res["name_refusals"], res["refusals"])
+    bad_name = ["The gate name 'bad' must start with cz_. Pick a name like cz_square."]
+    assert named == {"cz bad name": (bad_name, bad_name)}
 
 
 # --- a descriptor SM cannot build a gate from ----------------------------
@@ -2193,7 +2206,7 @@ def test_a_bad_descriptor_gets_one_sentence_from_the_plan_and_the_class_check():
     for label, bad in _bad_descriptors().items():
         res = _plan_described(_chip(), gate_desc=bad)
         assert res == {"error": cgb.BAD_DESCRIPTION,
-                       "refusals": [cgb.BAD_DESCRIPTION]}, label
+                       "refusals": [cgb.BAD_DESCRIPTION], "name_refusals": []}, label
     # without any pulse too: never a gate that holds no pulse
     for label, bad in _bad_descriptors().items():
         res = _plan_described(_chip(), gate_desc=bad, pulses=None)
@@ -2222,7 +2235,7 @@ def test_a_repeated_role_or_line_never_reaches_the_plan():
         pulses = {f: _described_pulses()["control_flux_pulse"] for f in ("a", "b")}
         res = _plan_described(_chip(), gate_desc=bad, pulses=pulses)
         assert res == {"error": cgb.BAD_DESCRIPTION,
-                       "refusals": [cgb.BAD_DESCRIPTION]}, second
+                       "refusals": [cgb.BAD_DESCRIPTION], "name_refusals": []}, second
         assert "model gate" not in res["error"]
         assert cgb.class_problem(_chip(), "q1-2", DESCRIBED_GATE,
                                  gate_desc=bad) == cgb.BAD_DESCRIPTION, second
@@ -2268,11 +2281,11 @@ def test_what_the_skeleton_returns_is_checked_before_a_gate_is_planned():
         assert cgb.desc_problem(DESCRIBED_GATE, bad) is None, label
         res = _plan_described(_chip(), gate_desc=bad)
         assert res == {"error": cgb.BAD_DESCRIPTION,
-                       "refusals": [cgb.BAD_DESCRIPTION]}, label
+                       "refusals": [cgb.BAD_DESCRIPTION], "name_refusals": []}, label
         # also when the request has other faults: no half answer about pulses
         res = _plan_described(_chip(), gate_desc=bad, pulses=None)
         assert res == {"error": cgb.BAD_DESCRIPTION,
-                       "refusals": [cgb.BAD_DESCRIPTION]}, label
+                       "refusals": [cgb.BAD_DESCRIPTION], "name_refusals": []}, label
         # a table class never reads it
         res = cgb.plan(_chip(), "q1-2", gate_name="cz_new", gate_class=cgb.CZ_GATE,
                        pulses=_square(), gate_desc=bad)
@@ -2414,10 +2427,10 @@ def test_spectators_for_a_described_class_are_refused_with_a_true_sentence():
                        pulses={"coupler_flux_pulse": _described_pulses()["coupler_flux_pulse"]},
                        spectators=spect, gate_desc=desc)
         assert res == {"error": cgb.NO_SPECTATORS_DESCRIBED,
-                       "refusals": [cgb.NO_SPECTATORS_DESCRIBED]}
+                       "refusals": [cgb.NO_SPECTATORS_DESCRIBED], "name_refusals": []}
     res = _plan_described(_chip(), spectators=spect)
     assert res == {"error": cgb.NO_SPECTATORS_DESCRIBED,
-                   "refusals": [cgb.NO_SPECTATORS_DESCRIBED]}
+                   "refusals": [cgb.NO_SPECTATORS_DESCRIBED], "name_refusals": []}
     assert "copies the layout" not in cgb.NO_SPECTATORS_DESCRIBED
     assert cgb.spectator_refusal(DESCRIBED_GATE, gate_desc=_described()) == cgb.NO_SPECTATORS_DESCRIBED
     # an empty list is no spectator: the gate is planned as without the keyword
