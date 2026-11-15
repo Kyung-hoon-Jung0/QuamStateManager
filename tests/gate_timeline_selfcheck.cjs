@@ -173,6 +173,30 @@ ok([...Array(116).keys()].every((t) => hov.x.includes(t)), 'hover grid has every
        '"starts at" only where the idle stretch can hold the words (it would sit on the pulse otherwise)');
 }
 
+// the "starts at" fit rule, at its edge: the idle stretch must hold the words plus a 12 px margin
+{
+    const CHAR = 5.8, MARGIN = 12;
+    const draw = (start) => {
+        const tl = GT.render(host2, { lanes: [lane('q1.z', 'gate', [seg('long', [0, 2000], [0.1, 0.1])]),
+                                              lane('q2.z', 'gate', [seg('late', [start, start + 100], [0.1, 0.1])])], notes: [] });
+        const f = last();
+        tl.destroy();
+        return f;
+    };
+    const probe = draw(500);
+    const xr = probe.layout.xaxis.range;
+    const w = Math.max(200, 900 - probe.layout.margin.l - probe.layout.margin.r);
+    const px = (start) => (start - xr[0]) * w / (xr[1] - xr[0]);
+    const words = (start) => ('starts at ' + start + ' ns').length * CHAR;
+    const shown = (start) => draw(start).layout.annotations.some((a) => a.meta && a.meta.role === 'starts-at' && a.meta.lane === 'q2.z');
+    let tight = 1; while (px(tight) <= words(tight)) tight++;            // the words alone just fit
+    let roomy = tight; while (px(roomy) <= words(roomy) + MARGIN) roomy++; // the words and the margin fit
+    ok(tight < roomy && px(tight) <= words(tight) + MARGIN && px(roomy - 1) <= words(roomy - 1) + MARGIN,
+       'fit edge: a start exists where the words fit but the margin does not');
+    ok(!shown(tight) && !shown(roomy - 1), '"starts at" absent while the idle stretch is short of the words plus 12 px');
+    ok(shown(roomy), '"starts at" present once the idle stretch holds the words plus 12 px');
+}
+
 // scales fit the data, not the limits
 const r1 = fig.layout.yaxis.range, r2 = fig.layout.yaxis2.range;
 ok(JSON.stringify(r1) !== JSON.stringify(r2), 'per lane: each lane has its own range');
