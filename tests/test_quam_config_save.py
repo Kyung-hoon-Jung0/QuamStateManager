@@ -251,3 +251,31 @@ def test_draft_without_header_and_unknown_environment_are_refused(setup, monkeyp
     monkeypatch.setattr(config_generator, "known_interpreter", lambda *a: False)
     with pytest.raises(D.DraftError, match="environment"):
         save()
+
+
+def _not_proportional(runner):
+    def run(py, req, **kwargs):
+        result = runner(py, req, **kwargs)
+        if req["action"] == "check":
+            result["proportional"] = {"proportional": False}
+        return result
+    return run
+
+
+def test_a_template_class_must_scale_with_amplitude(setup):
+    instance, folder, source, calls, runner, save = setup
+    with pytest.raises(D.DraftError, match="proportional"):
+        Q.save_class("python", instance, "scope", CLASS, runner=_not_proportional(runner),
+                     confirmed_folder=str(folder), history_folder=instance / "history")
+    assert not (folder / "FlatPulse.py").exists()
+
+
+def test_a_hand_edited_class_that_does_not_scale_is_saved_with_a_warning(setup):
+    instance, folder, source, calls, runner, save = setup
+    edited = source.decode().replace(T.REGION_END + "\n", "")
+    assert not T.parse(edited).editable
+    D.save_draft(instance, "scope", CLASS, edited)
+    result = Q.save_class("python", instance, "scope", CLASS, runner=_not_proportional(runner),
+                          confirmed_folder=str(folder), history_folder=instance / "history")
+    assert result["ok"] and result["proportional_warning"] == Q.PROPORTIONAL_WARNING
+    assert (folder / "FlatPulse.py").read_bytes() == edited.encode()

@@ -1,0 +1,66 @@
+# 313 Save to quam_config
+
+The pulse-class editor (docs/312_pulse_class_drafts.md) keeps a class as a draft in the instance folder.
+"Save to quam_config" is the one door that turns a draft into a module of the lab code. The route
+(`POST /pulse-class/save-config`, `web/pulse_class_page.py`) and, later, the agent tool both call one core
+function, `core/quam_config_save.py:save_class`.
+
+## The order (always the same)
+
+1. **Folder.** SM asks the chosen environment where it imports `quam_config` from, without SM's lab code folder in
+   front of the path (`lab_worker.run(..., prepend_lab=False)`; the runner is `generator/run_class_save.py`, action
+   `discover`). That is the folder QUAlibrate reads. The first press returns only `confirm` (absolute file path,
+   the environment's folder, the gates that use the class, the "runs without isolation" sentence); nothing is read
+   or written yet. The second press sends the shown folder back as `confirmed_folder`.
+   - SM's own lab code folder for that environment differs from the environment's folder: refused, both paths named.
+     Setting SM's lab code folder to the environment's folder lifts it.
+   - The folder is inside site-packages or not writable: refused.
+   - The user typed another folder: only writability is checked; the result says the environment does not import the
+     file, and gates that use the class stay refused (receipt `importable: false`).
+2. **Bytes.** The draft is read once and hashed (sha256). Those bytes are checked and written; nothing reads the
+   draft again, so an edit during the check cannot reach the file.
+3. **Check, in the lab worker, on copies only.** The quam_config folder is copied to a temporary package, the bytes
+   are put in it as `<Class>.py`, and the worker imports `quam_config.<Class>`, builds a default instance and
+   computes the waveform (with the amplitude-proportional check). The worker returns the hash of the bytes it ran;
+   a different hash is refused. When the open chip already uses the class, SM also writes a copy of the chip (the
+   store's in-memory state, `core/chip_copy.py`) and loads it with the draft class; a failed load refuses the save
+   with the lab's error. The copies are removed afterwards; the store, its change log and the working copy are not
+   touched, and nothing is written into the state (no `extras`).
+   - A template class whose waveform is not proportional to amplitude is refused; a hand-edited one is saved with a
+     warning line.
+4. **Write.** One file per class. A new name uses a create-only atomic write (`safe_io.atomic_write_bytes(...,
+   create_only=True)`): an existing file of that name, or one created during the check, is refused and left as it
+   was. An existing file is replaced in place only when it carries SM's header and is the file this draft was saved
+   to before; the old bytes go to `instance/class_file_backups/` first. A lab-made file is never replaced. If the
+   chip changed during the check, the check runs again (three tries, then the user is told the chip keeps changing).
+5. **History.** One JSON line in the chip's history folder, `class_files.jsonl`: time, who (`person` or `agent`, from
+   the `X-SM-Agent` header), path, sha256 and the list of this chip's gates that use the class (live and active ones
+   marked). If that line cannot be written, the file stays and the screen says the history line failed.
+6. **What the screen says.** The saved path, "this chip now needs quam_config/<file>.py; every computer that opens
+   this state needs the same file", the restart line, and any warning.
+
+## Restart wording (measured)
+
+In a long-lived process that had already imported `quam_config` (as a running QUAlibrate has), a module file created
+afterwards imported at once through `importlib.import_module` (the call quam uses to resolve a `__class__` string),
+while an already imported module that was edited on disk kept its old code. So a new class file says no restart is
+needed; an edited one says to restart QUAlibrate before running nodes with the class.
+
+## Gates wait for the class file
+
+`class_refusal(instance, scope, creates, classes)` refuses a gate plan (plan, check and create all go through
+`cz_gate_routes._plan_all`) that names, or creates a value of, a class that has a draft in this chip's scope but no
+saved quam_config file (or one saved to a folder the environment does not import).
+
+## Save to file
+
+The older "Save to file" door (a copy anywhere) cannot write into a `quam_config` package or over the file Save to
+quam_config wrote; both point to Save to quam_config. Each Save to file write also adds a history line.
+
+## Seams left for the next piece
+
+- The live-write check before Apply belongs inside `working_copy.apply_to_live`; this door does not write live.
+- `extras` on gate macros (file name, hash, proportional result) are written when a gate is created or re-checked,
+  not here; the receipt (`target.json` next to the draft) already carries `path`, `sha`, `qclass`, `importable`
+  and `proportional` for that.
+- Undo notice and "not used" in the class list.

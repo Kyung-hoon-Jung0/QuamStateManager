@@ -16,6 +16,8 @@ from quam_state_manager.core import pulse_class_template as T
 from quam_state_manager.core import pulse_class_watch as W
 
 HISTORY_FILE = "class_files.jsonl"
+PROPORTIONAL_WARNING = ("The waveform is not proportional to amplitude; SM cannot scale "
+                        "this pulse by its amplitude.")
 EXECUTION_NOTICE = "This file is Python that runs without isolation in the lab environment."
 RESTART_NEW = ("A running QUAlibrate imports this new file the first time a state needs it; "
                "no restart is needed.")
@@ -215,7 +217,8 @@ def save_class(python, instance, scope, class_name, *, confirmed_folder=None, fo
                 "restart": RESTART_EDIT if old is not None else RESTART_NEW,
                 "notice": EXECUTION_NOTICE, "warning": dest.get("warning"),
                 "dependency": f"This chip now needs quam_config/{target.name}; every computer that opens this state needs the same file.",
-                "proportional": check.get("proportional")}
+                "proportional": check.get("proportional"),
+                "proportional_warning": PROPORTIONAL_WARNING if proportional is False else None}
 
 
 def class_refusal(instance, scope, creates=(), classes=()):
