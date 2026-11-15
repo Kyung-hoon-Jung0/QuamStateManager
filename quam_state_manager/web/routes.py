@@ -24029,7 +24029,7 @@ _PULSE_ROW_KEYS = ("path", "summary", "is_alias", "known", "owner", "channel",
                    "class_match", "unmodeled", "qclass", "class_short",
                    "length_implausible", "length_stored", "length", "amplitude",
                    "amplitude_peak", "used_by", "length_why", "length_from_lab", "length_from_config",
-                   "length_from_transcription")
+                   "length_from_transcription", "fold_key", "spectator_of")
 
 
 def _pulse_vt_sig(row: dict) -> tuple:
