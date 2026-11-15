@@ -35,6 +35,9 @@ AMP_SCALE_LIMIT = 2.0
 MIN_LENGTH_NS = 16
 #: Pulse length step in ns; equal to the step the shared ``length_rule`` enforces (pinned by a test).
 LENGTH_STEP_NS = 4
+#: Guides/features.md line 1128: "Arbitrary waveforms cannot be compressed and can only be expanded
+#: up to $2^{24}-1$ clock cycles (67ms)." Each clock cycle is 4 ns; this limit is in ns.
+MAX_SPECTATOR_NS = (2 ** 24 - 1) * LENGTH_STEP_NS
 #: Longest wait in ns: 2**24 clock cycles of LENGTH_STEP_NS ns each.
 MAX_WAIT_NS = 2 ** 24 * LENGTH_STEP_NS
 #: Qubit z operation that spectator levels scale; one name for the pure check and the class.
@@ -43,7 +46,7 @@ SPECTATOR_UNIT_OP = "spectator_unit"
 KEYS_PROBLEM = "Spectator keys differ: qubits={qubits}, levels={levels}, lengths={lengths}."
 OWN_PROBLEM = "Spectator {name!r} is the pair control or target qubit."
 LENGTH_PROBLEM = ("Spectator {name!r} length {value!r} must be a finite whole multiple of " + str(LENGTH_STEP_NS)
-                  + " ns, at least " + str(MIN_LENGTH_NS) + " ns.")
+                  + " ns, at least " + str(MIN_LENGTH_NS) + " ns and at most " + str(MAX_SPECTATOR_NS) + " ns.")
 UNIT_PROBLEM = "Spectator {name!r}: the unit operation " + repr(SPECTATOR_UNIT_OP) + " is missing on that qubit."
 UNIT_VALUE_PROBLEM = ("Spectator {name!r}: the unit operation " + repr(SPECTATOR_UNIT_OP)
                       + " amplitude {value!r} must be a finite nonzero number.")
@@ -51,6 +54,7 @@ LEVEL_PROBLEM = ("Spectator {name!r} level {value!r} must be a finite number wit
                  + repr(AMP_SCALE_LIMIT) + ".")
 DUPLICATE_PROBLEM = "Spectators {first!r} and {second!r} name the same qubit."
 TYPE_PROBLEM = "Spectator {what} must be {kind}; received {value!r}."
+DURATION_PROBLEM = "Slot duration must be at most " + str(MAX_SPECTATOR_NS // LENGTH_STEP_NS) + " clock cycles."
 SLOT_PROBLEM = "The {slot} slot accepts {kinds}; received {value!r}."
 
 #: Sequence step kinds placed before or after the gate pulses.
@@ -287,9 +291,10 @@ def reachable_level(unit) -> float:
 
 
 def spectator_length_problem(length_ns) -> str | None:
-    """Use the shared pulse length rule, while requiring a numeric value."""
-    if isinstance(length_ns, bool) or not isinstance(length_ns, (int, float)):
-        return "Spectator length must be a number of ns."
+    """Bound the stretched play in ns and use the shared pulse length rule."""
+    if (isinstance(length_ns, bool) or not isinstance(length_ns, (int, float))
+            or length_ns > MAX_SPECTATOR_NS or length_ns % LENGTH_STEP_NS or length_ns < MIN_LENGTH_NS):
+        return LENGTH_PROBLEM.format(name="spectator", value=length_ns)
     return length_rule({"length": length_ns})
 
 
@@ -420,7 +425,8 @@ def _region(spec, before, after):
                   f"                    raise ValueError({DUPLICATE_PROBLEM!r}.format(first=first, second=name))",
                   "            seen.append((name, qubit))",
                   "            value = lengths[name]",
-                  f"            if isinstance(value, bool) or not isinstance(value, (int, float)) or value % {LENGTH_STEP_NS}"
+                  f"            if isinstance(value, bool) or not isinstance(value, (int, float))"
+                  f" or value > {MAX_SPECTATOR_NS} or value % {LENGTH_STEP_NS}"
                   f" or value < {MIN_LENGTH_NS}:",
                   f"                raise ValueError({LENGTH_PROBLEM!r}.format(name=name, value=value))",
                   "            if (SPECTATOR_UNIT_OP not in qubit.z.operations",
@@ -442,6 +448,10 @@ def _region(spec, before, after):
                   "                in_range = False",
                   "            if not in_range:",
                   f"                raise ValueError({LEVEL_PROBLEM!r}.format(name=name, value=level))"]
+    lines += ["        slot_duration = self.duration if duration is None else duration",
+              "        if (isinstance(slot_duration, numbers.Integral) and not isinstance(slot_duration, bool)",
+              f"                and slot_duration > {MAX_SPECTATOR_NS // LENGTH_STEP_NS}):",
+              f"            raise ValueError({DURATION_PROBLEM!r})"]
     lines += _step_guards(before, after)
     lines += _step_lines(before)
     lines += ["        align(*channels)"]
@@ -449,7 +459,7 @@ def _region(spec, before, after):
         flag = ", validate=False" if s == "coupler" else ""
         lines += [f"        {_channel(s)}.play(self.{s}_flux_pulse_label{flag},",
                   f"            amplitude_scale=amplitude_scale_{s},",
-                  "            duration=self.duration if duration is None else duration)"]
+                  "            duration=slot_duration)"]
     if spec.spectators:
         lines += ["        for name, qubit in self.spectator_qubits.items():",
                   "            level = self.spectator_levels[name]",
@@ -474,7 +484,7 @@ def render(spec: SlotSpec) -> str:
         raise ValueError(" ".join(problems))
     before, after = _plain_steps(spec.before, "before"), _plain_steps(spec.after, "after")
     return (f"{HEADER_MARK}, version {TEMPLATE_VERSION}.\n"
-            "from dataclasses import field\nfrom typing import Union\n"
+            "import numbers\nfrom dataclasses import field\nfrom typing import Union\n"
             + ("from qm.qua import align, amp, play, wait\n"
                if any(s["kind"] == "wait" for s in before + after) else "from qm.qua import align, amp, play\n")
             + "from quam.core import quam_dataclass\n"

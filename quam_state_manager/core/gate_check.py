@@ -15,7 +15,13 @@ lab side is ``generator/run_pulse_waveform.py``'s gate-check item, run by
 - ``timeline``: the static timeline (:mod:`core.static_timeline`); ``pass``
   means "drawn", not "compared with a measurement";
 - ``range``: each side of the pulse (maximum and minimum, times the played
-  scale, plus the channel offset) inside the port's output range.
+  scale, plus the channel offset) inside the port's output range;
+- ``spectator_scale``: SM's own reading of the gate's spectator rows on the
+  chip with the write (:func:`slot_gate_plan.rows_problem`); it does not
+  need the lab's answer, so it is judged also when the lab's code did not
+  run (no environment, busy, a crash, a chip that does not load). A gate
+  without spectator rows has no such entry in ``checks``, and the stored
+  count leaves it out too.
 
 Each check is ``{"status": "pass" | "fail" | "skipped" | "note",
 "message": str}``. The before / after comparison is used for the chip-level
@@ -89,7 +95,11 @@ from quam_state_manager.core.diagnostics import (
 #: play (its spectators): ``{REQUIRED: [(element, operation)]}``
 REQUIRED = "required"
 
-CHECKS = ("load_config", "ops", "length", "preview", "timeline", "range")
+CHECKS = ("load_config", "ops", "length", "preview", "timeline", "range", "spectator_scale")
+#: SM's own check of a gate's spectator rows; it reads the chip, never the lab's answer
+OWN_CHECK = "spectator_scale"
+#: the checks judged from the lab's answer, in order
+LAB_CHECKS = tuple(c for c in CHECKS if c != OWN_CHECK)
 
 #: preview vs config sample tolerance (volts, or normalised units on an MW
 #: port). Both sides come from the same class code through float64 math, so a
@@ -141,20 +151,25 @@ def gate_result(res: dict, pair: str, gate: str) -> dict | None:
     return None
 
 
-def _all(status: str, message: str) -> dict:
-    return {c: _r(status, message) for c in CHECKS}
+def _lab_skipped(key, message: str, after_merged=None) -> dict:
+    """Every lab check ``skipped`` with *message*; SM's own check is still
+    judged, since it reads the chip and not the lab's answer."""
+    return {c: (_spectator_scale_check(key, after_merged) if c == OWN_CHECK
+                else _r("skipped", message)) for c in CHECKS}
 
 
 def _entry(key, checks, timeline=None) -> dict:
+    from quam_state_manager.core.gate_check_log import _counted
+    checks = {name: c for name, c in checks.items() if _counted(name, c)}
     tl = None
     if timeline is not None:
         tl = dict(timeline)
         tl["rows"] = [r._asdict() if hasattr(r, "_asdict") else dict(r)
                       for r in timeline.get("rows") or []]
     return {"pair": key[0], "gate": key[1], "checks": checks,
-            "unchecked": [c for c in CHECKS if checks[c]["status"] == "skipped"
+            "unchecked": [c for c in checks if checks[c]["status"] == "skipped"
                           or checks[c].get("not_run")],
-            "partly_checked": [c for c in CHECKS if checks[c].get("partly")],
+            "partly_checked": [c for c in checks if checks[c].get("partly")],
             "timeline": tl}
 
 
@@ -169,10 +184,11 @@ def _no_gates() -> dict:
     return _finalize(_base("no-gates", checked=False, error="no gate was given"))
 
 
-def _unchecked(keys, status: str, error: str, msg: str | None = None) -> dict:
+def _unchecked(keys, status: str, error: str, msg: str | None = None,
+               after_merged: dict | None = None) -> dict:
     msg = msg or f"Not checked with the lab's code: {error}."
     out = _base(status, checked=False, error=error)
-    out["gates"] = [_entry(k, _all("skipped", msg)) for k in keys]
+    out["gates"] = [_entry(k, _lab_skipped(k, msg, after_merged)) for k in keys]
     return _finalize(out)
 
 
@@ -205,7 +221,8 @@ _WHY_STATUS = {
 
 _CHECK_WORDS = {"load_config": "loading the chip", "ops": "running the gate",
                 "length": "the pulse lengths", "preview": "the preview comparison",
-                "timeline": "the timeline", "range": "the output range"}
+                "timeline": "the timeline", "range": "the output range",
+                "spectator_scale": "the spectator levels"}
 
 
 def _names(names: list[str]) -> str:
@@ -271,7 +288,7 @@ def _finalize(out: dict, *, write_broke: bool = False) -> dict:
 
 
 def evaluate(gates: Iterable, ran: dict, previews: dict | None = None,
-             merged: dict | None = None) -> dict:
+             merged: dict | None = None, after_merged: dict | None = None) -> dict:
     """The per-gate checks from :func:`lab_waveform.run_gate_check`'s answer.
 
     *gates*: gate keys (see :func:`gate_key`). *previews*: ``{gate key:
@@ -284,8 +301,10 @@ def evaluate(gates: Iterable, ran: dict, previews: dict | None = None,
         return _no_gates()
     previews = {gate_key(k): v for k, v in (previews or {}).items()}
     status = (ran or {}).get("status") or "crash"
+    own_merged = after_merged if after_merged is not None else merged
     if status != "ok":
-        return _unchecked(keys, status, (ran or {}).get("error") or status)
+        return _unchecked(keys, status, (ran or {}).get("error") or status,
+                          after_merged=own_merged)
     data = ran.get("data") or {}
     before = data.get("before") or {}
     after = data.get("after") or {}
@@ -296,12 +315,13 @@ def evaluate(gates: Iterable, ran: dict, previews: dict | None = None,
                f"checked. The lab's error: {chip_err}")
         out = _base("ok", checked=False, chip_error=chip_err,
                     quam_config=data.get("quam_config"))
-        out["gates"] = [_entry(k, _all("skipped", msg)) for k in keys]
+        out["gates"] = [_entry(k, _lab_skipped(k, msg, own_merged)) for k in keys]
         return _finalize(out)
     out = _base("ok", checked=True, quam_config=data.get("quam_config"))
     after_err = after.get("load_error") or after.get("config_error")
     for k in keys:
-        checks, tl = _one_gate(k, data, after, after_err, previews.get(k) or {}, merged)
+        checks, tl = _one_gate(k, data, after, after_err, previews.get(k) or {}, merged,
+                              after_merged)
         out["gates"].append(_entry(k, checks, tl))
     out["ok"] = bool(out["gates"]) and all(
         c["status"] != "fail" for g in out["gates"] for c in g["checks"].values()) and all(
@@ -318,7 +338,35 @@ def _guard(fn, *args) -> dict:
                              "does not read.")
 
 
-def _one_gate(key, data, after, after_err, preview, merged=None):
+NO_SPECTATOR_ROWS = "No spectator levels to check."
+
+
+def _spectator_scale_check(key, after_merged) -> dict:
+    """SM's own check of a gate's spectator rows on the chip WITH the write:
+    the template's rule sentence as a failure, a pass, or a note (neither
+    unchecked nor partly checked) for a gate without spectator rows."""
+    from quam_state_manager.core.slot_gate_plan import macro_spectator_problem
+    try:
+        pair = ((after_merged or {}).get("qubit_pairs") or {}).get(key[0])
+        macro = ((pair or {}).get("macros") or {}).get(key[1]) if isinstance(pair, dict) else None
+        why = macro_spectator_problem(after_merged, key[0], macro)
+    except Exception:  # noqa: BLE001 -- one check never takes the gate down
+        return _r("skipped", "Not checked: SM could not read the spectator rows of this gate.")
+    if why is False:
+        return _r("note", NO_SPECTATOR_ROWS)
+    if why:
+        return _r("fail", why)
+    return _r("pass", "Every spectator level is within the range its unit operation reaches.")
+
+
+def _one_gate(key, data, after, after_err, preview, merged=None, after_merged=None):
+    checks, tl = _one_gate_lab(key, data, after, after_err, preview, merged)
+    checks[OWN_CHECK] = _spectator_scale_check(
+        key, after_merged if after_merged is not None else merged)
+    return checks, tl
+
+
+def _one_gate_lab(key, data, after, after_err, preview, merged=None):
     name = key[1]
     try:
         checks: dict[str, dict] = {}
@@ -332,7 +380,7 @@ def _one_gate(key, data, after, after_err, preview, merged=None):
             checks["load_config"] = _r("pass", "The chip loads and builds its config with "
                                                "this write.")
         if after.get("load_error") or g is None:
-            for c in CHECKS[1:]:
+            for c in LAB_CHECKS[1:]:
                 checks[c] = _r("skipped", "Not checked: the chip with this write does not load.")
             return checks, None
         if g.get("error"):
@@ -343,7 +391,7 @@ def _one_gate(key, data, after, after_err, preview, merged=None):
                 else:
                     msg += " This gate also failed before this change, with another error."
             checks["ops"] = _r("fail", msg)
-            for c in CHECKS[2:]:
+            for c in LAB_CHECKS[2:]:
                 checks[c] = _r("skipped", f"Not checked: the gate {name} does not run.")
             return checks, None
         no_cfg = bool(after.get("config_error"))
@@ -383,8 +431,8 @@ def _one_gate(key, data, after, after_err, preview, merged=None):
         checks["range"] = _guard(_range_check, found, tl, no_cfg, merged)
         return checks, with_samples(tl, found)
     except Exception:  # noqa: BLE001 -- one gate never takes the others down
-        return _all("skipped", f"Not checked: the lab's data for the gate {name} has a form "
-                               "SM does not read."), None
+        return {c: _r("skipped", f"Not checked: the lab's data for the gate {name} has a "
+                                 "form SM does not read.") for c in LAB_CHECKS}, None
 
 
 _ADDR = re.compile(r"0x[0-9a-fA-F]+")
@@ -768,6 +816,31 @@ def _scrub(res: dict, copies) -> dict:
     return res
 
 
+def _with_creates(merged: dict | None, creates) -> dict | None:
+    """*merged* with each ``(dotted path, value)`` create set, so the
+    spectator rule reads the chip as the write would leave it. *merged* is
+    never changed: only the dicts on a create's path are copied. A create
+    the create door refuses is left out: a path that steps through anything
+    but a dict (a list included), a missing parent, an empty path part, or
+    a key that is there already."""
+    if not isinstance(merged, dict):
+        return merged
+    out = dict(merged)
+    for path, value in creates or ():
+        parts = str(path).split(".")
+        parent: Any = out
+        for seg in parts[:-1]:
+            parent = parent.get(seg) if isinstance(parent, dict) else None
+        if not all(parts) or not isinstance(parent, dict) or parts[-1] in parent:
+            continue
+        node = out
+        for seg in parts[:-1]:
+            node[seg] = dict(node[seg])
+            node = node[seg]
+        node[parts[-1]] = value
+    return out
+
+
 def check_gates(store, python_path: str | None, gates: Iterable,
                 creates: Iterable[tuple[str, Any]] = (), *,
                 previews: dict | None = None,
@@ -782,8 +855,10 @@ def check_gates(store, python_path: str | None, gates: Iterable,
     if not keys:
         return _no_gates()
     creates = [(str(p), v) for p, v in creates]
+    own_merged = _with_creates(getattr(store, "merged", None), creates)
     if not python_path:
-        return _unchecked(keys, "no-env", "no Python environment is selected")
+        return _unchecked(keys, "no-env", "no Python environment is selected",
+                          after_merged=own_merged)
     if runner is None:
         from quam_state_manager.core.lab_waveform import run_gate_check as runner
     copies = None
@@ -791,23 +866,25 @@ def check_gates(store, python_path: str | None, gates: Iterable,
         try:
             copies = chip_copy.make_chip_copies(store, creates)
         except chip_copy.CopyError as exc:
-            res = _unchecked(keys, "crash", str(exc))
+            res = _unchecked(keys, "crash", str(exc), after_merged=own_merged)
             res["leftover"] = exc.leftover
             return _finalize(res)
         except chip_copy.CreateError as exc:
             res = _unchecked(keys, "invalid-create", str(exc),
-                             "Not checked: the gate cannot be written.")
+                             "Not checked: the gate cannot be written.",
+                             after_merged=own_merged)
             for g in res["gates"]:
                 g["checks"]["load_config"] = _r(
                     "fail", f"The write would be refused at {exc.path}: {exc.reason}")
-                g["unchecked"] = [c for c in CHECKS if g["checks"][c]["status"] == "skipped"]
+                g["unchecked"] = [c for c in g["checks"] if g["checks"][c]["status"] == "skipped"]
             return _finalize(res)
         try:
             ran = runner(python_path, str(copies.before), str(copies.after),
                          [macro_path(*k) for k in keys], root_class=copies.root_class)
         except Exception as exc:  # noqa: BLE001 -- a typed result, never a raise
             ran = {"status": "crash", "error": f"{type(exc).__name__}: {exc}", "data": None}
-        res = _scrub(evaluate(keys, ran, previews, getattr(store, "merged", None)), copies)
+        res = _scrub(evaluate(keys, ran, previews, getattr(store, "merged", None), own_merged),
+                     copies)
         res["seq"] = copies.seq
         res["store_id"] = copies.store_id
     except Exception as exc:  # noqa: BLE001 -- never a temp path in a message
@@ -816,7 +893,7 @@ def check_gates(store, python_path: str | None, gates: Iterable,
         if copies is not None:
             text = scrub_paths(text, [str(copies.before), str(copies.after)])
         text = scrub_copy_names(text)
-        res = _unchecked(keys, "crash", text)
+        res = _unchecked(keys, "crash", text, after_merged=own_merged)
         if copies is None:
             res["leftover"] = getattr(exc, "sm_leftover", None)
             return _finalize(res)

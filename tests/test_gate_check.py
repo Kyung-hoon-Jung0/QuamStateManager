@@ -16,6 +16,9 @@ SCRIPT = ('from qm.qua import *\n\nwith program() as prog:\n'
           '    align("q1.z", "q2.z")\n\nconfig = {}\n')
 LOOP = ('from qm.qua import *\n\nwith program() as prog:\n'
         '    v1 = declare(int, )\n    play("cz_pulse", "q1.z")\n')
+#: the checks that read the lab's answer; "spectator_scale" is SM's own and is
+#: omitted for a gate without spectator rows
+LAB = tuple(c for c in gate_check.CHECKS if c != "spectator_scale")
 N = 16
 
 
@@ -77,7 +80,7 @@ PREVIEW = {GATE: {("q1.z", "cz_pulse"): _wave(0.2)}}
 def test_all_pass_and_json_safe():
     res = gate_check.evaluate([GATE], _ran(), PREVIEW)
     assert res["ok"] and res["checked"]
-    assert _checks(res) == {c: "pass" for c in gate_check.CHECKS}
+    assert _checks(res) == {c: "pass" for c in LAB}
     assert _g(res)["unchecked"] == []
     rows = _g(res)["timeline"]["rows"]
     assert [(r["start_ns"], r["end_ns"]) for r in rows] == [(4, 4 + N)]
@@ -99,12 +102,13 @@ def test_before_fails_everything_skipped_with_chip_error():
     res = gate_check.evaluate([GATE], _ran(before={"load_error": "ImportError: lab",
                                                    "config_error": None}), PREVIEW)
     assert not res["checked"] and res["chip_error"] == "ImportError: lab"
-    assert set(_checks(res).values()) == {"skipped"}
-    assert _g(res)["unchecked"] == list(gate_check.CHECKS)
+    assert {_checks(res)[c] for c in LAB} == {"skipped"}
+    assert "spectator_scale" not in _checks(res) and _g(res)["unchecked"] == list(LAB)
     assert "ImportError: lab" in _msg(res, "ops")
     res = gate_check.evaluate([GATE], _ran(before={"load_error": None,
                                                    "config_error": "KeyError: x"}), PREVIEW)
-    assert not res["checked"] and set(_checks(res).values()) == {"skipped"}
+    assert not res["checked"] and {_checks(res)[c] for c in LAB} == {"skipped"}
+    assert "spectator_scale" not in _checks(res)
 
 
 def test_after_load_fails():
@@ -112,7 +116,7 @@ def test_after_load_fails():
                                                   "config_error": None}), PREVIEW)
     c = _checks(res)
     assert c["load_config"] == "fail" and not res["ok"]
-    assert {c[k] for k in gate_check.CHECKS[1:]} == {"skipped"}
+    assert {c[k] for k in LAB[1:]} == {"skipped"}
 
 
 def test_after_config_fails():
@@ -152,8 +156,9 @@ def test_a_checked_gate_that_cannot_run_always_fails():
 def test_another_broken_gate_of_the_chip_does_not_fail_this_one():
     ran = _ran()
     ran["data"]["before_gates"]["qubit_pairs.q3-4.macros.cz_old"] = {"error": "KeyError: old"}
-    res = gate_check.evaluate([GATE], ran, PREVIEW)
-    assert res["ok"] and set(_checks(res).values()) == {"pass"}
+    res = gate_check.evaluate([GATE], ran, PREVIEW, after_merged=_spectator_chip())
+    assert res["ok"] and {_checks(res)[c] for c in LAB} == {"pass"}
+    assert _checks(res)["spectator_scale"] == "pass"
 
 
 @pytest.mark.parametrize("length,status", [(16, "pass"), (20, "pass"), (18, "fail"),
@@ -169,6 +174,7 @@ def test_length_rule(length, status):
     if isinstance(length, float) and status == "pass":
         assert "stored as" in _msg(res, "length")
         assert _g(res)["timeline"]["rows"], "an integral float is drawn"
+
 
 
 def test_preview_one_sample_off_fails_and_tolerance_passes():
@@ -271,7 +277,7 @@ def test_one_bad_gate_does_not_lose_the_others():
     ran["data"]["gates"][gate_check.macro_path(*other)]["unresolved_plays"] = "x"
     res = gate_check.evaluate([other, GATE], ran, PREVIEW)
     assert _checks(res, other)["ops"] == "skipped"
-    assert _checks(res) == {c: "pass" for c in gate_check.CHECKS}
+    assert _checks(res) == {c: "pass" for c in LAB}
 
 
 def test_two_gates_in_either_order_give_the_same_result():
@@ -288,7 +294,8 @@ def test_two_gates_in_either_order_give_the_same_result():
 def test_typed_runner_failures(status):
     res = gate_check.evaluate([GATE], {"status": status, "error": "words", "data": None})
     assert res["status"] == status and not res["checked"] and not res["ok"]
-    assert set(_checks(res).values()) == {"skipped"}
+    assert {_checks(res)[c] for c in LAB} == {"skipped"}
+    assert "spectator_scale" not in _checks(res) and _g(res)["unchecked"] == list(LAB)
     assert "words" in _msg(res, "load_config")
 
 
@@ -553,7 +560,7 @@ def test_bad_preview_entry_only_skips_the_preview(bad):
     res = gate_check.evaluate([GATE], _ran(), {GATE: {("q1.z", "cz_pulse"): bad}})
     c = _checks(res)
     assert c["preview"] == "skipped"
-    assert all(c[k] == "pass" for k in gate_check.CHECKS if k != "preview")
+    assert all(c[k] == "pass" for k in LAB if k != "preview")
 
 
 def test_leftover_folder_reported(tmp_path, monkeypatch):
@@ -635,8 +642,10 @@ def test_before_error_different_is_said_so():
 def test_ok_needs_every_gate_run():
     ran = _ran()
     ran["data"]["gates"][PATH] = "unreadable"
-    res = gate_check.evaluate([GATE], ran, PREVIEW)
-    assert set(_checks(res).values()) == {"skipped"} and not res["ok"]
+    res = gate_check.evaluate([GATE], ran, PREVIEW, after_merged=_spectator_chip())
+    assert {_checks(res)[c] for c in LAB} == {"skipped"} and not res["ok"]
+    assert _checks(res)["spectator_scale"] == "pass"
+
 
 
 def test_existing_macro_check_import_failure_text(monkeypatch):
@@ -948,3 +957,32 @@ def test_check_gates_reads_the_flux_point_from_the_chip(tmp_path):
     res = gate_check.check_gates(QuamStore(folder), "python.exe", [GATE],
                                  runner=lambda *a, **k: _ran(cfg=_cfg(sample=0.4)))
     assert _checks(res)["range"] == "fail" and "joint flux-point offset" in _msg(res, "range")
+
+
+def _spectator_chip():
+    return {"qubits": {"q3": {"z": {"operations": {"spectator_unit": {"amplitude": 0.2}}}}},
+            "qubit_pairs": {GATE[0]: {"macros": {GATE[1]: {
+                "spectator_qubits": {"q3": "#/qubits/q3"},
+                "spectator_levels": {"q3": 0.1}, "spectator_lengths": {"q3": 20}}}}}}
+
+
+@pytest.mark.parametrize("path", ["checked", "no-env", "busy", "crash", "timeout", "chip-error"])
+def test_no_rows_client_checks_match_stored_count(tmp_path, path):
+    from quam_state_manager.core import gate_check_log
+    if path == "no-env":
+        res = gate_check.check_gates(_store(tmp_path), None, [GATE])
+    else:
+        ran = (_ran() if path == "checked" else
+               _ran(before={"load_error": "broken"}) if path == "chip-error" else
+               {"status": path, "error": "unavailable", "data": None})
+        res = gate_check.evaluate([GATE], ran, PREVIEW)
+    entry = _g(res)
+    checks = list(entry["checks"].values())
+    assert set(entry["checks"]) == set(LAB)
+    assert len(checks) == gate_check_log.outcome(res, entry)["total"] == 6
+    if path == "checked":
+        assert gate_check_log.outcome(res, entry)["passed"] == 6
+    else:
+        # The client's allSkippedReason accepts exactly this single-callout shape.
+        assert all(c == {"status": "skipped", "message": checks[0]["message"]} for c in checks)
+        assert checks[0]["message"]

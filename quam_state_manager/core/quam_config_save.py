@@ -5,6 +5,7 @@ import base64
 import copy
 import json
 import os
+import re
 import shutil
 import tempfile
 from datetime import datetime, timezone
@@ -14,6 +15,7 @@ from quam_state_manager.core import chip_copy, config_generator, lab_worker, saf
 from quam_state_manager.core import pulse_class_drafts as D
 from quam_state_manager.core import pulse_class_template as T
 from quam_state_manager.core import pulse_class_watch as W
+from quam_state_manager.core import slot_gate_template as S
 
 HISTORY_FILE = "class_files.jsonl"
 PROPORTIONAL_WARNING = ("The waveform is not proportional to amplitude; SM cannot scale "
@@ -68,6 +70,50 @@ def destination(python, *, folder=None, runner=None):
     if not result["importable"]:
         result["warning"] = "The selected environment does not import this file. Gates need a successful load check."
     return result
+
+
+SLOT_UNREADABLE = ("SM cannot read this slot gate class draft back as the text its template makes, so the "
+                   "class file was not saved: {why} Make the slot gate class again instead of editing its text.")
+
+
+def _first_line(text):
+    """The first line of *text* without a byte order mark, whichever way the
+    line ends (plain, Windows, or a lone carriage return)."""
+    return re.split("\r\n|\r|\n", text.removeprefix("\ufeff"), maxsplit=1)[0]
+
+
+def _slot_header(text):
+    """True when the first line of *text* is the slot gate class header with a
+    version. Trailing blanks, any kind of line end and a byte order mark are
+    allowed here, so such a draft gets the slot refusal that names them."""
+    return re.match(re.escape(S.HEADER_MARK) + r", version (\d+)\.\s*$", _first_line(text)) is not None
+
+
+SLOT_LINE_ENDS = ("The text has other line ends than the template writes, blanks at the end of its first line, "
+                  "or a byte order mark at its start.")
+SLOT_NOT_AS_WRITTEN = "The class line or a template comment line is not as the template writes it."
+
+
+def _slot_unreadable(text):
+    """Why the slot template parser cannot read *text* back, as one plain
+    sentence, or None when it can. The parser is the one judge; this only
+    words its answer: other line ends get their own sentence, the parser's
+    own sentences are passed on, and the text of an exception it caught on a
+    damaged line is never shown."""
+    parsed = S.parse(text)
+    if parsed.ok:
+        return None
+    first = _first_line(text)
+    if "\r" in text or text.startswith("\ufeff") or first != first.rstrip():
+        return SLOT_LINE_ENDS
+    why = parsed.why or ""
+    return why if why[:1].isupper() and why.endswith(".") else SLOT_NOT_AS_WRITTEN
+
+
+def _sm_made(data):
+    """True when *data* (file bytes) starts with the header of an SM template:
+    the pulse class template or the slot gate class template."""
+    return data.startswith((T.HEADER_MARK.encode(), S.HEADER_MARK.encode()))
 
 
 def _uses(node, qclass, root, seen=None):
@@ -132,6 +178,13 @@ def save_class(python, instance, scope, class_name, *, confirmed_folder=None, fo
     A caller first omits confirmed_folder to obtain the reviewable destination
     and gate list. It then sends that exact absolute folder back. Source bytes
     and current chip copies are never supplied by the caller.
+
+    A draft with the slot gate class header is a gate class, not a pulse: the
+    lab check imports it and plays each declared slot once (``check_slot``),
+    and no amplitude field or proportional rule applies (``proportional`` is
+    None in the answer and in the receipt). A slot draft the template parser
+    cannot read back is refused before any check, and a saved gate class is
+    not added to the pulse class modules of the probe (``registered`` is None).
     """
     if actor not in ("person", "agent") and not (isinstance(actor, str) and actor.startswith("by_")
                                                  and len(actor) > 3):
@@ -153,12 +206,18 @@ def save_class(python, instance, scope, class_name, *, confirmed_folder=None, fo
         raise D.DraftError("There is no draft for this class.")
     sha = D.sha256_bytes(data)
     text = data.decode("utf-8")
-    if T._header_version(text) is None:
+    slot = _slot_header(text)
+    if slot:
+        # The template parser is the one judge of a readable slot draft.
+        why = _slot_unreadable(text)
+        if why:
+            raise D.DraftError(SLOT_UNREADABLE.format(why=why))
+    elif T._header_version(text) is None:
         raise D.DraftError("The draft needs its SM header and template version before saving.")
     with safe_io.path_lock(target):
         old = target.read_bytes() if target.exists() else None
         receipt = W.published_record(instance, scope, class_name)
-        if old is not None and not old.startswith(T.HEADER_MARK.encode()):
+        if old is not None and not _sm_made(old):
             raise D.DraftError(f"{target} is a lab class file the environment already imports. "
                                "Pick another class name for this draft.")
         if old is not None and receipt.get("path") != str(target):
@@ -190,9 +249,10 @@ def save_class(python, instance, scope, class_name, *, confirmed_folder=None, fo
                         before = run(python, {"action": "load", "copy_root": work, **chip})
                         if not before.get("chip_loaded"):
                             old_error = before.get("error") or "the chip copy did not load"
-                    check = run(python, {"action": "check", "source": base64.b64encode(data).decode("ascii"),
-                                        "class_name": class_name, "filename": target.name,
-                                        "copy_root": work, **chip})
+                    check = run(python, {"action": "check_slot" if slot else "check",
+                                         "source": base64.b64encode(data).decode("ascii"),
+                                         "class_name": class_name, "filename": target.name,
+                                         "copy_root": work, **chip})
                 if not check.get("ok") and not (check.get("chip_error") and old_error):
                     raise D.DraftError(check.get("error") or "The lab check failed.")
                 if check.get("sha256") != sha:
@@ -206,6 +266,9 @@ def save_class(python, instance, scope, class_name, *, confirmed_folder=None, fo
                                      if not check.get("chip_loaded") else
                                      "The chip copy did not load with the old class file; it loads "
                                      "with this draft. ") + f"Old file load error: {old_error}")
+                if slot:
+                    # A gate class has no waveform: no proportional rule applies.
+                    check["proportional"] = None
                 proportional = (check.get("proportional") or {}).get("proportional")
                 if proportional is False and T.parse(text).editable:
                     raise D.DraftError("The template waveform must be proportional to amplitude.")
@@ -239,7 +302,9 @@ def save_class(python, instance, scope, class_name, *, confirmed_folder=None, fo
         except OSError as exc:
             record_error = (record_error or "") + f" The saved file receipt failed: {exc}"
         registered = None
-        if dest["importable"]:
+        # The probe's module list is for pulse classes. A gate class is not
+        # one; the probe learns it from the chip once a gate uses it.
+        if dest["importable"] and not slot:
             try:
                 registered = _register_module(instance, class_name)
             except OSError as exc:
@@ -383,10 +448,10 @@ def published_path(instance, scope, qclass):
 
 
 def _lab_made(path):
-    """True for an existing class file without the SM header."""
+    """True for an existing class file without an SM template header."""
     try:
         with open(path, "rb") as fh:
-            return not fh.read(len(T.HEADER_MARK)).startswith(T.HEADER_MARK.encode())
+            return not _sm_made(fh.read(max(len(T.HEADER_MARK), len(S.HEADER_MARK))))
     except OSError:
         return False
 
