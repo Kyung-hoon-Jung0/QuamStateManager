@@ -814,9 +814,9 @@
         var aboutClass = fp && !fp.ok ? (fp.class_refusals || []) : [];
         var aboutSpect = fp ? spectRefusals(fp.pair) : [];
         var split = splitRefusals(fp && !fp.ok ? (fp.refusals || []).filter(function (r) { return aboutClass.indexOf(r) < 0 && aboutSpect.indexOf(r) < 0; }) : []);
-        var bad = split.rest.filter(function (r) { return /^(The gate name|The pair already has a gate named)\b/.test(r); });
+        var bad = split.names;
         var general = clear($('czg-refusals'));
-        split.rest.filter(function (r) { return bad.indexOf(r) < 0; }).forEach(function (r) {
+        split.rest.forEach(function (r) {
             general.appendChild(el('p', 'ui-note', r));
         });
         general.hidden = !general.childNodes.length;
@@ -865,17 +865,19 @@
         try { again.setSelectionRange(Math.min(a, again.value.length), Math.min(b, again.value.length)); } catch (e) { /* not a text input */ }
     }
     /* The server names a refused value by "<slot>.<field>: <sentence>" or
-       "gate setting <key>: <sentence>": those go on the field they name. */
+       "gate setting <key>: <sentence>": those go on the field they name.
+       "name: <sentence>" belongs under Name, independent of its wording. */
     function splitRefusals(list) {
-        var fields = [], rest = [];
+        var fields = [], rest = [], names = [];
         list.forEach(function (r) {
+            if (r.indexOf('name: ') === 0) { names.push(r.slice(6)); return; }
             var m = /^gate setting (.+?): (Type .+)$/.exec(r);
             if (m && findField('@settings', m[1])) { fields.push({ field: '@settings', name: m[1], why: m[2] }); return; }
             m = /^([^.:\s]+)\.([^:]+): (.+)$/.exec(r);
             if (m && findField(m[1], m[2])) { fields.push({ field: m[1], name: m[2], why: m[3] }); return; }
             rest.push(r);
         });
-        return { fields: fields, rest: rest };
+        return { fields: fields, rest: rest, names: names };
     }
     function syncLine(sync) {
         if (sync && sync.auto_push) return 'In the working copy; Auto-Sync also writes the chip.';

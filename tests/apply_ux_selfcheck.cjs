@@ -95,19 +95,61 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
 window.showToast = function (msg) { toasts.push(String(msg)); };
 
 (async function () {
-    // Drive the real status lifecycle and Apply entry point while the check is pending.
-    window.eval(fs.readFileSync(path.join(STATIC, 'gate-status.js'), 'utf8'));
-    const activate = window.document.createElement('button');
-    activate.className = 'btn-sm outline secondary gate-status-activate';
-    window.document.body.appendChild(activate);
-    activate.dispatchEvent(new window.CustomEvent('htmx:beforeRequest', { bubbles: true, cancelable: true, detail: { elt: activate } }));
-    ok(activate.disabled && activate.getAttribute('aria-busy') === 'true', 'Make active wears the kit busy state during its check');
-    const beforeActiveApply = syncBodies.length;
-    window.doStateSync('apply');
-    await new Promise((r) => setTimeout(r, 30));
-    ok(syncBodies.length === beforeActiveApply && toasts.some((t) => /Make active is still checking/.test(t)), 'Apply sends nothing while Make active is in flight and explains why');
-    activate.dispatchEvent(new window.CustomEvent('htmx:afterRequest', { bubbles: true, detail: { elt: activate, failed: true } }));
-    ok(!window.GateStatus.busy() && !activate.disabled && !activate.hasAttribute('aria-busy'), 'completion including errors releases the activation latch');
+    // Use bundled htmx: outerHTML detaches the button before afterRequest.
+    const live = new JSDOM('<!doctype html><body><div id="wrap"></div></body>', {
+        url: 'http://localhost/pairs', runScripts: 'outside-only', pretendToBeVisual: true
+    });
+    const w = live.window;
+    let pending;
+    class FakeXHR extends w.EventTarget {
+        constructor() { super(); this.upload = new w.EventTarget(); }
+        open(method, url) { this.responseURL = 'http://localhost' + url; }
+        setRequestHeader() {}
+        overrideMimeType() {}
+        getAllResponseHeaders() { return 'content-type: text/html\r\n'; }
+        getResponseHeader(n) { return n.toLowerCase() === 'content-type' ? 'text/html' : null; }
+        send() { pending = this; }
+        abort() { this.dispatchEvent(new w.Event('loadend')); }
+        answer(status, html) {
+            this.status = status; this.readyState = 4;
+            this.response = this.responseText = html;
+            this.onload();
+            this.dispatchEvent(new w.Event('loadend'));
+        }
+    }
+    w.XMLHttpRequest = FakeXHR;
+    w.XPathEvaluator = function () {};
+    w.XPathEvaluator.prototype.createExpression = function () {
+        return { evaluate() { return { iterateNext() { return null; } }; } };
+    };
+    w.eval(fs.readFileSync(path.join(STATIC, 'htmx.min.js'), 'utf8'));
+    w.eval(fs.readFileSync(path.join(STATIC, 'gate-status.js'), 'utf8'));
+    window.GateStatus = w.GateStatus;
+    try {
+        for (const [status, text] of [[200, 'Active now'], [200, 'The gate cannot be made active.'], [409, 'Busy']]) {
+            w.document.getElementById('wrap').innerHTML = '<div class="gate-status"><button class="gate-status-activate" hx-post="/make-active" hx-target="closest .gate-status" hx-swap="outerHTML">Make active</button></div>';
+            w.htmx.process(w.document.body);
+            const activate = w.document.querySelector('button');
+            activate.click();
+            ok(w.GateStatus.busy() && activate.disabled && activate.getAttribute('aria-busy') === 'true', 'Make active wears the kit busy state during its check');
+            const before = syncBodies.length;
+            window.doStateSync('apply');
+            await flush(30);
+            ok(syncBodies.length === before && toasts.some((t) => /Make active is still checking/.test(t)), 'Apply sends nothing while Make active is in flight and explains why');
+            pending.answer(status, '<div class="gate-status">' + text + '</div>');
+            await flush(30);
+            ok(!w.GateStatus.busy(), 'request completion releases the activation latch');
+            if (status === 200) {
+                ok(!activate.isConnected && w.document.getElementById('wrap').textContent === text, 'the real outerHTML answer replaces the pressed button');
+                ok(activate.disabled, 'a detached button is not restored');
+            } else {
+                ok(activate.isConnected && !activate.disabled && !activate.hasAttribute('aria-busy'), 'a connected button is restored after a failed response');
+            }
+        }
+        w.document.addEventListener('htmx:beforeRequest', (ev) => ev.preventDefault(), { once: true });
+        w.document.querySelector('button').click();
+        ok(!w.GateStatus.busy(), 'a cancelled request does not strand the latch');
+    } finally { live.window.close(); }
     /* A1 — needs_confirm decline toasts */
     syncPayload = { status: 'needs_confirm', mode: 'discard', message: 'staged content' };
     confirmAnswer = false;

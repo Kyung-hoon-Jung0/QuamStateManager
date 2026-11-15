@@ -796,3 +796,23 @@ def test_simulator_one_sample_slack_does_not_fit_each_lane_separately():
     assert [p["t0_ns"] for p in out["ports"]] == [-72, -72]
     starts = [p["t0_ns"] + next(i for i,v in enumerate(p["volts"]) if v) * p["dt_ns"] for p in out["ports"]]
     assert starts[1] - starts[0] == 161.5
+
+
+@pytest.mark.parametrize("shaped", [False, True])
+def test_simulator_offset_lane_aligns_above_idle(shaped):
+    run = _delayed_run(shaped=shaped)
+    for port in run["result"]["ports"]:
+        port["volts"] = [v + .2 for v in port["volts"]]
+    out = sim.from_status(run, {})
+    assert out["start_latency_ns"] == 72
+    assert [p["t0_ns"] for p in out["ports"]] == [-72, -72]
+
+
+def test_simulator_early_edges_keep_raw_axis():
+    run = _delayed_run()
+    for row in run["result"]["intended"]:
+        row["start_ns"] += 80
+    out = sim.from_status(run, {})
+    assert out["start_latency_ns"] is None
+    assert [p["t0_ns"] for p in out["ports"]] == [0, 0]
+    assert "raw simulator time axis" in out["note"]

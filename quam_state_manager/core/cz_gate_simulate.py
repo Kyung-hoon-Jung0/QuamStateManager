@@ -190,11 +190,16 @@ def _align_ports(ports: list, rows: list) -> float | None:
                 else first.get("samples") or [])
         vals = [float(v) * scale for v in vals]
         peak = max(map(abs, vals), default=0)
-        sim_peak = max(map(abs, port["volts"]), default=0)
+        # Intended pulse samples are relative to the idle level (zero).
+        # Simulator volts include the port offset; measure the pulse above idle.
+        baseline = port["volts"][0] if port["volts"] else 0
+        sim_vals = [v - baseline for v in port["volts"]]
+        sim_peak = max(map(abs, sim_vals), default=0)
         if peak == 0 or sim_peak == 0:
             return None
-        i = next(i for i, v in enumerate(vals) if abs(v) >= peak * .5)
-        j = next(i for i, v in enumerate(port["volts"]) if abs(v) >= sim_peak * .5)
+        # Relative slack preserves exact half-height samples after offset subtraction.
+        i = next(i for i, v in enumerate(vals) if abs(v) >= peak * (.5 - 1e-12))
+        j = next(i for i, v in enumerate(sim_vals) if abs(v) >= sim_peak * (.5 - 1e-12))
         rate = first.get("sampling_rate") or 1e9
         intended_step = 1e9 / rate
         expected = first["start_ns"] + i * intended_step

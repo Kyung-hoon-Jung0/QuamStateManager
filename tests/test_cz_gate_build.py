@@ -257,6 +257,7 @@ def test_existing_operation_is_never_overwritten():
     s = _chip()
     s["qubits"]["q1"]["z"]["operations"]["cz_new_pulse_q1_q2"] = {"amplitude": 1}
     res = _plan(s)
+    assert "name: The operation" in res["error"]
     assert "already exists" in res["error"]
 
 

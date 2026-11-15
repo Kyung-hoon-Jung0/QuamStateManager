@@ -436,10 +436,18 @@ def test_machine_lock_never_reads_a_locked_byte_and_cleans_failed_init(tmp_path,
         if str(path) == str(lk.path):
             raise PermissionError("initialisation failed")
         return real_stat(path, *args, **kw)
+    unlocks = []
+    real_unlock = lk._os_unlock
+    def unlock(fh):
+        assert not fh.closed
+        unlocks.append(fh)
+        real_unlock(fh)
     with monkeypatch.context() as m:
+        m.setattr(lk, "_os_unlock", unlock)
         m.setattr(os, "stat", bad_stat)
         with pytest.raises(PermissionError, match="initialisation failed"):
             lk.acquire()
+    assert len(unlocks) == 1 and unlocks[0].closed
     assert all(f.closed for f in opened)
     assert _thread_probe(lk), "an exception must not leave the request thread owning the RLock"
 

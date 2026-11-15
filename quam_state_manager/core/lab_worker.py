@@ -48,6 +48,7 @@ class _MachineLock:
                 return True
             fh = None
             owned = False
+            locked = False
             try:
                 fh = self.path.open("a+b")
                 fh.seek(0)
@@ -62,6 +63,7 @@ class _MachineLock:
                     if not blocking:
                         return False
                 else:
+                    locked = True
                     # Byte zero may be unreadable while another process owns it.
                     # Initialise only after locking, without reading that byte.
                     if os.stat(self.path).st_size == 0:
@@ -75,6 +77,11 @@ class _MachineLock:
                 if not owned:
                     try:
                         if fh is not None:
+                            if locked:
+                                try:
+                                    self._os_unlock(fh)
+                                except (OSError, ValueError):
+                                    pass
                             fh.close()
                     finally:
                         self.local.release()

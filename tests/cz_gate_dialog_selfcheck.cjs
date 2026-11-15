@@ -94,7 +94,7 @@ function planOk(body) {
     if (body.gate_class === 'L.TwoFlux') return planCopied(body);
     return { ok: true, plan_sig: 'sig-' + JSON.stringify(body.pulses) + body.gate_name + body.pairs.join(','),
              pairs: body.pairs.map((p) => p === 'q9-9' ? { pair: p, ok: false, refusals: ['No such pair.'] } : {
-                 pair: p, ok: /^cz_/.test(body.gate_name), refusals: /^cz_/.test(body.gate_name) ? [] : ['The gate name must start with cz_.'],
+                 pair: p, ok: /^cz_/.test(body.gate_name), refusals: /^cz_/.test(body.gate_name) ? [] : ['name: The gate name must start with cz_.'],
                  creates: 2, paths: ['qubit_pairs.' + p + '.macros.' + body.gate_name, 'qubits.q1.z.operations.x'],
                  layout: 'known', operations: { flux_pulse_qubit: { key: 'op_' + p, channel: 'q1.z' } },
                  fields: { flux_pulse_qubit: { length: 'default', amplitude: ((body.pulses.flux_pulse_qubit || {}).fields || {}).amplitude !== undefined ? 'given' : 'default' } },
@@ -705,8 +705,8 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
       ok(prim().disabled, 'a length refusal disables Check');
       ok($('#czg-name-why').hidden && !$('#czg-name').hasAttribute('aria-invalid'), 'length and general refusals leave Name clean');
       ok(/port is unavailable/.test($('#czg-refusals').textContent) && !$('#czg-refusals').hidden, 'unrouted refusal has a general line'); }
-    for (const [idx, message] of ['The gate name cz bad is not a valid name. Use letters.', 'The pair already has a gate named cz_used. Pick another name.'].entries()) {
-        queue.plan.push((b) => { const j = planOk(b); j.pairs[0].ok = false; j.pairs[0].refusals = [message]; return j; });
+    for (const [idx, message] of ['The gate name cz bad is not a valid name. Use letters.', 'The pair already has a gate named cz_used. Pick another name.', 'The operation cz_used_pulse already exists on the line. Pick another gate name.'].entries()) {
+        queue.plan.push((b) => { const j = planOk(b); j.pairs[0].ok = false; j.pairs[0].refusals = ['name: ' + message]; return j; });
         type($('#czg-name'), 'cz_name_refusal_' + idx);
         await settle();
         ok($('#czg-name-why').textContent === message && $('#czg-name').getAttribute('aria-invalid') === 'true', 'invalid and existing names still show under Name');
@@ -756,6 +756,7 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     ok(/^2 lines$/.test($('#czg-pulses-sum').textContent), 'two-lane gap header does not claim together');
     type($('#czg-name'), 'cz_overlap');
     await settle();
+    queue.check.push((b) => { const j = checkOk(b); j.pairs[0].tiles = [{ key: 'timing', value: '0', unit: 'ns', label: 'Timing', note: 'same start', tone: 'neutral' }]; return j; });
     prim().click();
     await settle();
     ok(!/gap with no overlap/.test(alertText()), 'overlapping check has no gap warning');
@@ -837,7 +838,7 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
         await settle();
         ok(st().klass === 'G.CouplerCZ' && classWhy().hidden, 'pair change: a hand-picked class that runs on the new pair is kept');
         // 5. a name error and a class error at once: each under its own field
-        planExtra = [['The gate name must start with cz_.', false], [NOZ, true]];
+        planExtra = [['name: The gate name must start with cz_.', false], [NOZ, true]];
         type($('#czg-name'), 'cz_both');
         await settle();
         ok(/must start with cz_/.test(nameWhy().textContent) && !/no flux line/.test(nameWhy().textContent), 'name error stays under Name');

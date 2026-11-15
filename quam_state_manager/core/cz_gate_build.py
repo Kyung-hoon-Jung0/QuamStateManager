@@ -819,7 +819,7 @@ def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
     reasons: list[str] = []
     r = name_rule(macros, gate_name)
     if r:
-        reasons.append(r)
+        reasons.append("name: " + r)
     lines = _lines(merged, pair_id)
     control, target = lines["_ids"]
     if gate_class in GATE_CLASSES and not (control and target):
@@ -881,7 +881,7 @@ def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
                        f"{path.rsplit('.', 1)[-1]}. Pick another model gate.")
     for path, _ in out["creates"]:
         if path.endswith(".macros.cz"):
-            reasons.append("The new gate would replace the pair's cz alias. "
+            reasons.append("name: The new gate would replace the pair's cz alias. "
                            "Pick another gate name.")
     if reasons:
         return _refuse(reasons)
@@ -891,7 +891,7 @@ def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
 
 def _check_op(line: tuple, key: str, reasons: list[str]) -> None:
     if key in line[1]:
-        reasons.append(f"The operation {key} already exists on {line[2]}. "
+        reasons.append(f"name: The operation {key} already exists on {line[2]}. "
                        "Pick another gate name.")
 
 
@@ -903,9 +903,9 @@ def _name_problem(key: str, ids: tuple) -> str:
                     "cannot hold (only letters, digits and _ are allowed). "
                     "Rename the qubit in the chip first.")
     if len(key) > 64:
-        return (f"The operation name {key} would be longer than 64 characters. "
+        return (f"name: The operation name {key} would be longer than 64 characters. "
                 "Pick a shorter gate name.")
-    return (f"The operation name {key} is not a valid name (a letter first, then "
+    return (f"name: The operation name {key} is not a valid name (a letter first, then "
             "letters, digits or _). Pick a plainer gate name.")
 
 
