@@ -2,4 +2,6 @@
    (web/gate_status_routes.recheck_notice). `recheck_notice`: {tone, title, text, gates} or None.
    None renders nothing at all. It only informs; it never blocks a press. #}
 {% import "_ui.html" as ui %}
-{% if recheck_notice %}<div class="gate-status-notice" role="status" data-recheck-notice="{{ recheck_notice.gates | length }}">{{ ui.ui_callout(recheck_notice.tone, recheck_notice.title, recheck_notice.text) }}</div>{% endif %}
+{% if recheck_notice %}<div class="gate-status-notice" role="status"
+     data-recheck-notice="{{ recheck_notice.gates | length }}">{{ ui.ui_callout(recheck_notice.tone,
+     recheck_notice.title, recheck_notice.text) }}</div>{% endif %}
