@@ -22,9 +22,9 @@ def test_round_trip_and_source(slots, spectators):
     spec = T.SlotSpec("ExampleGate", slots, spectators)
     source = T.render(spec)
     parsed = T.parse(source)
-    assert parsed.ok and parsed.spec == spec and parsed.version == 1
+    assert parsed.ok and parsed.spec == spec and parsed.version == T.TEMPLATE_VERSION
     assert T.render(parsed.spec) == source
-    assert source.splitlines()[0] == T.HEADER_MARK + ", version 1."
+    assert source.splitlines()[0] == T.HEADER_MARK + f", version {T.TEMPLATE_VERSION}."
     tree = ast.parse(source)
     assert not any(isinstance(n, ast.Name) and n.id == "chip" for n in ast.walk(tree))
     assert not re.search(r"\bchip\b", source)
@@ -53,8 +53,8 @@ def test_presets():
 
 @pytest.mark.parametrize("change", [lambda s: s.replace(T.REGION_END, ""),
     lambda s: s + T.REGION_BEGIN + "\n", lambda s: s.replace(T.REGION_BEGIN, T.REGION_END),
-    lambda s: s.replace("version 1.", "version 7."), lambda s: s.replace("\n", "\r\n"),
-    lambda s: s.replace("duration=self.duration", "duration=4")])
+    lambda s: s.replace(f"version {T.TEMPLATE_VERSION}.", "version 7."), lambda s: s.replace("\n", "\r\n"),
+    lambda s: s.replace("duration=slot_duration", "duration=4")])
 def test_broken_text_is_not_editable(change):
     assert not T.parse(change(T.render(T.SlotSpec("ExampleGate", {"coupler"})))).ok
 
@@ -277,7 +277,7 @@ def test_unit_op_one_constant():
     assert constant == T.SPECTATOR_UNIT_OP
     module = (Path(T.__file__)).read_text(encoding="utf-8")
     assert module.count(repr(T.SPECTATOR_UNIT_OP)) + module.count(f'"{T.SPECTATOR_UNIT_OP}"') == 1
-    assert f"or value < {T.MIN_LENGTH_NS}:" in source
+    assert f"or value > {T.MAX_SPECTATOR_NS} or value % {T.LENGTH_STEP_NS} or value < {T.MIN_LENGTH_NS}:" in source
 
 
 @lab
@@ -426,7 +426,7 @@ def test_length_step_matches_shared_rule():
     assert all(length_rule({"length": low + d}) is not None for d in range(1, step))
     assert str(step) + " ns" in T.LENGTH_PROBLEM
     source = T.render(T.SlotSpec("ExampleGate", T.SLOTS, True))
-    assert f"value % {step} or value < {low}:" in source and f"length_ns // {step})" in source
+    assert f"value > {T.MAX_SPECTATOR_NS} or value % {step} or value < {low}:" in source and f"length_ns // {step})" in source
     assert len(re.findall(r"% \d+", source)) == 1 and len(re.findall(r"// \d+", source)) == 1
     assert T.spectator_rows_problem(**rows(low + step)) is None
     assert T.spectator_rows_problem(**rows(low + step // 2))
@@ -493,22 +493,39 @@ def test_lab_duplicate_spectator_guard(tmp_path):
 
 # Sequence steps placed before and after the gate pulses.
 
-#: sha256 of the rendered source without sequence steps, taken from the template before steps existed.
+#: sha256 of the rendered source without sequence steps, including the duration and spectator length guards.
 NO_STEP_SHA256 = {
-    ('control', False): 'cd2630a2f87e4d445ca7e408205696da0254432d5fa8bf16f664528b393c34a7',
-    ('control', True): '25a708f35d6e487b4171783ce5758581929feec0d9bc6a8c6312e42b605df2aa',
-    ('target', False): '4c42e2f82555d47f31fbb0675cc712fa3f4812f77eb32d3fc23fbd10e9497f60',
-    ('target', True): 'a1d5fe81673d625555c2ecc0aed62f082ac15d317c1c3ea81c4264996f976e06',
-    ('coupler', False): '54e3010f04d1ae5e7625b3a118e0286a3555965f90f43e24b9935e92143956a6',
-    ('coupler', True): '2f43c7ef30aeb5cb88a9b15e77e900363eb019637e3ccb05974b45a6f3d79ab2',
-    ('control+target', False): '1e6580ab0b40b5c7d08e1000612cf249b1a7ab34bcd19457ffcf01b3fe5a0590',
-    ('control+target', True): '3c91b9f729f7aeac074deb8e939281ffa81c90dcb2bb26bac905394dfff4b3a2',
-    ('control+coupler', False): '247f937083947fc57fbf59545d36820a8dbff69391f92c939b4214f3f2f76458',
-    ('control+coupler', True): 'dc85bcd97676d6b10ef8017010d70b03e2c9fc068758ebd4593b8cc65a6cb153',
-    ('target+coupler', False): 'a27da53d5e819b6a822b33efae4585594d2b4b90312d0adf1faf6f701f6cebe2',
-    ('target+coupler', True): 'e76cda2a1e27f736d5830cd7953c933f88aeb938b911cad6d01ece9fa1a2f83c',
-    ('control+target+coupler', False): '72fa3c11549129c385793cfe09f6db63af09705d8ca54cb95815c2e68965730f',
-    ('control+target+coupler', True): 'ec8161612bde80f574debd2a05232e7ef2c4ebff0ac2cbd66861f537500aed70',
+    ('control', False): '9ffd4fcbe53a35d6a5b1a9c1776991f114c958e85344e4782712f67643dc3a08',
+    ('control', True): '3aa2b0dd0877920c63a4e72c433b7b724e04468a93529a549c131a657a8c1e98',
+    ('target', False): 'e4e1c22e40a352171f10a56ea8468d1bab7cb740e443e598992680601e02076f',
+    ('target', True): 'f0ae09567e882e6be5a9d2a0f853552d9fe0b59b66dcac0690abb8fb60e3443d',
+    ('coupler', False): '5b9a57b31197cf7a625c4535506134fc68b2af48868679c789f66358d1269a03',
+    ('coupler', True): '1d2337ed87ae6793955e97f735d48d1ed6dd5f5dcbc62acaf7f1c5c335f0bae9',
+    ('control+target', False): '7da306d4619b4317082f00a39bf4cc6c07753b10e42fe3576aad2dffa022260e',
+    ('control+target', True): '7a5c15bb71b5f713cd116411c83a6949a9e6f88b7964efe7df3845dbe465df92',
+    ('control+coupler', False): '16cdcbb3d2dc08bebbbc50a57a7ff4e34262c4f230908ffa4c1306f5c4e680e9',
+    ('control+coupler', True): '47d672a90f1be21c7f77787bc8ad5a41fc49972266e53fc4f568c7a400ac24ea',
+    ('target+coupler', False): 'dcb6c4179f9f489954902e6b679b30e5a49bc4122d074b570c15b137e68ce355',
+    ('target+coupler', True): 'a68846750fb042fef1f3726adb9a7b47758cfae54ba6c495f020992bb2ddc244',
+    ('control+target+coupler', False): '80fd937f6bac5c2b8488a60788cad80f2a3ccb3dd7e77c5018c426d005e7becc',
+    ('control+target+coupler', True): '06443f377efba4c83439f301014148fb07b36fa03d5f28ae5f7c9f590b86120d',
+}
+#: The same for the frozen version-1 render (read only, never written again).
+NO_STEP_SHA256_V1 = {
+    ('control', False): '42d4f998716d6452915507f7711682fc0f232852aa8d0d554402624b6f51e5bf',
+    ('control', True): '26f075182588be6d6af115ed1319a67585c39ca16a65661b16dfabce6de18fb9',
+    ('target', False): 'f592ee0a8421b734649e806f38ae8955cb7d99fd395ad404701353cb4bd45ba0',
+    ('target', True): '3c60fd3d5405877f427aab8eda2d4e4a7652e08ed4b99690f4ffa23a800c7790',
+    ('coupler', False): '771766861e9f84b6450a073c3f1b257c76cf4e0947fdbc4195f40215b6ebe9c8',
+    ('coupler', True): 'f03ab64f81a7c00e809e19bb0ec8731e0fe9179508e310f5155c0ee3295525ad',
+    ('control+target', False): 'd5c0a60d0fb4d74b728d76c97b8092aee26681d762d467d94217e7a06d863864',
+    ('control+target', True): 'd6756fb5534b8fd952d6d59dce64dd8fcb60db8a5e063a7e4bd75150f8d85141',
+    ('control+coupler', False): '3659cc6280d1bd67598b4935e8f1901994faa87eddb8e89f6908fdcd797259c5',
+    ('control+coupler', True): '92690212982a5dd8cbcc99544b1d967ae0620b13e781527435f2848f13051462',
+    ('target+coupler', False): '96e18e1f203aa24b3eef72caf1474b89542bc55ffe6c679948737de21f3f4ab6',
+    ('target+coupler', True): '7267839ffb4c7db8a194b97a7a132814f6103f68234e833b9bc58f0aa22f2b52',
+    ('control+target+coupler', False): 'bd8169fd77962f687372c4cbb458bd9c65054507bb76cf8eb3e35671ec27562b',
+    ('control+target+coupler', True): '91e3d464b1c5fee8d95de9d223c408e9b69c3166c3309a48f3a572c95da84533',
 }
 
 
@@ -553,6 +570,7 @@ def test_no_step_render_is_unchanged(slots, spectators, empty):
     key = ("+".join(s for s in T.SLOTS if s in slots), spectators)
     spec = T.SlotSpec("ExampleGate", slots, spectators) if empty is None else \
         T.SlotSpec("ExampleGate", slots, spectators, empty, empty)
+    assert _sha(T.render_v1(spec)) == NO_STEP_SHA256_V1[key]
     source = T.render(spec)
     assert _sha(source) == NO_STEP_SHA256[key]
     assert "wait" not in source and "# before" not in source and "Before the gate" not in source
@@ -936,7 +954,8 @@ def test_roles_come_from_the_fixed_table():
         assert f"        pair.qubit_{role}.xy.play('x180')\n" in source
 
 
-def _standin_apply(monkeypatch, source, xy_operations=None):
+def _standin_apply(monkeypatch, source, xy_operations=None, *, macro_duration=None,
+                   apply_kwargs=None, slot_durations=None, duration_reads=None):
     """Run the generated apply() on small stand-in objects, without a QM library; return (statements, error)."""
     import dataclasses
     import sys
@@ -962,6 +981,8 @@ def _standin_apply(monkeypatch, source, xy_operations=None):
 
         def play(self, label, **kwargs):
             statements.append(f"play {self.name} {label}")
+            if slot_durations is not None:
+                slot_durations.append(kwargs["duration"])
 
         def frame_rotation_2pi(self, phase):
             statements.append(f"frame_rotation {self.name}")
@@ -981,8 +1002,12 @@ def _standin_apply(monkeypatch, source, xy_operations=None):
         def qubit_pair(self):
             return pair
 
+    if duration_reads is not None:
+        reads = iter(duration_reads)
+        Recorder.duration = property(lambda self: next(reads, duration_reads[-1]), lambda self, value: None)
+
     try:
-        Recorder(coupler_flux_pulse="coupler_op").apply()
+        Recorder(coupler_flux_pulse="coupler_op", duration=macro_duration).apply(**(apply_kwargs or {}))
     except ValueError as exc:
         return statements, str(exc)
     return statements, None
@@ -1230,3 +1255,323 @@ def test_standin_every_statement_kind_in_order(monkeypatch, tmp_path):
 def test_lab_every_statement_kind_in_order(tmp_path):
     source = T.render(T.SlotSpec("ExampleGate", {"control", "coupler"}, True, *EVERY_KIND[:2]))
     _every_statement_kind_in_order(run_check(tmp_path, source, **EVERY_KIND_REQUEST))
+
+
+SPECTATOR_CAP = (2 ** 24 - 1) * 4
+LENGTH_CAP_CASES = [16, 52.0, SPECTATOR_CAP, float(SPECTATOR_CAP), SPECTATOR_CAP + 4,
+                    True, float("nan"), float("inf"), 10 ** 400, "16"]
+
+
+def test_spectator_cap_sentence_and_constant():
+    assert T.MAX_SPECTATOR_NS == SPECTATOR_CAP
+    assert T.LENGTH_PROBLEM == ("Spectator {name!r} length {value!r} must be a finite whole multiple of "
+                                "4 ns, at least 16 ns and at most 67108860 ns.")
+    assert T.DURATION_PROBLEM == "Slot duration must be at most 16777215 clock cycles."
+    for sentence in (T.LENGTH_PROBLEM, T.DURATION_PROBLEM):
+        assert sentence.isascii() and sentence.endswith(".")
+        assert all(word not in sentence for word in (" -- ", "->", "CAS", "patch"))
+    source = T.render(T.SlotSpec("ExampleGate", {"coupler"}))
+    assert "lengths[name]" not in source and T.LENGTH_PROBLEM not in source
+
+
+@pytest.mark.parametrize("length", LENGTH_CAP_CASES, ids=lambda value: T._shown(value))
+def test_spectator_cap_server(length):
+    valid = type(length) in (int, float) and length in (16, 52.0, SPECTATOR_CAP)
+    assert (T.spectator_length_problem(length) is None) == valid
+    problem = T.spectator_rows_problem(**rows(length))
+    assert (problem is None) == valid
+    if not valid:
+        assert problem == T.LENGTH_PROBLEM.format(name="s", value=length)
+        assert "at most 67108860 ns." in T.spectator_length_problem(length)
+
+
+@pytest.mark.parametrize("length", LENGTH_CAP_CASES, ids=lambda value: T._shown(value))
+def test_spectator_cap_executed(monkeypatch, tmp_path, length):
+    source = T.render(T.SlotSpec("ExampleGate", T.SLOTS, True))
+    result = _standin_check(monkeypatch, tmp_path, source, spectators={"s": [0.05, length, 0.1]})
+    valid = type(length) in (int, float) and length in (16, 52.0, SPECTATOR_CAP)
+    assert result["ok"] == valid, result
+    if valid:
+        assert result["spectator_plays"][0]["duration"] == length // 4
+    else:
+        assert result["error"] == "ValueError: " + T.LENGTH_PROBLEM.format(name="s", value=length)
+        assert result["slots_played"] == result["spectator_plays"] == result["alignments"] == []
+
+
+class DurationExpression:
+    def __gt__(self, other):
+        raise AssertionError("A duration expression must pass through untouched.")
+
+
+@pytest.mark.parametrize("value", [None, 2 ** 24 - 1, 2 ** 24, 10 ** 400,
+                                   float(2 ** 24), True, DurationExpression()],
+                         ids=lambda value: T._shown(value))
+@pytest.mark.parametrize("where", ["field", "argument", "override"])
+def test_slot_duration_cap_executed(monkeypatch, value, where):
+    source = T.render(T.SlotSpec("ExampleGate", {"coupler"}))
+    durations = []
+    kwargs = {} if where == "field" else {"duration": value}
+    field_value = value if where == "field" else (2 ** 24 if where == "override" else None)
+    effective = field_value if kwargs.get("duration") is None else value
+    statements, error = _standin_apply(monkeypatch, source, macro_duration=field_value,
+                                       apply_kwargs=kwargs, slot_durations=durations)
+    if isinstance(effective, int) and not isinstance(effective, bool) and effective > 2 ** 24 - 1:
+        assert error == "Slot duration must be at most 16777215 clock cycles."
+        assert statements == durations == []
+    else:
+        assert error is None
+        assert len(durations) == 1 and durations[0] is effective
+
+
+@pytest.mark.parametrize("value", [2 ** 24, 2 ** 40])
+@pytest.mark.parametrize("make", [lambda v: __import__("numpy").int64(v), IntSub], ids=["numpy", "intsub"])
+def test_slot_duration_cap_judges_every_whole_number(monkeypatch, make, value):
+    source = T.render(T.SlotSpec("ExampleGate", {"coupler"}))
+    durations = []
+    statements, error = _standin_apply(monkeypatch, source, apply_kwargs={"duration": make(value)},
+                                       slot_durations=durations)
+    assert error == "Slot duration must be at most 16777215 clock cycles."
+    assert statements == durations == []
+
+
+def test_slot_duration_cap_numpy_at_bound_passes(monkeypatch):
+    import numpy
+    source = T.render(T.SlotSpec("ExampleGate", {"coupler"}))
+    durations = []
+    bound = numpy.int64(2 ** 24 - 1)
+    _, error = _standin_apply(monkeypatch, source, apply_kwargs={"duration": bound}, slot_durations=durations)
+    assert error is None and len(durations) == 1 and durations[0] is bound
+
+
+def test_slot_duration_is_read_once_and_played_as_judged(monkeypatch):
+    assert T.render(T.SlotSpec("ExampleGate", T.SLOTS)).count("self.duration") == 1
+    source = T.render(T.SlotSpec("ExampleGate", {"coupler"}))
+    assert source.count("self.duration") == 1 and "\nimport numbers\n" in source and "numpy" not in source
+    durations = []
+    _, error = _standin_apply(monkeypatch, source, duration_reads=[100, 2 ** 24 + 5],
+                              slot_durations=durations)
+    assert error is None and durations == [100] * len(durations) and durations
+    _, error = _standin_apply(monkeypatch, source, duration_reads=[2 ** 24 + 5, 100])
+    assert error == "Slot duration must be at most 16777215 clock cycles."
+
+
+def test_slot_duration_bool_is_not_judged(monkeypatch):
+    source = T.render(T.SlotSpec("ExampleGate", {"coupler"}))
+    durations = []
+    _, error = _standin_apply(monkeypatch, source, apply_kwargs={"duration": True}, slot_durations=durations)
+    assert error is None and durations == [True]
+
+
+# ---------------------------------------------------------------- slot values as a chip stores them
+
+#: Value forms a slot may hold; a stored "#/qubits/<q>/z/operations/<op>" reference resolves to an own-channel Pulse.
+SLOT_FORMS = ("name", "own", "other", "inline", "junk")
+#: The channel a Pulse of another channel is taken from, per slot.
+OTHER_OWNER = {"control": "target", "target": "coupler", "coupler": "control"}
+
+
+def _slot_value_world(monkeypatch, source):
+    """Run a rendered class on small stand-ins; return (gate class, pair, Pulse class, statements)."""
+    import dataclasses
+    import sys
+    import types
+    statements = []
+    qua = types.ModuleType("qm.qua")
+    qua.align = lambda *channels: statements.append("align")
+    qua.wait = lambda duration, *channels: None
+    qua.amp = lambda scale: scale
+    qua.play = lambda pulse, element, **kwargs: None
+    core, macro, pulses = (types.ModuleType(n) for n in ("quam.core", "quam.components.macro",
+                                                         "quam.components.pulses"))
+    core.quam_dataclass = dataclasses.dataclass
+    macro.QubitPairMacro = type("QubitPairMacro", (), {})
+
+    class Pulse:
+        def __init__(self, name=None):
+            self.id, self.parent = name, None
+
+    pulses.Pulse = Pulse
+    for module in (types.ModuleType("qm"), qua, types.ModuleType("quam"), core,
+                   types.ModuleType("quam.components"), macro, pulses):
+        monkeypatch.setitem(sys.modules, module.__name__, module)
+
+    class Channel:
+        def __init__(self, name, op):
+            self.name, self.operations = name, {op: Pulse(op)}
+
+        def play(self, label, **kwargs):
+            statements.append(f"play {self.name} {label} {kwargs.get('amplitude_scale')}")
+
+        def frame_rotation_2pi(self, phase):
+            return None
+
+    def qubit(name):
+        z = Channel(name + "_z", name + "_op")
+        return types.SimpleNamespace(z=z, xy=Channel(name + "_xy", "x180"), channels={"z": z})
+
+    pair = types.SimpleNamespace(qubit_control=qubit("control"), qubit_target=qubit("target"),
+                                 coupler=Channel("coupler", "coupler_op"))
+    namespace = {"__name__": "standin_slot_values"}
+    exec(compile(source, "standin_slot_values.py", "exec"), namespace)
+
+    class Recorder(namespace["ExampleGate"]):
+        @property
+        def qubit_pair(self):
+            return pair
+
+    return Recorder, pair, Pulse, statements
+
+
+def _slot_channel(pair, slot):
+    return pair.coupler if slot == "coupler" else getattr(pair, f"qubit_{slot}").z
+
+
+def _slot_value(pair, Pulse, slot, form):
+    own, other = _slot_channel(pair, slot), _slot_channel(pair, OTHER_OWNER[slot])
+    return {"name": slot + "_op", "own": own.operations[slot + "_op"],
+            "other": next(iter(other.operations.values())), "inline": _inline(Pulse), "junk": 3}[form]
+
+
+def _inline(Pulse):
+    """An inline Pulse whose parent names it, as an inline field of a macro does."""
+    import types
+    pulse = Pulse()
+    pulse.parent = types.SimpleNamespace(get_attr_name=lambda value: "inline_pulse")
+    return pulse
+
+
+def _accepted(slot, form):
+    return form in ("name", "own") or (slot == "coupler" and form in ("other", "inline"))
+
+
+@pytest.mark.parametrize("slot", T.SLOTS)
+@pytest.mark.parametrize("form", SLOT_FORMS)
+def test_pure_slot_value_rule(monkeypatch, slot, form):
+    _, pair, Pulse, _ = _slot_value_world(monkeypatch, T.render(T.SlotSpec("ExampleGate", T.SLOTS)))
+    value = _slot_value(pair, Pulse, slot, form)
+    problem = T.slot_value_problem(slot, value, _slot_channel(pair, slot).operations, Pulse)
+    if _accepted(slot, form):
+        assert problem is None
+    else:
+        assert problem == T.SLOT_PROBLEM.format(slot=slot, kinds=T.SLOT_KINDS[slot], value=value)
+
+
+@pytest.mark.parametrize("slots", [frozenset({"control"}), frozenset(T.SLOTS)])
+@pytest.mark.parametrize("slot", T.SLOTS)
+@pytest.mark.parametrize("form", SLOT_FORMS)
+def test_generated_slot_value_rule_matches_the_pure_check(monkeypatch, slots, slot, form):
+    if slot not in slots:
+        pytest.skip("slot not in class")
+    Gate, pair, Pulse, statements = _slot_value_world(monkeypatch, T.render(T.SlotSpec("ExampleGate", slots)))
+    fields = {f"{s}_flux_pulse": _slot_value(pair, Pulse, s, "name") for s in slots}
+    value = _slot_value(pair, Pulse, slot, form)
+    fields[f"{slot}_flux_pulse"] = value
+    gate = Gate(**fields)
+    for s in slots:   # the label of every accepted form is the operation name on its own channel
+        if _accepted(s, "name"):
+            assert getattr(Gate(**{**fields, f"{slot}_flux_pulse": _slot_value(pair, Pulse, slot, "own")}),
+                           f"{s}_flux_pulse_label") == s + "_op"
+    expected = T.slot_value_problem(slot, value, _slot_channel(pair, slot).operations, Pulse)
+    try:
+        gate.apply(**{f"amplitude_scale_{slot}": 0.5})
+        error = None
+    except ValueError as exc:
+        error = str(exc)
+    assert error == expected
+    if error is None:
+        label = getattr(gate, f"{slot}_flux_pulse_label")
+        assert f"play {_slot_channel(pair, slot).name} {label} 0.5" in statements
+        for s in slots:
+            assert sum(st.startswith(f"play {_slot_channel(pair, s).name} ") for st in statements) == 1
+    else:
+        assert not any(st.startswith("play") for st in statements)
+
+
+def test_kinds_text_is_one_table():
+    module = Path(T.__file__).read_text(encoding="utf-8")
+    for kinds in T.SLOT_KINDS.values():
+        assert module.count(f'"{kinds}"') == 1
+    for slots in COMBINATIONS:
+        source = T.render(T.SlotSpec("ExampleGate", slots))
+        for s in slots:
+            assert repr(T.SLOT_KINDS[s]) in source
+        if slots != {"coupler"}:
+            assert "operation of the slot's own z channel" in ast.get_docstring(ast.parse(source).body[-1])
+
+
+# ---------------------------------------------------------------- older renders
+
+def _every_slot_spec():
+    for k in range(1, len(T.SLOTS) + 1):
+        for slots in itertools.combinations(T.SLOTS, k):
+            for spectators in (False, True):
+                yield T.SlotSpec("G", frozenset(slots), spectators)
+
+
+@pytest.mark.parametrize("spec", list(_every_slot_spec()), ids=lambda s: "-".join(sorted(s.slots)) + f"-{s.spectators}")
+def test_each_render_version_parses_to_its_spec_and_version(spec):
+    for text, version in ((T.render_v1(spec), 1), (T.render(spec), T.TEMPLATE_VERSION)):
+        parsed = T.parse(text)
+        assert parsed.ok and parsed.version == version and parsed.spec == spec, parsed.why
+        cut = text.index(T.REGION_END) - 10
+        edited = text[:cut] + ("x" if text[cut] != "x" else "y") + text[cut + 1:]
+        assert not T.parse(edited).ok
+        assert not T.parse(text.replace(", version ", ", version 9", 1)).ok
+    # a version-1 text under a version-2 header (and the reverse) is no render
+    assert not T.parse(T.render_v1(spec).replace(", version 1.", ", version 2.", 1)).ok \
+        or T.render_v1(spec).split("\n", 1)[1] == T.render(spec).split("\n", 1)[1]
+    assert not T.parse(T.render(spec).replace(", version 2.", ", version 1.", 1)).ok \
+        or T.render_v1(spec).split("\n", 1)[1] == T.render(spec).split("\n", 1)[1]
+
+
+def test_only_a_control_or_target_version_1_refuses_a_stored_pulse():
+    for spec in _every_slot_spec():
+        own = bool({"control", "target"} & spec.slots)
+        assert T.older_render_refuses_pulse(spec, 1) is own
+        assert T.older_render_refuses_pulse(spec, T.TEMPLATE_VERSION) is False
+        # coupler-only renders differ only in the version marker
+        if not own:
+            assert T.render_v1(spec).split("\n", 1)[1] == T.render(spec).split("\n", 1)[1]
+        else:
+            assert T.render_v1(spec).split("\n", 1)[1] != T.render(spec).split("\n", 1)[1]
+
+
+#: The frozen version-1 render of classes with sequence steps, by (slots, spectators, steps case).
+STEP_CASES_V1 = {"wait": ([WAIT], []), "xy_after": ([], [XY]), "several": ([WAIT, XY, ALIGN], [XY, WAIT])}
+STEP_SHA256_V1 = {
+    ('control', False, 'wait'): 'ff2fce85e0d0a3fff1fb9a1deef1c8701b79ad32c10850d673c4207699c815ee',
+    ('control', False, 'xy_after'): '1eca329b2f054cd367cce3189be2e74ae19340f97577a0adb19f0f36b1bd6bdb',
+    ('control', False, 'several'): '458ce064fb470194734a039eb5302f7ed9b33bba6d72b128406e9b5101efe185',
+    ('control', True, 'wait'): 'a3680ef594faf73d75178ad2247066e407ce72deeb1857feb3bde95ed76c2270',
+    ('control', True, 'xy_after'): '32f763355df15c81797c9429cbea3f7ef783f5912ec4cf6beff5d02fe7d2d4ad',
+    ('control', True, 'several'): '66419074daf74f8b8a897b117e5ca29649753fb9d9bfe84db003e7d72dfc8dbc',
+    ('target', False, 'wait'): 'c3c648f71b03cc9386af3411d1744c3094f86dfdd8aaef0aaadf240a7ca2282a',
+    ('target', False, 'xy_after'): '83d5fab5290966d155a9deb0a1e70caedfc1919362d02d7c2ac2ac4444850b99',
+    ('target', False, 'several'): 'f748c43b47a3c554c1bb523d4f76af26483dcd3d3651e38a86457a6945b6f2d1',
+    ('target', True, 'wait'): '2b84f0b8c7dba545ee0412f316941db12f29e5f41725da1260efb87e078270fe',
+    ('target', True, 'xy_after'): '8f24d160764cb4673dc2ce188d888f25590c7cf1fcff08d618d594bcd64f4c5e',
+    ('target', True, 'several'): '84a31d865b555a970d0c2993cf937bfcf8e113eef612ffe164d8b8877f4f65c9',
+    ('coupler', False, 'wait'): 'd04d2f576972098322789cb18b30bf893ab39209967f04ef171dc3eec8f22544',
+    ('coupler', False, 'xy_after'): '5a1347dd895d242c85335e20997edd185b021869831cfaeebdbf1f257f8d0113',
+    ('coupler', False, 'several'): 'c0b2d2ec88f244c78dd001b9e00926772e695fd17b99a690b726ef3163e2faac',
+    ('coupler', True, 'wait'): '2d6e466ec36b5bdb3068b9fd97e1afc573ce71c58dea0af71a9cbb871926daf2',
+    ('coupler', True, 'xy_after'): '7d44aa6a366d2b9f9a01c6ed95421e0376fffe527a2b90c2725affa4e3503abe',
+    ('coupler', True, 'several'): '7860bd8f2cc5034e76118c5025c5e302222ab730f37a43735bc51ce2571ab62d',
+    ('control+target+coupler', False, 'wait'): '5d39722f5fef549909e0935b57733990bfd1ebd7fe35b9344bc5ed19b178f762',
+    ('control+target+coupler', False, 'xy_after'): '5e872baa95c33accbe249c33fde1893117a0a07e21585e552e58405a994f0a9e',
+    ('control+target+coupler', False, 'several'): 'be7e002f1abfaf4e60f4172ad07b4f9fba3b751dd8e8bf143c6278bbf4dec282',
+    ('control+target+coupler', True, 'wait'): '0b882855c81d5cd1764fe65451644b948f90db3757f3fccc0aa6c2ebf53f8062',
+    ('control+target+coupler', True, 'xy_after'): '9a4549b0eda83c69ddb9db20070929e9277f6481c01a51058c801b7929faf6e6',
+    ('control+target+coupler', True, 'several'): '368b619752043e838356f4e00045a6a6e6b3289ea57ea629baae75e1bf4c53da',
+}
+
+
+@pytest.mark.parametrize("key", sorted(STEP_SHA256_V1, key=repr))
+def test_stepped_version_1_render_is_unchanged(key):
+    slots, spectators, case = key
+    before, after = STEP_CASES_V1[case]
+    spec = T.SlotSpec("ExampleGate", frozenset(slots.split("+")), spectators, before, after)
+    source = T.render_v1(spec)
+    assert _sha(source) == STEP_SHA256_V1[key]
+    parsed = T.parse(source)
+    assert parsed.ok and parsed.version == 1 and parsed.spec == spec

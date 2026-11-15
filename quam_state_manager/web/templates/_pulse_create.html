@@ -22,6 +22,12 @@
       hx-indicator="#pulse-create-busy" hx-disabled-elt="find button[type=submit]"
       hx-disinherit="hx-target hx-swap hx-indicator hx-disabled-elt">
 
+    {# Three numbered zones in the order the form is filled; every field keeps
+       its name, id and place in the submission order. #}
+    <section class="ui-zone" aria-label="Where the pulse goes">
+    <div class="ui-zone-head"><span class="ui-zone-step" aria-hidden="true">1</span><h3 class="ui-zone-title">Where the pulse goes</h3></div>
+    <div class="ui-zone-body">
+
     <fieldset class="pulse-target-row">
         <legend>Target</legend>
         <label><input type="radio" name="target_kind" value="qubit" checked
@@ -81,6 +87,12 @@
        + the held-slot edit-instead note. Filled by JS. #}
     <p class="pulse-pair-line muted" id="pulse-create-pairline" hidden></p>
     <p class="pulse-pair-slotnote muted" id="pulse-create-slotnote" hidden></p>
+    </div>
+    </section>
+
+    <section class="ui-zone" aria-label="What pulse">
+    <div class="ui-zone-head"><span class="ui-zone-step" aria-hidden="true">2</span><h3 class="ui-zone-title">What pulse</h3></div>
+    <div class="ui-zone-body">
 
     <div class="pulse-create-row">
         <label for="pulse-create-type">Pulse type</label>
@@ -125,6 +137,12 @@
         {# per-type parameter fieldsets are rendered by JS from the catalog
            JSON (defaults pre-filled); pointer strings are accepted verbatim #}
     </div>
+    </div>
+    </section>
+
+    <section class="ui-zone" aria-label="Preview and create">
+    <div class="ui-zone-head"><span class="ui-zone-step" aria-hidden="true">3</span><h3 class="ui-zone-title">Preview and create</h3></div>
+    <div class="ui-zone-body">
 
     <div class="pulse-plot-bar">
         <span class="pulse-plot-label muted">preview (synthesized)</span>
@@ -132,7 +150,7 @@
     </div>
     <div id="pulse-create-plot" class="pulse-create-plot"></div>
 
-    <div class="pulse-create-actions">
+    <div class="pulse-create-actions ui-actions ui-actions--start" role="group" aria-label="Create or cancel">
         <button type="submit" class="btn-sm">Create pulse</button>
         {# 2026-09-27: a lab class is first run through its own code in the
            selected env (measured 9-30 s on the lab-F chips) -- say so while
@@ -141,6 +159,8 @@
             run through its own code in the selected environment, which takes a few seconds.</span>
         <button type="button" class="btn-sm outline" onclick="closeInspector()">Cancel</button>
     </div>
+    </div>
+    </section>
 </form>
 
 <script id="pulse-catalog-data" type="application/json">{{ catalog_json | script_json }}</script>

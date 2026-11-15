@@ -47,7 +47,9 @@ def test_columns_follow_natural_qubit_order_with_idle_and_loss_data():
 def test_each_pair_shows_its_cz_by_default_else_its_first_operation():
     m = the_map()
     shown = {(s["pair"], s["operation"]) for s in m["segments"]}
-    assert ("q10-2", "cz") in shown and ("q10-2", "cz_a") not in shown       # the alias "cz" -> cz_b
+    # the pair's active gate (the macro its alias "cz" names) is the row shown
+    assert ("q10-2", "cz_b") in shown and ("q10-2", "cz_a") not in shown
+    assert ("q3-2", "cz_a") in shown                                          # no alias: its first operation
     seg = next(s for s in m["segments"] if s["pair"] == "q10-2" and s["qubit"] == "q10")
     assert seg["frequency_hz"] == pytest.approx(5e9 - 8e9 * .05 ** 2) and seg["moves"]
     still = next(s for s in m["segments"] if s["pair"] == "q10-2" and s["qubit"] == "q2")

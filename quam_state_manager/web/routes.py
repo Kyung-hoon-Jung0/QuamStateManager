@@ -3839,14 +3839,94 @@ def _unit_ts(unit: dict) -> float | None:
 _UNIT_ASK_AFTER_S = 8 * 3600
 
 
+def _journal_window_id() -> str | None:
+    """The existing per-document identity; background writers have none."""
+    return request.headers.get("X-SM-Window-ID") if has_request_context() else None
+
+
 def _unit_needs_ask(unit: dict) -> bool:
     """T1-F2 / R2 MINOR 4: a Ctrl+Z writing this unit's inverse on the live
     chip asks first -- the unit was recorded before this SM process started,
-    or more than ``_UNIT_ASK_AFTER_S`` ago."""
+    or more than ``_UNIT_ASK_AFTER_S`` ago. The rule holds for every caller,
+    the pressing window's own steps included (docs/160)."""
     if _unit_from_previous_session(unit):
         return True
     ts = _unit_ts(unit)
     return ts is not None and time.time() - ts > _UNIT_ASK_AFTER_S
+
+
+def _unit_from_other_window(unit: dict) -> bool:
+    """docs/160: a person asks before walking a step another window made; a
+    missing stamp (or a request with no window id) counts as another window."""
+    window_id = _journal_window_id()
+    return not window_id or (unit.get("meta") or {}).get("window_id") != window_id
+
+
+def _unit_age_acked(unit: dict) -> bool:
+    """The presser's yes to the age reason: this step's own yes
+    (``ack_prev_session``) or the tab's standing yes to old edits
+    (``ack_old_edits``, kept as on main: per tab and chip folder). A yes to
+    the window reason is never a yes to the age reason."""
+    uid = str(unit.get("id") or "")
+    return (request.values.get("ack_old_edits", "") == "1"
+            or (bool(uid) and request.values.get("ack_prev_session", "") == uid))
+
+
+def _unit_window_acked(unit: dict) -> bool:
+    """The presser's yes to the window reason, for this one step only: the
+    page sends the unit id it was asked about, once (docs/160)."""
+    uid = str(unit.get("id") or "")
+    return (bool(_journal_window_id()) and bool(uid)
+            and request.values.get("ack_prev_window", "") == uid)
+
+
+def _unit_age_question(unit: dict) -> str:
+    """The age sentence of the Ctrl+Z question (one wording for both asks)."""
+    return (f"It undoes an edit {_unit_age(unit) or 'of unknown age'}"
+            + (", made in an earlier SM session." if _unit_from_previous_session(unit)
+               else "."))
+
+
+def _journal_window_ask(unit: dict, direction: str):
+    """Return the existing kit-dialog event before any journal mutation."""
+    # callers.py: this advisory label preserves the agent path, not proof of
+    # personhood or authority. Existing agent ownership guards still apply.
+    if (request.headers.get("X-SM-Agent")
+            or not _unit_from_other_window(unit)
+            or _unit_window_acked(unit)):
+        return None
+    entries = unit.get("entries") or []
+    if not entries:
+        return None
+    anchor = entries[0]
+    what = str(anchor.get("path") or "the recorded change")
+    if len(entries) > 1:
+        what = f"{len(entries)} changes including {what}"
+    elif anchor.get("created") or anchor.get("deleted"):
+        restoring = bool(anchor.get("deleted")) == (direction == "/undo")
+        what += " restored" if restoring else " removed"
+    else:
+        value = anchor.get("old" if direction == "/undo" else "new")
+        what += " to " + _fmt_msg_val(value)
+    # Keep the question one ASCII line even for a Unicode path or value.
+    what = what.encode("ascii", "backslashreplace").decode("ascii")
+    what = " ".join(what.split())
+    effect = ("writes the chip" if _undo_live_enabled()
+              else "stages only; the chip stays unchanged")
+    verb = "Undo" if direction == "/undo" else "Redo"
+    resp = make_response(_tray_html(), 200 if _journal_window_id() else 409)
+    message = f"{verb} another window's change: {what}; Ctrl+Z {effect}."
+    reasons = ["other_window"]
+    # One question names every reason, in the text and in ``reasons``: the
+    # page answers a Yes with the ack of each named reason, for this step.
+    if (direction == "/undo" and _undo_live_enabled() and _unit_needs_ask(unit)
+            and not _unit_age_acked(unit)):
+        message += " " + _unit_age_question(unit)
+        reasons.append("age")
+    resp.headers["HX-Trigger"] = json.dumps({"undoAskPrevSession": {
+        "unit_id": str(unit.get("id") or ""), "direction": direction,
+        "reasons": reasons, "message": message}})
+    return resp
 
 
 def _unit_from_previous_session(unit: dict) -> bool:
@@ -3946,6 +4026,7 @@ def _journal_prepare(store, ctx, meta: dict | None = None) -> list[dict]:
             return []
         m = dict(meta or {})
         m.setdefault("owner_pid", os.getpid())
+        m.setdefault("window_id", _journal_window_id())
         return undo_journal.units_from_log([
             e for e in store.change_log
             if not str(e.group_id or "").startswith("restore-applied:")], meta=m)
@@ -5035,7 +5116,8 @@ def _wholesale_unit(before: dict | None, ctx: dict, src: str,
         # Recreating a document has no prior state that Ctrl+Z can restore.
         return {"id": uuid.uuid4().hex[:12], "ts": time.time(), "entries": [],
                 "meta": {"src": src, "wholesale": True, "no_previous_state": True,
-                         "owner_pid": os.getpid()}}
+                         "owner_pid": os.getpid(),
+                         "window_id": _journal_window_id()}}
     try:
         store = ctx["store"]
         # docs/271: a door that knows what it is writing (restore-live writes
@@ -5114,7 +5196,8 @@ def _wholesale_unit(before: dict | None, ctx: dict, src: str,
     # which filters on src == "auto", listed nothing for a wholesale flush: the
     # one surface docs/117 designates as the feedback after an auto write was
     # silent about the largest write it can make, and offered no ✕ to undo it.
-    meta = {"src": src, "wholesale": True, "owner_pid": os.getpid(), "at": time.time()}
+    meta = {"src": src, "wholesale": True, "owner_pid": os.getpid(), "at": time.time(),
+            "window_id": _journal_window_id()}
     if _auto_apply_state(ctx):
         meta["auto"] = True
     if cap and len(entries) > _WHOLESALE_UNIT_CAP:
@@ -12643,6 +12726,26 @@ def _remember_notice_window(ctx):
         if win_id:
             windows[win_id] = now
         return win_id
+
+
+_EDIT_WINDOW_TOKEN = "sm.edit_window_token"
+
+
+def bind_edit_window():
+    """App-wide before_request: rows staged during this request carry the
+    pressing window's id, whichever blueprint serves the door (an Approve
+    press included). The token lives in this request's environ, so a nested
+    request context (an internal door call) cannot release it."""
+    from quam_state_manager.core.loader import edit_window_id
+    request.environ[_EDIT_WINDOW_TOKEN] = edit_window_id.set(_journal_window_id())
+
+
+def release_edit_window(_exc=None):
+    """App-wide teardown_request: undo what bind_edit_window set."""
+    from quam_state_manager.core.loader import edit_window_id
+    token = request.environ.pop(_EDIT_WINDOW_TOKEN, None)
+    if token is not None:
+        edit_window_id.reset(token)
 
 
 @bp.before_request
@@ -24029,7 +24132,7 @@ _PULSE_ROW_KEYS = ("path", "summary", "is_alias", "known", "owner", "channel",
                    "class_match", "unmodeled", "qclass", "class_short",
                    "length_implausible", "length_stored", "length", "amplitude",
                    "amplitude_peak", "used_by", "length_why", "length_from_lab", "length_from_config",
-                   "length_from_transcription")
+                   "length_from_transcription", "fold_key", "spectator_of")
 
 
 def _pulse_vt_sig(row: dict) -> tuple:
@@ -31197,6 +31300,9 @@ def _undo_journal_step(ctx, n_req: int = 1):
                         "This step recorded no values — skipped; the chip is unchanged"),
             "entries": [], "level": "warning", **_walk_burst_extra(n_req)}})
         return resp
+    question = _journal_window_ask(unit, "/undo")
+    if question is not None:
+        return question
     gid = undo_journal.GID_PREFIX + str(unit.get("id") or cursor)
     ops = undo_journal.inverse_ops(unit)
 
@@ -31289,11 +31395,8 @@ def _undo_journal_step(ctx, n_req: int = 1):
         resp = make_response(_tray_html())
         resp.headers["HX-Trigger"] = json.dumps({"undoAskPrevSession": {
             "unit_id": str(unit.get("id") or ""),
-            "age": _age,
-            "message": (f"This Ctrl+Z writes the live chip: {_what}. It undoes an edit "
-                        f"{_unit_age(unit) or 'of unknown age'}"
-                        + (", made in an earlier SM session." if _unit_from_previous_session(unit)
-                           else "."))}})
+            "age": _age, "direction": "/undo", "reasons": ["age"],
+            "message": f"This Ctrl+Z writes the live chip: {_what}. " + _unit_age_question(unit)}})
         return resp
     if flush.get("rolled_back"):
         # the chip refused (it moved) and the step was undone again: NOTHING
@@ -31608,11 +31711,12 @@ def _undo_live_flush(ctx, store, modifier, unit: dict, staged: list, *,
     # on reopening wrote a days-old edit's inverse to the chip. Nothing is
     # staged or written while the question is open; the cursor stays.
     # R2 MINOR 4: also an edit older than 8 h of THIS session; and the yes is
-    # the presser's WINDOW's (it sends ack_prev_window once it said yes), not
+    # the presser's tab's (it sends ack_old_edits once it said yes), not
     # the chip context's -- a yes in one window was a yes in every window.
-    if (_unit_needs_ask(unit)
-            and request.values.get("ack_prev_window", "") != "1"
-            and request.values.get("ack_prev_session", "") != str(unit.get("id") or "")):
+    # The rule applies to the pressing window's own steps too. Only a yes to
+    # the age reason counts here (_unit_age_acked); a yes to another
+    # window's step is not one.
+    if _unit_needs_ask(unit) and not _unit_age_acked(unit):
         _rollback_walk_step(ctx, store, modifier, staged)
         ctx["undo_cursor"] = cursor_before
         _redo_mark(ctx, store)
@@ -31854,6 +31958,24 @@ def redo():
     busy = _journal_ready_refusal(ctx, "redone")
     if busy is not None:
         return busy
+
+    units = ctx.get("undo_units") or []
+    cursor = int(ctx.get("undo_cursor") or 0)
+    top = store.change_log[-1].group_id if store.change_log else None
+    candidate = None
+    if isinstance(top, str) and top.startswith(undo_journal.GID_PREFIX):
+        candidate = next((u for u in units
+                          if undo_journal.GID_PREFIX + str(u.get("id")) == top), None)
+    elif not store.change_log and cursor < len(units):
+        frames = ctx.get("redo_stack") or []
+        if not frames or (frames[-1].get("kind") == "jrn_live"
+                          and ctx.get("redo_seq") == store.mutation_seq
+                          and frames[-1].get("unit_id") == units[cursor].get("id")):
+            candidate = units[cursor]
+    if candidate is not None:
+        question = _journal_window_ask(candidate, "/redo")
+        if question is not None:
+            return question
 
     top_gid = store.change_log[-1].group_id if store.change_log else None
     if isinstance(top_gid, str) and top_gid.startswith(undo_journal.GID_PREFIX):
@@ -52839,6 +52961,11 @@ _SCHEDULER_MUTATOR_ENDPOINTS = {
     "main.api_cz_gate_create", "main.api_cz_gate_check",
     # ... and the agent's doors to the same two functions
     "agent.cz_gate_create", "agent.cz_gate_check",
+    # Re-check runs the lab check in the chosen env and then writes the gate's
+    # class file record into its macro through the modifier (stages).
+    "main.api_cz_gate_recheck",
+    # Class saves check in the chosen env and write code queued nodes import.
+    "pulse_class_page.pulse_class_save_config", "agent.class_file_save",
     # Add a qubit / a pair from the chip diagram: creates subtrees through the
     # modifier under one group id (a staging door like /field/edit-batch).
     "main.diagram_add_stage",
@@ -52975,8 +53102,8 @@ def _scheduler_lock_guard():
             and scheduler.is_active(_sched_inst()):
         resp = make_response(jsonify({
             "error": "scheduler_running",
-            "message": "The Experiment Runner is running — editing is locked "
-                       "until it finishes or is cancelled.",
+            "message": "Editing and class saves are refused because the Experiment Runner is running; "
+                       "try again after it finishes or is cancelled.",
         }), 409)
         resp.headers["HX-Reswap"] = "none"       # don't swap an error into the page
         resp.headers["HX-Trigger"] = "schedulerLocked"

@@ -3,6 +3,7 @@
    default, or the 2-4 pulses picked for Compare -- each editable, each
    carrying the colour its traces have in the shared plot. Variables: sec
    (the section context), main_path, view_paths. #}
+{%- from '_ui.html' import ui_stats -%}
 <details open class="detail-section pulse-sec" data-pulse-path="{{ sec.path }}"
          data-sec-index="{{ sec.index }}" style="--sec-color: {{ sec.color }}">
     <summary class="section-header pulse-sec-head">
@@ -17,6 +18,15 @@
     {% if sec.alias_chain %}
     <p class="muted pulse-sec-note">alias of <code>{{ sec.actual_path }}</code> — edits write at the target</p>
     {% endif %}
+    {#- The key numbers first, as tiles: the very values the rows below show
+        (same param, same value), only when the row has a readable value. -#}
+    {%- set _key_tiles = [] -%}
+    {%- for _k, _label in (('length', 'Length'), ('amplitude', 'Amplitude')) -%}
+    {%- for p in sec.params if p.key == _k and not p.is_list and not p.is_runtime and p.value is not none and p.value != '' and (not p.is_pointer or p.ref_known) -%}
+    {%- set _ = _key_tiles.append({'label': _label, 'value': p.value, 'unit': p.unit or none}) -%}
+    {%- endfor -%}
+    {%- endfor -%}
+    {%- if _key_tiles %}{{ ui_stats(_key_tiles, label='Key values of ' ~ sec.short) }}{% endif %}
     <table class="prop-table">
         <thead><tr><th class="col-prop">Property</th><th class="col-val">Value</th></tr></thead>
         <tbody>
@@ -149,6 +159,8 @@
         </tbody>
     </table>
     {% if sec.used_by or sec.named_slots %}
+    <details class="ui-disclosure"><summary class="ui-disclosure-summary">Used by <span class="ui-count">{{ (sec.used_by | length) + (sec.named_slots | default([]) | length) }}</span></summary><div class="ui-disclosure-body">
     <p class="muted pulse-sec-usedby">Used by {% for ref in sec.used_by %}<code class="dot-path">{{ ref }}</code>{{ ", " if not loop.last }}{% endfor %}{% if sec.used_by and sec.named_slots %}, {% endif %}{% for ref in sec.named_slots or [] %}<code class="dot-path">{{ ref }}</code> (plays by name){{ ", " if not loop.last }}{% endfor %}</p>
+    </div></details>
     {% endif %}
 </details>

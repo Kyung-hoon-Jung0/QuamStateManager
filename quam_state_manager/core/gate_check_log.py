@@ -44,7 +44,18 @@ KIND_NONE = "none"         # the lab's code did not run the gate
 
 CHECK_LABELS = {"load_config": "loading the chip", "ops": "running the gate",
                 "length": "length check", "preview": "preview comparison",
-                "timeline": "timeline", "range": "output range check"}
+                "timeline": "timeline", "range": "output range check",
+                "spectator_scale": "the spectator levels"}
+
+#: checks whose ``note`` means "this gate has nothing of that kind": such a
+#: note is neither a passed check nor one of the total, so the counts of a
+#: gate without spectator rows read as they did before the check existed
+UNCOUNTED_NOTES = ("spectator_scale",)
+
+
+def _counted(name: str, c: Any) -> bool:
+    """Use one inclusion rule for the client checks and the stored count."""
+    return not (name in UNCOUNTED_NOTES and isinstance(c, dict) and c.get("status") == "note")
 
 _LOCK = threading.Lock()
 
@@ -183,6 +194,7 @@ def outcome(result: dict | None, entry: dict | None, *,
            "reason": None, "summary": None}
     result = result if isinstance(result, dict) else {}
     checks = (entry or {}).get("checks") or {}
+    checks = {name: c for name, c in checks.items() if _counted(name, c)}
     out["total"] = len(checks)
     for name, c in checks.items():
         if isinstance(c, dict) and c.get("status") == "fail":

@@ -30,6 +30,7 @@ from tests.test_mcp_bridge import CHIP, FakeLink
 
 _FSP = "ports.mw_outputs.con1.1.1.full_scale_power_dbm"
 _AGENT = {"X-SM-Agent": "claude"}
+_WINDOW = {"X-SM-Window-ID": "window-a"}  # a person in one browser window
 _T1 = "qubits.qA1.resonator.operations.const.length"
 
 
@@ -147,8 +148,9 @@ class TestAgentUndoIsItsOwnOnly:
 
     def test_an_empty_tray_never_walks_the_journal_onto_the_live_chip(self, chip):
         app, c, d = chip
-        c.post("/field/edit", data={"dot_path": _T1, "value": "321"})        # a person stages ...
-        assert c.post("/state/apply-to-live").status_code == 200           # ... and applies
+        c.post("/field/edit", data={"dot_path": _T1, "value": "321"},
+               headers=_WINDOW)                                           # a person stages ...
+        assert c.post("/state/apply-to-live", headers=_WINDOW).status_code == 200  # ... and applies
         h_applied = _h(d)
         assert _log(_ctx(app)) == []
         r = c.post("/undo", headers=_AGENT)
@@ -156,7 +158,7 @@ class TestAgentUndoIsItsOwnOnly:
         assert _h(d) == h_applied, "the person's applied value is still on the live chip"
         assert _log(_ctx(app)) == []
         # the same press by a PERSON still walks it (the gate is the actor, not the route)
-        c.post("/undo")
+        c.post("/undo", headers=_WINDOW)
         assert _h(d) != h_applied
 
     def test_a_burst_is_one_press_for_an_agent(self, chip):

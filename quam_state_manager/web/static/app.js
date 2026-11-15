@@ -9936,11 +9936,14 @@ window.UndoQueue = (function () {
     var MAX = 20;
     var q = [], busy = false, waiting = false, _fullToastAt = 0;
     var _ackPrev = "";        // T1-F2: the earlier-session unit the user said yes to
+    // docs/160: one consent per reason. The yes to another window's step
+    // covers that one step only (its unit id, sent on the next press).
+    var _ackWindow = "";
     /* R2 MINOR 4: the yes to undoing an old edit on the live chip belongs to
        THIS window (sessionStorage, per chip folder) -- it was kept per chip
        context on the server, so one window's yes covered every window. */
     function _yesKey() { return "sm.undoOldOk." + String(window.__chipKey || ""); }
-    function _windowSaidYes() {
+    function _oldEditsSaidYes() {
         try { return window.sessionStorage.getItem(_yesKey()) === "1"; } catch (e) { return false; }
     }
     /* The queue's OWN htmx sync source (docs/124 M-11). It must NOT be the
@@ -10059,8 +10062,15 @@ window.UndoQueue = (function () {
                               _ackPrev = "";
                               return a;
                           })(),
-                          // R2 MINOR 4: this window already said yes once
-                          ack_prev_window: (item.path === "/undo" && _windowSaidYes()) ? "1" : "" },
+                          // docs/160: the yes to another window's step,
+                          // for the one step it was asked about
+                          ack_prev_window: (function () {
+                              var a = _ackWindow;
+                              _ackWindow = "";
+                              return a;
+                          })(),
+                          // R2 MINOR 4: this window already said yes to an old edit
+                          ack_old_edits: (item.path === "/undo" && _oldEditsSaidYes()) ? "1" : "" },
             });
         } catch (e) { done(); return; }
         /* A /undo that never settles used to hold `busy` FOREVER — every
@@ -10113,7 +10123,9 @@ window.UndoQueue = (function () {
         busy: function () { return busy; },
         /* T1-F2: the next /undo carries the user's yes for this unit */
         ackPrevSession: function (unitId) { _ackPrev = String(unitId || ""); },
-        /* R2 MINOR 4: remember this window's yes (per chip folder) */
+        /* docs/160: the next press carries the yes to another window's step */
+        ackWindow: function (unitId) { _ackWindow = String(unitId || ""); },
+        /* R2 MINOR 4: remember this window's yes to old edits (per chip folder) */
         rememberPrevSessionYes: function () {
             try { window.sessionStorage.setItem(_yesKey(), "1"); } catch (e) {}
         },
@@ -10149,20 +10161,31 @@ document.addEventListener("undoAskPrevSession", function (evt) {
     var d = (evt && evt.detail) || {};
     // R2 MINOR 4: presses queued behind the asked one wait for this answer
     if (window.UndoQueue && window.UndoQueue.drain) window.UndoQueue.drain();
-    window.smConfirm(String(d.message || "This Ctrl+Z writes the live chip.")
-        + "\n\nOK = undo it on the live chip.\nCancel = leave the chip as it is.").then(function (yes) {
+    window.smConfirm(String(d.message || "Undo another window's change?"))
+        .then(function (yes) {
         if (yes && window.UndoQueue) {
-            window.UndoQueue.ackPrevSession(d.unit_id);
-            if (window.UndoQueue.rememberPrevSessionYes) window.UndoQueue.rememberPrevSessionYes();
-            window.UndoQueue.push("/undo");
+            // docs/160: a Yes answers only the reasons this question named.
+            // An age-only Yes is also the tab's standing yes to old edits
+            // (as before); a combined Yes covers both for this step only.
+            var reasons = Array.isArray(d.reasons) ? d.reasons : [];
+            var age = reasons.indexOf("age") >= 0;
+            var other = reasons.indexOf("other_window") >= 0;
+            if (age) window.UndoQueue.ackPrevSession(d.unit_id);
+            if (age && !other && window.UndoQueue.rememberPrevSessionYes)
+                window.UndoQueue.rememberPrevSessionYes();
+            if (other && window.UndoQueue.ackWindow) window.UndoQueue.ackWindow(d.unit_id);
+            window.UndoQueue.push(d.direction === "/redo" ? "/redo" : "/undo");
         } else if (!yes && window.showToast) {
-            window.showToast("Not undone — nothing was written.", "info");
+            window.showToast("Not undone; nothing was written.", "info");
         }
     });
 });
 
 document.addEventListener("keydown", function(evt) {
-    if (!((evt.ctrlKey || evt.metaKey) && (evt.key === "z" || evt.key === "Z")
+    // Y redoes only with Ctrl (every OS); Cmd+Y stays the browser's (History on macOS).
+    var yKey = (evt.key === "y" || evt.key === "Y") && evt.ctrlKey && !evt.metaKey;
+    var redoKey = evt.shiftKey || yKey;
+    if (!(((evt.ctrlKey || evt.metaKey) && (evt.key === "z" || evt.key === "Z") || yKey)
           && !evt.altKey)) return;
     var a = document.activeElement;
     var inGridCell = !!(a && a.classList && a.classList.contains("bulk-cell"));
@@ -10190,14 +10213,14 @@ document.addEventListener("keydown", function(evt) {
         if (a.value !== _base) {
             // typed, not committed: Ctrl+Z undoes the typing; Ctrl+Shift+Z is
             // the browser's (a server redo would overwrite the typing)
-            if (evt.shiftKey) return;
+            if (redoKey) return;
             evt.preventDefault();
             a.value = _base;
             a.dispatchEvent(new Event("input", { bubbles: true }));
             return;
         }
     }
-    if (evt.shiftKey) {
+    if (redoKey) {
         // ---- redo chain (docs/107) ----
         // Wizard MOUNTED → swallow (the wizard has no redo; letting the press
         // fall through to chip-level redo would act behind the user's back).
@@ -11345,7 +11368,8 @@ window.filterDetailPanel = function(inputEl) {
         for (var s = 0; s < sections.length; s++) {
             var section = sections[s];
             var sumEl = section.querySelector("summary");
-            var sectionName = (sumEl ? sumEl.textContent : "").toLowerCase();
+            var titleEl = sumEl && sumEl.querySelector(".ui-zone-title");
+            var sectionName = (titleEl ? titleEl.textContent : (sumEl ? sumEl.textContent : "")).toLowerCase();
             var rows = section.querySelectorAll(".prop-table tbody > tr");
             var sectionVisible = 0;
 
@@ -23930,6 +23954,11 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     // ── Capture section collapse state for all inspector types ──
     // Read the type off the header class (datasets no longer carry a badge —
     // their run-id replaced it, so badge-class sniffing would miss them).
+    var active = document.activeElement;
+    if (active && pane.contains(active) && active.closest('.pair-detail')
+        && active.matches('form.inline-edit input[name="value"]')
+        && !window.InlineCommit._pending()) window.InlineCommit.remember(active, active);
+
     var header = pane.querySelector('.inspector-header');
     if (header) {
         var type = null;
@@ -23946,7 +23975,7 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
             _inspectorSticky.sections = Object.assign({}, keepSec);
             pane.querySelectorAll('details.detail-section').forEach(function(d) {
                 var summary = d.querySelector('summary');
-                if (summary) _inspectorSticky.sections[summary.textContent.trim()] = d.open;
+                if (summary) _inspectorSticky.sections[d.getAttribute('data-detail-zone') || summary.textContent.trim()] = d.open;
             });
         }
     }
@@ -24022,16 +24051,19 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     else if (badge.classList.contains('inspector-badge-pair')) type = 'pair';
     if (!type || type !== _inspectorSticky.type) return;
 
-    // Restore <details> open/closed state by matching summary text
+    // Stable gate keys survive edits; other folds keep their section-name keys.
     var sections = _inspectorSticky.sections;
     if (Object.keys(sections).length > 0) {
         pane.querySelectorAll('details.detail-section').forEach(function(d) {
             var summary = d.querySelector('summary');
             if (!summary) return;
-            var name = summary.textContent.trim();
-            if (name in sections) d.open = sections[name];
+            var name = d.getAttribute('data-detail-zone') || summary.textContent.trim();
+            if (name in sections && !d.hasAttribute('data-detail-warning')) d.open = sections[name];
         });
     }
+
+    // Folds must be restored before focus, in the same swap tick.
+    window.InlineCommit.restore(false);
 
     // Restore scroll position
     if (_inspectorSticky.scrollTop) {

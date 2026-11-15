@@ -23,6 +23,8 @@ class Chip:
         self.inst = self.tmp / "_inst"
         self.app = create_app(testing=True, instance_path=str(self.inst))
         self.c = self.app.test_client()
+        # One browser window: its journal steps are its own (no ask).
+        self.c.environ_base["HTTP_X_SM_WINDOW_ID"] = "window-a"
         r = self.c.post("/load", data={"folder": str(self.live)}, follow_redirects=True)
         assert r.status_code in (200, 302), r.get_data(as_text=True)[:300]
         self.load_html = r.get_data(as_text=True)

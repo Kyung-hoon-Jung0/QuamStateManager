@@ -5,8 +5,10 @@
  * selfcheck) the template is read and its few Jinja holes are filled here.
  * Pins: button states across input change / check / create, the busy guard,
  * the two stale rounds, error callouts in the dialog, several pairs, the
- * not-checked wording, the chart guard, and the row buttons (keyboard
- * reachable, never opening the row under them). */
+ * not-checked wording, the chart guard, the row buttons (keyboard
+ * reachable, never opening the row under them), and the slot gate class:
+ * the new-class row with its two-step save, and the unit method's spectator
+ * cells (the allowed range is the server's number, shown as given). */
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -28,8 +30,11 @@ const DATA = {
 };
 
 let dataOverride = null;             // a test's own dialog data (which classes can run where)
+let openScrollFixture = false;
 function dialogHtml() {
-    const h = dialogHtmlBase();
+    let h = dialogHtmlBase();
+    if (openScrollFixture) h = h.replace(/(<[^>]+id="czg-empty"[^>]*>)/,
+        '<div data-czg-table-scroll data-czg-open-scroll-fixture><table aria-label="Open table"></table></div>$1');
     if (!dataOverride) return h;
     return h.replace(/(<script type="application\/json" id="czg-data">)[\s\S]*?(<\/script>)/,
         (m, a, b) => a + JSON.stringify(dataOverride) + b);
@@ -56,7 +61,8 @@ const dom = new JSDOM(PAGE, { url: 'http://localhost/pairs', pretendToBeVisual: 
 const { window } = dom;
 const doc = window.document;
 const sent = [];
-const queue = { plan: [], check: [], create: [] };
+const queue = { plan: [], check: [], create: [], 'slot-class': [], 'save-config': [] };
+let unitReach = null;               // a test's own server range per spectator qubit (the unit method)
 const OUTCOME_CASES = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, 'fixtures', 'gate_outcome_cases.json'), 'utf8')).cases;
 let hold = null;                    // a pending check the test resolves itself
 let holdCreate = null;
@@ -134,6 +140,7 @@ function spectPlan(body, j) {
         const op = body.gate_name + '_spectator_pulse';
         p.spectators = sp.map((x) => ({ qubit: x.qubit, line: x.qubit + '.z', operation: op, path: 'qubits.' + x.qubit + '.z.operations.' + op,
                                         length: x.length, level: x.level, phase_shift: 0.0, not_calibrated: NOT_CAL,
+                                        ...(unitReach && x.unit !== undefined && unitReach[x.qubit] !== undefined ? { unit: x.unit, reachable: unitReach[x.qubit] } : {}),
                                         ...(x.qubit === 'q4' ? { range_not_compared: RANGE_NOTE } : {}) }));
         p.spectator_ops = {};
         sp.forEach((x) => { p.spectator_ops[x.qubit] = SPECT_OPS[x.qubit]; });
@@ -154,7 +161,9 @@ function spectCheck(body, j) {
     });
     return j;
 }
-function respond(status, j) { return Promise.resolve({ ok: status < 400, status, json: () => Promise.resolve(j), text: () => Promise.resolve('') }); }
+let replies = 0;
+let holdDialog = null;
+function respond(status, j) { return Promise.resolve({ ok: status < 400, status, json: () => { replies++; return Promise.resolve(j); }, text: () => Promise.resolve('') }); }
 window.fetch = (url, opt) => {
     if (String(url).indexOf('/pulse/cz-gate/status') === 0) {
         const q = new URLSearchParams(String(url).split('?')[1]);
@@ -167,6 +176,7 @@ window.fetch = (url, opt) => {
     }
     if (!opt || !opt.method) {
         if (failDialog) return Promise.reject(new Error('offline'));
+        if (holdDialog) { const held = holdDialog; holdDialog = null; return held(); }
         return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(dialogHtml()) });
     }
     const body = JSON.parse(opt.body);
@@ -176,8 +186,9 @@ window.fetch = (url, opt) => {
     if (kind === 'create' && holdCreate) { const h = holdCreate; holdCreate = null; return h.then(() => respond(200, { ok: true, created: lastAllowed.map((pp) => ({ pair: pp, gate: 'cz_x', state: 'verified', paths: ['a'] })), skipped: [], count: lastAllowed.length, tray_html: '', sync: createSync })); }
     if (kind === 'plan' && holdPlan) { const h = holdPlan; holdPlan = null; const ans = q ? q(body) : spectPlan(body, planOk(body)); return h.then(() => respond(200, ans)); }
     if (kind === 'check' && hold) { const h = hold; hold = null; return h.then(() => respond(200, q ? q(body) : spectCheck(body, checkOk(body)))); }
-    if (q) { const r = q(body); return Array.isArray(r) ? respond(r[0], r[1]) : respond(200, r); }
+    if (q) return Promise.resolve(q(body)).then((r) => Array.isArray(r) ? respond(r[0], r[1]) : respond(200, r));
     if (kind === 'plan') return respond(200, spectPlan(body, planOk(body)));
+    if (kind === 'slot-class' || kind === 'save-config') return respond(500, {});
     if (kind === 'check') return respond(200, spectCheck(body, checkOk(body)));
     return respond(200, { ok: true, created: lastAllowed.map((p) => ({ pair: p, gate: 'cz_x', state: 'verified', paths: ['a'] })), skipped: [], count: lastAllowed.length, tray_html: '', sync: createSync });
 };
@@ -191,6 +202,18 @@ const ajax = [];
 window.htmx = { ajax: (m, u, o) => ajax.push(u), trigger: () => {} };
 window.alert = () => { throw new Error('alert used'); };
 window.eval(fs.readFileSync(path.join(ROOT, 'static', 'ui.js'), 'utf8'));
+const originalAdd = window.addEventListener;
+const originalRemove = window.removeEventListener;
+const resizeListeners = new Set();
+let resizeAdds = 0, resizeRemoves = 0;
+window.addEventListener = function (type, listener, options) {
+    if (type === 'resize') { resizeAdds++; resizeListeners.add(listener); }
+    return originalAdd.call(this, type, listener, options);
+};
+window.removeEventListener = function (type, listener, options) {
+    if (type === 'resize') { resizeRemoves++; resizeListeners.delete(listener); }
+    return originalRemove.call(this, type, listener, options);
+};
 window.eval(fs.readFileSync(path.join(ROOT, 'static', 'cz-gate.js'), 'utf8'));
 
 let n = 0, failed = 0;
@@ -203,8 +226,65 @@ const count = (k) => sent.filter((s) => s.kind === k).length;
 const alertText = () => ($('#czg-alert') || { textContent: '' }).textContent;
 function type(input, v) { input.value = v; input.dispatchEvent(new window.Event('input', { bubbles: true })); }
 function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('change', { bubbles: true })); }
+function tableWidths(el, sw, cw) {
+    Object.defineProperty(el, 'scrollWidth', { configurable: true, get: () => el.closest('[hidden]') ? 0 : sw });
+    Object.defineProperty(el, 'clientWidth', { configurable: true, get: () => el.closest('[hidden]') ? 0 : cw });
+}
 
 (async () => {
+    // Supply layout before rendering, including the browser's zero size under hidden ancestors.
+    const proto = window.HTMLElement.prototype;
+    const savedWidths = ['scrollWidth', 'clientWidth'].map((key) => Object.getOwnPropertyDescriptor(proto, key));
+    let wide = true;
+    ['scrollWidth', 'clientWidth'].forEach((key) => Object.defineProperty(proto, key, {
+        configurable: true, get() {
+            if (!this.hasAttribute('data-czg-table-scroll') || this.closest('[hidden]')) return 0;
+            return key === 'scrollWidth' && wide ? 900 : 300;
+        }
+    }));
+    const named = (w, name) => w && w.getAttribute('tabindex') === '0' && w.getAttribute('role') === 'region'
+        && w.getAttribute('aria-label') === 'Scrollable table region: ' + name;
+    const plain = (w) => w && !w.hasAttribute('tabindex') && !w.hasAttribute('role') && !w.hasAttribute('aria-label');
+    try {
+        openScrollFixture = true;
+        await window.CzGate.open({ pair: 'q1-2' }); await settle();
+        ok(named($('[data-czg-open-scroll-fixture]'), 'Open table'), 'open measures an existing visible scrolling table without a resize');
+        openScrollFixture = false;
+        ok($('#czg-sec-intent').hidden, 'first check starts with the intent section hidden');
+        prim().click(); await settle();
+        ok(named($('#czg-intent > [data-czg-table-scroll]'), 'Entered and actual'), 'first check measures the intent table after showing its section without a resize');
+        wide = false;
+        // A new check redraws the table while the section is already visible.
+        type($('#czg-name'), 'cz_width'); await settle(); prim().click(); await settle();
+        ok(plain($('#czg-intent > [data-czg-table-scroll]')), 'a fitting redrawn intent table has no region attributes');
+        wide = true;
+        type($('#czg-name'), 'cz_wider'); await settle(); prim().click(); await settle();
+        ok(named($('#czg-intent > [data-czg-table-scroll]'), 'Entered and actual'), 'redraw measures a scrolling intent table without a resize');
+        window.CzGate.close();
+        await window.CzGate.open({ pair: 'q1-2' }); await settle();
+        { const st = window.CzGate.state(); if (!st.data.classes.some((c) => c['class'] === 'L.TwoFlux')) st.data.classes.push(DATA.classes[2]); }
+        $('#czg-class-host .ui-menu').dispatchEvent(new window.CustomEvent('ui-menu-pick', { bubbles: true, detail: { value: 'L.TwoFlux', kind: 'pick' } }));
+        await settle();
+        ok(named($('#czg-model-facts > [data-czg-table-scroll]'), 'From the model gate'), 'redraw measures the model table without a resize');
+        window.CzGate.close();
+        openScrollFixture = true;
+        await window.CzGate.open({ pair: 'q1-2' }); await settle();
+        ok(named($('[data-czg-open-scroll-fixture]'), 'Open table'), 'reopen measures an existing table without a resize');
+        ok(resizeListeners.size === 1 && resizeAdds - resizeRemoves === 1, 'reopening leaves exactly one resize listener counted through add and remove');
+        wide = false;
+        window.dispatchEvent(new window.Event('resize'));
+        ok(plain($('[data-czg-open-scroll-fixture]')), 'the resize listener updates the reopened dialog');
+    } finally {
+        window.CzGate.close();
+        openScrollFixture = false;
+        ['scrollWidth', 'clientWidth'].forEach((key, i) => {
+            if (savedWidths[i]) Object.defineProperty(proto, key, savedWidths[i]); else delete proto[key];
+        });
+        window.addEventListener = originalAdd;
+        window.removeEventListener = originalRemove;
+        sent.length = 0; charts.length = 0;
+    }
+    const scrollAssertions = n;
     // row buttons: reachable, the row under them never opens
     let rowClicks = 0;
     $('#row').addEventListener('click', () => { rowClicks++; });
@@ -420,6 +500,15 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     ok(sent.filter((x) => x.kind === 'plan').pop().body.macro_fields.mode === 'slow', 'a changed setting goes to the plan as macro_fields');
     ok(!$('#czg-model-panel').hidden && /cz_m/.test($('#czg-model-facts').textContent) && /fidelity/.test($('#czg-model-facts').textContent),
        'before the first check the model gate and what is not inherited are shown');
+    { const mw = $('#czg-model-facts > [data-czg-table-scroll]');
+      ok(mw && mw.querySelector(':scope > table.ui-table') && mw.classList.contains('ui-xscroll-table') && !mw.hasAttribute('tabindex'),
+         'the model gate table sits in the scrolling wrapper, plain layout while it fits');
+      tableWidths(mw, 900, 300);
+      window.dispatchEvent(new window.Event('resize'));
+      ok(mw.getAttribute('tabindex') === '0' && /^Scrollable table region: /.test(mw.getAttribute('aria-label')),
+         'the model gate table wrapper becomes a named tab stop once it scrolls sideways');
+      tableWidths(mw, 300, 300);
+      window.dispatchEvent(new window.Event('resize')); }
     queue.check.push((b) => { const j = checkOk(b, { refuse: 'q1-2' }); j.pairs.forEach((p) => {
         p.checks = [{ name: 'ops', status: 'fail', message: 'The gate cz_x does not run with the lab\'s code. The lab\'s error: \u201cValueError: flat lengths differ.\u201d' }]
             .concat(['length', 'preview', 'timeline', 'range'].map((n) => ({ name: n, status: 'skipped', message: 'Not checked: the gate cz_x does not run.' })));
@@ -885,6 +974,23 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
         ok([...doc.querySelectorAll('#czg-intent tbody tr')].map((tr) => tr.children[0].textContent).join('|') === 'op_q1-2|spectator on q3.z|spectator on q4.z'
            && $('#czg-intent tbody tr:nth-child(3) .ui-line-dot.ui-line-3'),
            'check: Entered and actual has one row per spectator, named by its line, with its dot');
+        { const w = $('#czg-intent > [data-czg-table-scroll]');
+          ok(w && w.classList.contains('ui-xscroll') && w.classList.contains('ui-xscroll-table') && w.querySelector(':scope > table.ui-table')
+             && !w.hasAttribute('tabindex') && !w.hasAttribute('role') && !w.hasAttribute('aria-label'),
+             'check: a table that fits has no tab stop, role or label of its own');
+          const setW = tableWidths;
+          const all = [...doc.querySelectorAll('[data-czg-table-scroll]')];
+          all.forEach((x) => setW(x, 900, 300));
+          window.dispatchEvent(new window.Event('resize'));
+          ok(all.length >= 1 && all.every((x) => x.getAttribute('tabindex') === '0' && x.getAttribute('role') === 'region'
+               && /^Scrollable table region: /.test(x.getAttribute('aria-label')) && x.getAttribute('aria-label') !== x.querySelector('table').getAttribute('aria-label')),
+             'check: a table that scrolls sideways is a focusable, named scrollable region (re-decided on resize)');
+          all.forEach((x) => setW(x, 300, 300));
+          window.dispatchEvent(new window.Event('resize'));
+          ok(all.every((x) => !x.hasAttribute('tabindex') && !x.hasAttribute('role') && !x.hasAttribute('aria-label')),
+             'check: after widening, the wrapper is plain layout again'); }
+        ok([...doc.querySelectorAll('.czg table')].length > 0 && [...doc.querySelectorAll('.czg table')].every((t) => t.parentElement.hasAttribute('data-czg-table-scroll')),
+           'every table the dialog draws sits in the one scrolling wrapper');
         ok(doc.querySelectorAll('[data-czg-spect-uncal]').length === 1 && /not calibrated/.test($('[data-czg-spect-uncal]').textContent)
            && $('[data-czg-spect-uncal]').classList.contains('ui-text-quiet') && !/not calibrated/.test(alertText()),
            'check: the phase shift is not calibrated, said once in the panel, quiet, not in the banner');
@@ -956,6 +1062,659 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
         dataOverride = null;
     }
 
+    // ---- slot gate classes: the new-class row, its two-step save, the unit method
+    {
+        const SQ = DATA.classes[0].slots[0].pulse_classes;
+        const slot = (n) => ({ field: n + '_flux_pulse', line: n, line_words: 'x', required: true, pulse_classes: SQ });
+        const CZ = { 'class': 'G.CZGate', label: 'CZ gate', layout: 'known', available: true, why: '', models: [], spectators: { offered: true, why: '' },
+                     slots: [{ field: 'flux_pulse_qubit', line: 'moving', line_words: 'x', required: true, pulse_classes: SQ }] };
+        const SA = { 'class': 'quam_config.SlotA.SlotA', label: 'SlotA (slot class SM made)', layout: 'slot', available: true, why: '', models: [],
+                     slots: [slot('control'), slot('coupler')], slot_spec: { slots: ['control', 'coupler'], spectators: true },
+                     spectators: { offered: true, method: 'unit', why: '' } };
+        const NEW = { 'class': 'quam_config.MyGate.MyGate', label: 'MyGate (slot class SM made)', layout: 'slot', available: true, why: '', models: [],
+                      slots: [slot('coupler')], slot_spec: { slots: ['coupler'], spectators: false },
+                      spectators: { offered: false, method: 'unit', why: 'This class was made without spectators.' } };
+        // the server's range is NOT twice the unit here on purpose: the screen must show the server's number
+        const cand = (q, k, unit, reach) => ({ qubit: q, line: q + '.z', port: '#/ports/analog_outputs/con1/1/' + k, range: 0.5, unit: unit, reachable: reach });
+        const PRESETS = [{ key: 'only_coupler', label: 'Coupler only', slots: ['coupler'] },
+                         { key: 'both_qubits', label: 'Control and target', slots: ['control', 'target'] }];
+        dataOverride = { pairs: [Object.assign({}, DATA.pairs[0], { spectator_candidates: [cand('q3', 3, 0.3, 0.5), cand('q4', 4, null, null)] })],
+                         selected: 'q1-2', env: 'lab', classes: [CZ, SA], slot_presets: PRESETS, slot_names: ['control', 'target', 'coupler'] };
+        const st = () => window.CzGate.state();
+        const until = async (fn) => {
+            const end = Date.now() + 3000;
+            while (!fn()) { if (Date.now() > end) throw new Error('Condition wait expired: ' + fn); await tick(5); }
+        };
+        const ready = async () => {
+            await until(() => st() && !st().newSlot.busy && !st().busy);
+            window.clearTimeout(st().timer);
+            await window.CzGate._plan();
+            await until(() => [...doc.querySelectorAll('input[data-czg-field]')].every((i) => {
+                const why = st().invalid[i.getAttribute('data-czg-field') + '\u0000' + i.getAttribute('data-czg-name')];
+                const error = i.closest('.ui-field').querySelector('.ui-field-error');
+                return !why || (error && error.textContent === why);
+            }));
+        };
+        const last = () => sent.filter((x) => x.kind === 'plan').slice(-1)[0].body;
+        const kinds = (from) => sent.slice(from).map((x) => x.kind).filter((k) => k !== 'plan');
+        const pick = (hostSel, v) => $(hostSel + ' .ui-menu').dispatchEvent(new window.CustomEvent('ui-menu-pick', { bubbles: true, detail: { value: v, kind: 'pick' } }));
+        const ticks = () => [...doc.querySelectorAll('#czg-new-body input[data-czg-new-slot]')].filter((i) => i.checked).map((i) => i.getAttribute('data-czg-new-slot')).join();
+        const spectOn = () => $('#czg-new-body input[data-czg-new-spect]').checked;
+        const tickNew = (n, on) => { const i = [...doc.querySelectorAll('#czg-new-body input[data-czg-new-slot]')].filter((x) => x.getAttribute('data-czg-new-slot') === n)[0]; i.focus(); i.checked = on; i.dispatchEvent(new window.Event('change', { bubbles: true })); };
+        const box = (q) => [...doc.querySelectorAll('#czg-spect-body input[data-czg-spect-qubit]')].filter((i) => i.getAttribute('data-czg-spect-qubit') === q)[0];
+        const tickBox = (q, on) => { const i = box(q); i.checked = on; i.dispatchEvent(new window.Event('change', { bubbles: true })); };
+        const fld = (q, n) => [...doc.querySelectorAll('#czg-spect-body input[data-czg-field]')].filter((i) => i.getAttribute('data-czg-field') === '@sp:q1-2:' + q && i.getAttribute('data-czg-name') === n)[0];
+        const errOf = (i) => { const e = i && i.closest('.ui-field').querySelector('.ui-field-error'); return e ? e.textContent : ''; };
+        const allowed = (q) => $('#czg-spect-body [data-czg-spect-allowed="' + q + '"]');
+        const rowOf = (q) => $('#czg-spect-body [data-czg-spect-row="' + q + '"]');
+        const lines = (sel) => [...doc.querySelectorAll(sel)].map((x) => x.textContent);
+        await window.CzGate.open({ pair: 'q1-2' });
+        await ready();
+        const panel = $('#czg-new');
+        ok(panel && !panel.hidden && !panel.open && panel.classList.contains('ui-panel--fold') && $('#czg-zone-gate').contains(panel)
+           && /New slot gate class/.test(panel.querySelector('summary').textContent),
+           'new slot class: a folded kit panel in the Gate zone when the server names presets');
+        ok($('#czg-new-body input[data-czg-new-name]').value === '' && lines('#czg-new-preset-host [role="option"]').join('|') === 'Coupler only|Control and target'
+           && $('#czg-new-preset-host .ui-menu').getAttribute('data-value') === 'only_coupler',
+           'new slot class: a blank name and the server\'s presets, the first one picked');
+        ok(ticks() === 'coupler' && !spectOn() && doc.querySelectorAll('#czg-new-body input[data-czg-new-slot]').length === 3
+           && $('#czg-new-sum').textContent === '1 slot' && $('#czg-new-body [data-czg-new-create]').textContent === 'Create class',
+           'new slot class: one check per slot name, ticked from the preset; spectators off; a Create button');
+        ok(!doc.querySelector('#czg-spect-body [data-czg-spect-unit]') && !$('#czg-new-body [data-czg-new-confirm]'),
+           'a class without slot_spec renders as today: no unit cells');
+        // a slot class picked: its slots in the Pulses zone and prefilled checks
+        pick('#czg-class-host', SA['class']);
+        await ready();
+        ok(ticks() === 'control,coupler' && spectOn() && !$('#czg-new-preset-host .ui-menu').getAttribute('data-value') && $('#czg-new-sum').textContent === '2 slots',
+           'a slot class: the checks are prefilled from its slot_spec, no preset named');
+        ok(Object.keys(last().pulses).join() === 'control_flux_pulse,coupler_flux_pulse' && last().gate_class === SA['class']
+           && doc.querySelectorAll('#czg-slots .ui-slot').length === 2,
+           'a slot class: its slots are pulse blocks and the request names each slot\'s pulse');
+        // the unit method
+        tickBox('q3', true);
+        tickBox('q4', true);
+        await ready();
+        ok(fld('q3', 'level').value === '' && fld('q3', 'length').value === '100' && !fld('q3', 'unit'),
+           'unit method: Level starts blank, Length at the gate length; a line with a unit operation asks for no unit');
+        ok(allowed('q3').textContent === '|level| < 0.5 V' && rowOf('q3').contains(allowed('q3')) && !allowed('q3').matches('input')
+           && $('[data-czg-spect-unit-value="q3"]').textContent === '0.3 V',
+           'unit method: the allowed range is the server\'s number as given (0.5 for unit 0.3), read-only');
+        ok(allowed('q4').textContent === '' && fld('q4', 'unit') && fld('q4', 'unit').value === ''
+           && /no unit operation on this line yet/.test(fld('q4', 'unit').closest('.ui-field').textContent) && !/\d/.test(allowed('q4').closest('.ui-field').textContent),
+           'unit method: no unit operation: the range is blank, the line says so, the unit amplitude is asked blank');
+        type(fld('q3', 'level'), '0.1');
+        type(fld('q4', 'level'), '0.1');
+        await ready();
+        ok(/unit amplitude/.test(errOf(fld('q4', 'unit'))) && prim().disabled, 'unit method: a blank unit amplitude says why and blocks Check');
+        unitReach = { q4: 0.35 };
+        type(fld('q4', 'unit'), '0.2');
+        await ready();
+        ok(JSON.stringify(last().spectators) === JSON.stringify({ 'q1-2': [{ qubit: 'q3', length: 100, level: 0.1 }, { qubit: 'q4', length: 100, level: 0.1, unit: 0.2 }] })
+           && !prim().disabled,
+           'unit method: the request carries unit only for the row without a unit operation');
+        ok(allowed('q4').textContent === '|level| < 0.35 V' && allowed('q3').textContent === '|level| < 0.5 V',
+           'unit method: a typed unit shows the plan\'s own range (0.35 for unit 0.2), never one computed here');
+        // refusals: the server's sentences, next to their row
+        const R3 = "Spectator 'q3' level 0.7 must be a finite number with |level / unit| strictly below 2.0.";
+        const RD = "Spectators 'q3' and 'q4' name the same qubit.";
+        queue.plan.push((b) => ({ ok: true, plan_sig: 'r', pairs: b.pairs.map((p) => ({ pair: p, ok: false, refusals: [R3, RD] })) }));
+        type(fld('q3', 'level'), '0.7');
+        await ready();
+        ok(lines('#czg-spect-body [data-czg-spect-row="q3"] .ui-field-error').indexOf(R3) >= 0
+           && lines('#czg-spect-body [data-czg-spect-row="q4"] .ui-field-error').indexOf(R3) < 0
+           && lines('#czg-spect-body .ui-field-error').filter((t) => t === R3).length === 1,
+           'refusal: the server\'s sentence about a spectator sits in that spectator\'s row, verbatim, once');
+        ok(lines('#czg-spect-body [data-czg-spect-pair="q1-2"] > .ui-field-error').join('|') === RD && prim().disabled,
+           'refusal: a sentence about no single row stays under the pair, verbatim; Check is blocked');
+        type(fld('q3', 'level'), '0.1');
+        await ready();
+        // a preset replaces the ticks; the person's own tick names no preset
+        st().newSlot.name = '';
+        pick('#czg-new-preset-host', 'both_qubits');
+        ok(ticks() === 'control,target' && spectOn() && $('#czg-new-preset-host .ui-menu').getAttribute('data-value') === 'both_qubits',
+           'preset change: only slot ticks change and spectators survive');
+        ok(doc.activeElement === $('#czg-new-preset'), 'preset menu keeps keyboard focus');
+        tickNew('coupler', true);
+        ok(ticks() === 'control,target,coupler' && !$('#czg-new-preset-host .ui-menu').getAttribute('data-value')
+           && doc.activeElement && doc.activeElement.getAttribute('data-czg-new-slot') === 'coupler',
+           'an own tick: no preset is named any more, and the ticked box keeps the focus');
+        // a refused class: the server's sentences, nothing saved
+        let from = sent.length;
+        queue['slot-class'].push(() => [400, { ok: false, error: 'The class name must be a Python class name.', problems: ['The class name must be a Python class name.', 'A slot gate class needs at least one slot.'] }]);
+        type($('#czg-new-body input[data-czg-new-name]'), '9bad');
+        $('#czg-new-body [data-czg-new-create]').click();
+        await ready();
+        ok(lines('#czg-new-body [data-czg-new-problem]').join('|') === 'The class name must be a Python class name.|A slot gate class needs at least one slot.'
+           && kinds(from).join() === 'slot-class' && !$('#czg-new-body [data-czg-new-confirm]') && st().klass === SA['class'],
+           'a refused class: the server\'s sentences verbatim, each once; nothing is saved and the picked class stays');
+        // create, then the two-step save
+        pick('#czg-new-preset-host', 'only_coupler');
+        const spOff = $('#czg-new-body input[data-czg-new-spect]');
+        spOff.checked = false; spOff.dispatchEvent(new window.Event('change', { bubbles: true }));
+        type($('#czg-new-body input[data-czg-new-name]'), ' MyGate ');
+        ok(!$('#czg-new-body [data-czg-new-problem]'), 'typing a new name clears the old refusal');
+        const CONFIRM = { folder: 'C:/lab/quam_config', env_folder: 'C:/env/quam_config', lab_folder: 'C:/lab', importable: false, path: 'C:/lab/quam_config/MyGate.py',
+                          notice: 'This file is Python that runs without isolation in the lab environment.',
+                          warning: 'The selected environment does not import this file. Gates need a successful load check.',
+                          gates: [{ pair: 'q1-2', gate: 'cz_old', live_active: true }] };
+        from = sent.length;
+        queue['slot-class'].push(() => { dataOverride.classes = [CZ, SA, NEW]; return { ok: true, cls: 'MyGate', qclass: NEW['class'] }; });
+        queue['save-config'].push(() => [409, { ok: false, confirm: CONFIRM }]);
+        $('#czg-new-body [data-czg-new-create]').click();
+        await ready();
+        const mk = sent.slice(from).filter((x) => x.kind === 'slot-class')[0];
+        ok(mk && JSON.stringify(mk.body) === JSON.stringify({ class_name: 'MyGate', slots: ['coupler'], spectators: false }),
+           'Create class posts the name, the ticked slots and the spectators choice to the slot route');
+        const sv1 = sent.slice(from).filter((x) => x.kind === 'save-config');
+        ok(sv1.length === 1 && JSON.stringify(sv1[0].body) === JSON.stringify({ cls: 'MyGate' }) && kinds(from).join() === 'slot-class,save-config',
+           'then the existing save is asked once, with no folder confirmed yet');
+        ok(st().klass === NEW['class'] && $('#czg-class-host .ui-menu').getAttribute('data-value') === NEW['class'] && last().gate_class === NEW['class'],
+           'the new class is in the class list and picked');
+        ok(/spectator choices were cleared/.test($('#czg-spect-body').textContent) && !('spectators' in last()) && $('#czg-spect-sum').textContent === 'not offered',
+           'the class changed: the spectator ticks are cleared with the existing notice');
+        const cf = $('#czg-new-body [data-czg-new-confirm]');
+        ok(cf && lines('#czg-new-body [data-czg-new-confirm] p').slice(0, 6).join('\n') === ['File: ' + CONFIRM.path,
+               'The environment imports quam_config from: ' + CONFIRM.env_folder, CONFIRM.notice, CONFIRM.warning,
+               'Gates on this chip using this class:', 'q1-2: cz_old (live and active)'].join('\n'),
+           'the save confirm shows the file, the folder the environment imports, the notice, the warning and the gates verbatim');
+        ok(cf.querySelector('[data-czg-new-confirm-save]').textContent === 'Confirm folder and save' && cf.querySelector('[data-czg-new-cancel]').textContent === 'Cancel'
+           && $('#czg-new-body [data-czg-new-create]').disabled && lines('#czg-new-body [data-czg-new-confirm] p').join(' ').indexOf('then writes ' + CONFIRM.path) > 0,
+           'the confirm has the two choices and says what each does; Create class waits');
+        ok(doc.activeElement === cf.querySelector('button') && cf.getAttribute('aria-live') === 'polite', 'confirm is announced and its first button receives focus');
+        // cancel writes nothing and leaves a way back
+        from = sent.length;
+        cf.querySelector('[data-czg-new-cancel]').click();
+        await ready();
+        ok(!$('#czg-new-body [data-czg-new-confirm]') && !kinds(from).length && /Nothing was written/.test($('#czg-new-body [data-czg-new-done]').textContent)
+           && $('#czg-new-body [data-czg-new-save]'),
+           'Cancel: no request, the row says nothing was written and offers the save again');
+        ok(doc.activeElement === $('#czg-new-body [data-czg-new-save]'), 'Cancel focuses Save the class file');
+        for (const message of ['Class saving is locked while a run is in progress; try again when it ends. <i>Wait</i>', null]) {
+            queue['save-config'].push(() => [409, Object.assign({ ok: false, error: 'scheduler_running' }, message ? { message } : {})]);
+            $('#czg-new-body [data-czg-new-save]').click(); await ready();
+            const line = $('[data-czg-new-problem]');
+            ok(line.textContent === (message || 'scheduler_running') && !line.querySelector('i'),
+               'class save lock shows the message as text or the existing error fallback');
+        }
+        queue['save-config'].push(() => [409, { ok: false, confirm: CONFIRM }]);
+        $('#czg-new-body [data-czg-new-save]').click();
+        await ready();
+        from = sent.length;
+        queue['save-config'].push(() => ({ ok: true, target: CONFIRM.path, dependency: 'This chip now needs quam_config/MyGate.py; every computer that opens this state needs the same file.',
+                                           restart: 'A running QUAlibrate imports this new file the first time a state needs it.', warning: CONFIRM.warning,
+                                           chip_warning: null, record_error: null, backup: null, proportional: null }));
+        const confirmSave = $('#czg-new-body [data-czg-new-confirm-save]');
+        confirmSave.click(); confirmSave.click();
+        await ready();
+        const sv2 = sent.slice(from).filter((x) => x.kind === 'save-config');
+        ok(sv2.length === 1 && JSON.stringify(sv2[0].body) === JSON.stringify({ cls: 'MyGate', confirmed_folder: CONFIRM.folder }),
+           'Confirm sends the folder the server named back as confirmed');
+        const doneLines = lines('#czg-new-body [data-czg-new-done] p');
+        ok(doneLines.indexOf('Saved to ' + CONFIRM.path) >= 0 && doneLines.indexOf('This chip now needs quam_config/MyGate.py; every computer that opens this state needs the same file.') >= 0
+           && doneLines.indexOf(CONFIRM.warning) >= 0 && !$('#czg-new-body [data-czg-new-confirm]') && !$('#czg-new-body [data-czg-new-save]')
+           && !$('#czg-new-body [data-czg-new-create]').disabled,
+           'saved: the target, the dependency line and the warning as the server gave them; the confirm is gone');
+        ok(kinds(0).filter((k) => k === 'create').length === sent.filter((x) => x.kind === 'create').length && !kinds(from).some((k) => k === 'create' || k === 'check')
+           && st().klass === NEW['class'],
+           'making and saving a class creates no gate and runs no check');
+        const said = panel.textContent + $('#czg-spect-body').textContent;
+        ok(!/ -- |->|\bCAS\b|patch/i.test(said), 'the new texts carry no arrow, no double dash and no internal word');
+        // the client holds no limit: nothing multiplies or divides a unit or a range
+        const SRC = fs.readFileSync(path.join(ROOT, 'static', 'cz-gate.js'), 'utf8');
+        const calc = SRC.split('\n').filter((l) => !/^\s*(\*|\/\*|\/\/)/.test(l) && /\b(unit|reachable|reach)\b/.test(l) &&/[^\/*]([*\/])\s*[\d(a-zA-Z]/.test(l.replace(/\/\*.*?\*\/|\/\/.*$/g, '').replace(/'[^']*'|\/[^\/\n]+\/[gimsuy]*/g, '')));
+        ok(!calc.length && !/AMP_SCALE|scale_limit/i.test(SRC), 'the client computes no range from a unit and names no scale limit: ' + calc.join(' | '));
+
+        // Contract edge cases and delayed answers use explicit conditions.
+        const openSlot = async (classes) => {
+            window.CzGate.close();
+            dataOverride.classes = classes || [CZ, SA, NEW];
+            await window.CzGate.open({ pair: 'q1-2' });
+            pick('#czg-class-host', SA['class']);
+            await ready();
+        };
+        SA.slots = [slot('control'), slot('target'), slot('coupler')];
+        await openSlot();
+        ok(/selection replaced the slots and spectators/.test($('#czg-new-body').textContent), 'gate class refill explains the replaced row choices');
+        for (const [field, words] of [['control', 'Control flux pulse'], ['target', 'Target flux pulse'], ['coupler', 'Coupler pulse']]) {
+            const select = [...doc.querySelectorAll('#czg-slots select')].filter((i) => i.getAttribute('aria-label') === 'Pulse class of ' + words)[0];
+            ok(select && [...doc.querySelectorAll('#czg-slots .ui-slot-head')].some((i) => i.textContent.startsWith(words)), field + ' slot title and pulse class label use words');
+        }
+        dataOverride.pairs[0].spectator_candidates.push(cand('q5', 5, 0.3, null));
+        await openSlot();
+        tickBox('q5', true);
+        await ready();
+        ok(allowed('q5').textContent === '' && rowOf('q5').textContent.includes('0.3 V') && !rowOf('q5').textContent.includes('no unit operation on this line yet'), 'unit with no server range stays blank without an absent operation hint');
+        tickBox('q5', false); await ready();
+        queue.check.push((b) => { const j = checkOk(b); j.pairs[0].checks = ['note', 'pass', 'fail'].map((status) => ({ name: 'spectator_scale', status, message: 'Server sentence.' })); return j; });
+        prim().click();
+        await until(() => !st().busy);
+        ok([...doc.querySelectorAll('[data-check="spectator_scale"]')].length === 3 && [...doc.querySelectorAll('[data-check="spectator_scale"]')].every((i) => i.textContent.includes('Spectator levels') && !i.textContent.includes('spectator_scale')), 'spectator checks have readable words for every status');
+        await openSlot();
+        const badName = '<b>x</b> & more', problem = 'Bad <i>name</i> & more';
+        pick('#czg-new-preset-host', 'both_qubits');
+        type($('#czg-new-name'), badName);
+        const refusedTicks = ticks(), refusedPreset = st().newSlot.preset, refusedSpect = spectOn();
+        queue['slot-class'].push(() => [400, { ok: false, problems: [problem] }]);
+        $('#czg-new-body [data-czg-new-create]').focus();
+        $('#czg-new-body [data-czg-new-create]').click();
+        await ready();
+        ok($('#czg-new-name').value === badName && ticks() === refusedTicks && st().newSlot.preset === refusedPreset && spectOn() === refusedSpect, 'refusal keeps the typed name preset and ticks');
+        const refusal = $('[data-czg-new-problem]');
+        ok(refusal.textContent === problem && !refusal.querySelector('i') && refusal.getAttribute('role') === 'alert' && doc.activeElement === $('[data-czg-new-create]'), 'refusal is literal text announced with focus on Create');
+        let release;
+        const delayed = (kind, answer) => { queue[kind].push(() => new Promise((r) => { release = () => r(answer); })); };
+        const attemptEdits = () => {
+            const before = JSON.stringify(st().newSlot);
+            type($('#czg-new-name'), 'Other');
+            tickNew('target', false);
+            const sp = $('[data-czg-new-spect]'); sp.checked = !sp.checked; sp.dispatchEvent(new window.Event('change', { bubbles: true }));
+            pick('#czg-new-preset-host', 'only_coupler');
+            pick('#czg-class-host', CZ['class']);
+            ok(JSON.stringify(st().newSlot) === before && $('#czg-new-name').disabled && $('#czg-new-preset').disabled, 'busy row rejects name preset slot spectator and gate class refill edits');
+        };
+        type($('#czg-new-name'), 'MyGate');
+        delayed('slot-class', { ok: true, cls: 'MyGate', qclass: NEW['class'] });
+        queue['save-config'].push(() => [409, { ok: false, confirm: CONFIRM }]);
+        $('[data-czg-new-create]').click();
+        await until(() => !!release);
+        attemptEdits();
+        release(); await ready();
+        ok(st().newSlot.cls === 'MyGate' && st().newSlot.name === 'MyGate' && $('[data-czg-new-confirm]'), 'confirm belongs to the row that asked');
+        $('[data-czg-new-cancel]').click();
+        release = null;
+        delayed('save-config', [409, { ok: false, confirm: CONFIRM }]);
+        $('[data-czg-new-save]').click();
+        await until(() => !!release);
+        attemptEdits(); release(); await ready();
+        ok(st().newSlot.cls === 'MyGate' && $('[data-czg-new-confirm-save]'), 'save answer retains a working confirm for the same class');
+        // Outside fields keep their focus and caret while row answers arrive.
+        for (const kind of ['slot-class', 'save-config']) {
+            for (const field of ['name', 'pulse', 'spectator']) {
+                await openSlot();
+                tickBox('q4', true);
+                type(fld('q4', 'level'), '0.1'); type(fld('q4', 'unit'), '0.2'); await ready();
+                type($('#czg-new-name'), 'MyGate'); release = null;
+                if (kind === 'slot-class') {
+                    delayed(kind, { ok: true, cls: 'MyGate', qclass: NEW['class'] });
+                    queue['save-config'].push(() => [409, { ok: false, confirm: CONFIRM }]);
+                    $('[data-czg-new-create]').click();
+                } else {
+                    queue['slot-class'].push(() => ({ ok: true, cls: 'MyGate', qclass: SA['class'] }));
+                    queue['save-config'].push(() => [409, { ok: false, confirm: CONFIRM }]);
+                    $('[data-czg-new-create]').click(); await ready();
+                    $('[data-czg-new-cancel]').click();
+                    delayed(kind, [409, { ok: false, confirm: CONFIRM }]);
+                    $('[data-czg-new-save]').click();
+                }
+                await until(() => !!release);
+                const input = field === 'name' ? $('#czg-name') : field === 'pulse' ? doc.querySelector('#czg-slots input[data-czg-name="length"]') : fld('q4', 'level');
+                input.focus(); input.setSelectionRange(1, 1);
+                const pickedBefore = st().klass, rawBefore = JSON.stringify(st().raw);
+                release(); await until(() => !st().newSlot.busy);
+                const madeLabel = kind === 'slot-class' ? NEW.label : SA.label;
+                const madeSaid = kind === 'slot-class' ? ' is made; pick it from the Class list to use it.' : ' is made and picked.';
+                ok(st().klass === pickedBefore && JSON.stringify(st().raw) === rawBefore && $('#czg-new-body').textContent.includes('The class ' + madeLabel + madeSaid) && (kind === 'slot-class' || !/pick it from the Class list/.test($('#czg-new-body').textContent)),
+                   kind + ' answer with the focus in outside ' + field + ' lists the class without picking it or touching typed values');
+                const focused = doc.activeElement === input && input.selectionStart === 1 && input.selectionEnd === 1;
+                if (focused) doc.activeElement.setRangeText('7', 1, 1, 'end');
+                ok(focused && input.value[1] === '7', kind + ' answer keeps focus caret and typing in outside ' + field);
+            }
+        }
+        // The save answer must keep the row locked through the list answer.
+        await openSlot(); type($('#czg-new-name'), 'MyGate');
+        queue['slot-class'].push(() => ({ ok: true, cls: 'MyGate', qclass: SA['class'] }));
+        queue['save-config'].push(() => [409, { ok: false, confirm: CONFIRM }]);
+        $('[data-czg-new-create]').click(); await ready();
+        release = null; delayed('save-config', { ok: true, target: CONFIRM.path });
+        $('[data-czg-new-confirm-save]').click(); await until(() => !!release);
+        let listRequested = false, releaseList;
+        holdDialog = () => { listRequested = true; return new Promise((resolve) => { releaseList = () => resolve({ ok: true, status: 200, text: () => Promise.resolve(dialogHtml()) }); }); };
+        release(); await until(() => listRequested);
+        ok(st().newSlot.busy && $('#czg-new-name').disabled, 'save keeps the row locked until the class list answers');
+        attemptEdits(); releaseList(); await ready();
+        // Each class answer must leave running and completed gate flows alone.
+        for (const listed of [true, false]) for (const kind of ['slot-class', 'save-config']) {
+            for (const flow of ['check', 'create', 'done']) {
+                if (!listed && kind === 'save-config') continue;
+                await openSlot([CZ, SA]);
+                type($('#czg-new-name'), 'MyGate');
+                release = null;
+                delayed(kind, kind === 'slot-class' ? { ok: true, cls: 'MyGate', qclass: NEW['class'] } : { ok: true, target: CONFIRM.path });
+                if (kind === 'slot-class') { queue['save-config'].push(() => [409, { ok: false, confirm: CONFIRM }]); $('[data-czg-new-create]').click(); }
+                else {
+                    // Make a draft before holding its second save request.
+                    queue['slot-class'].push(() => ({ ok: true, cls: 'MyGate', qclass: SA['class'] }));
+                    queue['save-config'].unshift(() => [409, { ok: false, confirm: CONFIRM }]);
+                    $('[data-czg-new-create]').click(); await ready();
+                    $('[data-czg-new-cancel]').click();
+                    $('[data-czg-new-save]').click();
+                }
+                await until(() => !!release);
+                let finish;
+                if (flow === 'check') hold = new Promise((r) => { finish = r; });
+                prim().click();
+                if (flow !== 'check') {
+                    await until(() => !st().busy && st().phase === 'create');
+                    if (flow === 'create') holdCreate = new Promise((r) => { finish = r; });
+                    prim().click();
+                    if (flow === 'done') await until(() => st().phase === 'done');
+                }
+                const seq = st().seq, phase = st().phase, typed = JSON.stringify(st().raw), selected = st().klass, banner = alertText(), plans = count('plan');
+                dataOverride.classes = listed ? [CZ, SA, NEW] : [CZ, SA];
+                // Put the focus on the body (a disabled field ignores blur): a focused node removed.
+                { const spot = doc.createElement('button'); doc.body.appendChild(spot); spot.focus(); spot.remove(); }
+                const bodyFocus = doc.activeElement === doc.body || !doc.activeElement;
+                release(); await until(() => !st().newSlot.busy);
+                await until(() => !!$('[data-czg-new-confirm]') || st().newSlot.saved);
+                ok(st().seq === seq && st().phase === phase && JSON.stringify(st().raw) === typed && st().klass === selected && count('plan') === plans && (flow !== 'done' || (prim().textContent === 'Close' && alertText() === banner && /Created/.test(banner))), kind + ' answer preserves ' + flow + ' flow without picking or replanning' + (listed ? '' : ' (class not listed)'));
+                const said = $('#czg-new-body').textContent;
+                if (listed) {
+                    const madeLabel = kind === 'slot-class' ? NEW.label : SA.label;
+                    const madeSaid = kind === 'slot-class' ? ' is made; pick it from the Class list to use it.' : ' is made and picked.';
+                    ok(bodyFocus && said.includes('The class ' + madeLabel + madeSaid) && (kind === 'slot-class' || !/pick it from the Class list/.test(said)) && !said.includes('quam_config.'), kind + ' says the truth about a class made during ' + flow + ', with the focus on the body');
+                } else {
+                    ok(bodyFocus && said.includes('The class MyGate is made; the Class list does not offer it for this pair.') && !/pick it from the Class list/.test(said), kind + ' says a class made during ' + flow + ' is not offered when the list lacks it');
+                }
+                if (finish) { finish(); await until(() => !st().busy); }
+                ok($('#czg-class-host').textContent.includes(NEW.label) === listed && st().klass === selected, kind + ' lists the made class after ' + flow + ' without changing the pick' + (listed ? '' : ' (class not listed)'));
+            }
+        }
+        // The row sentence in every branch: free / check / create / done x focus in the row / outside x
+        // the made class already picked / listed and not picked before / not listed. One sentence at a time,
+        // never the qualified id, after both the create and the save list answers.
+        const S_PICKED = (l) => 'The class ' + l + ' is made and picked.';
+        const S_PICK = (l) => 'The class ' + l + ' is made; pick it from the Class list to use it.';
+        const S_UNLISTED = (l) => 'The class ' + l + ' is made; the Class list does not offer it for this pair.';
+        for (const flow of ['free', 'check', 'create', 'done']) for (const where of ['in', 'out']) for (const made of ['picked', 'listed', 'unlisted']) {
+            const cell = flow + ' / focus ' + where + ' / ' + made;
+            await openSlot(made === 'unlisted' ? [CZ, SA] : [CZ, SA, NEW]);
+            type($('#czg-new-name'), 'MyGate');
+            const qclass = made === 'picked' ? SA['class'] : NEW['class'];
+            release = null;
+            delayed('slot-class', { ok: true, cls: 'MyGate', qclass: qclass });
+            queue['save-config'].push(() => [409, { ok: false, confirm: CONFIRM }]);
+            $('[data-czg-new-create]').click();
+            await until(() => !!release);
+            let finish;
+            if (flow !== 'free') {
+                if (flow === 'check') hold = new Promise((r) => { finish = r; });
+                prim().click();
+                if (flow !== 'check') {
+                    await until(() => !st().busy && st().phase === 'create');
+                    if (flow === 'create') holdCreate = new Promise((r) => { finish = r; });
+                    prim().click();
+                    if (flow === 'done') await until(() => st().phase === 'done');
+                }
+            }
+            const label = made === 'picked' ? SA.label : made === 'listed' ? NEW.label : 'MyGate';
+            const before = st().klass;
+            const focusSpot = () => {
+                if (where === 'out') { const o = !$('#czg-name').disabled ? $('#czg-name') : ($('#czg-zone-gate [data-czg-outside-spot]') || $('#czg-zone-gate').appendChild(Object.assign(doc.createElement('span'), { tabIndex: 0 }))); o.setAttribute('data-czg-outside-spot', ''); o.focus(); return doc.activeElement === o && !$('#czg-new-body').contains(o); }
+                const spot = doc.createElement('button'); doc.body.appendChild(spot); spot.focus(); spot.remove();
+                return doc.activeElement === doc.body || !doc.activeElement;
+            };
+            const placed1 = focusSpot();
+            release();
+            await until(() => !st().newSlot.busy && !!$('[data-czg-new-confirm]'));
+            const pickedNow = made !== 'unlisted' && st().klass === qclass;
+            const expect = made === 'unlisted' ? S_UNLISTED(label) : pickedNow ? S_PICKED(label) : S_PICK(label);
+            const wantPicked = made === 'picked' || (made === 'listed' && flow === 'free' && where === 'in');
+            const said1 = $('#czg-new-body').textContent;
+            ok(placed1 && pickedNow === wantPicked && (wantPicked || st().klass === before) && said1.includes(expect) && !said1.includes('quam_config.'),
+               cell + ': the create answer says "' + expect + '"');
+            // a held check or create cannot take a second request: the save answer comes once it is over
+            if (finish) { finish(); finish = null; await until(() => !st().busy); }
+            queue['save-config'].push(() => ({ ok: true, target: CONFIRM.path }));
+            const placed2 = focusSpot();
+            $('[data-czg-new-confirm-save]').click();
+            await until(() => !st().newSlot.busy && st().newSlot.saved);
+            const said2 = $('#czg-new-body').textContent;
+            const counts = [S_PICKED(label), S_PICK(label), S_UNLISTED(label)].map((x) => said2.split(x).length - 1);
+            const pickedAfter = made !== 'unlisted' && st().klass === qclass;
+            const expect2 = made === 'unlisted' ? S_UNLISTED(label) : pickedAfter ? S_PICKED(label) : S_PICK(label);
+            ok(placed2 && counts.reduce((a, b) => a + b, 0) === 1 && said2.includes(expect2) && !said2.includes('quam_config.') && (flow === 'check' || flow === 'create' || pickedAfter === wantPicked)
+               && st().newSlot.done.length === new Set(st().newSlot.done).size,
+               cell + ': after the save answer the row says "' + expect2 + '" once and nothing twice');
+            if (finish) { finish(); await until(() => !st().busy); }
+        }
+        // A class list that cannot be read again leaves the made sentence: the plain class name, never the module path.
+        await openSlot([CZ, SA]);
+        type($('#czg-new-name'), 'MyGate');
+        queue['slot-class'].push(() => ({ ok: true, cls: 'MyGate', qclass: NEW['class'] }));
+        holdDialog = () => Promise.reject(new Error('offline'));
+        $('[data-czg-new-create]').click();
+        await until(() => $('#czg-new-body').textContent.includes('could not be read again'));
+        ok($('#czg-new-body').textContent.includes('The class MyGate is made as a draft.') && !$('#czg-new-body').textContent.includes('quam_config.'), 'an unread class list leaves the plain made sentence, never the module path');
+        await until(() => !st().newSlot.busy);
+        const UNREAD = 'The class list could not be read again.';
+        const unreadCount = () => $('#czg-new-body').textContent.split(UNREAD).length - 1;
+        const madeFlow = async (classes, readFails) => {
+            await openSlot([CZ, SA]);
+            type($('#czg-new-name'), 'MyGate');
+            queue['slot-class'].push(() => { dataOverride.classes = classes; return { ok: true, cls: 'MyGate', qclass: NEW['class'] }; });
+            queue['save-config'].push(() => ({ ok: true, target: CONFIRM.path }));
+            readFails();
+            $('[data-czg-new-create]').click();
+            await until(() => st().newSlot.saved && !st().newSlot.busy);
+        };
+        // A made class that cannot run on the pair is not offered: the row gives its reason, never "pick it".
+        const NEWU = Object.assign({}, NEW, { available: false, why: 'Not for this pair.' });
+        await madeFlow([CZ, SA, NEWU], () => {});
+        { const said = $('#czg-new-body').textContent;
+          ok(said.includes('The class ' + NEW.label + ' is made; it cannot be used on this pair. Not for this pair.') && !/pick it from the Class list/.test(said) && st().klass === SA['class'],
+             'a made class that cannot run on the pair says why and is not offered to pick'); }
+        // The answer arrives in a free flow with the focus in the new-class row: a made class that cannot run
+        // never takes the user's hand pick, its by-hand mark or the entered values.
+        {
+            await openSlot([CZ, SA]);
+            const amp2 = doc.querySelector('#czg-slots input[data-czg-name="length"]');
+            type(amp2, '48');
+            await ready();
+            type($('#czg-new-name'), 'MyGate');
+            queue['slot-class'].push(() => { dataOverride.classes = [CZ, SA, NEWU]; return { ok: true, cls: 'MyGate', qclass: NEW['class'] }; });
+            queue['save-config'].push(() => ({ ok: true, target: CONFIRM.path }));
+            const enteredBefore = JSON.stringify(st().entered);
+            const nameBox = $('#czg-new-name'); nameBox.focus();
+            const inRow = $('#czg-new-body').contains(doc.activeElement);
+            $('[data-czg-new-create]').click();
+            await until(() => !st().newSlot.busy && !!st().newSlot.done.length && /is made/.test($('#czg-new-body').textContent));
+            const said = $('#czg-new-body').textContent;
+            ok(inRow && st().klass === SA['class'] && st().klassByHand === true && JSON.stringify(st().entered) === enteredBefore && enteredBefore.includes('48')
+               && !/The class changed to/.test($('#czg-class-why').textContent) && !/The class changed to/.test(doc.body.textContent)
+               && said.includes('The class ' + NEW.label + ' is made; it cannot be used on this pair. Not for this pair.'),
+               'a made class that cannot run, answered in a free flow with the focus in the new-class row, leaves the hand pick, its mark and the entered values');
+        }
+        // The latest list answer wins: a failed read on the create answer, then a good read on the save answer.
+        await madeFlow([CZ, SA, NEW], () => { holdDialog = () => Promise.reject(new Error('offline')); });
+        { const said = $('#czg-new-body').textContent;
+          ok(unreadCount() === 0 && said.includes('The class ' + NEW.label + ' is made') && said.includes('Saved to') && st().newSlot.done.length === new Set(st().newSlot.done).size,
+             'a later good list read removes the unread line, the row holds the latest answer only'); }
+        // Two failing reads show the unread line once.
+        await madeFlow([CZ, SA, NEW], () => { failDialog = true; });
+        failDialog = false;
+        ok(unreadCount() === 1 && $('#czg-new-body').textContent.includes('Saved to'), 'two failed list reads show the unread line exactly once');
+        await openSlot();
+        release = null;
+        delayed('slot-class', { ok: true, cls: 'MyGate', qclass: NEW['class'] });
+        $('[data-czg-new-create]').click(); await until(() => !!release);
+        await openSlot();
+        const next = JSON.stringify(st().newSlot), nextSeq = st().seq, requests = sent.length, previousReplies = replies;
+        release(); await until(() => replies > previousReplies);
+        ok(JSON.stringify(st().newSlot) === next && st().seq === nextSeq && sent.length === requests && st().klass === SA['class'], 'closed dialog class answer changes nothing in the next dialog');
+        queue['slot-class'].push(() => ({ ok: true, cls: badName, qclass: badName }));
+        queue['save-config'].push(() => [409, { ok: false, confirm: CONFIRM }]);
+        type($('#czg-new-name'), badName); $('[data-czg-new-create]').click(); await ready();
+        ok($('[data-czg-new-done]').textContent.includes(badName) && !$('[data-czg-new-done]').querySelector('b'), 'server class name with markup is shown as literal text');
+        // One missing unit amplitude is shared across pairs, with ownership transfer.
+        dataOverride.pairs.push(Object.assign({}, DATA.pairs[1], { spectator_candidates: [cand('q4', 4, null, null)] }));
+        await openSlot();
+        const more = $('#czg-more-list input'); more.checked = true; more.dispatchEvent(new window.Event('change', { bubbles: true }));
+        tickBox('q4', true); type(fld('q4', 'level'), '0.1'); type(fld('q4', 'unit'), '0.2');
+        const second = () => $('#czg-spect-body [data-czg-spect-pair="q2-3"] [data-czg-spect-row="q4"]');
+        const secondTick = second().querySelector('input[type="checkbox"]'); secondTick.checked = true; secondTick.dispatchEvent(new window.Event('change', { bubbles: true }));
+        const secondField = (name) => second().querySelector('input[data-czg-name="' + name + '"]');
+        type(secondField('level'), '0.15'); await ready();
+        ok(!secondField('unit') && second().textContent.includes('0.2 V') && second().textContent.includes('Shared with the spectator row of q1-2.') && !prim().disabled && last().spectators['q1-2'][0].unit === 0.2 && !('unit' in last().spectators['q2-3'][0]), 'shared spectator unit is read-only on later row and sent once without blocking Check');
+        type(fld('q4', 'unit'), '0.3'); await ready();
+        ok(second().textContent.includes('0.3 V') && second().textContent.includes('Shared with the spectator row of q1-2.') && last().spectators['q1-2'][0].unit === 0.3 && !('unit' in last().spectators['q2-3'][0]), 'an owner unit edited after a later row shares it updates the shared note and is sent once');
+        // Typing in a unit field keeps the focus and the caret, also while the unit is shared and rows redraw.
+        {
+            const keyIn = (ch) => {
+                const u = fld('q4', 'unit');
+                const at = u.selectionStart;
+                u.setRangeText(ch, at, at, 'end');
+                u.dispatchEvent(new window.Event('input', { bubbles: true }));
+                const now = fld('q4', 'unit');
+                ok(now && doc.activeElement === now && now.selectionStart === at + 1 && now.selectionEnd === at + 1, 'shared unit: the unit field keeps the focus and the caret after typing ' + ch);
+            };
+            type(fld('q4', 'unit'), '0.2'); const u0 = fld('q4', 'unit'); u0.focus(); u0.setSelectionRange(2, 2);
+            keyIn('5'); keyIn('1');
+            ok(fld('q4', 'unit').value === '0.512', 'two characters typed in the middle land where the caret was: ' + fld('q4', 'unit').value);
+            type(fld('q4', 'unit'), '0.2'); await ready();
+        }
+        type(fld('q4', 'unit'), '0.2'); await ready();
+        tickBox('q4', false); await ready();
+        ok(secondField('unit').value === '0.2' && last().spectators['q2-3'][0].unit === 0.2 && !prim().disabled, 'unticking the first row transfers the typed unit to the remaining row');
+        tickBox('q4', true); type(fld('q4', 'level'), '0.1'); type(fld('q4', 'unit'), '0.4'); await ready();
+        ok(fld('q4', 'unit').value === '0.4' && !secondField('unit') && second().textContent.includes('0.4 V') && last().spectators['q1-2'][0].unit === 0.4 && !('unit' in last().spectators['q2-3'][0]), 'owner moving back then an edit sends one unit with the new value');
+        // The shown pair stays first; the two extra pairs share one absent unit.
+        dataOverride.pairs.push(Object.assign({}, DATA.pairs[1], { id: 'q5-6', spectator_candidates: [cand('q4', 4, null, null)] }));
+        const morePair = (pair, on) => { const i = $('#czg-more-list input[value="' + pair + '"]'); i.checked = on; i.dispatchEvent(new window.Event('change', { bubbles: true })); };
+        const spectRow = (pair) => $('#czg-spect-body [data-czg-spect-pair="' + pair + '"] [data-czg-spect-row="q4"]');
+        const rowField = (pair, name) => spectRow(pair).querySelector('input[data-czg-name="' + name + '"]');
+        const rowTick = (pair, on) => { const i = spectRow(pair).querySelector('input[type="checkbox"]'); i.checked = on; i.dispatchEvent(new window.Event('change', { bubbles: true })); };
+        for (const door of ['more', 'spectator', 'pair', 'class']) {
+            await openSlot(); morePair('q2-3', true); morePair('q5-6', true);
+            rowTick('q2-3', true); type(rowField('q2-3', 'level'), '0.1'); type(rowField('q2-3', 'unit'), '0.2');
+            rowTick('q5-6', true); type(rowField('q5-6', 'level'), '0.1'); await ready();
+            if (door === 'more') morePair('q2-3', false);
+            if (door === 'spectator') rowTick('q2-3', false);
+            if (door === 'pair') {
+                const pair = $('#czg-pair'); pair.value = 'q2-3'; pair.dispatchEvent(new window.Event('change', { bubbles: true }));
+                morePair('q5-6', true); rowTick('q5-6', true); type(rowField('q5-6', 'level'), '0.1');
+            }
+            if (door === 'class') {
+                pick('#czg-class-host', CZ['class']); pick('#czg-class-host', SA['class']);
+                rowTick('q5-6', true); type(rowField('q5-6', 'level'), '0.1');
+            }
+            await ready();
+            ok(rowField('q5-6', 'unit').value === '0.2' && JSON.stringify(last().spectators) === JSON.stringify({ 'q5-6': [{ qubit: 'q4', length: 100, level: 0.1, unit: 0.2 }] }) && !prim().disabled, door + ' removal preserves the shared unit on the next owner and in the request');
+        }
+        await openSlot(); morePair('q2-3', true); morePair('q5-6', true);
+        rowTick('q2-3', true); type(rowField('q2-3', 'level'), '0.1');
+        rowTick('q5-6', true); type(rowField('q5-6', 'level'), '0.1'); morePair('q2-3', false); await ready();
+        ok(rowField('q5-6', 'unit').value === '' && errOf(rowField('q5-6', 'unit')) === 'Type the unit amplitude in V: this line has no unit operation yet.' && prim().disabled && !('unit' in last().spectators['q5-6'][0]), 'a blank new owner needs a unit and blocks Check while sending no empty unit');
+        const waits = fs.readFileSync(__filename, 'utf8').split('// ---- slot gate classes:')[1].split('// the chart component missing')[0];
+        ok(!/await\s+settle\s*\(/.test(waits) && /const until = async/.test(waits), 'the slot tests wait on capped conditions without fixed settles');
+        unitReach = null;
+        window.CzGate.close();
+        dataOverride = null;
+    }
+
+    // Older class marks and pair notes use quiet text outside folds.
+    {
+        const st = () => window.CzGate.state();
+        const until = async (fn) => {
+            const end = Date.now() + 3000;
+            while (!fn()) { if (Date.now() > end) throw new Error('Condition wait expired: ' + fn); await tick(5); }
+        };
+        const markWords = 'Made by an older version; make it again to update.';
+        const OLD_REASON = 'Needs a newer <b>environment</b> & more.';
+        dataOverride = JSON.parse(JSON.stringify(DATA));
+        dataOverride.classes[0].layout = 'slot';
+        dataOverride.classes[0].older_render = true;
+        dataOverride.classes[1].older_render = true;
+        dataOverride.classes[1].why = OLD_REASON;
+        await window.CzGate.open({ pair: 'q1-2' });
+        await until(() => st() && st().plan);
+        const options = [...doc.querySelectorAll('#czg-class-host [role="option"]')];
+        const markOf = (o) => o.querySelectorAll('[data-czg-older-render]');
+        const mark = options[0].querySelector('[data-czg-older-render]');
+        ok(markOf(options[0]).length === 1, 'older mark: true shows exactly one sign');
+        ok(mark && mark.textContent === markWords && mark.classList.contains('ui-option-desc') && !mark.closest('[aria-hidden="true"]')
+           && mark.parentNode === options[0] && !options[0].querySelector('.ui-option-desc:not([data-czg-older-render])'),
+           'older mark: enabled older class carries the words as its description part, under the title');
+        ok(!markOf(options[2]).length, 'older mark: absent flag shows no sign');
+        ok(!options[2].querySelector('.ui-option-desc'), 'older mark: a class with no flag and no reason has no description part');
+        const dis = [...options[1].querySelectorAll('.ui-option-desc')];
+        ok(options[1].getAttribute('aria-disabled') === 'true' && dis.length === 2 && dis[0].textContent === OLD_REASON
+           && !dis[0].hasAttribute('data-czg-older-render') && dis[1].textContent === markWords && dis[1].hasAttribute('data-czg-older-render'),
+           'older mark: disabled older class shows its reason and the words, each as a description part');
+        ok(dis[0].children.length === 0, 'older mark: reason text with markup characters stays text');
+        const kit = ['ui-option-check', 'ui-option-title', 'ui-option-desc'];
+        ok(options.every((o) => [...o.children].every((ch) => kit.some((k) => ch.classList.contains(k)))),
+           'pick options: every direct child is one of the kit option parts, nothing lands in the check column');
+        const trig = () => $('#czg-class');
+        const trigMarks = () => trig().querySelectorAll('[data-czg-older-render-trigger]');
+        const pickClass = (v) => $('#czg-class-host .ui-menu').dispatchEvent(new window.CustomEvent('ui-menu-pick', { bubbles: true, detail: { value: v, kind: 'pick' } }));
+        ok(trigMarks().length === 1 && trigMarks()[0].textContent === markWords && trigMarks()[0].className === 'ui-text-quiet' && trig().getAttribute('aria-labelledby').split(' ').indexOf(trigMarks()[0].id) >= 0,
+           'older mark: the closed picker says it for the selected older class and names it for screen readers');
+        pickClass('L.TwoFlux');
+        ok(trigMarks().length === 0 && trig().getAttribute('aria-labelledby').indexOf('czg-class-older') < 0, 'older mark: picking another class removes the words from the picker');
+        pickClass('G.CZGate');
+        ok(trigMarks().length === 1, 'older mark: picking the older class again shows the words');
+        type($('#czg-name'), 'cz_keep');
+        ok(trigMarks().length === 1, 'older mark: typing an input keeps the words, they describe the class');
+        const more = $('#czg-more-list input'); more.checked = true; more.dispatchEvent(new window.Event('change', { bubbles: true }));
+        window.clearTimeout(st().timer);
+        const notes = ['Made with an older version.', 'Keep <b>these words</b> as text.'];
+        const withNotes = (j) => { j.pairs.forEach((p) => { p.notes = notes.slice(); }); return j; };
+        const shown = () => [...doc.querySelectorAll('#czg-notes [data-czg-note-pair]')];
+        const exact = () => ['q1-2', 'q2-3'].every((pair) => {
+            const rows = shown().filter((r) => r.getAttribute('data-czg-note-pair') === pair);
+            return rows.length === notes.length && rows.every((r, k) => r.textContent === pair + ': ' + notes[k] && r.querySelector('span').textContent === notes[k]);
+        });
+        queue.plan.push((body) => withNotes(planOk(body)));
+        await window.CzGate._plan();
+        ok(exact(), 'pair notes: plan shows every sentence once for each named pair');
+        ok(!$('#czg-notes').hidden && !$('#czg-notes').closest('details, [hidden]'), 'pair notes: visible outside folds');
+        ok(shown().every((r) => r.className === 'ui-text-quiet') && !$('#czg-notes b'), 'pair notes: quiet literal markup');
+        ok(/can be created/.test($('#czg-more-list').textContent), 'pair notes: ok plan keeps can be created words');
+        type($('#czg-name'), 'cz_notes');
+        ok($('#czg-notes').hidden && !$('#czg-notes').childNodes.length, 'pair notes: typing immediately removes stale notes and space');
+        window.clearTimeout(st().timer);
+        await window.CzGate._plan();
+        ok($('#czg-notes').hidden && !$('#czg-notes').childNodes.length, 'pair notes: plan without notes leaves no box');
+        queue.check.push((body) => withNotes(checkOk(body)));
+        prim().click();
+        await until(() => !st().busy && st().phase === 'create');
+        ok(exact(), 'pair notes: check shows every sentence once for each named pair');
+        ok(!prim().disabled && /^Create 2 gates/.test(prim().textContent) && /can be created/.test($('#czg-more-list').textContent), 'pair notes: ok with notes keeps Create enabled and can be created words');
+        // Create currently returns no notes: retain only the notes of matching checked pairs.
+        prim().click();
+        await until(() => st().phase === 'done');
+        ok(exact(), 'pair notes: create without notes retains checked notes once per created pair');
+        window.CzGate.close();
+        await window.CzGate.open({ pair: 'q1-2' });
+        await until(() => st() && st().plan);
+        window.clearTimeout(st().timer);
+        queue.check.push((body) => withNotes(checkOk(body)));
+        prim().click(); await until(() => !st().busy && st().phase === 'create');
+        $('#czg-class-host .ui-menu').dispatchEvent(new window.CustomEvent('ui-menu-pick', { bubbles: true, detail: { value: 'L.TwoFlux', kind: 'pick' } }));
+        ok($('#czg-notes').hidden && !$('#czg-notes').childNodes.length, 'pair notes: class change removes checked notes');
+        window.clearTimeout(st().timer);
+        await window.CzGate._plan();
+        queue.check.push((body) => withNotes(checkOk(body)));
+        prim().click(); await until(() => !st().busy && st().phase === 'create');
+        // Recheck without editing, so the check renderer itself must replace the old notes.
+        st().phase = 'check';
+        prim().click(); await until(() => !st().busy && st().phase === 'create');
+        ok($('#czg-notes').hidden && !$('#czg-notes').childNodes.length, 'pair notes: second Check without notes removes them');
+        queue.create.push(() => ({ ok: true, created: [{ pair: 'q1-2', gate: 'cz_notes', state: 'verified', paths: ['a'], notes: notes.slice() }], skipped: [], sync: createSync }));
+        prim().click(); await until(() => st().phase === 'done');
+        ok(shown().length === 2 && shown().every((r, k) => r.querySelector('span').textContent === notes[k]) && !$('#czg-notes b'), 'pair notes: create answer notes override checked notes as literal text');
+        // Reopen with another selected class: the picker reflects only the new class.
+        window.CzGate.close();
+        dataOverride = JSON.parse(JSON.stringify(DATA));
+        dataOverride.classes[0].older_render = false;
+        dataOverride.classes[2].older_render = true;
+        await window.CzGate.open({ pair: 'q2-3' });
+        await until(() => st() && st().plan);
+        ok(doc.querySelectorAll('#czg-class [data-czg-older-render-trigger]').length === 0, 'older mark: a new open shows the words only for the newly selected class');
+        window.CzGate.close();
+        dataOverride = null;
+    }
+
     // the chart component missing
     delete window.GateTimeline;
     window.CzGate.open({ pair: 'q1-2' });
@@ -964,6 +1723,7 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     await settle();
     ok(/Chart not loaded/.test($('#czg-chart').textContent), 'no chart component: said, never a throw');
 
+    console.log(`Scroll checks: ${scrollAssertions}; existing dialog checks (${n - scrollAssertions} assertions)`);
     console.log(failed ? `FAIL cz_gate_dialog_selfcheck (${n} assertions, ${failed} failed)` : `ok cz_gate_dialog_selfcheck (${n} assertions)`);
     process.exit(failed ? 1 : 0);
 })().catch((e) => { console.log('FAIL crashed: ' + (e && e.stack || e)); process.exit(1); });

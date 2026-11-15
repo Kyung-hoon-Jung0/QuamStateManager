@@ -82,6 +82,7 @@
      },
      "layout": "known",
      "model_gate": null,
+     "notes": [],
      "ok": true,
      "operations": {
       "flux_pulse_qubit": {
@@ -257,6 +258,7 @@
      },
      "layout": "known",
      "model_gate": null,
+     "notes": [],
      "ok": true,
      "operations": {
       "coupler_flux_pulse": {
@@ -391,6 +393,7 @@
      },
      "layout": "known",
      "model_gate": null,
+     "notes": [],
      "ok": true,
      "operations": {
       "coupler_flux_pulse": {
@@ -523,6 +526,7 @@
      },
      "layout": "known",
      "model_gate": null,
+     "notes": [],
      "ok": true,
      "operations": {
       "coupler_flux_pulse": {

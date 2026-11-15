@@ -42,10 +42,14 @@
         return { data: null, busy: false, phase: 'check', plan: null, planSig: null, check: null,
                  checkSig: null, stale: 0, entered: {}, raw: {}, cls: {}, timer: null, handle: null,
                  opener: null, seq: 0, created: null, pairIdx: 0, invalid: {}, creating: false,
-                 confirmClose: false, downOnBackdrop: false, spectOn: {}, spectNote: '' };
+                 confirmClose: false, downOnBackdrop: false, spectOn: {}, spectNote: '',
+                 newSlot: { name: '', preset: '', slots: {}, spectators: false, busy: false, busyWord: '',
+                            cls: '', qclass: '', saved: false, lines: [], done: [], confirm: null } };
     }
 
     /* ---- the request body ------------------------------------------------ */
+    /* A class that lists its pulse slots (the built-in ones and the slot classes SM made). */
+    function slotted(c) { return !!c && (c.layout === 'known' || c.layout === 'slot'); }
     function klass() {
         var v = S.klass || '';
         return (S.data.classes || []).filter(function (c) { return c['class'] === v; })[0] || null;
@@ -59,7 +63,7 @@
     function body() {
         var c = klass();
         var pulses = {};
-        if (c && c.layout === 'known') {
+        if (slotted(c)) {
             (c.slots || []).forEach(function (s) {
                 var cls = S.cls[s.field];
                 if (!cls) return;
@@ -217,16 +221,39 @@
         var f = (S.data.fit || {})[pair];
         return (f && f[c['class']]) || '';
     }
+    /* The one sentence for a class made by an older version; the option's note
+       and the closed picker both show it. */
+    var OLDER_WORDS = 'Made by an older version; make it again to update.';
+    /* The closed picker repeats the words while the selected class is an older
+       one; the kit pick handler rewrites only the title and leaves this span, so this runs after
+       every pick and every refill. */
+    function markClassTrigger() {
+        var t = $('czg-class');
+        if (!t) return;
+        var old = t.querySelector('[data-czg-older-render-trigger]');
+        if (old) old.parentNode.removeChild(old);
+        var v = t.querySelector('.ui-menu-value');
+        var sel = (S.data.classes || []).filter(function (c) { return c['class'] === S.klass; })[0];
+        var lab = (t.getAttribute('aria-labelledby') || '').split(/\s+/).filter(function (x) { return x && x !== 'czg-class-older'; });
+        if (sel && sel.older_render && v) {
+            var m = el('span', 'ui-text-quiet', OLDER_WORDS);
+            m.id = 'czg-class-older';
+            m.setAttribute('data-czg-older-render-trigger', '');
+            t.appendChild(m);
+            lab.push('czg-class-older');
+        }
+        t.setAttribute('aria-labelledby', lab.join(' '));
+    }
     /* The selected class is the first one that can run on the pair; a class
        picked by hand stays while it can run there. Returns true when the
        selection changed. */
-    function fillClasses() {
+    function fillClasses(keepPicked) {
         var pair = $('czg-pair') ? $('czg-pair').value : '';
         var all = S.data.classes || [];
         var runs = all.filter(function (c) { return !classWhy(c, pair); });
         var before = S.klass || '';
         var keep = runs.filter(function (c) { return c['class'] === before; })[0];
-        S.klass = keep ? before : runs[0] ? runs[0]['class'] : '';
+        S.klass = keepPicked ? before : keep ? before : runs[0] ? runs[0]['class'] : '';
         S.classNote = '';
         if (before && S.klass !== before && S.klassByHand) {
             var old = all.filter(function (c) { return c['class'] === before; })[0];
@@ -239,8 +266,12 @@
             value: S.klass, placeholder: 'Pick a gate class',
             items: all.map(function (c) {
                 var why = classWhy(c, pair);
-                return { value: c['class'], title: c.label, disabled: !!why, reason: why };
+                return { value: c['class'], title: c.label, disabled: !!why, reason: why, note: c.older_render ? OLDER_WORDS : '' };
             }) });
+        Array.prototype.forEach.call($('czg-class-host').querySelectorAll('[data-ui-option-note]'), function (n) {
+            n.setAttribute('data-czg-older-render', '');
+        });
+        markClassTrigger();
         renderClassWhy([]);
         return S.klass !== before;
     }
@@ -313,6 +344,43 @@
     function spectField(pair, q) { return SPECT_PREFIX + pair + ':' + q; }
     function isSpectField(f) { return String(f || '').indexOf(SPECT_PREFIX) === 0; }
     /* What the class says about spectators; null when the data names nothing. */
+    /* The unit method scales a level by the line's own unit operation; a line
+       without one asks for the unit amplitude (the server makes the operation). */
+    var UNIT_NEEDED = 'Type the unit amplitude in V: this line has no unit operation yet.';
+    var SPECT_CLASS_NOTE = 'The spectator choices were cleared: the new gate class takes other choices. Tick them again where it offers spectators.';
+    function unitMethod() { var o = spectOffer(); return !!o && o.method === 'unit'; }
+    function unitAsked(c) { return unitMethod() && (c.unit === null || c.unit === undefined); }
+    function unitOwner(q) {
+        return selectedPairs().filter(function (p) { return ticked(p).some(function (c) { return c.qubit === q; }); })[0];
+    }
+    function shareUnits(change) {
+        var values = S.sharedUnits || {};
+        Object.keys(S.raw).forEach(function (f) {
+            if (isSpectField(f) && S.raw[f].unit !== undefined) values[f.slice(f.lastIndexOf(':') + 1)] = S.raw[f].unit;
+        });
+        S.sharedUnits = values;
+        if (change) change();
+        selectedPairs().forEach(function (p) { ticked(p).forEach(function (c) {
+            if (!unitAsked(c)) return;
+            var f = spectField(p, c.qubit), key = fieldKey(f, 'unit');
+            S.raw[f] = S.raw[f] || {};
+            S.entered[f] = S.entered[f] || {};
+            delete S.invalid[key];
+            // A former owner may keep its raw unit: a row that owns again is ticked anew, so
+            // its raw key is newer and the collect above takes its value.
+            if (p !== unitOwner(c.qubit)) { delete S.entered[f].unit; return; }
+            var v = values[c.qubit];
+            if (v !== undefined) S.raw[f].unit = v;
+            var r = parseValue(S.raw[f].unit);
+            if (r !== null) S.entered[f].unit = r;
+            else { delete S.entered[f].unit; S.invalid[key] = UNIT_NEEDED; }
+        }); });
+        // Keep a typed unit between cleared selections until a row can own it again.
+        Object.keys(values).forEach(function (q) { if (unitOwner(q)) delete values[q]; });
+    }
+    function parseValue(v) {
+        return v !== undefined && String(v).trim() !== '' && NUMBER_RE.test(String(v)) && isFinite(Number(v)) ? Number(v) : null;
+    }
     function spectOffer() {
         var c = klass();
         var s = c && c.spectators;
@@ -339,6 +407,7 @@
                 var row = { qubit: c.qubit };
                 if (e.length !== undefined) row.length = e.length;
                 if (e.level !== undefined) row.level = e.level;
+                if (unitAsked(c) && e.unit !== undefined) row.unit = e.unit;
                 return row;
             });
             if (list.length) { out[p] = list; any = true; }
@@ -375,21 +444,27 @@
         });
     }
     function tickSpect(pair, q, on) {
-        S.spectOn = S.spectOn || {};
-        S.spectOn[pair] = S.spectOn[pair] || {};
-        S.spectNote = '';
-        var f = spectField(pair, q);
-        delete S.entered[f];
-        delete S.raw[f];
-        delete S.invalid[fieldKey(f, 'length')];
-        delete S.invalid[fieldKey(f, 'level')];
-        if (!on) { delete S.spectOn[pair][q]; return; }
-        S.spectOn[pair][q] = true;
-        var len = gateLength();
-        S.raw[f] = { length: len === null ? '' : String(len), level: '' };
-        S.entered[f] = len === null ? {} : { length: len };
-        if (len === null) S.invalid[fieldKey(f, 'length')] = LENGTH_NEEDED;
-        S.invalid[fieldKey(f, 'level')] = LEVEL_NEEDED;
+        shareUnits(function () {
+            S.spectOn = S.spectOn || {};
+            S.spectOn[pair] = S.spectOn[pair] || {};
+            S.spectNote = '';
+            var f = spectField(pair, q);
+            delete S.entered[f];
+            delete S.raw[f];
+            delete S.invalid[fieldKey(f, 'length')];
+            delete S.invalid[fieldKey(f, 'level')];
+            delete S.invalid[fieldKey(f, 'unit')];
+            if (!on) {
+                delete S.spectOn[pair][q];
+                return;
+            }
+            S.spectOn[pair][q] = true;
+            var len = gateLength();
+            S.raw[f] = { length: len === null ? '' : String(len), level: '' };
+            S.entered[f] = len === null ? {} : { length: len };
+            if (len === null) S.invalid[fieldKey(f, 'length')] = LENGTH_NEEDED;
+            S.invalid[fieldKey(f, 'level')] = LEVEL_NEEDED;
+        });
     }
     function planRow(pair) {
         return ((S.plan && S.plan.pairs) || []).filter(function (p) { return p.pair === pair; })[0] || null;
@@ -414,6 +489,40 @@
     function spectRefusals(pair) {
         var pr = planRow(pair);
         return ((pr && !pr.ok && pr.refusals) || []).filter(function (r) { return /spectator/i.test(r); });
+    }
+    /* The unit method's cells of one ticked row: the unit amplitude (typed when the
+       line has no unit operation) and the read-only allowed range. The range is the
+       server's own number, shown as given; nothing here computes a limit. */
+    var NO_UNIT_OP = 'no unit operation on this line yet';
+    function readCell(label, text, attr, q, hint) {
+        var f = el('div', 'ui-field');
+        var h = el('div', 'ui-field-head');
+        h.appendChild(el('span', 'ui-field-label', label));
+        f.appendChild(h);
+        var ctl = el('div', 'ui-field-control');
+        var cell = text ? el('code', 'ui-chip', text) : el('span', 'ui-text-quiet', '');
+        cell.setAttribute(attr, q);
+        ctl.appendChild(cell);
+        f.appendChild(ctl);
+        if (hint) f.appendChild(el('p', 'ui-field-hint', hint));
+        return f;
+    }
+    function unitCells(f, c, planned, raw) {
+        var box = el('div', 'ui-grid2');
+        box.setAttribute('data-czg-spect-unit', c.qubit);
+        var asked = unitAsked(c);
+        var reach = typeof c.reachable === 'number' ? c.reachable
+            : planned && typeof planned.reachable === 'number' ? planned.reachable : null;
+        var owner = unitOwner(c.qubit);
+        if (asked && f !== spectField(owner, c.qubit)) {
+            var value = (S.raw[spectField(owner, c.qubit)] || {}).unit;
+            box.appendChild(readCell('Unit amplitude', value ? value + ' V' : '', 'data-czg-spect-unit-value', c.qubit,
+                'Shared with the spectator row of ' + owner + '.'));
+        } else if (asked) box.appendChild(fieldInput(f, 'unit', 'Unit amplitude', 'V', 'float', raw.unit, null, { hint: NO_UNIT_OP }));
+        else box.appendChild(readCell('Unit amplitude', fmt(c.unit) + ' V', 'data-czg-spect-unit-value', c.qubit, ''));
+        box.appendChild(readCell('Allowed range', reach === null ? '' : '|level| < ' + fmt(reach) + ' V',
+                                 'data-czg-spect-allowed', c.qubit, ''));
+        return box;
     }
     function fillSpect() {
         var panel = $('czg-spect');
@@ -467,13 +576,15 @@
                     grid.appendChild(fieldInput(f, 'level', 'Level', 'V', 'float', raw.level, null));
                     row.appendChild(grid);
                     var planned = ((pr && pr.ok && pr.spectators) || []).filter(function (x) { return x.qubit === c.qubit; })[0];
+                    if (unitMethod()) row.appendChild(unitCells(f, c, planned, raw));
                     if (planned && planned.range_not_compared) {
                         var rn = el('p', 'ui-text-quiet', planned.range_not_compared);
                         rn.setAttribute('data-czg-spect-range-note', c.qubit);
                         row.appendChild(rn);
                     }
-                    var mine = refused.filter(function (r) { return r.indexOf('For the spectator ' + c.qubit + ':') === 0; });
-                    var own = S.invalid[fieldKey(f, 'length')] || S.invalid[fieldKey(f, 'level')];
+                    var mine = refused.filter(function (r) { return r.indexOf('For the spectator ' + c.qubit + ':') === 0
+                        || r.indexOf("Spectator '" + c.qubit + "'") === 0; });
+                    var own = S.invalid[fieldKey(f, 'length')] || S.invalid[fieldKey(f, 'level')] || S.invalid[fieldKey(f, 'unit')];
                     if (mine.length && !own) {
                         var w = el('p', 'ui-field-error', mine.join(' '));
                         w.setAttribute('role', 'alert');
@@ -552,7 +663,8 @@
         if (bdg && opts.title) { bdg.title = opts.title; bdg.setAttribute('aria-description', opts.title); }
         return f;
     }
-    var SLOT_WORDS = { flux_pulse_qubit: 'Qubit flux pulse', coupler_flux_pulse: 'Coupler pulse',
+    var SLOT_WORDS = { control_flux_pulse: 'Control flux pulse', target_flux_pulse: 'Target flux pulse',
+                       flux_pulse_qubit: 'Qubit flux pulse', coupler_flux_pulse: 'Coupler pulse',
                        flux_pulse_control: 'Control flux pulse', flux_pulse_target: 'Target flux pulse' };
     /* The channel THIS pair's slot plays on: the plan's own answer, else the pair's lines. */
     function slotChannel(field, line, fp) {
@@ -609,13 +721,13 @@
         var c = klass();
         var fp = firstPlan();
         if (!c) return;
-        S.slotChannels = c.layout === 'known'
+        S.slotChannels = slotted(c)
             ? (c.slots || []).filter(function (s) { return S.cls[s.field] !== '' || s.required; })
                 .map(function (s) { return slotChannel(s.field, s.line, fp); })
             : Object.keys((fp && fp.ok && fp.pulses) || {}).map(function (f) { return slotChannel(f, null, fp); });
         var sum = $('czg-pulses-sum');
         if (sum) { var nl = S.slotChannels.length; sum.textContent = nl === 1 ? '1 line' : nl + ' lines play together'; }
-        if (c.layout === 'known') {
+        if (slotted(c)) {
             (c.slots || []).forEach(function (s) {
                 var b = slotBlock(s.field, slotChannel(s.field, s.line, fp), '');
                 var l = el('div', 'ui-field');
@@ -734,10 +846,11 @@
         resultQuiet();
         if (!show) return;
         var U = UIkit();
-        host.appendChild(U.table(null, [
+        host.appendChild(scrollTable(U.table(null, [
             ['Model gate', { chip: fp.model_gate[1] }],
             ['On the pair', { chip: fp.model_gate[0] }],
-            ['Not inherited', (fp.reset || []).join(', ') || 'nothing']], true, [], 'From the model gate'));
+            ['Not inherited', (fp.reset || []).join(', ') || 'nothing']], true, [], 'From the model gate')));
+        syncScrollRegions();
         host.appendChild(el('p', 'ui-text-quiet', 'The new gate copies the model gate\'s structure; the lab\'s code must run it before it is written.'));
     }
     var NUMBER_RE = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
@@ -762,9 +875,301 @@
         return { ok: true, v: raw };
     }
 
+    /* ---- a new slot gate class: SM makes the draft from the ticked slots, then the
+       existing two-step save puts the file into the lab's code. Every refusal and
+       every line of the save's confirm comes from the server. */
+    function slotNames() { return (S.data && S.data.slot_names) || []; }
+    function slotPresets() { return (S.data && S.data.slot_presets) || []; }
+    function slotWord(n) { return n.charAt(0).toUpperCase() + n.slice(1); }
+    function setNewSlots(names, spectators) {
+        var m = {};
+        (names || []).forEach(function (n) { m[n] = true; });
+        S.newSlot.slots = m;
+        S.newSlot.spectators = !!spectators;
+    }
+    /* What the row made so far belongs to the old choices: a changed name, slot or
+       preset starts over. */
+    function newEdited() {
+        var ns = S.newSlot;
+        ns.cls = ''; ns.qclass = ''; ns.saved = false; ns.lines = []; ns.done = []; ns.confirm = null;
+    }
+    /* Prefill: the picked slot class's own slots, else the first preset. */
+    function prefillNew() {
+        if (S.newSlot.busy) return;
+        var c = klass();
+        var ns = S.newSlot;
+        newEdited();
+        if (c && c.layout === 'slot' && c.slot_spec) {
+            ns.preset = '';
+            setNewSlots((c.slot_spec.slots || []).map(function (x) { return typeof x === 'string' ? x : x && x.name; }),
+                        c.slot_spec.spectators);
+            return;
+        }
+        var p = slotPresets()[0];
+        ns.preset = p ? p.key : '';
+        setNewSlots(p ? p.slots : [], false);
+    }
+    function focusNew(selector) {
+        var n = $('czg-new-body').querySelector(selector);
+        if (n) n.focus();
+    }
+    function newBusy(on, word) {
+        var act = document.activeElement;
+        var move = !act || act === document.body || $('czg-new-body').contains(act);
+        S.newSlot.busy = on; S.newSlot.busyWord = on ? (word || '') : ''; fillNew();
+        if (!on && move) focusNew(S.newSlot.confirm ? '[data-czg-new-cancel]' : '[data-czg-new-create]');
+    }
+    function quietLines(host, lines) {
+        lines.filter(Boolean).forEach(function (t) { host.appendChild(el('p', 'ui-text-quiet', t)); });
+    }
+    function fillNew() {
+        var panel = $('czg-new');
+        var host = $('czg-new-body');
+        if (!panel || !host) return;
+        // drawn again: the control the person was on keeps the focus
+        var act = document.activeElement;
+        var keep = act && host.contains(act)
+            ? ['data-czg-new-slot', 'data-czg-new-spect', 'data-czg-new-name', 'data-czg-new-create',
+               'data-czg-new-save', 'data-czg-new-cancel', 'data-czg-new-confirm-save'].filter(function (a) { return act.hasAttribute(a); })[0] : null;
+        var keepVal = keep ? act.getAttribute(keep) : '';
+        clear(host);
+        var presets = slotPresets();
+        panel.hidden = !presets.length;
+        if (!presets.length) return;
+        var U = UIkit();
+        var ns = S.newSlot;
+        var sum = $('czg-new-sum');
+        if (sum) {
+            var cnt = slotNames().filter(function (k) { return ns.slots[k]; }).length;
+            sum.textContent = cnt === 1 ? '1 slot' : cnt + ' slots';
+        }
+        var nf = U.field({ label: 'Class name', control: { part: 'input', id: 'czg-new-name', block: true, value: ns.name } });
+        var ni = nf.querySelector('input');
+        ni.setAttribute('data-czg-new-name', '');
+        ni.spellcheck = false;
+        ni.value = ns.name;
+        ni.disabled = ns.busy;
+        host.appendChild(nf);
+        var pf = el('div', 'ui-field');
+        var ph = el('div', 'ui-field-head');
+        ph.appendChild(el('span', 'ui-field-label', 'Preset'));
+        pf.appendChild(ph);
+        var pm = el('div');
+        pm.id = 'czg-new-preset-host';
+        pf.appendChild(pm);
+        host.appendChild(pf);
+        menuInto('czg-new-preset-host', { id: 'czg-new-preset', kind: 'pick', label: 'Preset', block: true,
+            value: ns.preset, placeholder: 'Pick a preset',
+            items: presets.map(function (p) { return { value: p.key, title: p.label }; }) });
+        pm.querySelectorAll('button').forEach(function (b) { b.disabled = ns.busy; });
+        var sf = el('div', 'ui-field');
+        var sh = el('div', 'ui-field-head');
+        sh.appendChild(el('span', 'ui-field-label', 'Slots'));
+        sf.appendChild(sh);
+        var sg = el('div', 'ui-field-stack ui-field-stack--dense');
+        sg.setAttribute('role', 'group');
+        sg.setAttribute('aria-label', 'Slots of the new class');
+        slotNames().forEach(function (n) {
+            var l = U.check(slotWord(n), !!ns.slots[n], ns.busy);
+            var i = l.querySelector('input');
+            i.checked = !!ns.slots[n];
+            i.setAttribute('data-czg-new-slot', n);
+            sg.appendChild(l);
+        });
+        var spl = U.check('Spectators', !!ns.spectators, ns.busy);
+        var spi = spl.querySelector('input');
+        spi.checked = !!ns.spectators;
+        spi.setAttribute('data-czg-new-spect', '');
+        sg.appendChild(spl);
+        sf.appendChild(sg);
+        host.appendChild(sf);
+        var acts = U.actions([{ label: 'Create class', cls: 'btn-sync outline' }], 'New slot gate class');
+        var cb = acts.children[0];
+        cb.setAttribute('data-czg-new-create', '');
+        cb.disabled = ns.busy || !!ns.confirm;
+        if (ns.cls && !ns.confirm && !ns.saved) {
+            var sb = U.actions([{ label: 'Save the class file', cls: 'btn-sync outline' }]).children[0];
+            sb.setAttribute('data-czg-new-save', '');
+            sb.disabled = ns.busy;
+            acts.appendChild(sb);
+        }
+        host.appendChild(acts);
+        if (ns.busy && ns.busyWord) {
+            var bw = el('p', 'ui-text-quiet', ns.busyWord);
+            bw.setAttribute('role', 'status');
+            bw.setAttribute('data-czg-new-busy', '');
+            host.appendChild(bw);
+        }
+        ns.lines.forEach(function (t) {
+            var w = el('p', 'ui-field-error', t);
+            w.setAttribute('role', 'alert');
+            w.setAttribute('data-czg-new-problem', '');
+            host.appendChild(w);
+        });
+        if (ns.done.length) {
+            var dn = el('div', 'ui-field-stack ui-field-stack--dense');
+            dn.setAttribute('data-czg-new-done', '');
+            quietLines(dn, ns.done);
+            host.appendChild(dn);
+        }
+        if (ns.confirm) {
+            var c = ns.confirm;
+            var box = el('div', 'ui-field-stack ui-field-stack--dense');
+            box.setAttribute('data-czg-new-confirm', '');
+            box.setAttribute('role', 'group');
+            box.setAttribute('aria-live', 'polite');
+            box.setAttribute('aria-label', 'Save to quam_config');
+            box.appendChild(el('div', 'ui-field-label', 'Save to quam_config'));
+            quietLines(box, ['File: ' + c.path, 'The environment imports quam_config from: ' + c.env_folder, c.notice, c.warning]);
+            var gates = (c.gates || []).map(function (g) { return g.pair + ': ' + g.gate + (g.live_active ? ' (live and active)' : ''); });
+            if (gates.length) quietLines(box, ['Gates on this chip using this class:'].concat(gates));
+            quietLines(box, ['Confirm folder and save: SM checks the draft in the lab environment, then writes ' + c.path,
+                             'Cancel: nothing is written']);
+            var ca = U.actions([{ label: 'Cancel', cls: 'btn-sync outline' }, { label: 'Confirm folder and save', cls: 'btn-sync primary' }], 'Save to quam_config');
+            ca.children[0].setAttribute('data-czg-new-cancel', '');
+            ca.children[1].setAttribute('data-czg-new-confirm-save', '');
+            box.appendChild(ca);
+            host.appendChild(box);
+        }
+        if (keep) {
+            var again = Array.prototype.slice.call(host.querySelectorAll('[' + keep + ']'))
+                .filter(function (x) { return x.getAttribute(keep) === keepVal; })[0];
+            if (again) { try { again.focus(); } catch (e) { /* not focusable */ } }
+        }
+    }
+    function problemLines(j, status) {
+        var out = [];
+        if (j.message || j.error) out.push(j.message || j.error);
+        (j.problems || []).forEach(function (p) { if (p && out.indexOf(p) < 0) out.push(p); });
+        return out.length ? out : ['The app answered HTTP ' + status + '.'];
+    }
+    function newCreate() {
+        var ns = S.newSlot;
+        if (ns.busy) return Promise.resolve();
+        var g = S;
+        var picked = slotNames().filter(function (n) { return ns.slots[n]; });
+        newEdited();
+        newBusy(true, 'Making the class.');
+        return post('/api/pulse/cz-gate/slot-class', { class_name: ns.name.trim(), slots: picked, spectators: !!ns.spectators })
+            .then(function (x) {
+                if (S !== g) return null;
+                if (!x.r.ok || !x.j.ok || !x.j.cls) { ns.lines = problemLines(x.j, x.r.status); newBusy(false); return null; }
+                ns.cls = x.j.cls;
+                ns.qclass = x.j.qclass || '';
+                ns.done = ['The class ' + plainClassName(ns.qclass || ns.cls) + ' is made as a draft.'];
+                return refreshClasses(ns.qclass).then(function () { return S === g ? saveNew(null) : null; });
+            }).catch(function (e) {
+                if (S !== g) return;
+                ns.lines = ['The app did not answer (' + e + ').'];
+                newBusy(false);
+            });
+    }
+    /* The existing two-step save: the first answer names the folder, the second
+       call sends that folder back as confirmed. */
+    function saveNew(folder) {
+        var ns = S.newSlot, g = S;
+        if (!ns.cls) return Promise.resolve();
+        var b = { cls: ns.cls };
+        if (folder) b.confirmed_folder = folder;
+        ns.lines = [];
+        newBusy(true, folder ? 'The lab environment checks the draft, then SM writes the file.' : 'Asking where the file goes.');
+        return post('/pulse-class/save-config', b).then(function (x) {
+            if (S !== g) return null;
+            var j = x.j;
+            if (j.confirm) { ns.confirm = j.confirm; newBusy(false); return null; }
+            if (!j.ok) { ns.lines = problemLines(j, x.r.status); newBusy(false); return null; }
+            ns.confirm = null;
+            ns.saved = true;
+            ns.done = ns.done.concat(['Saved to ' + j.target, j.dependency, j.restart, j.warning, j.chip_warning, j.record_error,
+                                      j.backup ? 'Backup of the replaced file: ' + j.backup : ''].filter(Boolean));
+            // the saved file can change which classes run: the list again, then the plan
+            return refreshClasses(ns.qclass).then(function () { if (S === g) newBusy(false); });
+        }).catch(function (e) {
+            if (S !== g) return;
+            ns.lines = ['The app did not answer (' + e + ').'];
+            newBusy(false);
+        });
+    }
+    /* The dialog data again from the server, so the new class is in the class list.
+       Only the class list, the per-pair fit and the presets are taken; what the person
+       typed stays unless the answer picks the new class (then as for a class picked by hand). */
+    /* The plain class name of a qualified id (the last dotted part); the module path is never shown. */
+    function plainClassName(q) {
+        var parts = String(q || '').split('.');
+        return parts[parts.length - 1];
+    }
+    /* The one sentence of the new-class row after a class list answer, from three facts:
+       is the class in the list, is it the picked class now, and its label. */
+    function newClassSentence(listed, pickedNow, label, why) {
+        if (listed && why) return 'The class ' + label + ' is made; it cannot be used on this pair. ' + why;
+        if (listed && pickedNow) return 'The class ' + label + ' is made and picked.';
+        if (listed) return 'The class ' + label + ' is made; pick it from the Class list to use it.';
+        return 'The class ' + label + ' is made; the Class list does not offer it for this pair.';
+    }
+    function refreshClasses(select) {
+        var g = S;
+        var pair = $('czg-pair') ? $('czg-pair').value : '';
+        return fetch('/pulse/cz-gate/dialog' + (pair ? '?pair=' + encodeURIComponent(pair) : ''))
+            .then(function (r) { return r.text(); })
+            .then(function (t) {
+                if (S !== g) return;
+                var tpl = document.createElement('template');
+                tpl.innerHTML = t;
+                var src = tpl.content.querySelector('#czg-data');
+                var d = JSON.parse((src && src.textContent) || '{}');
+                if (!d.classes) throw new Error('no class list');
+                S.data.classes = d.classes;
+                if (d.fit) S.data.fit = d.fit;
+                if (d.slot_presets) S.data.slot_presets = d.slot_presets;
+                if (d.slot_names) S.data.slot_names = d.slot_names;
+                var before = S.klass || '';
+                var hit = d.classes.filter(function (c) { return c['class'] === select; })[0];
+                var free = !S.busy && S.phase !== 'done';     // a check or a create in flight keeps its class
+                var act = document.activeElement;
+                var outside = act && act !== document.body && !$('czg-new-body').contains(act);
+                // The one pick rule: the answer picks the new class only in a free flow (no check
+                // or create in flight, not finished) and only when the focus is in the new-class
+                // row, on the body or nowhere; otherwise the class is listed and not picked.
+                var pickNew = free && !outside;
+                var shown = (hit && hit.label) || plainClassName(S.newSlot.cls || select);
+                var unreadLine = 'The class list could not be read again. Close and open this dialog to pick the new class.';
+                var why = hit ? classWhy(hit, pair) : '';
+                // The sentence is worked out after the final fill, from the pick that stands.
+                var sentence = function () {
+                    S.newSlot.done = S.newSlot.done.filter(function (x) { return x !== unreadLine; });
+                    S.newSlot.done[0] = newClassSentence(!!hit, !!hit && S.klass === select, shown, why);
+                };
+                if (!pickNew) {
+                    fillClasses(true);
+                    sentence();
+                    fillNew(); return;
+                }
+                if (hit && !why) { S.klass = select; S.klassByHand = true; }
+                var moved = fillClasses() ? S.classNote : '';
+                sentence();
+                if (S.klass !== before) {
+                    var hadTicks = anyTicked();
+                    shareUnits(function () {
+                        S.entered = {}; S.raw = {}; S.cls = {}; S.placed = {}; S.invalid = {}; S.spectOn = {};
+                    });
+                    S.spectNote = hadTicks ? SPECT_CLASS_NOTE : '';
+                    S.classNote = moved;
+                    renderClassWhy([]);
+                }
+                fillModel(); fillFrom(); fillSlots(); fillSpect(); fillNew();
+                inputsChanged();
+            }).catch(function () {
+                if (S !== g) return;
+                var unread = 'The class list could not be read again. Close and open this dialog to pick the new class.';
+                if (S.newSlot.done.indexOf(unread) < 0) S.newSlot.done = S.newSlot.done.concat([unread]);
+                fillNew();
+            });
+    }
+
     /* ---- the plan -------------------------------------------------------- */
     function inputsChanged() {
         S.seq++;
+        renderNotes([]);
         simReset();
         if (S.check) {
             var ev = $('czg-evidence');
@@ -807,7 +1212,23 @@
             alertBox(callout('danger', 'The plan could not be made', 'The app did not answer (' + e + '). Try again.'), 'plan-error');
         });
     }
+    /* Pair notes stay outside folds and never affect the verdict. */
+    function renderNotes(pairs) {
+        var host = clear($('czg-notes'));
+        if (!host) return;
+        pairs.forEach(function (p) {
+            (p.notes || []).forEach(function (note) {
+                var line = el('p', 'ui-text-quiet');
+                line.setAttribute('data-czg-note-pair', p.pair);
+                line.appendChild(document.createTextNode(p.pair + ': '));
+                line.appendChild(el('span', null, note));
+                host.appendChild(line);
+            });
+        });
+        host.hidden = !host.childNodes.length;
+    }
     function renderPlan() {
+        renderNotes((S.plan && S.plan.pairs) || []);
         var fp = firstPlan();
         if (S.alertKind === 'plan-error') alertBox(null);
         var why = clear($('czg-name-why'));
@@ -924,6 +1345,33 @@
         if (s.indexOf('e') < 0) return s;
         return Math.abs(x) >= 1e-6 && Math.abs(x) < 1e21 ? x.toFixed(12).replace(/0+$/, '').replace(/\.$/, '') : s;
     }
+    /* Every table of the dialog sits in the kit's sideways-scrolling wrapper: a narrow panel scrolls the
+       table inside itself and never cuts a column. The wrapper is a keyboard stop only while it really
+       scrolls sideways (see syncScrollRegions); otherwise it is plain layout. */
+    function scrollTable(t) {
+        var w = el('div', 'ui-xscroll ui-xscroll-table');
+        w.setAttribute('data-czg-table-scroll', '');
+        w.appendChild(t);
+        return w;
+    }
+    /* Decide, for each table wrapper, whether it scrolls sideways now: only then it is focusable and
+       named as a scrollable region. Called when the dialog opens, when a table is redrawn and on resize. */
+    function syncScrollRegions() {
+        var d = $('czg-dialog');
+        if (!d) return;
+        Array.prototype.forEach.call(d.querySelectorAll('[data-czg-table-scroll]'), function (w) {
+            if (w.scrollWidth > w.clientWidth) {
+                var t = w.querySelector('table');
+                w.setAttribute('tabindex', '0');
+                w.setAttribute('role', 'region');
+                w.setAttribute('aria-label', 'Scrollable table region: ' + ((t && t.getAttribute('aria-label')) || 'table'));
+            } else {
+                w.removeAttribute('tabindex');
+                w.removeAttribute('role');
+                w.removeAttribute('aria-label');
+            }
+        });
+    }
     function num(v, unit) {
         if (v === null || v === undefined) return '';
         if (typeof v === 'number') return fmt(v) + (unit ? ' ' + unit : '');
@@ -1007,12 +1455,12 @@
                 }
             });
         });
-        host.appendChild(t);
+        host.appendChild(scrollTable(t));
         var over = rows.filter(function (r) { var t = r.tones || {}; return t.max === 'danger' || t.min === 'danger'; }).length;
         if (sum) sum.textContent = over ? over + ' over the limit' : flagged ? flagged + ' differ' : 'all as entered';
         rows.forEach(function (r) { (r.why || []).forEach(function (w) { host.appendChild(el('p', 'ui-text-quiet', rowName(r) + ': ' + w)); }); });
     }
-    var CHECK_WORDS = { load_config: 'Chip loads and builds its config', ops: 'The gate runs with the lab\'s code',
+    var CHECK_WORDS = { spectator_scale: 'Spectator levels', load_config: 'Chip loads and builds its config', ops: 'The gate runs with the lab\'s code',
                         length: 'Pulse lengths', preview: 'Preview equals the config', timeline: 'Timeline',
                         range: 'Output range' };
     function allSkippedReason(p) {
@@ -1163,6 +1611,7 @@
         renderPairSwitch();
         openLabel();
         simButton();
+        syncScrollRegions();
     }
     /* What the checks that ran came to, in the server's words (one judgement
        for the banner, the summary and the record): "every check passed." or
@@ -1174,6 +1623,7 @@
     }
     function renderCheck() {
         var c = S.check;
+        renderNotes(c.pairs || []);
         var ev = $('czg-evidence');
         if (ev) ev.classList.remove('czg-stale');
         var pairs = c.pairs || [];
@@ -1588,6 +2038,10 @@
         var cancel = $('czg-cancel');
         if (cancel) cancel.hidden = true;
         say(SYNC_WORDS[word]);
+        renderNotes((j.created || []).map(function (c) {
+            var checked = ((S.check && S.check.pairs) || []).filter(function (p) { return p.pair === c.pair; })[0];
+            return { pair: c.pair, notes: c.notes || (checked && checked.notes) || [] };
+        }));
         renderWrites();
         refresh();
         if (word === 'writing') watchSync(S, skip, sync, true, 40);
@@ -1622,7 +2076,7 @@
        above a modal dialog). */
     function worked() {
         return !!(S && (S.check || Object.keys(S.entered || {}).some(function (k) { return Object.keys(S.entered[k] || {}).length; })
-                        || ($('czg-name') && $('czg-name').value.trim() !== 'cz_')));
+                        || ($('czg-name') && $('czg-name').value.trim() !== 'cz_') || S.newSlot.name.trim()));
     }
     function softClose() {
         if (!S || S.phase === 'done' || !worked()) { close(); return; }
@@ -1648,7 +2102,7 @@
         var w = cols.clientWidth;
         if (w > 0 && w < need) d.setAttribute('data-czg-stacked', ''); else d.removeAttribute('data-czg-stacked');
     }
-    window.addEventListener('resize', function () { if (S) layoutStack(); });
+    window.addEventListener('resize', function () { if (S) { layoutStack(); syncScrollRegions(); } });
     function init() {
         var src = $('czg-data');
         S.data = JSON.parse((src && src.textContent) || '{}');
@@ -1659,9 +2113,12 @@
         fillMore();
         fillSlots();
         fillSpect();
+        prefillNew();
+        fillNew();
         renderWrites();
         refresh();
         layoutStack();
+        syncScrollRegions();
         return plan();
     }
     function open(opts) {
@@ -1748,6 +2205,22 @@
                 .forEach(function (b) { if (+b.getAttribute('data-czg-pair-idx') === k) { try { b.focus(); } catch (e) { /* not focusable */ } } });
             return;
         }
+        if (t.closest('[data-czg-new-create]')) { newCreate(); return; }
+        if (t.closest('[data-czg-new-save]')) { if (!S.newSlot.busy) saveNew(null); return; }
+        if (t.closest('[data-czg-new-confirm-save]')) {
+            var cf = S.newSlot.confirm;
+            if (S.newSlot.busy || !cf || !cf.folder) return;
+            S.newSlot.confirm = null;
+            saveNew(cf.folder);
+            return;
+        }
+        if (t.closest('[data-czg-new-cancel]')) {
+            S.newSlot.confirm = null;
+            S.newSlot.done = S.newSlot.done.concat(["Nothing was written to the lab's code. The class stays a draft until its file is saved."]);
+            fillNew();
+            focusNew('[data-czg-new-save]');
+            return;
+        }
         if (t.closest('[data-czg-sim]')) { simulate(); return; }
         if (t.closest('#czg-primary')) {
             if (S.busy) return;
@@ -1759,7 +2232,16 @@
     document.addEventListener('change', function (ev) {
         var t = ev.target;
         if (!t || !inDialog(t) || !S) return;
+        if (S.newSlot.busy && (t.hasAttribute('data-czg-new-slot') || t.hasAttribute('data-czg-new-spect'))) { fillNew(); return; }
         if (t.id === 'czg-pair-shown') { S.pairIdx = +t.value; renderPair(); return; }
+        if (t.hasAttribute('data-czg-new-slot')) {
+            newEdited();
+            S.newSlot.slots[t.getAttribute('data-czg-new-slot')] = t.checked;
+            S.newSlot.preset = '';          // the ticks are the person's own now, no preset names them
+            fillNew();
+            return;
+        }
+        if (t.hasAttribute('data-czg-new-spect')) { newEdited(); S.newSlot.spectators = t.checked; fillNew(); return; }
         if (t.hasAttribute('data-czg-spect-qubit')) {
             tickSpect(t.getAttribute('data-czg-spect-pair'), t.getAttribute('data-czg-spect-qubit'), t.checked);
             fillSpect();
@@ -1769,8 +2251,7 @@
         }
         if (t.id === 'czg-pair') {
             var had = anyTicked();
-            S.spectOn = {};
-            dropSpect(null);
+            shareUnits(function () { S.spectOn = {}; dropSpect(null); });
             S.spectNote = had ? 'The spectator choices were cleared: ' + (t.value || 'the new pair') + ' has other neighbouring lines. Tick them again.' : '';
             if (fillClasses()) { S.entered = {}; S.raw = {}; S.cls = {}; S.placed = {}; S.invalid = {}; fillSlots(); }
             fillPairLine(); fillFrom(); fillModel(); fillMore(); fillSpect();
@@ -1784,7 +2265,9 @@
                 Object.keys(m).forEach(function (k) { if (k.indexOf(f + '\u0000') === 0) delete m[k]; });
             });
         } else if (t.hasAttribute('data-czg-more')) {
-            if (!t.checked && S.spectOn) { delete S.spectOn[t.value]; dropSpect(t.value); }
+            shareUnits(function () {
+                if (!t.checked && S.spectOn) { delete S.spectOn[t.value]; dropSpect(t.value); }
+            });
             fillSpect();
         } else if (t.id !== 'czg-from') { return; }
         if (t.hasAttribute('data-czg-slot')) fillSlots();
@@ -1796,12 +2279,27 @@
         var v = ev.detail && ev.detail.value;
         if (t.querySelector('#czg-class')) {
             if (v === S.klass) return;
-            S.klass = v; S.klassByHand = true; S.classNote = ''; renderClassWhy([]);
+            S.klass = v; S.klassByHand = true; S.classNote = ''; renderClassWhy([]); markClassTrigger();
             var hadTicks = anyTicked();
-            S.entered = {}; S.raw = {}; S.cls = {}; S.placed = {}; S.invalid = {}; S.spectOn = {};
-            S.spectNote = hadTicks ? 'The spectator choices were cleared: the new gate class takes other choices. Tick them again where it offers spectators.' : '';
+            shareUnits(function () {
+                S.entered = {}; S.raw = {}; S.cls = {}; S.placed = {}; S.invalid = {}; S.spectOn = {};
+            });
+            S.spectNote = hadTicks ? SPECT_CLASS_NOTE : '';
             fillModel();
             fillFrom();
+            prefillNew();
+            if (!S.newSlot.busy) S.newSlot.done = ['The gate class selection replaced the slots and spectators in this row.'];
+            fillNew();
+        } else if (t.querySelector('#czg-new-preset')) {
+            if (S.newSlot.busy) return;
+            var pr = slotPresets().filter(function (p) { return p.key === v; })[0];
+            if (!pr) return;
+            newEdited();
+            S.newSlot.preset = v;
+            setNewSlots(pr.slots, S.newSlot.spectators);     // a preset replaces the slot ticks
+            fillNew();
+            focusNew('#czg-new-preset');
+            return;
         } else if (t.querySelector('#czg-model')) {
             if (v === S.model) return;
             S.model = v; S.entered = {}; S.raw = {}; S.placed = {}; S.invalid = {};
@@ -1814,10 +2312,17 @@
         var t = ev.target;
         if (!t || !inDialog(t) || !S) return;
         if (t.id === 'czg-name') { inputsChanged(); return; }
+        if (t.hasAttribute('data-czg-new-name')) {
+            if (S.newSlot.busy) { t.value = S.newSlot.name; return; }
+            var made = S.newSlot.cls || S.newSlot.lines.length || S.newSlot.done.length || S.newSlot.confirm;
+            S.newSlot.name = t.value;
+            if (made) { newEdited(); fillNew(); }
+            return;
+        }
         if (!t.hasAttribute('data-czg-field')) return;
         var f = t.getAttribute('data-czg-field');
         var n = t.getAttribute('data-czg-name');
-        var r = isSpectField(f) && !t.value.trim() ? { ok: false, why: n === 'level' ? LEVEL_NEEDED : LENGTH_NEEDED } : parse(t);
+        var r = isSpectField(f) && !t.value.trim() ? { ok: false, why: n === 'level' ? LEVEL_NEEDED : n === 'unit' ? UNIT_NEEDED : LENGTH_NEEDED } : parse(t);
         S.entered[f] = S.entered[f] || {};
         S.raw[f] = S.raw[f] || {};
         S.raw[f][n] = t.value;
@@ -1831,6 +2336,10 @@
             S.invalid[key] = r.why;
             showFieldError(t, r.why);
             say(r.why);
+        }
+        if (isSpectField(f) && n === 'unit') {
+            var unitCaret = [t.selectionStart, t.selectionEnd];
+            fillSpect(); restoreFocus([f, n], unitCaret);
         }
         inputsChanged();
     });

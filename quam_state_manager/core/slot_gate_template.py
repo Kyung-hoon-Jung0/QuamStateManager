@@ -13,7 +13,9 @@ from dataclasses import dataclass, field
 from quam_state_manager.core.cz_gate_build import length_rule
 from quam_state_manager.core.pulse_class_template import check_class_name
 
-TEMPLATE_VERSION = 1
+TEMPLATE_VERSION = 2
+#: Older renders the parser still reads (a text must be the exact render of its spec at that version).
+READ_VERSIONS = (1, TEMPLATE_VERSION)
 HEADER_MARK = "# Made by QUAM State Manager slot gate class template"
 REGION_BEGIN = "    # >>> SM slot template region >>>"
 REGION_END = "    # <<< SM slot template region end <<<"
@@ -35,6 +37,9 @@ AMP_SCALE_LIMIT = 2.0
 MIN_LENGTH_NS = 16
 #: Pulse length step in ns; equal to the step the shared ``length_rule`` enforces (pinned by a test).
 LENGTH_STEP_NS = 4
+#: Guides/features.md line 1128: "Arbitrary waveforms cannot be compressed and can only be expanded
+#: up to $2^{24}-1$ clock cycles (67ms)." Each clock cycle is 4 ns; this limit is in ns.
+MAX_SPECTATOR_NS = (2 ** 24 - 1) * LENGTH_STEP_NS
 #: Longest wait in ns: 2**24 clock cycles of LENGTH_STEP_NS ns each.
 MAX_WAIT_NS = 2 ** 24 * LENGTH_STEP_NS
 #: Qubit z operation that spectator levels scale; one name for the pure check and the class.
@@ -43,7 +48,7 @@ SPECTATOR_UNIT_OP = "spectator_unit"
 KEYS_PROBLEM = "Spectator keys differ: qubits={qubits}, levels={levels}, lengths={lengths}."
 OWN_PROBLEM = "Spectator {name!r} is the pair control or target qubit."
 LENGTH_PROBLEM = ("Spectator {name!r} length {value!r} must be a finite whole multiple of " + str(LENGTH_STEP_NS)
-                  + " ns, at least " + str(MIN_LENGTH_NS) + " ns.")
+                  + " ns, at least " + str(MIN_LENGTH_NS) + " ns and at most " + str(MAX_SPECTATOR_NS) + " ns.")
 UNIT_PROBLEM = "Spectator {name!r}: the unit operation " + repr(SPECTATOR_UNIT_OP) + " is missing on that qubit."
 UNIT_VALUE_PROBLEM = ("Spectator {name!r}: the unit operation " + repr(SPECTATOR_UNIT_OP)
                       + " amplitude {value!r} must be a finite nonzero number.")
@@ -51,7 +56,20 @@ LEVEL_PROBLEM = ("Spectator {name!r} level {value!r} must be a finite number wit
                  + repr(AMP_SCALE_LIMIT) + ".")
 DUPLICATE_PROBLEM = "Spectators {first!r} and {second!r} name the same qubit."
 TYPE_PROBLEM = "Spectator {what} must be {kind}; received {value!r}."
+DURATION_PROBLEM = "Slot duration must be at most " + str(MAX_SPECTATOR_NS // LENGTH_STEP_NS) + " clock cycles."
 SLOT_PROBLEM = "The {slot} slot accepts {kinds}; received {value!r}."
+#: What each slot accepts, in plain words; the pure check and the generated class both read this one table.
+#: A control or target Pulse must be an operation of that slot's own z channel (the object a stored
+#: "#/qubits/<name>/z/operations/<op>" reference resolves to); the coupler slot also takes inline Pulses.
+SLOT_KINDS = {
+    "control": "operation-name strings or a Pulse that is an operation of the control qubit z channel",
+    "target": "operation-name strings or a Pulse that is an operation of the target qubit z channel",
+    "coupler": "operation-name strings or inline Pulse objects",
+}
+#: Version 1 wording, frozen: read only to recognise a version-1 text. Version 1 refused any Pulse on control
+#: and target; only this wording, the docstring line and that guard differ from version 2.
+V1_SLOT_KINDS = {"control": "operation-name strings", "target": "operation-name strings",
+                 "coupler": SLOT_KINDS["coupler"]}
 
 #: Sequence step kinds placed before or after the gate pulses.
 STEP_KINDS = ("align", "wait", "xy")
@@ -287,9 +305,10 @@ def reachable_level(unit) -> float:
 
 
 def spectator_length_problem(length_ns) -> str | None:
-    """Use the shared pulse length rule, while requiring a numeric value."""
-    if isinstance(length_ns, bool) or not isinstance(length_ns, (int, float)):
-        return "Spectator length must be a number of ns."
+    """Bound the stretched play in ns and use the shared pulse length rule."""
+    if (isinstance(length_ns, bool) or not isinstance(length_ns, (int, float))
+            or length_ns > MAX_SPECTATOR_NS or length_ns % LENGTH_STEP_NS or length_ns < MIN_LENGTH_NS):
+        return LENGTH_PROBLEM.format(name="spectator", value=length_ns)
     return length_rule({"length": length_ns})
 
 
@@ -361,17 +380,34 @@ def spectator_rows_problem(qubits, levels, lengths, control=None, target=None, u
         return f"Spectator rows could not be read: {type(exc).__name__}."
 
 
+def slot_value_problem(slot, value, operations, pulse_type) -> str | None:
+    """Check one slot value as the lab code holds it; return None or the SLOT_PROBLEM sentence.
+
+    *operations* is the operations mapping of the slot's own channel and *pulse_type* the Pulse class.
+    A str passes on every slot. A Pulse passes on the coupler slot, and on control or target only when
+    it is one of *operations* (by identity). The generated class applies the same rule.
+    """
+    if isinstance(value, str):
+        return None
+    if isinstance(value, pulse_type) and (slot == "coupler" or any(op is value for op in operations.values())):
+        return None
+    return SLOT_PROBLEM.format(slot=slot, kinds=SLOT_KINDS[slot], value=value)
+
+
 def _channel(slot):
     return "pair.coupler" if slot == "coupler" else f"pair.qubit_{slot}.z"
 
 
-def _region(spec, before, after):
+def _region(spec, before, after, version=TEMPLATE_VERSION):
     slots = tuple(s for s in SLOTS if s in spec.slots)
     steps = bool(before or after)
     lines = [f"    # slots = {slots!r}", f"    # spectators = {spec.spectators!r}"]
     if steps:
         lines += [f"    # before = {ascii(before)}", f"    # after = {ascii(after)}"]
-    lines += ['    """Control and target slots accept operation-name strings.',
+    own = ("    Control and target slots accept operation-name strings or a Pulse that is an operation of"
+           " the slot's own z channel." if slots != ("coupler",) and version != 1 else
+           "    Control and target slots accept operation-name strings.")
+    lines += ['    """' + own.lstrip(),
               '    The coupler slot accepts operation-name strings or inline Pulse objects.']
     if steps:
         lines += [f"    Before the gate pulses: {_describe(before)}.",
@@ -403,10 +439,15 @@ def _region(spec, before, after):
     if spec.spectators:
         lines += ["        channels.extend(q.z.name for q in self.spectator_qubits.values())"]
     for s in slots:
-        kinds = "operation-name strings or inline Pulse objects" if s == "coupler" else "operation-name strings"
-        types = "(str, Pulse)" if s == "coupler" else "str"
-        lines += [f"        if not isinstance(self.{s}_flux_pulse, {types}):",
-                  f"            raise ValueError({SLOT_PROBLEM!r}.format(slot={s!r}, kinds={kinds!r}, value=self.{s}_flux_pulse))"]
+        kinds = (V1_SLOT_KINDS if version == 1 else SLOT_KINDS)[s]
+        if s == "coupler":
+            lines += [f"        if not isinstance(self.{s}_flux_pulse, (str, Pulse)):"]
+        elif version == 1:
+            lines += [f"        if not isinstance(self.{s}_flux_pulse, str):"]
+        else:
+            lines += [f"        if not (isinstance(self.{s}_flux_pulse, str) or (isinstance(self.{s}_flux_pulse, Pulse)",
+                      f"                and any(op is self.{s}_flux_pulse for op in {_channel(s)}.operations.values()))):"]
+        lines += [f"            raise ValueError({SLOT_PROBLEM!r}.format(slot={s!r}, kinds={kinds!r}, value=self.{s}_flux_pulse))"]
     if spec.spectators:
         lines += ["        qubits, levels, lengths = self.spectator_qubits, self.spectator_levels, self.spectator_lengths",
                   "        if set(qubits) != set(levels) or set(qubits) != set(lengths):",
@@ -420,7 +461,8 @@ def _region(spec, before, after):
                   f"                    raise ValueError({DUPLICATE_PROBLEM!r}.format(first=first, second=name))",
                   "            seen.append((name, qubit))",
                   "            value = lengths[name]",
-                  f"            if isinstance(value, bool) or not isinstance(value, (int, float)) or value % {LENGTH_STEP_NS}"
+                  f"            if isinstance(value, bool) or not isinstance(value, (int, float))"
+                  f" or value > {MAX_SPECTATOR_NS} or value % {LENGTH_STEP_NS}"
                   f" or value < {MIN_LENGTH_NS}:",
                   f"                raise ValueError({LENGTH_PROBLEM!r}.format(name=name, value=value))",
                   "            if (SPECTATOR_UNIT_OP not in qubit.z.operations",
@@ -442,6 +484,10 @@ def _region(spec, before, after):
                   "                in_range = False",
                   "            if not in_range:",
                   f"                raise ValueError({LEVEL_PROBLEM!r}.format(name=name, value=level))"]
+    lines += ["        slot_duration = self.duration if duration is None else duration",
+              "        if (isinstance(slot_duration, numbers.Integral) and not isinstance(slot_duration, bool)",
+              f"                and slot_duration > {MAX_SPECTATOR_NS // LENGTH_STEP_NS}):",
+              f"            raise ValueError({DURATION_PROBLEM!r})"]
     lines += _step_guards(before, after)
     lines += _step_lines(before)
     lines += ["        align(*channels)"]
@@ -449,7 +495,7 @@ def _region(spec, before, after):
         flag = ", validate=False" if s == "coupler" else ""
         lines += [f"        {_channel(s)}.play(self.{s}_flux_pulse_label{flag},",
                   f"            amplitude_scale=amplitude_scale_{s},",
-                  "            duration=self.duration if duration is None else duration)"]
+                  "            duration=slot_duration)"]
     if spec.spectators:
         lines += ["        for name, qubit in self.spectator_qubits.items():",
                   "            level = self.spectator_levels[name]",
@@ -469,12 +515,27 @@ def _region(spec, before, after):
 
 
 def render(spec: SlotSpec) -> str:
+    """The current (version 2) text of *spec*."""
+    return _render(spec, TEMPLATE_VERSION)
+
+
+def render_v1(spec: SlotSpec) -> str:
+    """The frozen version-1 text of *spec*; used only to recognise an older text, never written."""
+    return _render(spec, 1)
+
+
+def older_render_refuses_pulse(spec: SlotSpec, version) -> bool:
+    """True when a text of *version* for *spec* refuses a stored control or target Pulse."""
+    return version == 1 and bool({"control", "target"} & set(spec.slots))
+
+
+def _render(spec: SlotSpec, version: int) -> str:
     problems = validate(spec)
     if problems:
         raise ValueError(" ".join(problems))
     before, after = _plain_steps(spec.before, "before"), _plain_steps(spec.after, "after")
-    return (f"{HEADER_MARK}, version {TEMPLATE_VERSION}.\n"
-            "from dataclasses import field\nfrom typing import Union\n"
+    return (f"{HEADER_MARK}, version {version}.\n"
+            "import numbers\nfrom dataclasses import field\nfrom typing import Union\n"
             + ("from qm.qua import align, amp, play, wait\n"
                if any(s["kind"] == "wait" for s in before + after) else "from qm.qua import align, amp, play\n")
             + "from quam.core import quam_dataclass\n"
@@ -482,16 +543,19 @@ def render(spec: SlotSpec) -> str:
             "from quam.components.pulses import Pulse\n\n"
             + (f'SPECTATOR_UNIT_OP = "{SPECTATOR_UNIT_OP}"\n\n' if spec.spectators else "")
             + f"@quam_dataclass\nclass {spec.class_name}(QubitPairMacro):\n"
-            + REGION_BEGIN + "\n" + _region(spec, before, after) + REGION_END + "\n")
+            + REGION_BEGIN + "\n" + _region(spec, before, after, version) + REGION_END + "\n")
 
 
 def parse(text: str) -> Parsed:
-    """Read only canonical template text, without executing it; never raises."""
+    """Read only canonical template text, without executing it; never raises.
+
+    A text is read when it is the exact render of its spec at the version its header names
+    (one of READ_VERSIONS); ``Parsed.version`` says which."""
     version = None
     try:
         match = re.fullmatch(re.escape(HEADER_MARK) + r", version (\d+)\.", text.split("\n", 1)[0])
         version = int(match[1]) if match else None
-        if version != TEMPLATE_VERSION:
+        if version not in READ_VERSIONS:
             raise ValueError("Missing or unsupported template version.")
         lines = text.split("\n")
         if lines.count(REGION_BEGIN) != 1 or lines.count(REGION_END) != 1:
@@ -509,7 +573,7 @@ def parse(text: str) -> Parsed:
             if not (before or after):
                 raise ValueError("Empty sequence step lists must not be written.")
         spec = SlotSpec(name, frozenset(slots), spectators, before, after)
-        if render(spec) != text:
+        if _render(spec, version) != text:
             raise ValueError("Template text does not re-render identically.")
         return Parsed(True, version=version, spec=spec)
     except Exception as exc:

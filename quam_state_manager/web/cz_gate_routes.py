@@ -44,12 +44,14 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import hashlib
 import json
 import logging
 import secrets
 import threading
 import time
+from pathlib import Path
 from collections import OrderedDict
 from typing import Any
 
@@ -58,8 +60,9 @@ from flask import current_app, jsonify, render_template, request
 from quam_state_manager.core import chip_copy, cz_gate_build as cgb, cz_gate_create
 from quam_state_manager.core.quam_config_save import (ClassFileError, class_files,
                                                       class_files_moved, class_refusal,
-                                                      lab_package)
+                                                      lab_package, published_path)
 from quam_state_manager.core import gate_check, gate_check_log, gate_intent, gate_timeline_view, pulse_catalog
+from quam_state_manager.core import slot_gate_plan as sgp, slot_gate_template as sgt
 from quam_state_manager.web import request_body
 from quam_state_manager.web import routes as R
 from quam_state_manager.web.routes import bp
@@ -147,7 +150,82 @@ def _known_available(manifest, gate_class) -> tuple[bool, str]:
                    + (f" ({detail})." if detail else "."))
 
 
-def _classes(store, merged) -> list[dict]:
+class SlotClass:
+    """A slot gate class draft of the open scope: its spec and the ONE
+    descriptor every door of a request plans and judges it with."""
+
+    def __init__(self, name: str, spec: sgt.SlotSpec, version: int = sgt.TEMPLATE_VERSION):
+        self.name = name
+        self.spec = spec
+        self.version = version
+        self.qclass = sgp.qclass_of(spec)
+        self.desc = sgp.slot_desc(spec)
+
+
+def _scope() -> str:
+    return R._ctx_chip_key(R._active_ctx()) or "no-chip"
+
+
+def _slot_classes() -> list[SlotClass]:
+    """Every slot gate class draft of the open scope that the template
+    parser reads back, at any version it reads (read only; an unreadable
+    draft is left out)."""
+    try:
+        return [SlotClass(n, s, v) for n, s, v in sgp.slot_drafts(current_app.instance_path, _scope(), True)]
+    except OSError:
+        return []
+
+
+def _request_slot(gate_class: Any) -> SlotClass | None:
+    """The slot class a request names, built once per request, or None."""
+    if not isinstance(gate_class, str) or gate_class in cgb.GATE_CLASSES:
+        return None
+    return next((sc for sc in _slot_classes() if sc.qclass == gate_class), None)
+
+
+def _desc_of(slot: SlotClass | None) -> dict | None:
+    return slot.desc if slot is not None else None
+
+
+def _slot_entry(sc: SlotClass, pcs: list) -> dict:
+    slots = [s for s in sgt.SLOTS if s in sc.spec.slots]
+    return {"class": sc.qclass, "label": f"{sc.name} (slot class SM made)", "layout": "slot",
+            "available": True, "why": "", "older_render": sc.version != sgt.TEMPLATE_VERSION,
+            "slots": [{"field": sgp.slot_field(s), "line": s,
+                       "line_words": _LINE_WORDS.get(s, s), "required": True,
+                       "pulse_classes": pcs} for s in slots],
+            "models": [],
+            "slot_spec": {"slots": slots, "spectators": bool(sc.spec.spectators)},
+            "spectators": _spectator_offer(sc.qclass, sc)}
+
+
+def _slot_presets() -> list[dict]:
+    return [{"key": k, "label": k.replace("_", " ").capitalize(),
+             "slots": [s for s in sgt.SLOTS if s in v]} for k, v in sgt.PRESETS.items()]
+
+
+def _number(v: Any) -> bool:
+    import math
+    try:
+        return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+    except OverflowError:
+        return False
+
+
+def _unit_candidates(merged: dict, pairs: list[dict]) -> None:
+    """Each spectator candidate gains ``unit`` (the stored amplitude of the
+    unit operation, None when absent) and ``reachable`` (the template's
+    own range for that unit, None without a number). In place."""
+    for p in pairs:
+        rows = p.get("spectator_candidates") or []
+        amps = sgp.unit_amplitudes(merged, [r["qubit"] for r in rows])
+        for r in rows:
+            u = amps.get(r["qubit"])
+            r["unit"] = u if _number(u) else None
+            r["reachable"] = sgt.reachable_level(u) if _number(u) else None
+
+
+def _classes(store, merged, slot_classes: list[SlotClass] | None = None) -> list[dict]:
     manifest = _manifest(store)
     pcs = _pulse_classes()
     out = []
@@ -159,12 +237,14 @@ def _classes(store, merged) -> list[dict]:
         out.append({"class": cls, "label": _CLASS_LABELS[cls], "layout": "known",
                     "available": ok, "why": why, "slots": slots, "models": [],
                     "spectators": _spectator_offer(cls)})
+    slot_names = {sc.qclass for sc in slot_classes or ()}
     lab: dict[str, list] = {}
     for pid, p in sorted((merged.get("qubit_pairs") or {}).items()):
         macros = p.get("macros") if isinstance(p, dict) else None
         for name, m in (macros or {}).items() if isinstance(macros, dict) else ():
             cls = m.get("__class__") if isinstance(m, dict) else None
-            if isinstance(cls, str) and cls not in cgb.GATE_CLASSES and cgb.is_cz_macro(name, m):
+            if (isinstance(cls, str) and cls not in cgb.GATE_CLASSES and cls not in slot_names
+                    and cgb.is_cz_macro(name, m)):
                 lab.setdefault(cls, []).append([pid, name])
     for cls in sorted(lab):
         out.append({"class": cls, "label": cls.rsplit(".", 1)[-1] + " (copies the layout of a gate on this chip)",
@@ -176,14 +256,36 @@ def _classes(store, merged) -> list[dict]:
                     "why": ("SM does not know the structure of this class and this chip has "
                             "no gate of it to copy."), "slots": [], "models": [],
                     "spectators": _spectator_offer(short)})
+    out.extend(_slot_entry(sc, pcs) for sc in slot_classes or ())
     return out
 
 
-def _spectator_offer(gate_class: str) -> dict:
+def _spectator_offer(gate_class: str, slot: SlotClass | None = None) -> dict:
     """``{"offered": bool, "why": str}``: whether the dialog offers
-    spectators for *gate_class*, and the reason sentence when it does not."""
+    spectators for *gate_class*, and the reason sentence when it does not.
+    A slot class offers them when its spec says so, with ``method: "unit"``
+    (each row scales the qubit's unit operation)."""
+    if slot is not None:
+        if slot.spec.spectators:
+            return {"offered": True, "method": "unit", "why": ""}
+        why = cgb.spectator_refusal(gate_class, gate_desc=slot.desc)
+        return {"offered": False, "method": "unit", "why": why or ""}
     why = cgb.spectator_refusal(gate_class)
     return {"offered": why is None, "why": why or ""}
+
+
+def _slot_rows(rows: Any) -> Any:
+    """The rows of a slot class as the plan reads them: a blank unit
+    (missing, None or "") is left out, never passed on as "". Rows of any
+    other shape are passed on as they are (the plan refuses them)."""
+    if not isinstance(rows, list):
+        return rows
+    out = []
+    for r in rows:
+        if isinstance(r, dict) and "unit" in r and (r["unit"] is None or r["unit"] == ""):
+            r = {k: v for k, v in r.items() if k != "unit"}
+        out.append(r)
+    return out
 
 
 def _spectators(data: dict, pairs: list) -> dict | None:
@@ -229,10 +331,17 @@ def _given_values(pulse: dict) -> dict:
             if k not in ("__class__", "id") and not (isinstance(v, str) and v.startswith("#"))}
 
 
-def _plan_all(merged: dict, body: dict) -> list[tuple[str, dict]]:
+def _plan_all(merged: dict, body: dict, slot: SlotClass | None = None) -> list[tuple[str, dict]]:
     """``[(pair, plan)]``; the first pair seeds the others' field values.
-    A given value of the wrong kind refuses every pair, naming the field."""
-    bad = check_values(merged, body)
+    A given value of the wrong kind refuses every pair, naming the field.
+
+    For a slot class (*slot*) every pair is planned with the class's one
+    descriptor and no spectators; the rows are then planned by
+    ``slot_gate_plan.plan_spectators`` against one ``planned_units`` dict
+    for the whole request. A gate refused afterwards leaves no unit in it."""
+    desc = _desc_of(slot)
+    planned_units: dict = {}
+    bad = check_values(merged, body, desc)
     spect = body.get("spectators") or {}
     for key in spect:
         if key not in body["pairs"]:
@@ -263,11 +372,21 @@ def _plan_all(merged: dict, body: dict) -> list[tuple[str, dict]]:
                     pulses[f] = {"class": pp.get("__class__"), "fields": _given_values(pp)}
         requested = [body["gate_class"]] + [s.get("class") for s in pulses.values() if isinstance(s, dict)]
         why = class_refusal(current_app.instance_path, scope, classes=requested, lab_folder=lab_folder)
-        res = {} if why else cgb.plan(
-            merged, pid, gate_name=body["gate_name"], gate_class=body["gate_class"],
-            pulses=pulses, copy_from=copy_from, model_gate=body["model_gate"],
-            macro_fields=body["macro_fields"] or None,
-            **({"spectators": spect[pid]} if pid in spect else {}))
+        added: list = []
+        if slot is not None:
+            res = {} if why else cgb.plan(
+                merged, pid, gate_name=body["gate_name"], gate_class=body["gate_class"],
+                pulses=pulses, copy_from=copy_from, model_gate=body["model_gate"],
+                macro_fields=body["macro_fields"] or None, gate_desc=desc)
+            if not why and "error" not in res and pid in spect:
+                res, added = _plan_slot_rows(merged, pid, body["gate_name"], slot, res,
+                                             spect[pid], planned_units)
+        else:
+            res = {} if why else cgb.plan(
+                merged, pid, gate_name=body["gate_name"], gate_class=body["gate_class"],
+                pulses=pulses, copy_from=copy_from, model_gate=body["model_gate"],
+                macro_fields=body["macro_fields"] or None,
+                **({"spectators": spect[pid]} if pid in spect else {}))
         why = why or class_refusal(current_app.instance_path, scope, res.get("creates") or [],
                                    lab_folder=lab_folder)
         files = []
@@ -277,15 +396,92 @@ def _plan_all(merged: dict, body: dict) -> list[tuple[str, dict]]:
                                     classes=requested)
             except ClassFileError as exc:
                 why = str(exc)
+        if why or "error" in res:
+            for key in added:
+                planned_units.pop(key, None)
         if why:
             res = {"error": why, "refusals": [why]}
         else:
             _record_class_files(res, pid, body["gate_name"], files)
+            if slot is not None:
+                note = older_render_note(slot, published_path(current_app.instance_path, scope, slot.qclass))
+                if note:
+                    res["notes"] = [note]
         if i == 0:
             first = res
         out.append((pid, res))
-    cgb.count_request_spectators(merged, out)
+    if slot is None:
+        cgb.count_request_spectators(merged, out)
+    else:
+        out = assign_units(out)
     return out
+
+
+def assign_units(plans: list[tuple[str, dict]], allowed: Any = None) -> list[tuple[str, dict]]:
+    """*plans* with each new spectator unit operation created by exactly one
+    of the gates that are written: the first gate (in request order) among
+    *allowed* (every plan without an error when None) whose rows use it. A
+    gate outside that set creates no unit, and a unit no written gate uses
+    is not created. The rows' ``unit_created`` follow. Plans are copied,
+    never changed in place."""
+    new_units: dict[str, Any] = {}
+    for _, p in plans:
+        made = {r.get("unit_operation") for r in p.get("spectators") or []
+                if isinstance(r, dict) and r.get("unit_created")}
+        for path, value in p.get("creates") or []:
+            if path in made and path not in new_units:
+                new_units[path] = value
+    if not new_units:
+        return plans
+    out, given = [], set()
+    for pid, p in plans:
+        if "error" in p:
+            out.append((pid, p))
+            continue
+        p = dict(p)
+        writes = "error" not in p and (allowed is None or pid in allowed)
+        rows = [dict(r) if isinstance(r, dict) else r for r in p.get("spectators") or []]
+        mine = []
+        for r in rows:
+            if not isinstance(r, dict) or r.get("unit_operation") not in new_units:
+                continue
+            path = r["unit_operation"]
+            r["unit_created"] = bool(writes and path not in given)
+            if r["unit_created"]:
+                given.add(path)
+                mine.append((path, copy.deepcopy(new_units[path])))
+        if "spectators" in p:
+            p["spectators"] = rows
+        p["creates"] = [c for c in p.get("creates") or [] if c[0] not in new_units] + mine
+        out.append((pid, p))
+    return out
+
+
+def _plan_slot_rows(merged: dict, pid: str, gate: str, slot: SlotClass, res: dict,
+                    rows: Any, planned_units: dict) -> tuple[dict, list]:
+    """*res* with the slot class's spectator rows planned into its macro:
+    ``(plan, [unit keys this gate added to planned_units])``. A class with
+    no spectators refuses rows with the descriptor's own sentence; a row
+    refusal is passed on as the plan sentence, unchanged."""
+    if not slot.spec.spectators:
+        why = cgb.spectator_refusal(slot.qclass, gate_desc=slot.desc)
+        return {"error": why, "refusals": [why]}, []
+    mpath = f"qubit_pairs.{pid}.macros.{gate}"
+    macro = next((v for p, v in res.get("creates") or [] if p == mpath), None)
+    if not isinstance(macro, dict):
+        return {"error": sgp.UNREADABLE_PROBLEM, "refusals": [sgp.UNREADABLE_PROBLEM]}, []
+    before = set(planned_units)
+    creates, extra, refusals = sgp.plan_spectators(
+        merged, pid, gate, _slot_rows(rows), macro, ("qubit_pairs", pid, "macros", gate),
+        planned_units)
+    if refusals:
+        return {"error": refusals[0], "refusals": list(refusals)}, []
+    res["creates"] = list(res["creates"]) + list(creates)
+    res.update(extra)
+    for r in res.get("spectators") or []:
+        r["not_calibrated"] = cgb.NOT_CALIBRATED
+    res["spectator_ops"] = {r["qubit"]: 1 for r in extra.get("spectators") or []}
+    return res, [k for k in planned_units if k not in before]
 
 
 #: the hint added to a refusal of a gate with SM-made classes whose class has
@@ -293,6 +489,33 @@ def _plan_all(merged: dict, body: dict) -> list[tuple[str, dict]]:
 EXTRAS_SLOT_REFUSAL = ("A gate that uses a class SM made records its class files in the "
                        "gate's extras; this gate class has no extras slot, so it cannot be "
                        "combined with a class SM made.")
+
+
+OLDER_RENDER_NOTE = ("The class file quam_config/{file} is of an older render that refuses the stored control "
+                     "or target pulse. Make {name} again under its own name and save it to quam_config; "
+                     "saving the class again updates the file.")
+OLDER_RENDER_SAVE_NOTE = ("The class file quam_config/{file} is of an older render that refuses the stored control "
+                          "or target pulse. {name} is already made again in the current render; save it to "
+                          "quam_config to update the file.")
+
+
+def older_render_note(slot: SlotClass, path) -> str | None:
+    """The OLDER_RENDER_NOTE sentence when the lab file at *path* of the slot
+    class is a version-1 render with a control or target slot, else None
+    (also when the file is absent or unreadable: other doors name that).
+    When the slot's draft is already of the current render, the
+    OLDER_RENDER_SAVE_NOTE sentence instead: only the save is left."""
+    if not path:
+        return None
+    try:
+        with open(path, "rb") as fh:
+            parsed = sgt.parse(fh.read().decode("utf-8"))
+    except (OSError, UnicodeDecodeError):
+        return None
+    if parsed.ok and parsed.spec is not None and sgt.older_render_refuses_pulse(parsed.spec, parsed.version):
+        note = OLDER_RENDER_SAVE_NOTE if slot.version == sgt.TEMPLATE_VERSION else OLDER_RENDER_NOTE
+        return note.format(file=Path(path).name, name=slot.name)
+    return None
 
 
 def _record_class_files(plan: dict, pid: str, gate: str, files: list[dict]) -> None:
@@ -380,7 +603,7 @@ def value_problem(value: Any, kind: str, optional: bool = True) -> str | None:
     return None if isinstance(value, (int, float, str)) else "Type a number or text."
 
 
-def _given_kinds(merged: dict, body: dict) -> tuple[dict, dict]:
+def _given_kinds(merged: dict, body: dict, desc: dict | None = None) -> tuple[dict, dict]:
     """``({slot: {field: (kind, optional)}}, {key: (kind, optional)})`` for the
     values the person may give: from the catalog for a class SM knows, from
     the model's own pulses and settings (with the catalog's declarations) for
@@ -393,7 +616,7 @@ def _given_kinds(merged: dict, body: dict) -> tuple[dict, dict]:
             pulse_kinds[slot] = {n: (prm.kind, False) for prm in cat.params
                                  for n in (prm.name, *getattr(prm, "aliases", ()))}
     setting_kinds: dict = {}
-    if body.get("gate_class") not in cgb.GATE_CLASSES and body.get("pairs"):
+    if body.get("gate_class") not in cgb.GATE_CLASSES and desc is None and body.get("pairs"):
         bare = cgb.plan(merged, body["pairs"][0], gate_name=body.get("gate_name") or "cz_x",
                         gate_class=body.get("gate_class") or "", pulses={},
                         model_gate=body.get("model_gate"))
@@ -406,11 +629,11 @@ def _given_kinds(merged: dict, body: dict) -> tuple[dict, dict]:
     return pulse_kinds, setting_kinds
 
 
-def check_values(merged: dict, body: dict) -> list[str]:
+def check_values(merged: dict, body: dict, desc: dict | None = None) -> list[str]:
     """Every given pulse field and gate setting checked against its kind on
     the server (the page checks too, but nothing it sends is trusted): one
     refusal per bad value, naming the field."""
-    pulse_kinds, setting_kinds = _given_kinds(merged, body)
+    pulse_kinds, setting_kinds = _given_kinds(merged, body, desc)
     out = []
     for slot, spec in (body.get("pulses") or {}).items():
         for k, v in ((spec or {}).get("fields") or {}).items() if isinstance(spec, dict) else ():
@@ -483,22 +706,27 @@ def _settings(p: dict) -> list[dict]:
 _NO_CLASS = cgb.NO_CLASS
 
 
-def class_fit(merged: dict, pairs: list[dict], classes: list[dict]) -> dict:
-    """``{pair: {class: reason}}``, empty reason when the class can run there."""
+def class_fit(merged: dict, pairs: list[dict], classes: list[dict],
+              descs: dict | None = None) -> dict:
+    """``{pair: {class: reason}}``, empty reason when the class can run there.
+    *descs* maps a slot class to its descriptor."""
+    descs = descs or {}
     out = {}
     for p in pairs:
-        out[p["id"]] = {c["class"]: (cgb.class_problem(merged, p["id"], c["class"]) or "")
+        out[p["id"]] = {c["class"]: (cgb.class_problem(merged, p["id"], c["class"],
+                                                        gate_desc=descs.get(c["class"])) or "")
                         for c in classes}
     return out
 
 
-def _summary(pid: str, p: dict, merged: dict | None = None, gate_class: str = "") -> dict:
+def _summary(pid: str, p: dict, merged: dict | None = None, gate_class: str = "",
+             desc: dict | None = None) -> dict:
     if "error" in p:
         refusals = p.get("refusals") or [p["error"]]
         out = {"pair": pid, "ok": False, "refusals": refusals}
         about = {_NO_CLASS}
         if merged is not None and gate_class:
-            r = cgb.class_problem(merged, pid, gate_class)
+            r = cgb.class_problem(merged, pid, gate_class, gate_desc=desc)
             if r:
                 about.add(r)
                 if r not in refusals:
@@ -520,6 +748,7 @@ def _summary(pid: str, p: dict, merged: dict | None = None, gate_class: str = ""
             "operations": p.get("operations"), "fields": p.get("fields"),
             "pulses": pulses, "sources": p.get("sources"),
             "renamed": p.get("renamed") or {}, "reset": p.get("reset") or [],
+            "notes": list(p.get("notes") or []),
             **{k: p[k] for k in ("spectators", "spectator_ops") if k in p}}
 
 
@@ -696,13 +925,17 @@ def cz_gate_dialog():
     with store._lock:
         merged = store.merged
         pairs = _pairs(merged)
-        classes = _classes(store, merged)
-        fit = class_fit(merged, pairs, classes)
+        slots = _slot_classes()
+        if slots:
+            _unit_candidates(merged, pairs)
+        classes = _classes(store, merged, slots)
+        fit = class_fit(merged, pairs, classes, {sc.qclass: sc.desc for sc in slots})
     want = request.args.get("pair") or ""
     selected = want if any(p["id"] == want for p in pairs) else ""
     from quam_state_manager.web import diagram_remove_routes as DR
     data = {"pairs": pairs, "selected": selected, "classes": classes, "fit": fit,
-            "env": DR.env_name(_env_python()), "sync": sync_now()}
+            "env": DR.env_name(_env_python()), "sync": sync_now(),
+            "slot_presets": _slot_presets(), "slot_names": list(sgt.SLOTS)}
     return render_template("_cz_gate_dialog.html", data=data, selected=selected,
                            unknown_pair=want if want and not selected else "")
 
@@ -739,9 +972,11 @@ def plan_answer():
     body = _body()
     if not body["pairs"]:
         return jsonify(ok=False, error="Pick a pair."), 400
+    slot = _request_slot(body["gate_class"])
     with store._lock:
-        plans = _plan_all(store.merged, body)
-        rows = [_summary(pid, p, store.merged, body["gate_class"]) for pid, p in plans]
+        plans = _plan_all(store.merged, body, slot)
+        rows = [_summary(pid, p, store.merged, body["gate_class"], _desc_of(slot))
+                for pid, p in plans]
     return jsonify(ok=True, plan_sig=plan_signature(body, plans), pairs=rows)
 
 
@@ -753,22 +988,45 @@ def check_answer():
     body = _body()
     if not body["pairs"]:
         return jsonify(ok=False, error="Pick a pair."), 400
+    slot = _request_slot(body["gate_class"])
     with store._lock:
-        plans = _plan_all(store.merged, body)
+        plans = _plan_all(store.merged, body, slot)
         pre_seq = store.mutation_seq
     sig = plan_signature(body, plans)
-    good = [(pid, p) for pid, p in plans if "error" not in p]
-    gates = [(pid, body["gate_name"]) for pid, _ in good]
-    creates = [c for _, p in good for c in p["creates"]]
-    previews, skipped_by = {}, {}
-    for pid, p in good:
-        pv, sk = _previews(p)
-        previews[(pid, body["gate_name"])] = pv
-        skipped_by[pid] = sk
-    res = run_check(store, _env_python(), gates, creates, previews) if gates else None
     scope = R._ctx_chip_key(R._active_ctx()) or "no-chip"
+    good = [(pid, p) for pid, p in plans if "error" not in p]
+    checked: dict = {}
+    skipped_by: dict = {}
+    res = None
+    # The check of each gate reads the creates the final write makes: when
+    # the verdicts move a shared unit operation to another gate (or drop it),
+    # the gates that may be written are checked again as they will be written.
+    for _ in range(len(plans) + 1):
+        gates = [(pid, body["gate_name"]) for pid, _ in good]
+        creates = [c for _, p in good for c in p["creates"]]
+        previews = {}
+        for pid, p in good:
+            pv, sk = _previews(p)
+            previews[(pid, body["gate_name"])] = pv
+            skipped_by[pid] = sk
+        res = run_check(store, _env_python(), gates, creates, previews) if gates else None
+        for pid, p in good:
+            checked[pid] = (res, p, _verdict(res, pid, p, body, slot, scope))
+        allowed = [pid for pid, _ in good if checked[pid][2][0]]
+        if slot is None:
+            break
+        nxt = [(pid, p) for pid, p in assign_units(good, set(allowed)) if pid in allowed]
+        if [(pid, p["creates"]) for pid, p in nxt] == [(pid, checked[pid][1]["creates"])
+                                                       for pid in allowed]:
+            break
+        good = nxt
+    # a refused gate shows the paths it would hold beside the gates written
+    shown = dict(assign_units(plans, {pid for pid, (_, _, v) in checked.items() if v[0]})
+                 if slot is not None else plans)
     out_pairs, verdicts, sigs, checks_by, timelines = [], {}, {}, {}, {}
     for pid, p in plans:
+        if "error" not in p:
+            rp, p, (allowed, state, reason, entry) = checked[pid]
         if "error" in p:
             out_pairs.append({"pair": pid, "gate": body["gate_name"], "ok": False,
                               "refusals": p.get("refusals") or [p["error"]],
@@ -776,15 +1034,6 @@ def check_answer():
                                           "reason": " ".join(p.get("refusals") or [p["error"]])}})
             verdicts[pid] = {"allowed": False}
             continue
-        entry = gate_check.gate_result(res or {}, pid, body["gate_name"])
-        allowed, state, reason = cz_gate_create.may_create(
-            res, entry, gate_class=body["gate_class"], layout=p.get("layout"),
-            sm_classes=bool(p.get("sm_class_files")))
-        if not allowed and p.get("sm_class_files") and "extras" in reason:
-            reason = f"{reason} {EXTRAS_SLOT_REFUSAL}"
-        moved = class_files_moved(current_app.instance_path, scope, p.get("sm_class_files"))
-        if moved:
-            allowed, state, reason = False, cz_gate_create.NOT_CHECKED, moved
         couplers = {_element(op) for op in (p.get("operations") or {}).values()
                     if (op.get("channel") or "").startswith(("coupler", "the coupler"))}
         src = p.get("sources") or {}
@@ -797,19 +1046,19 @@ def check_answer():
                                               target=src.get("target"),
                                               coupler_elements=[c for c in couplers if c])
         skips = skipped_by.get(pid) or []
-        oc = gate_check_log.outcome(res, entry, reasons=(
+        oc = gate_check_log.outcome(rp, entry, reasons=(
             {"preview": "no preview for this pulse class"}
             if skips and all("pulse class" in t for t in skips) else {}))
         out_pairs.append({
             "pair": pid, "gate": body["gate_name"], "ok": True, "refusals": [],
-            "outcome": oc,
+            "notes": list(p.get("notes") or []), "outcome": oc,
             "checks": [{"name": k, "status": v.get("status"), "message": v.get("message")}
                        for k, v in ((entry or {}).get("checks") or {}).items()],
             "unchecked": (entry or {}).get("unchecked") or [],
             "timeline": tl, "tiles": gate_timeline_view.tiles(tl),
             "intent": gate_intent.intent_rows(p, entry),
             "previews_skipped": skipped_by.get(pid) or [],
-            "paths": [c[0] for c in p["creates"]],
+            "paths": [c[0] for c in (p if allowed else shown[pid])["creates"]],
             "verdict": {"allowed": allowed, "state": state, "reason": reason,
                         "headline": headline(entry, tl, reason)}})
         verdicts[pid] = {"allowed": allowed, "state": state, "reason": reason}
@@ -826,6 +1075,21 @@ def check_answer():
                    why_not_checked=(res or {}).get("why_not_checked"),
                    leftover=(res or {}).get("leftover"),
                    plan_sig=sig, check_token=tok, pairs=out_pairs)
+
+
+def _verdict(res, pid: str, p: dict, body: dict, slot, scope: str) -> tuple:
+    """``(allowed, state, reason, entry)`` of one planned gate from the check *res*."""
+    entry = gate_check.gate_result(res or {}, pid, body["gate_name"])
+    allowed, state, reason = cz_gate_create.may_create(
+        res, entry, gate_class=body["gate_class"],
+        layout="slot" if slot is not None else p.get("layout"),
+        sm_classes=bool(p.get("sm_class_files")))
+    if not allowed and p.get("sm_class_files") and "extras" in reason:
+        reason = f"{reason} {EXTRAS_SLOT_REFUSAL}"
+    moved = class_files_moved(current_app.instance_path, scope, p.get("sm_class_files"))
+    if moved:
+        allowed, state, reason = False, cz_gate_create.NOT_CHECKED, moved
+    return allowed, state, reason, entry
 
 
 def _refuse(msg: str, code: int = 409, **extra):
@@ -872,7 +1136,10 @@ def create_answer():
         if not chip_copy.store_at_seq(store, {"seq": tok["seq"], "store_id": tok["store_id"]}):
             return _refuse("The chip changed after the check. Nothing was written. The check "
                            "runs again.", 409, stale=True)
-        plans = dict(_plan_all(store.merged, body))
+        slot = _request_slot(body["gate_class"])
+        allowed = {pid for pid in body["pairs"] if (tok["verdicts"].get(pid) or {}).get("allowed")}
+        plans = _plan_all(store.merged, body, slot)
+        plans = dict(assign_units(plans, allowed) if slot is not None else plans)
         for pid in body["pairs"]:
             v = tok["verdicts"].get(pid) or {}
             p = plans.get(pid) or {}
@@ -936,3 +1203,122 @@ def create_answer():
                    tray_html=R._tray_html())
     resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
     return resp
+
+
+# ---------------------------------------------------------------------------
+# a new slot gate class
+# ---------------------------------------------------------------------------
+
+NAME_NOT_TEXT = "The class name must be text. Type a class name."
+NAME_TABLE = "{name} is already a gate class SM knows. Pick another class name."
+NAME_PULSE = "{name} is already a pulse class. Pick another class name."
+NAME_LAB = "{name} is already a class file of the lab's quam_config folder. Pick another class name."
+NAME_DRAFT = "A class draft named {name} already exists and is not a slot gate class. Pick another class name."
+NAME_IN_USE = ("The slot gate class {name} is used by {count} gate(s) of this chip, so SM does not "
+               "replace it. Pick another class name.")
+STEPS_NOT_TAKEN = ("This door makes a slot gate class without steps and cannot take before or after "
+                   "steps. Post the class without them.")
+
+
+def _gates_using(merged: dict, qclass: str) -> int:
+    n = 0
+    for p in ((merged or {}).get("qubit_pairs") or {}).values():
+        macros = p.get("macros") if isinstance(p, dict) else None
+        for m in (macros or {}).values() if isinstance(macros, dict) else ():
+            if isinstance(m, dict) and m.get("__class__") == qclass:
+                n += 1
+    return n
+
+
+def _older_match(spec: sgt.SlotSpec | None, mine: list) -> sgt.SlotSpec | None:
+    """The stored spec of an older-render draft that equals *spec* once its steps are left out, or None.
+
+    The make-class route refuses posted steps, so the stored steps are kept as they are."""
+    if spec is None:
+        return None
+    for s, v in mine:
+        if v != sgt.TEMPLATE_VERSION and dataclasses.replace(s, before=(), after=()) == spec:
+            return s
+    return None
+
+
+#: the "spec to write" of a make request whose text equals the stored draft: nothing is written
+UNCHANGED = object()
+
+
+def _name_check(name: str, merged: dict, spec: sgt.SlotSpec | None = None):
+    """``(why *name* cannot be (re)made here or None, the spec to write or None for *spec*)``."""
+    from quam_state_manager.core import pulse_class_drafts as drafts
+    from quam_state_manager.core.quam_config_save import _lab_made
+    if any(c.rsplit(".", 1)[-1] == name for c in cgb.GATE_CLASSES):
+        return NAME_TABLE.format(name=name), None
+    if any(spec.key == name or str(spec.qclass).rsplit(".", 1)[-1] == name
+           for spec in pulse_catalog.PULSE_CATALOG.values()):
+        return NAME_PULSE.format(name=name), None
+    data = drafts.load_draft(current_app.instance_path, _scope(), name)
+    if data is not None:
+        mine = [(s, v) for n, s, v in sgp.slot_drafts(current_app.instance_path, _scope(), True) if n == name]
+        if not mine:
+            return NAME_DRAFT.format(name=name), None
+        count = _gates_using(merged, f"quam_config.{name}.{name}")
+        if not count:
+            return None, None
+        # an older render made again with the same spec only widens what its slots accept,
+        # so the gates that use it keep working: that remake is allowed while they use it,
+        # and the stored steps (which this route refuses to take) are written again unchanged
+        # a make that renders exactly the stored draft changes nothing, so it is answered ok
+        if spec is not None and sgt.render(spec).encode("utf-8") == data:
+            return None, UNCHANGED
+        same_older = _older_match(spec, mine)
+        if same_older is None:
+            return NAME_IN_USE.format(name=name, count=count), None
+        return None, same_older
+    lab = lab_package(_env_python())
+    if lab is not None and _lab_made(lab / f"{name}.py"):
+        return NAME_LAB.format(name=name), None
+    return None, None
+
+
+@bp.route("/api/pulse/cz-gate/slot-class", methods=["POST"])
+def api_cz_gate_slot_class():
+    """Make (or replace, while no gate uses it) a slot gate class draft:
+    ``{class_name, slots, spectators}`` -> ``{ok, cls, qclass}`` or
+    ``{ok: false, error, problems}``. Writes the draft only; saving it into
+    the lab's code is the class save door's two-step."""
+    from quam_state_manager.core import pulse_class_drafts as drafts
+    from quam_state_manager.core import pulse_class_watch as watch
+    store, err = _store_or_error()
+    if err:
+        return err
+    data = request_body.json_object({})
+    if not isinstance(data, dict):
+        raise request_body.BadBody("A JSON object is required.")
+
+    def refuse(problems):
+        return jsonify(ok=False, error=problems[0], problems=problems), 400
+
+    name = data.get("class_name")
+    if not isinstance(name, str):
+        return refuse([NAME_NOT_TEXT])
+    slots = data.get("slots")
+    if isinstance(slots, list):
+        slots = [s if isinstance(s, (str, int, float, bool, type(None))) else repr(s) for s in slots]
+    spec = sgt.SlotSpec(name, slots, data.get("spectators", False))
+    problems = sgt.validate(spec)
+    if problems:
+        return refuse(problems)
+    if any(data.get(k) not in (None, [], ()) for k in ("before", "after")):
+        return refuse([STEPS_NOT_TAKEN])
+    with store._lock:
+        taken, keep = _name_check(name, store.merged, spec)
+    if taken:
+        return jsonify(ok=False, error=taken, problems=[taken]), 409
+    if keep is UNCHANGED:
+        return jsonify(ok=True, cls=name, qclass=sgp.qclass_of(spec))
+    try:
+        src = sgt.render(keep or spec)
+        drafts.save_draft(current_app.instance_path, _scope(), name, src)
+    except (drafts.DraftError, ValueError) as exc:
+        return refuse([str(exc)])
+    watch.watch_for(current_app.instance_path, _scope(), name).adopt(src.encode("utf-8"))
+    return jsonify(ok=True, cls=name, qclass=sgp.qclass_of(spec))

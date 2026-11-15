@@ -24,7 +24,8 @@ LAZY = {"grid-virt.js", "bulk-edit.js", "pair-edit.js", "all-values.js", "pulses
         "component-map.js", "diagram-add.js", "chip-status.js", "gen-additions.js", "gen-rules.js", "generate.js", "generate_preview.js", "dataset-virtual.js",
         "ndview.js", "scheduler.js", "autofit.js", "compare-hub.js", "diff-panes.js", "journal.js", "opx-monitor.js",
         "notes.js", "agent-setup.js", "zline.js", "pulses-vt.js", "gate-status.js",
-        "coupler-units.js", "cz-plan.js", "cz-map.js", "ui.js", "cz-gate.js", "gate-timeline.js", "vendor/cm6/cm6.min.js", "tree-json-edit.js", "port-play.js"}   # cz-plan.js: Chip Status > CZ gate plan (2026-10-15); cz-map.js: its chip map (A14)   # notes.js: docs/167's bundle, never added here (red on main since); journal.js / agent-setup.js: docs/173
+        "coupler-units.js", "cz-plan.js", "cz-map.js", "ui.js", "cz-gate.js", "gate-timeline.js", "vendor/cm6/cm6.min.js", "tree-json-edit.js", "port-play.js",
+        "cm-python.js", "pulse-class-edit.js"}   # cz-plan.js: Chip Status > CZ gate plan (2026-10-15); cz-map.js: its chip map (A14)   # notes.js: docs/167's bundle, never added here (red on main since); journal.js / agent-setup.js: docs/173
 
 
 def _scripts(html: str):
@@ -103,7 +104,7 @@ def test_the_manifest_names_every_lazy_file_once_and_the_page_map_covers_the_rou
         "qubits", "pairs", "resonators", "flux", "couplers", "qdac",
         "datasets", "dataset_detail", "dataset_compare", "collections", "fit-audit",
         "scheduler", "autofit", "compare_hub", "diff", "journal", "opx_monitor", "agent_setup", "zline", "czplan",
-        "ui_kit", "explorer", "port_play",  # port_play: the standalone Port play page; explorer: the CodeMirror bundle (D-21); docs/308: the UI kit sample page (a full page load from /help)
+        "ui_kit", "explorer", "port_play", "pulse_class",  # port_play: the standalone Port play page; explorer: the CodeMirror bundle (D-21); docs/308: the UI kit sample page (a full page load from /help)
     }
     assert man["pages"]["topology"] == ["chipstatus", "components"] and man["pages"]["trends"] == ["chipstatus", "datasets"]
     # A14: an htmx navigation to /cz-plan loads the topology helper before the map, the map before the detail

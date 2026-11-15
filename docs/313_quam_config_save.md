@@ -4,6 +4,7 @@ The pulse-class editor (docs/312_pulse_class_drafts.md) keeps a class as a draft
 "Save to quam_config" is the one door that turns a draft into a module of the lab code. The route
 (`POST /pulse-class/save-config`, `web/pulse_class_page.py`) and, later, the agent tool both call one core
 function, `core/quam_config_save.py:save_class`.
+While the scheduler runs, both Save to quam_config routes refuse with the existing 409 answer before running a check or writing a file.
 
 ## The order (always the same)
 
@@ -70,11 +71,20 @@ for another chip are not judged here.
 
 ## Save to file
 
-The older "Save to file" door (a copy anywhere) cannot write into any folder named `quam_config` (with or without
-`__init__.py`) or over the file Save to quam_config published; both point to Save to quam_config. Each Save to file
+The older "Save to file" door (a copy anywhere) cannot write over the file Save to quam_config published, nor into a
+folder that has a folder named `quam_config` anywhere above the file; both point to Save to quam_config. Each Save to file
 write also adds a history line. Save to file updates only `target.json` (the status line); the publication record
 `published.json` is written only by Save to quam_config, so a copy saved elsewhere does not make the next Save to
 quam_config refuse its own file, nor make gates using the class wait again.
+
+The folder rule is a name rule and nothing else: Save to file starts no process and asks the environment nothing,
+so a press answers at once. The target is refused when any folder above it is named `quam_config`, letter case
+ignored (`QUAM_CONFIG` is the same folder on Windows), checked both on the path as typed and on the resolved path:
+a link named otherwise that leads into a `quam_config` folder is refused, and so is a link named `quam_config` that
+leads elsewhere. The package folder is always named `quam_config`, so the rule covers it wherever it lives; a copy
+that is only named `quam_config` (an archive, a backup) is refused too. The refusal names that folder with
+`PACKAGE_SENTENCE` (`pulse_class_watch.package_ancestor`). An unusable path (empty, relative, a NUL character, a
+reserved device name, a missing folder) is refused before any of this.
 
 ## The class file record on a gate, and its status
 

@@ -1,12 +1,29 @@
 {# Pulse detail — inspector pane. Waveform plot (synthesized preview) on top,
    instant-commit parameter editor below. Rendered by GET /pulse/detail and
    re-rendered by every pulse mutation response. #}
+{%- from '_ui.html' import ui_callout, ui_stats -%}
 <div id="pulse-detail-root" data-pulse-path="{{ path }}"
      data-actual-path="{{ actual_path }}">
 {% set inspector_type = "pulse" %}
 {% set inspector_label = owner ~ " · " ~ channel ~ " · " ~ op_name %}
 {% set inspector_sub = (class_short ~ (" · +" ~ (sections | length - 1) ~ " more") if sections | length > 1 else class_short) %}
 {% include '_inspector_header.html' %}
+
+{# The one sentence that says the gate plays a different pulse than the one
+   shown in the table: the strongest block, first. Its tiles are read from the
+   sentence itself (played_note), so they can never disagree with it. #}
+{% if played_note %}
+{%- set _pn_tiles = [] -%}
+{%- for _part in played_note.split(': ', 1)[-1].split('; ') -%}
+{%- if _part.startswith('length ') and ' played vs ' in _part and _part.endswith(' in the copy') -%}
+{%- set _pv = _part[7:].split(' played vs ', 1) -%}
+{%- set _ = _pn_tiles.append({'label': 'Length the gate plays', 'value': _pv[0]}) -%}
+{%- set _ = _pn_tiles.append({'label': 'Length in the macro copy', 'value': _pv[1][:-12]}) -%}
+{%- endif -%}
+{%- endfor -%}
+<div data-played-note="1" role="alert">{{ ui_callout('danger', 'Macro pulse and played op differ', played_note,
+    body=([{'part': 'stats', 'tiles': _pn_tiles, 'label': 'Played and copy length'}] if _pn_tiles else ())) }}</div>
+{% endif %}
 
 {% if status_msg %}
 <div class="pulse-status-toast pulse-status-{{ status_level }}">{{ status_msg }}</div>
@@ -88,19 +105,21 @@
 </div>
 {% endif %}
 
-<div class="pulse-actions">
+{# One primary (Verify vs config), quiet secondaries, Delete as the quiet
+   danger at the end; Delete still opens its confirm step below. #}
+<div class="pulse-actions ui-actions ui-actions--start" role="group" aria-label="Pulse actions">
+    <button type="button" class="btn-sm pulse-verify-btn"
+            title="Overlay the real machine.generate_config() waveform (ground truth) on the synthesized preview"
+            onclick="PulsesPage.verifyPulse(this)">Verify vs config</button>
     {% if can_rename %}
-    <button type="button" class="btn-sm outline"
+    <button type="button" class="btn-sm secondary"
             onclick="PulsesPage.startRename(this)">Rename</button>
     {% endif %}
     {% if can_rename or alias_chain %}
-    <button type="button" class="btn-sm outline"
+    <button type="button" class="btn-sm secondary"
             onclick="PulsesPage.startDuplicate(this)">Duplicate</button>
     {% endif %}
-    <button type="button" class="btn-sm outline pulse-verify-btn"
-            title="Overlay the real machine.generate_config() waveform (ground truth) on the synthesized preview"
-            onclick="PulsesPage.verifyPulse(this)">Verify vs config</button>
-    <button type="button" class="btn-sm outline pulse-delete-btn"
+    <button type="button" class="btn-sm danger pulse-delete-btn"
             onclick="PulsesPage.askDelete(this)">Delete</button>
 </div>
 
@@ -215,9 +234,6 @@
     <span class="pulse-dirty-pill" hidden>previewing uncommitted edits &mdash; Enter commits &middot; Esc reverts</span>
     <span class="pulse-verify-note" hidden></span>
     <span class="pulse-synth-err" {% if not synth_error %}hidden{% endif %}>{{ synth_error or '' }}</span>
-    {# AFTER the synth-error span, which pulses.js finds as the
-       first .pulse-synth-err of this bar #}
-    {% if played_note %}<span class="pulse-synth-err" data-played-note="1">Macro pulse and played op differ: {{ played_note }}</span>{% endif %}
     <span class="pulse-synth-err" data-edge-note="1" {% if not edge_note %}hidden{% endif %}>{{ edge_note or '' }}</span>
     {% if synth_unknown_class and truth_status != 'ok' and plot_source not in ('lab', 'transcription') %}
     <span class="pulse-plot-cta"{% if needs_lab %} data-lab-pending="1"{% endif %}>{% if truth_status == 'absent' %}Generate this

@@ -123,6 +123,7 @@ def sm(tmp_path):
     write_chip(live, chip_state(alias="#./x180_DragCosine", t1=3.0e-5, f01=5.1e9, amp=0.25), data)
     app = make_app(tmp_path)
     c = app.test_client()
+    c.environ_base["HTTP_X_SM_WINDOW_ID"] = "window-a"
     assert c.post("/load", data={"folder": str(live)}).status_code in (200, 302)
     return {"app": app, "client": c, "live": live, "data": data, "tmp": tmp_path}
 
@@ -621,6 +622,7 @@ def aba(tmp_path):
     write_chip(live, chip_state(alias="#./x180_DragCosine", amp=0.15), data)
     app = make_app(tmp_path)
     c = app.test_client()
+    c.environ_base["HTTP_X_SM_WINDOW_ID"] = "window-a"
     assert c.post("/load", data={"folder": str(live)}).status_code in (200, 302)
     return {"app": app, "client": c, "live": live, "data": data, "tmp": tmp_path}
 

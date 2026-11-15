@@ -1301,8 +1301,11 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
         import logging
         logging.getLogger(__name__).warning("lab code folders not loaded", exc_info=True)
 
-    from quam_state_manager.web.routes import bp
+    from quam_state_manager.web.routes import bp, bind_edit_window, release_edit_window
     app.register_blueprint(bp)
+    # one window stamp for every blueprint's door (docs/160)
+    app.before_request(bind_edit_window)
+    app.teardown_request(release_edit_window)
     # w7 liveedit (RAM P5): compile every template off the request path. A
     # process compiles each template on its first render -- the first cell
     # commit paid ~100 ms compiling the Review tray alone, measured -- and

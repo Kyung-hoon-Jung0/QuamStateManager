@@ -124,6 +124,8 @@ def test_map_details_survive_restart_ledger_history_and_undo(map_chip):
         assert "code unverified" in html and "code_fingerprint" in html and "caps_applied" in html
     pending_tray.flush_all()
     chip.app, chip.c, _ = _open(chip.inst, chip.live)
+    # A restart reloads the page: a new window, so its Ctrl+Z asks and the person says Yes.
+    chip.c.environ_base["HTTP_X_SM_WINDOW_ID"] = "window-b"
     assert chip.ctx["store"].change_log[0].origin["map"] == details
     assert chip.c.post("/state/apply-to-live").status_code == 200
     assert chip.journal()[0][-1]["entries"][0]["origin"]["map"] == details
@@ -137,7 +139,9 @@ def test_map_details_survive_restart_ledger_history_and_undo(map_chip):
     with chip.app.test_request_context():
         shown = routes._vh_present(point, [], {})
     assert '"code_fingerprint"' in shown["title"] and '"caps_applied"' in shown["title"]
-    assert chip.c.post("/undo").status_code == 200
+    # The Yes names the step it was asked about.
+    step = str(chip.journal()[0][-1]["id"])
+    assert chip.c.post("/undo", data={"ack_prev_window": step}).status_code == 200
     assert chip.live_state() == before and chip.log() == []
     # The historical record remains, marked undone; no pending origin remains.
     answer = value_history.read(directory, {"v": value_history.target(chip.ctx["store"].merged, PATH)})
