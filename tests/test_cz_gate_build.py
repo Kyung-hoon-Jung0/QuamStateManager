@@ -1864,3 +1864,125 @@ def test_refusals_cap_every_echoed_long_name():
     assert "error" in res
     assert all(long_cls not in r for r in res["refusals"])
     assert any(cgb.cap_name(long_cls) in r for r in res["refusals"]) and len(cgb.cap_name(long_cls)) == cgb.ECHO_CAP
+
+
+# --- a class described by the caller ------------------------------------
+
+DESCRIBED_GATE = "lab_pkg.TwoLineGate.TwoLineGate"
+
+
+def _described():
+    def skeleton():
+        return {"control_flux_pulse": None, "coupler_flux_pulse": None,
+                "duration": None, "__class__": DESCRIBED_GATE}
+    return {"skeleton": skeleton,
+            "slots": (cgb.Slot("control_flux_pulse", "control_pulse", "control", True),
+                      cgb.Slot("coupler_flux_pulse", "coupler_pulse", "coupler", True))}
+
+
+def _described_pulses():
+    return {f: {"class": SQUARE, "fields": {"length": 48, "amplitude": 0.3}}
+            for f in ("control_flux_pulse", "coupler_flux_pulse")}
+
+
+def _plan_described(state, pid="q1-2", **kw):
+    kw.setdefault("gate_desc", _described())
+    kw.setdefault("pulses", _described_pulses())
+    return cgb.plan(state, pid, gate_name="cz_new", gate_class=DESCRIBED_GATE, **kw)
+
+
+def _no_desc_cases():
+    lab = _lab_chip()
+    return [
+        (_chip(), "q1-2", dict(gate_name="cz_new", gate_class=cgb.CZ_GATE, pulses=_square())),
+        (_chip(), "q1-2", dict(gate_name="cz_new", gate_class=cgb.COUPLER_CZ_GATE,
+                               pulses={"coupler_flux_pulse": _square()["flux_pulse_qubit"]})),
+        (_chip(), "q1-2", dict(gate_name="cz_new", gate_class=cgb.CZ_GATE)),
+        (_chip(), "q1-2", dict(gate_name="bad", gate_class=cgb.CZ_GATE, pulses=_square())),
+        (_chip(), "q1-2", dict(gate_name="cz_new", gate_class=cgb.CZ_GATE, pulses=_square(),
+                               macro_fields={"mode": "x"})),
+        (_chip(), "q1-2", dict(gate_name="cz_new", gate_class=cgb.CZ_GATE, pulses=_square(),
+                               spectators=[{"qubit": "q3", "length": 48, "level": 0.05}])),
+        (lab, "q2-3", dict(gate_name="cz_new", gate_class=LAB_GATE)),
+        (_chip(), "q1-2", dict(gate_name="cz_new", gate_class=LAB_GATE)),
+        (_chip(), "q1-2", dict(gate_name="cz_new", gate_class=DESCRIBED_GATE,
+                               pulses=_described_pulses())),
+    ]
+
+
+def _dump(res):
+    return json.dumps(res, sort_keys=True, default=repr)
+
+
+def test_no_descriptor_answers_exactly_as_a_call_without_the_keyword():
+    kinds = set()
+    for state, pid, kw in _no_desc_cases():
+        plain = cgb.plan(copy.deepcopy(state), pid, **kw)
+        kinds.add("error" in plain)
+        assert _dump(cgb.plan(copy.deepcopy(state), pid, gate_desc=None, **kw)) == _dump(plain)
+        cls = kw["gate_class"]
+        assert (cgb.class_problem(state, pid, cls, gate_desc=None)
+                == cgb.class_problem(state, pid, cls))
+    assert kinds == {True, False}
+
+
+def test_a_descriptor_for_a_table_class_is_ignored():
+    for state, pid, kw in _no_desc_cases():
+        if kw["gate_class"] not in cgb.GATE_CLASSES:
+            continue
+        plain = cgb.plan(copy.deepcopy(state), pid, **kw)
+        assert _dump(cgb.plan(copy.deepcopy(state), pid, gate_desc=_described(), **kw)) == _dump(plain)
+    assert cgb._desc(cgb.CZ_GATE, _described()) is cgb.GATE_CLASSES[cgb.CZ_GATE]
+    # the table class asks for no pulse on the coupler-less pair's control line
+    # only; the handed-in descriptor would require the coupler
+    s = _chip()
+    s["qubit_pairs"]["q1-2"] = _pair("q1", "q2", coupler=False)
+    assert cgb.class_problem(s, "q1-2", cgb.CZ_GATE, gate_desc=_described()) is None
+    assert "no coupler" in cgb.class_problem(s, "q1-2", DESCRIBED_GATE, gate_desc=_described())
+
+
+def test_a_described_class_is_built_like_a_table_class():
+    s = _chip()
+    res = _plan_described(s)
+    assert "error" not in res, res
+    creates = dict(res["creates"])
+    macro = creates["qubit_pairs.q1-2.macros.cz_new"]
+    assert macro["__class__"] == DESCRIBED_GATE and macro["duration"] is None
+    assert set(macro) == {"control_flux_pulse", "coupler_flux_pulse", "duration", "__class__"}
+    assert macro["control_flux_pulse"]["id"] == "cz_new_control_pulse_q1_q2"
+    assert macro["coupler_flux_pulse"]["id"] == "cz_new_coupler_pulse_q1_q2"
+    assert set(creates) == {
+        "qubit_pairs.q1-2.macros.cz_new",
+        "qubits.q1.z.operations.cz_new_control_pulse_q1_q2",
+        "qubit_pairs.q1-2.coupler.operations.cz_new_coupler_pulse_q1_q2"}
+    assert res.get("layout") != "copied" and not res.get("model_gate")
+    # the same request without the descriptor has no model gate to copy
+    bare = _plan_described(s, gate_desc=None)
+    assert "error" in bare
+
+
+def test_a_described_class_takes_the_table_class_refusals():
+    res = _plan_described(_chip(), macro_fields={"mode": "x"})
+    assert any("no gate settings" in r for r in res["refusals"])
+    res = _plan_described(_chip(), pulses={"control_flux_pulse": _described_pulses()["control_flux_pulse"]})
+    assert any("needs a pulse for coupler_flux_pulse" in r for r in res["refusals"])
+    res = _plan_described(_chip(), pulses={**_described_pulses(), "flux_pulse_qubit": _square()["flux_pulse_qubit"]})
+    assert any("no pulse field flux_pulse_qubit" in r for r in res["refusals"])
+    s = _chip()
+    s["qubit_pairs"]["q1-2"]["qubit_target"] = "#/qubits/q9"
+    res = _plan_described(s)
+    assert any("uses both qubits of the pair" in r for r in res["refusals"])
+    s = _chip()
+    s["qubit_pairs"]["q1-2"]["qubit_control"] = None
+    res = _plan_described(s)
+    assert any("so SM cannot name the gate's pulses" in r for r in res["refusals"])
+
+
+def test_class_problem_reads_the_descriptor_only_for_an_unlisted_class():
+    s = _chip()
+    assert cgb.class_problem(s, "q1-2", DESCRIBED_GATE, gate_desc=_described()) is None
+    s["qubits"]["q1"]["z"] = {}
+    why = cgb.class_problem(s, "q1-2", DESCRIBED_GATE, gate_desc=_described())
+    assert why and "q1.z has no operations" in why
+    assert cgb.class_problem(s, "q1-2", DESCRIBED_GATE) is None
+    assert _plan_described(s)["refusals"] == [why]

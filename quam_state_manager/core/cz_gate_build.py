@@ -111,6 +111,15 @@ GATE_CLASSES: dict[str, dict[str, Any]] = {
 }
 
 
+def _desc(gate_class: Any, gate_desc: dict | None = None) -> dict[str, Any] | None:
+    """The descriptor a gate of *gate_class* is built from: its row in
+    ``GATE_CLASSES``, else the descriptor the caller handed in (same keys as
+    a row), else None. The table always wins, so a caller cannot redefine a
+    class SM already knows."""
+    row = GATE_CLASSES.get(gate_class)
+    return row if row is not None else gate_desc
+
+
 def _ref(*segments: str) -> str:
     """An absolute reference built from path segments."""
     return "#/" + "/".join(segments)
@@ -460,13 +469,15 @@ def _lines(merged: dict, pair_id: str) -> dict[str, Any]:
 NO_CLASS = "The gate class must be given by its class name. Pick a gate class from the list."
 
 
-def class_problem(merged: dict, pair_id: str, gate_class: str) -> str | None:
+def class_problem(merged: dict, pair_id: str, gate_class: str, *,
+                  gate_desc: dict | None = None) -> str | None:
     """Why a gate of *gate_class* cannot run on *pair_id*, or None.
 
     Only the line facts the plan itself refuses on: a required pulse slot
     whose line has no operations gives the very reason ``plan`` gives for
-    it. A class SM does not know (a copied layout) is judged by its plan."""
-    desc = GATE_CLASSES.get(gate_class)
+    it. A class SM does not know (a copied layout) is judged by its plan.
+    ``gate_desc`` describes a class that has no row in ``GATE_CLASSES``."""
+    desc = _desc(gate_class, gate_desc)
     if desc is None:
         return None
     try:
@@ -706,7 +717,8 @@ def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
          copy_from: str | None = None,
          model_gate: tuple[str, str] | None = None,
          macro_fields: dict[str, Any] | None = None,
-         spectators: list | None = None) -> dict[str, Any]:
+         spectators: list | None = None,
+         gate_desc: dict | None = None) -> dict[str, Any]:
     """Plan one new CZ gate. Never raises on chip shape; never changes *merged*.
 
     ``pulses`` maps a gate pulse field (``flux_pulse_qubit``,
@@ -738,10 +750,16 @@ def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
     spectator fields. With spectators the answer also carries
     ``"spectators": [...]`` and ``"spectator_ops": {qubit: count}``; without
     them the answer is exactly what it is for a gate with no spectators.
+
+    ``gate_desc`` is the descriptor (``{"skeleton": callable, "slots":
+    (Slot, ...)}``) of a class that has no row in ``GATE_CLASSES``; with it
+    the class is built like a table class instead of copied from a model
+    gate. It is ignored for a class the table already holds.
     """
     try:
         out = _plan_body(merged, pair_id, gate_name, gate_class, pulses,
-                         copy_from, model_gate, macro_fields, spectators)
+                         copy_from, model_gate, macro_fields, spectators,
+                         gate_desc=gate_desc)
         if "refusals" in out:
             names = _echoed_names(pair_id, gate_name, gate_class, pulses, copy_from,
                                   model_gate, macro_fields) + _spectator_names(spectators)
@@ -791,7 +809,8 @@ def _echoed_names(pair_id, gate_name, gate_class, pulses, copy_from, model_gate,
 
 
 def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
-               model_gate, macro_fields=None, spectators=None) -> dict[str, Any]:
+               model_gate, macro_fields=None, spectators=None, *,
+               gate_desc=None) -> dict[str, Any]:
     bad = _argument_problem(pair_id, gate_name, gate_class, pulses, model_gate,
                             copy_from)
     if bad:
@@ -822,12 +841,13 @@ def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
         reasons.append(r)
     lines = _lines(merged, pair_id)
     control, target = lines["_ids"]
-    if gate_class in GATE_CLASSES and not (control and target):
+    desc = _desc(gate_class, gate_desc)
+    if desc is not None and not (control and target):
         return _refuse(reasons + [
             f"The control or target of pair {pair_id} does not point at a qubit, "
             "so SM cannot name the gate's pulses. Set the pair's qubit_control "
             "and qubit_target first."])
-    if gate_class in GATE_CLASSES:
+    if desc is not None:
         # Both classes SM builds align the channels of BOTH qubits of the pair
         # when the gate runs, so a pair that names a qubit the chip does not
         # have cannot run such a gate, whichever line the pulse plays on.
@@ -861,13 +881,14 @@ def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
 
     if macro_fields is not None and not isinstance(macro_fields, dict):
         return _refuse(reasons + ["The gate settings must be given by key. Type them again."])
-    if gate_class in GATE_CLASSES:
+    if desc is not None:
         if macro_fields:
             return _refuse(reasons + [
                 f"This gate class has no gate settings to change ({', '.join(sorted(macro_fields))}). "
                 "Remove them."])
         out = _plan_known(merged, pair_id, p, gate_name, gate_class, pulses,
-                          lines, copy_source, reasons, spectators or [])
+                          lines, copy_source, reasons, spectators or [],
+                          gate_desc=gate_desc)
     else:
         out = _plan_copied(merged, pair_id, gate_name, gate_class, pulses,
                            lines, copy_source, reasons, model_gate, macro_fields)
@@ -910,8 +931,9 @@ def _name_problem(key: str, ids: tuple) -> str:
 
 
 def _plan_known(merged, pair_id, p, gate_name, gate_class, pulses, lines,
-                copy_source, reasons, spectators=()) -> dict[str, Any]:
-    desc = GATE_CLASSES[gate_class]
+                copy_source, reasons, spectators=(), *,
+                gate_desc=None) -> dict[str, Any]:
+    desc = _desc(gate_class, gate_desc)
     slots = {s.field: s for s in desc["slots"]}
     have = ", ".join(slots)
     copy_refused: set = set()
