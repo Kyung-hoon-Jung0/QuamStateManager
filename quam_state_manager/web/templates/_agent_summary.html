@@ -6,12 +6,14 @@
 {% set s = summary or {} %}
 {% set p = s.plan %}
 {% macro val(x) %}{% if x is none %}<span class="muted">not set</span>{% elif x is mapping or (x is iterable and x is not string) %}<code>{{ x | tojson }}</code>{% else %}{{ x }}{% endif %}{% endmacro %}
-{% macro rows(ws, more, show_now) %}
+{# a value as the agent card writes it (summary_data adds `cells`, docs/254); not set stays honest #}
+{% macro cell(x, w, k) %}{% if x is none %}<span class="muted">not set</span>{% elif w.cells %}{{ w.cells[k] }}{% else %}{{ val(x) }}{% endif %}{% endmacro %}
+{% macro rows(ws, more, show_now, seen=False) %}
 <div class="ag-tbl ns-tbl"><table>
   <thead><tr><th>value</th><th>old</th><th>new</th>{% if show_now %}<th>now</th>{% endif %}</tr></thead>
   <tbody>
-  {% for w in ws %}<tr><td title="{{ w.path }}"><code>{{ w.path }}</code></td><td>{{ val(w.old) }}</td><td>{{ val(w.new) }}</td>{% if show_now %}<td>{% if w.now_known %}{{ val(w.now) }}{% else %}<span class="muted">?</span>{% endif %}</td>{% endif %}</tr>{% endfor %}
-  {% if more %}<tr><td colspan="{{ 4 if show_now else 3 }}" class="muted">+{{ more }} more</td></tr>{% endif %}
+  {% for w in ws %}<tr{% if seen %} data-seen-path="{{ w.path }}"{% if w.now_known %} data-seen-now='{{ w.seen_now | tojson }}'{% else %} data-seen-unknown="1"{% endif %}{% endif %}><td title="{{ w.path }}"><code>{{ w.path }}</code></td><td>{{ cell(w.old, w, 'old') }}</td><td>{{ cell(w.new, w, 'new') }}</td>{% if show_now %}<td>{% if w.now_known %}{{ cell(w.now, w, 'now') }}{% else %}<span class="muted">?</span>{% endif %}</td>{% endif %}</tr>{% endfor %}
+  {% if more %}<tr><td colspan="{{ 4 if show_now else 3 }}" class="muted" data-ns-more>and {{ more }} more row{{ 's' if more != 1 }}</td></tr>{% endif %}
   </tbody></table></div>
 {% endmacro %}
 <div id="agent-summary" class="agent-summary" data-plan="{{ p.id if p else '' }}">
@@ -55,10 +57,16 @@
       <div class="ns-line"><span class="ag-plan-st {{ 'ag-st-waiting' if pending else '' }}">{{ 'run request' if h.kind == 'run' else ('held' if pending else h.status) }}</span>
         <code>{{ h.node }}</code> {{ (h.targets or []) | join(' ') }}{% if h.run_id %} · #{{ h.run_id }}{% endif %}{% if h.step is not none %} · step {{ h.step }}{% endif %}
         <span class="muted">· {{ h.why }} · {{ h.created | ts_local(short=True) }}</span></div>
-      {% if h.kind == 'writes' %}{{ rows(h.writes, h.more, True) }}{% endif %}
+      {% if h.kind == 'writes' %}{{ rows(h.writes, h.more, True, pending) }}{% endif %}
       <div class="ns-acts">
-      {% if pending %}
+      {% if pending and h.kind == 'writes' and h.more %}
+        {# contract 7: a press writes only what the presser could see; this page lists 12 rows #}
+        <a class="btn-sm" data-ns-review href="/agent" hx-get="/agent" hx-target="#table-pane" hx-push-url="true"
+           title="this approval has more values than the summary lists; its card in the agent panel shows every one">Review in panel</a>
+      {% elif pending %}
         <button type="button" class="btn-sm ns-approve" data-ns-act="approve" data-id="{{ h.id }}">{{ 'Allow run' if h.kind == 'run' else 'Write to chip' }}</button>
+      {% endif %}
+      {% if pending %}
         <button type="button" class="btn-sm outline ns-reject" data-ns-act="reject" data-id="{{ h.id }}">Reject</button>
       {% else %}
         <span class="muted">{{ h.status }}{% if h.decided_by %} by {{ h.decided_by }}{% endif %}{% if h.decided_at %} · {{ h.decided_at | ts_local(short=True) }}{% endif %}</span>

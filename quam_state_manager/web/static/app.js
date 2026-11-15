@@ -5323,6 +5323,7 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
         headers: {"Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
         body: "mode=" + encodeURIComponent(mode) + (opts && opts.automatic ? "&auto_sync=1" : "") + (forced ? "&force=1" : "")
               + (ackUnseen ? "&ack_unseen=1" : "")
+              + (opts && opts.ackUnverified ? "&ack_unverified=" + encodeURIComponent(opts.ackUnverified) : "")
               + (_seen !== null ? "&seen_changes=" + encodeURIComponent(_seen) : "")
               + (_seenSig ? "&seen_sig=" + encodeURIComponent(_seenSig) : "")
               + (expectChip ? "&expect_chip=" + encodeURIComponent(expectChip) : "")
@@ -5421,6 +5422,17 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                                          "info");
                     }
                 }
+                return;
+            }
+            if (data.status === "unverified_kept") {
+                // docs/254: an earlier write nobody verified left values this press would
+                // carry; name them, and only the person's OK writes them too
+                window._confirmUnverifiedKept(data).then(function (ok) {
+                    window._applyInFlight = false;
+                    if (!ok) return;
+                    var o2 = Object.assign({}, opts || {}, { ackUnverified: data.token });
+                    window.doStateSync(mode, forced, ackUnseen, expectChip, o2);
+                });
                 return;
             }
             if (data.status === "collision") {
@@ -6094,6 +6106,64 @@ document.addEventListener("htmx:beforeSwap", function (evt) {
             if (window.showToast) window.showToast("Nothing was written — the tray now shows those edits.", "info");
             refresh();
         }
+    }, 0);
+});
+/* docs/254: values an approval's or a dataset door's unverified live write kept are named before a person's
+ * press carries them (the mark's id is the token, so a newer mark is named again). OK = write
+ * them too; Cancel = write nothing, the values stay in SM. Resolves true/false. */
+window._confirmUnverifiedKept = function (data) {
+    var rows = (data && data.rows) || [];
+    var text = (data && data.message) || "";
+    if (rows.length) {
+        text += "\n\n  " + rows.map(function (r) {
+            var kept = r.value;
+            return r.path + "  " + (Object.prototype.hasOwnProperty.call(r, "old")
+                ? r.old + " -> " + kept : kept);
+        }).join("\n  ");
+    }
+    text += "\n\nOK = write them too.\nCancel = write nothing; the values stay in SM."
+        + " In the top bar, open Apply not verified and choose Take live to check what the chip holds.";
+    // no UI-kit confirm: write nothing (an unanswered question is never a yes)
+    var ask = window.smConfirm ? window.smConfirm(text) : Promise.resolve(false);
+    return ask.then(function (ok) {
+        if (!ok) {
+            if (window.htmx) {
+                try { window.htmx.ajax("GET", "/state/tray", { target: "#pending-tray", swap: "outerHTML" }); }
+                catch (e) {}
+            }
+            if (window.showToast) window.showToast("Nothing was written to the live chip.", "info");
+        }
+        return !!ok;
+    });
+};
+/* Every press of /state/apply-to-live (the tray, Review, Keep mine, the grid's push, an
+ * Auto-Sync flush) meets the same 409: no generic toast, the named values, and on OK the same
+ * request again with the acknowledgement. */
+document.addEventListener("htmx:beforeSwap", function (evt) {
+    var det = evt.detail;
+    if (!det || !det.xhr || det.xhr.status !== 409) return;
+    var path = (det.requestConfig && det.requestConfig.path) || "";
+    if (path.indexOf("/state/apply-to-live") !== 0) return;
+    var data = null;
+    try { data = JSON.parse(det.xhr.responseText || ""); } catch (e) { return; }
+    if (!data || data.status !== "unverified_kept") return;
+    det.shouldSwap = false;
+    det.isError = false;
+    if (window._keepMineInFlight) window._keepMineInFlight._writeFailed = "unverified_kept";
+    var vals = {};
+    var fd = det.requestConfig && det.requestConfig.formData;
+    if (fd && typeof fd.forEach === "function") {
+        fd.forEach(function (v, k) { vals[k] = v; });
+    } else if (det.requestConfig && det.requestConfig.parameters) {
+        var ps = det.requestConfig.parameters;
+        Object.keys(ps).forEach(function (k) { vals[k] = ps[k]; });
+    }
+    vals.ack_unverified = data.token;
+    setTimeout(function () {
+        window._confirmUnverifiedKept(data).then(function (ok) {
+            if (!ok || !window.htmx) return;
+            window.htmx.ajax("POST", path, { target: "#pending-tray", swap: "outerHTML", values: vals });
+        });
     }, 0);
 });
 window.applyEditsToLive = function () {

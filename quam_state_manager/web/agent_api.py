@@ -199,6 +199,97 @@ def _jsonable(v: Any) -> Any:
     return v
 
 
+def _card_value(v: Any) -> Any:
+    """docs/254: a stored value exactly as the approval card receives it: ``_jsonable``
+    and then the app's JSON provider mapping (NaN and +/-inf become null)."""
+    from quam_state_manager.web.app import _finite_or_none
+    return _finite_or_none(_jsonable(v))
+
+
+def _refusal_line(path: str, row: dict, sent: dict, where: str = "the card") -> str:
+    """docs/254: the "changed since the card showed" line, written as the card writes its
+    values: ``row`` is the refreshed card row (``now_known`` / ``now`` / ``old`` /
+    ``display``), ``sent`` what the press sent (``seen_now`` or ``seen_unknown``, ``new``).
+    The numbers come from core.value_delta.format_card_row, the port of agent.js fmtRow;
+    agent.js apRefusedText writes the same line from the same two dicts. The stored values
+    are added in brackets only when the display scales them (Hz shown in GHz). ``where``
+    names the page the person pressed on ("the card", or "the summary" for the night
+    summary, which writes its rows with the same formatter). Never raises: a refusal is
+    never turned into a 500 by the text that explains it."""
+    try:
+        return _refusal_text(path, row, sent, where)
+    except Exception:  # noqa: BLE001 -- the refusal stands; only its numbers are left out
+        logger.warning("refusal line for %s could not be formatted", path, exc_info=True)
+        return f"{path} changed since {where} showed it; press again"
+
+
+def _refusal_text(path: str, row: dict, sent: dict, where: str) -> str:
+    from quam_state_manager.core.value_delta import format_card_row, js_json_text
+    known, unknown = row.get("now_known") is True, sent.get("seen_unknown") is True
+    vals = [row.get("now") if known else None, None if unknown else sent.get("seen_now"),
+            row.get("old"), sent.get("new")]
+    spec = row.get("display") if isinstance(row.get("display"), dict) else None
+    texts = [js_json_text(v) if isinstance(v, str) else t
+             for v, t in zip(vals, format_card_row(vals, spec))]
+    now_text = texts[0] if known else "not set"
+    shown = "not set" if unknown else texts[1]
+    stored = ""
+    scale = (spec or {}).get("scale")
+    if spec and spec.get("unit") and isinstance(scale, (int, float)) and scale != 1:
+        detail = ([f"now {js_json_text(vals[0])}"] if known else []) + (
+            [f"{where}'s {js_json_text(vals[1])}"] if not unknown else [])
+        if detail:
+            stored = f" (stored in {spec.get('stored') or 'its own unit'}: {', '.join(detail)})"
+    return f"{path} changed to {now_text} since {where} showed {shown}; press again{stored}"
+
+
+def _seen_equal(now: Any, seen: Any, equal) -> bool:
+    """docs/254: a value as the card rendered it (`_jsonable`) against what the press
+    says the card showed, element by element, each leaf by `equal` (differ.compare_equal)."""
+    if isinstance(now, list) and isinstance(seen, list):
+        return len(now) == len(seen) and all(_seen_equal(a, b, equal) for a, b in zip(now, seen))
+    if isinstance(now, dict) and isinstance(seen, dict):
+        return now.keys() == seen.keys() and all(_seen_equal(now[k], seen[k], equal) for k in now)
+    return equal(now, seen)
+
+
+def _count_of(n: int, noun: str) -> str:
+    """'1 value' / 'N values': the one plural style of the approval refusals and the tray count."""
+    return f"{n} {noun}{'' if n == 1 else 's'}"
+
+
+def _then(lead: str, tail: str) -> str:
+    """``lead`` and a "; ..." ``tail`` as one sentence: the lead's own closing period goes."""
+    if not tail:
+        return lead
+    lead = lead.rstrip()
+    return (lead[:-1] if lead.endswith(".") and not lead.endswith("..") else lead) + tail
+
+
+#: what an approval says once its values left SM again after a refused live write
+TAKEN_BACK = "; nothing was written, and the approval's values were taken back out of SM"
+
+
+#: what an approval says when its live write may have reached the chip (the door's write outcome
+#: is "unknown" or "landed"): the values stay, so SM shows what the chip may hold
+KEPT_UNVERIFIED = ("; the live write could not be verified, so the approval's values stay saved in SM's working "
+                   "copy until a person takes live or applies; check the chip")
+
+
+def _door_lead_then(lead: str, clause: str) -> str:
+    """The door's ``lead`` with the approval's own ``clause``: the door's "Your edits are kept."
+    goes (the clause says what happened to the approval's values), and the clause follows."""
+    kept = _r().EDITS_KEPT
+    if lead.rstrip().endswith(kept.strip()):
+        lead = lead.rstrip()[:-len(kept.strip())]
+    return _then(lead, clause)
+
+
+def _taken_back(lead: str) -> str:
+    """The door's ``lead`` for an approval whose values were taken back out of SM."""
+    return _door_lead_then(lead, TAKEN_BACK)
+
+
 def _err(msg: str, code: int = 400, **extra):
     return jsonify(ok=False, error=msg, **extra), code
 
@@ -1846,6 +1937,55 @@ def _pre_door_state(r, ctx) -> dict:
             "reapply_orig": _copy.deepcopy(ctx.get("pending_reapply_orig")), "units": ids}
 
 
+def _overlaps(a: str, b: str) -> bool:
+    """True when one dot-path is the other or lies under it."""
+    return a == b or a.startswith(b + ".") or b.startswith(a + ".")
+
+
+def _take_back_own(store, mod, gid) -> list[str]:
+    """Take this approval's own rows (``gid``) back out of the tray; never undo another window.
+
+    Each own row is taken back whole or left whole, newest first:
+    - no later row of any group (another window's or this approval's own) touches its path
+      (the same path, under it or above it): it is discarded (its old value restored), as before;
+    - a plain set whose only later rows are plain sets of exactly the same path: the value
+      stays what the other window set, the first of those rows takes this row's old value as
+      its own "before" (the tray then reads old -> theirs, and its Ctrl+Z restores old, never
+      the refused approval's value), and this row leaves the tray;
+    - anything else (a created or deleted subtree another window changed since, a later
+      structural edit on or above it): the row stays in the tray untouched, never half
+      reverted, and its path is returned so the refusal can say a human decides.
+    Returns the dot-paths that stayed.
+    """
+    kept: list[str] = []
+    with store._lock:
+        log = store.change_log
+        for i in range(len(log) - 1, -1, -1):
+            if i >= len(log) or log[i].group_id != gid:
+                continue
+            own = log[i]
+            later = [e for e in log[i + 1:] if _overlaps(e.dot_path, own.dot_path)]
+            if not later:
+                try:
+                    mod.discard(i)
+                except Exception:  # noqa: BLE001 -- a row SM cannot revert stays, for a human
+                    logger.debug("take-back of %s failed", own.dot_path, exc_info=True)
+                    kept.append(own.dot_path)
+                continue
+            plain = (not own.created and not own.deleted
+                     and all(e.group_id != gid and e.dot_path == own.dot_path
+                             and not e.created and not e.deleted for e in later))
+            if not plain:
+                kept.append(own.dot_path)
+                continue
+            later[0].old_value = copy.deepcopy(own.old_value)
+            log.pop(i)
+            store.mutation_seq += 1
+        store._clear_pointer_cache()
+    kept.reverse()
+    return kept
+
+
 def _take_back_saved(r, ctx, staged: list, before: dict) -> str | None:
     """Undo a group the door SAVED into the working copy but could not push:
     write each leaf's old value back, save the working copy, drop the journal
@@ -1987,7 +2127,7 @@ def _unstaged_message(unstaged: list[dict], total: int) -> str:
     tail = ""
     if any(str(u.get("why", "")).startswith(("new key", "removed key")) for u in unstaged):
         tail = "; " + STRUCTURAL_WHAT_TO_DO
-    return (f"{len(unstaged)} of {total} value(s) cannot be staged: {lines}{more}; "
+    return (f"{len(unstaged)} of {_count_of(total, 'value')} cannot be staged: {lines}{more}; "
             f"nothing was written{tail}")
 
 
@@ -2008,7 +2148,7 @@ def _nonfinite_rows(writes: list[dict]) -> list[dict]:
 
 
 def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan_id: str | None,
-                  apply: bool, *, presser: str | None = None) -> dict:
+                  apply: bool, *, presser: str | None = None, shown_by: str = "the card") -> dict:
     """Stage ``writes`` onto the chip's working copy as ONE group with the
     agent's actor and, when ``apply``, push them through the ONE door
     (``/state/apply-to-live``) as the presser's own press -- the agent's
@@ -2020,12 +2160,18 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
         return {"group_id": gid, "staged": 0, "applied": False, "error": "the chip is no longer loaded",
                 "unstaged": [{"path": w["path"], "why": "chip not loaded"} for w in writes[:50]]}
     mod, store = ctx["modifier"], ctx["store"]
-    if presser and not str(presser).startswith("by_") and store.change_log:
+    person = bool(presser) and not str(presser).startswith("by_")
+
+    def _tray_busy(lead: str = "") -> dict:
         # review R1-M1: a person's approval press consents to THESE writes, never to whatever
-        # else the tray holds (another window's edit would ride along under this name)
+        # else the tray holds (another window's edit would ride along under this name).
+        # The count is what the tray holds NOW, read here for every caller: after a take-back
+        # it is the other window's rows plus any of this approval's rows that had to stay.
+        with store._lock:
+            n = len(store.change_log)
         return {"group_id": gid, "staged": 0, "applied": False, "unstaged": [],
-                "error": f"the tray holds {len(store.change_log)} staged edit(s); apply or discard them in the window "
-                         "first, then approve"}
+                "error": f"{lead}the tray holds {_count_of(n, 'staged edit')}; apply or discard "
+                         f"{'it' if n == 1 else 'them'} in the window first, then approve"}
     staged, unstaged = [], []
     # Q-4 (agents ver180): a path the person listed as never-touch is never staged for an agent
     try:
@@ -2061,6 +2207,35 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
     resized = resized_lists(writes)
     creations: dict[str, dict] = {}     # first missing path -> nested dict of the new leaves (or a scalar)
     with store._lock:
+        # the empty-tray check and the staging are one hold of the store lock (an RLock; the
+        # modifier calls below take it again): an edit from another window cannot land
+        # between them and be pushed under this person's name
+        if person and store.change_log:
+            return _tray_busy()
+        # docs/254: compare every displayed value before staging any row.
+        from quam_state_manager.core.differ import compare_equal
+        for w in writes:
+            unknown = w.get("seen_unknown") is True
+            if "seen_now" not in w and not unknown:
+                continue
+            target = r._resolve_edit_path(store, w["path"]) or w["path"]
+            try:
+                current = _card_value(store.get_value(target))     # the card's own representation
+            except Exception:  # noqa: BLE001 -- a leaf SM cannot read: the card said "not set"
+                readable, current = False, None
+            else:
+                readable = True
+            if unknown:
+                matches = not readable
+            else:
+                matches = readable and _seen_equal(current, w["seen_now"], compare_equal)
+            if not matches:
+                from quam_state_manager.core import units
+                row = {"now_known": readable, "now": current if readable else None, "old": w.get("old"),
+                       "display": units.display_spec(w["path"])}
+                return {"group_id": gid, "staged": 0, "applied": False, "unstaged": [],
+                        "seen_now_changed": True, "path": w["path"],
+                        "error": _refusal_line(w["path"], row, w, shown_by)}
         for w in writes:
             root = None
             if w.get("created") and not w.get("deleted") and not _existing_leaf(store, w["path"]):
@@ -2135,22 +2310,51 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
         out["error"] = "another chip is active in the window; staged only"
         return out
 
-    def _take_back():
-        with store._lock:                      # the group comes back out of the tray
-            while store.change_log and store.change_log[-1].group_id == gid:
-                mod.undo_group()
+    took: dict = {}
+
+    def _take_back() -> str:
+        # the group comes back out of the tray, never over another window's later edit
+        # (docs/254); the returned text names what had to stay for a human
+        own = sum(1 for e in store.change_log if e.group_id == gid)
+        kept = _take_back_own(store, mod, gid)
+        took["back"] = own - len(kept)
+        if not kept:
+            return ""
+        return (f"; {_count_of(len(kept), 'value')} of this approval could not be taken back because another "
+                f"window changed {'it' if len(kept) == 1 else 'them'} since ({', '.join(kept[:6])}); "
+                "a human decides in the window")
     # The door SAVES the log into the working copy before it writes the chip and
     # only then notices a moved chip (docs/65's re-apply stash) -- a refusal there
     # would leave the agent's values half-way, in SM but not on the chip. Ask first.
+    from quam_state_manager.core import working_copy as wc_mod
+    # the flag and the mark are facts SM holds; only the hash probe below can fail, and only it
+    # fails open (a probe error never lets a held mark through)
+    held = bool(ctx.get("live_diverged")) or r._unverified_write_held(ctx)
+    moved = False
     try:
-        from quam_state_manager.core import working_copy as wc_mod
-        if wc_mod.live_diverged_now(ctx["working_copy"]):
-            _take_back()
-            out["error"] = "stale_live: the live files moved outside SM since the last sync (take live first)"
-            return out
+        moved = wc_mod.live_diverged_now(ctx["working_copy"])
     except Exception:  # noqa: BLE001
         logger.debug("live_diverged_now failed", exc_info=True)
-    n = len(store.change_log)
+    if moved or held:
+        # the flag or the mark alone: an earlier live write nobody could verify
+        # (routes._note_unverified_write) may have left saved values no approval owns; this press
+        # must not carry them to the chip
+        kept = _take_back()
+        out["error"] = ("stale_live: " + ("the live files moved outside SM since the last sync (take live first)"
+                                          if moved else r.UNVERIFIED_HELD_MSG) + kept)
+        return out
+    with store._lock:
+        # the count the door is handed is read under the lock, and for a person's press it
+        # may count only this approval's own rows: an edit that reached the tray after the
+        # staging refuses here, and one after this point makes the door's count refuse
+        foreign = sum(1 for e in store.change_log if e.group_id != gid)
+        if person and foreign:
+            kept = _take_back()
+            busy = _tray_busy("another edit reached the tray while this approval was staged, so "
+                              "nothing was written: ")
+            busy["error"] += kept
+            return busy
+        n = len(store.change_log)
     # verifier P0 (w7/agentsqa): what SM looked like before the door, so a push
     # refused AFTER the door's save can be taken back to exactly this
     before = _pre_door_state(r, ctx)
@@ -2176,10 +2380,16 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
     try:
         with app.test_request_context("/state/apply-to-live", method="POST",
                                       data=door, headers=headers):
-            resp = r.state_apply_to_live()
-    except Exception as exc:  # noqa: BLE001
+            try:
+                resp = r.state_apply_to_live()
+            except Exception as exc:  # noqa: BLE001
+                # the door raised: its outcome is what it reached ("none" before its journal line)
+                logger.exception("agent apply failed")
+                resp = (jsonify(ok=False, message=f"Apply to live failed unexpectedly: {type(exc).__name__}: {exc}",
+                                write_outcome=r._apply_pend_outcome()), 500)
+    except Exception as exc:  # noqa: BLE001 (the request could not be set up: the door never ran)
         logger.exception("agent apply failed")
-        resp = (jsonify(ok=False, error=f"{type(exc).__name__}: {exc}"), 500)
+        resp = (jsonify(ok=False, error=f"{type(exc).__name__}: {exc}", write_outcome="none"), 500)
     status = resp[1] if isinstance(resp, tuple) else getattr(resp, "status_code", 200)
     body = resp[0] if isinstance(resp, tuple) else resp
     if status != 200:
@@ -2187,7 +2397,14 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
         out["error"] = ((js or {}).get("message") or (js or {}).get("conflict") or (js or {}).get("error")
                         or _status_text(body) or f"HTTP {status}")
         if store.change_log:
-            _take_back()                       # refused BEFORE the save: the group comes back out
+            # refused BEFORE the save: the group comes back out. A failed live write
+            # whose save was put back says "Your edits are kept." -- for an approval
+            # whose values just left the tray, it says what happened instead
+            kept = _take_back()
+            if (js or {}).get("error") == r.LIVE_WRITE_FAILED and took.get("back"):
+                out["error"] = _then(_taken_back(out["error"]), kept)
+            else:
+                out["error"] = _then(out["error"], kept)
         else:
             # refused AFTER the save (the live write itself failed -- a reader
             # holding state.json open on Windows). The values used to stay in
@@ -2195,13 +2412,29 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
             # Reject left them there and the NEXT approval's push carried them
             # to the chip under its own name. Take them back out, so a refused
             # press leaves SM exactly where it found it.
+            # Only when the chip certainly holds the old content: a write whose outcome is
+            # "unknown" or "landed" (routes._write_outcome) may be on the chip, and taking
+            # its values back would make SM show an old value the chip no longer holds.
+            outcome = (js or {}).get("write_outcome")
+            if status >= 500 and outcome not in ("failed", "none"):
+                # an unexpected error after the live write (or one that names no outcome):
+                # nobody confirmed what the chip holds
+                outcome = "unknown"
+            if outcome in ("unknown", "landed"):
+                r._note_unverified_write(ctx, outcome, kept=[
+                    {"path": e.dot_path, "old": e.old_value, "kept": e.new_value,
+                     **({"absent": True} if e.created else {})} for e in staged])
+                out["saved_in_working_copy"] = True
+                out["write_outcome"] = outcome
+                out["error"] = _door_lead_then(out["error"], KEPT_UNVERIFIED)
+                return out
             why = _take_back_saved(r, ctx, staged, before)
             if why is None:
-                out["error"] += "; nothing was written, and the approval's values were taken back out of SM"
+                out["error"] = _taken_back(out["error"])
             else:
                 out["saved_in_working_copy"] = True
-                out["error"] += ("; the values are saved in SM's working copy (unapplied) and could not be "
-                                 f"taken back ({why}); a human decides in the window")
+                out["error"] = _then(out["error"], "; the values are saved in SM's working copy (unapplied) and "
+                                     f"could not be taken back ({why}); a human decides in the window")
         return out
     if r._change_count() == 0 and not ctx.get("live_diverged"):
         out["applied"] = True
@@ -2853,6 +3086,11 @@ def _nonfinite_masked(proposed_new, sent_new) -> bool:
         return False
 
 
+def _shown(x) -> bool:
+    """docs/254: one ``seen`` entry of a press that names no values says what the page showed."""
+    return isinstance(x, dict) and ("seen_now" in x or x.get("seen_unknown") is True)
+
+
 @agent_bp.route("/approvals/<aid>/<verb>", methods=["POST"])
 def approvals_decide(aid: str, verb: str):
     """approve / reject, by a person. Approving ``writes`` stages them as the
@@ -2869,6 +3107,7 @@ def approvals_decide(aid: str, verb: str):
     data = json_object()
     inst, chip = current_app.instance_path, _chip_key()
     writes = data.get("writes") if isinstance(data.get("writes"), list) else None
+    shown_by = "the card"                        # the page the press came from, for the refusal line
     with _lock_for("approve"):                   # review R3-3: two presses are one decision
         cur = approvals.get(inst, chip, aid)
         if cur is None or cur.get("status") != "pending":
@@ -2892,8 +3131,7 @@ def approvals_decide(aid: str, verb: str):
                     + ", ".join(strangers[:6])
                     + (" and %d more" % (len(strangers) - 6) if len(strangers) > 6 else "")
                     + " was not among them", 400)
-            # keep each proposal's own `old`: the value is the person's to
-            # change, the anchor it is compared against is not
+            # Keep proposal provenance; seen_now belongs to this press alone.
             # a node that proposed NaN or Infinity is shown null (JSON has no
             # such number), so the card sends that null back unchanged. That
             # null is the display, never a value the person chose: writing it
@@ -2906,16 +3144,40 @@ def approvals_decide(aid: str, verb: str):
                     + ", ".join(masked[:6])
                     + (" and %d more" % (len(masked) - 6) if len(masked) > 6 else "")
                     + "; type a value for it, or untick it", 409)
-            writes = [dict(proposed[str(w.get("path"))], new=w.get("new"))
+            writes = [dict(proposed[str(w.get("path"))], new=w.get("new"),
+                           **({"seen_now": w["seen_now"]} if "seen_now" in w else {}),
+                           **({"seen_unknown": True} if w.get("seen_unknown") is True else {}))
                       for w in writes]
         if verb == "approve" and cur.get("kind") == "writes" and writes is None:
             # a press that names no values writes what the card ticks by default: never a value
             # the node itself marked failed (those are written only when a person ticks them)
             writes = [dict(w) for w in (cur.get("writes") or []) if not w.get("failed_target")]
+            # docs/254: a press that names no values (the night summary) may still say what each
+            # listed row showed as now; those rows then refuse like the card's when it moved
+            seen = {str(x.get("path")): x for x in (data.get("seen") if isinstance(data.get("seen"), list) else [])
+                    if isinstance(x, dict)}
+            for w in writes:
+                x = seen.get(str(w.get("path")))
+                if x and "seen_now" in x:
+                    w["seen_now"] = x["seen_now"]
+                elif x and x.get("seen_unknown") is True:
+                    w["seen_unknown"] = True
             if not writes:
                 return _err("every value on this card comes from a target the node marked failed; "
                             "tick the ones to write on the card, or Reject it", 409,
                             approval=approvals.summary(cur))
+            if isinstance(data.get("seen"), list):
+                # contract 7: a press that says what it showed writes only what it showed. A
+                # value the page did not list (the summary lists at most 12) is never written
+                # under it; the summary offers Review in panel instead of a write for those.
+                shown_by = "the summary"
+                unseen = [str(w.get("path")) for w in writes if not _shown(seen.get(str(w.get("path"))))]
+                if unseen:
+                    return _err(f"{_count_of(len(unseen), 'value')} of this approval "
+                                f"{'was' if len(unseen) == 1 else 'were'} not on the summary "
+                                f"({', '.join(unseen[:3])}{' and more' if len(unseen) > 3 else ''}); "
+                                "nothing was written. Review it in the agent panel", 409,
+                                approval=approvals.summary(cur), unseen=unseen[:50])
         if verb == "approve" and cur.get("kind") == "writes" and writes is not None and not writes:
             return _err("no value is ticked: tick the values to write, or Reject the card", 400)
         out = {"ok": True}
@@ -2930,13 +3192,17 @@ def approvals_decide(aid: str, verb: str):
                 writes = cur["writes"]
             res = _stage_writes(current_app._get_current_object(), str(r._active_path()),
                                 writes if writes is not None else (cur.get("writes") or []),
-                                f"approved:{aid}", cur.get("actor") or "by_agent", cur.get("plan_id"), True, presser=actor)
+                                f"approved:{aid}", cur.get("actor") or "by_agent", cur.get("plan_id"), True,
+                                presser=actor, shown_by=shown_by)
             out["stage"] = res
             if not res.get("applied"):
                 return jsonify(ok=False, error=res.get("error") or "not applied", stage=res,
-                               approval=approvals.summary(cur),
+                               approval=(_approval_card(cur, r._active_ctx()["store"])
+                                         if res.get("seen_now_changed") else approvals.summary(cur)),
                                how=("the approval stays pending; " + ("take live, then approve again"
                                     if "stale_live" in str(res.get("error")) else "see the error"))), 409
+        if writes is not None:     # what the card showed belongs to this press, never to the record
+            writes = [{k: v for k, v in w.items() if k not in ("seen_now", "seen_unknown")} for w in writes]
         rec = approvals.decide(inst, chip, aid, status="approved" if verb == "approve" else "rejected", who=actor,
                                note=data.get("note"), writes=writes)
     out["approval"] = approvals.summary(rec)
@@ -3575,12 +3841,13 @@ def _approval_view(ap: dict, store) -> dict:
         if not (w2.get("created") or w2.get("deleted")):
             try:
                 target = r._resolve_edit_path(store, str(w.get("path"))) or str(w.get("path"))
-                w2["now"] = _jsonable(store.get_value(target))
+                raw_now = _jsonable(store.get_value(target))
+                w2["now"] = _card_value(raw_now)     # docs/254: the form the press compares against
                 w2["now_known"] = True
             except Exception:  # noqa: BLE001 -- a leaf SM cannot read says "not set", never a guess
                 w2["now_known"] = False
             else:
-                if w2["now"] is None and isinstance(w.get("new"), str):
+                if raw_now is None and isinstance(w.get("new"), str):
                     w2.update(_text_into_null(store, target, w["new"]))
         rows.append(w2)
     out["writes"] = rows
@@ -3600,16 +3867,23 @@ def _with_display(rows: list | None) -> list:
     return out
 
 
+def _approval_card(ap: dict, store) -> dict:
+    """docs/254: an approval exactly as the panel's card gets it, from the feed and from
+    the approve door's "changed since the card showed" refusal alike: the view with the
+    display unit on each write row."""
+    out = _approval_view(ap, store)
+    if out.get("writes"):
+        out["writes"] = _with_display(out["writes"])
+    return out
+
+
 def _feed_display(live: dict) -> None:
-    """The panel's feed only: approvals' writes, run writes and a plan's
-    "may change" rows. The MCP-visible views (``_run_view``, ``_plan_view``)
-    stay as they were -- an agent reads stored values, not display text."""
+    """The panel's feed only: run writes and a plan's "may change" rows (approvals
+    get theirs in ``_approval_card``). The MCP-visible views (``_run_view``,
+    ``_plan_view``) stay as they were -- an agent reads stored values, not display text."""
     for p in live.get("plans") or []:
         if p.get("may_change"):
             p["may_change"] = _with_display(p["may_change"])
-    for a in live.get("approvals") or []:
-        if a.get("writes"):
-            a["writes"] = _with_display(a["writes"])
     for rv in live.get("runs") or []:
         res = rv.get("result") or {}
         if res.get("writes"):
@@ -3669,7 +3943,7 @@ def chat_cards():
                 and kept(m, m.get("status") not in ("starting", "running"), "since")]
         runs.sort(key=lambda x: float(x.get("since") or 0))
         live["runs"] = runs[-20:]
-        live["approvals"] = [_approval_view(a, r._store()) for a in approvals.pending(inst, key)]
+        live["approvals"] = [_approval_card(a, r._store()) for a in approvals.pending(inst, key)]
         rec = agent_session.load(inst, key)
         file = agent_session.summary(rec)
         resumable = bool(rec and rec.get("session_id"))
@@ -4115,8 +4389,36 @@ def summary_data(plan_id: str | None) -> dict:
         target = r._resolve_edit_path(store, str(path)) or str(path)
         return store.get_value(target)
     _reconcile_grant()                              # never summarize a grant that ended as still running
-    return agent_overnight.summary(current_app.instance_path, _chip_key(), plan_id=plan_id,
-                                   live_folder=ctx.get("path"), current=current if store is not None else None)
+    out = agent_overnight.summary(current_app.instance_path, _chip_key(), plan_id=plan_id,
+                                  live_folder=ctx.get("path"), current=current if store is not None else None)
+    # docs/254: a held value's "now" as the approve door compares it (the card's own form),
+    # so the summary's Write to chip press sends what its row shows
+    for h in out.get("held") or []:
+        for w in h.get("writes") or []:
+            if w.get("now_known"):
+                w["seen_now"] = _card_value(w.get("now"))
+            w["cells"] = _summary_cells(w)
+    for a in out.get("applied") or []:
+        for w in a.get("writes") or []:
+            w["cells"] = _summary_cells(w)
+    return out
+
+
+def _summary_cells(w: dict) -> dict | None:
+    """docs/254: one summary row's now / old / new written as the agent card writes them
+    (core.value_delta.format_card_row, the port of agent.js fmtRow; strings as JSON text),
+    so the summary shows the unit and the decimals a refusal line then names."""
+    from quam_state_manager.core import units
+    from quam_state_manager.core.value_delta import format_card_row, js_json_text
+    vals = [_card_value(w.get("now")) if w.get("now_known") else None,
+            _card_value(w.get("old")), _card_value(w.get("new"))]
+    try:
+        texts = format_card_row(vals, units.display_spec(str(w.get("path") or "")))
+    except Exception:  # noqa: BLE001 -- the page then shows the stored values, as before
+        logger.debug("summary cells for %s", w.get("path"), exc_info=True)
+        return None
+    texts = [js_json_text(v) if isinstance(v, str) else t for v, t in zip(vals, texts)]
+    return {"now": texts[0], "old": texts[1], "new": texts[2]}
 
 
 @agent_bp.route("/plans/<pid>/end", methods=["POST"])

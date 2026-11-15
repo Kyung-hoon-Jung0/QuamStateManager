@@ -1305,6 +1305,10 @@ def _sync_view(ctx=None) -> dict | None:
             # returned the chip to the refused sync point (A -> B -> A)
             or refused.get("ev", 0) != getattr(wc, "sync_events", 0)):
         refused = None
+    if refused is None and getattr(wc, "unverified_write", None):
+        # docs/254: the persisted mark says the same after a restart (or once the press's own
+        # record expired): a write nobody verified is never shown as a plain unapplied edit
+        refused = {"unverified": True, "at": wc.unverified_write, "cause": ""}
     # a refused apply stashes the edits it saved (pending_reapply) and clears
     # the change log -- they are still the user's unapplied edits
     # S10 walk r4 (P2-5): one count of the user's unapplied edits -- the FIELDS
@@ -1585,6 +1589,14 @@ def _build_quam_context(folder: Path):
                         (store.mutation_seq, len(store.change_log)), h)
         except Exception:
             working_dirty = False
+    if getattr(wc, "unverified_write", None):
+        # docs/254: a live write an earlier session could not verify left its values saved here.
+        # While they are, the context is marked diverged as that session's was; once the working
+        # content is back at the sync point there is nothing left to guard.
+        if working_dirty:
+            live_diverged = True
+        else:
+            working_copy.clear_unverified_write(wc)
     return wc, store, index, live_diverged, working_dirty, drift_count, parked
 
 
@@ -32692,7 +32704,7 @@ def _auto_apply_landed(ctx) -> None:
 
 def _conflict_tray(ctx, store, *, staged_conflict: bool,
                    auto_disarmed: bool = False,
-                   auto_merging: bool = False, cause: str = "") -> str:
+                   auto_merging: bool = False, cause: str = "", unverified: bool = False) -> str:
     """Render the staleness-conflict tray (docs/187 3).
 
     ONE place that knows what this tray needs. It replaces ``#pending-tray``,
@@ -32705,7 +32717,9 @@ def _conflict_tray(ctx, store, *, staged_conflict: bool,
     state ("Apply wrote nothing — live changed") -- and the choices live in the
     sync panel, which the client opens in answer to the user's own press. What
     the panel must say (when, staged or not, what Auto-Sync decided) rides on
-    ``ctx["apply_refused"]``, valid until the sync point moves.
+    ``ctx["apply_refused"]``, valid until the sync point moves. *unverified*: the write may
+    have reached the chip (its outcome "unknown" or "landed"), so the control never says it
+    wrote nothing (docs/254).
     """
     if ctx is not None:
         wc = ctx.get("working_copy")
@@ -32717,6 +32731,7 @@ def _conflict_tray(ctx, store, *, staged_conflict: bool,
             "auto_disarmed": bool(auto_disarmed),
             "auto_merging": bool(auto_merging),
             "cause": cause,
+            "unverified": bool(unverified),
         }
     return render_template(
         "_state_apply_conflict.html",
@@ -34426,7 +34441,8 @@ def state_drift():
     _reprobe_readonly(ctx)          # v1.5.1 (U P1-6)
     _sv = _sync_view(ctx)
     sync = ({"state": _sv["state"], "sig": _sv["sig"], "stale": _sv["stale"],
-             "live_n": _sv["live_n"], "unapplied": _sv["unapplied"]}
+             "live_n": _sv["live_n"], "unapplied": _sv["unapplied"],
+             "unverified": bool(_sv.get("refused_unverified"))}
             if _sv else None)
     # QA review of r2-36: the flag this refresh may just have raised rides the
     # poll, so an OPEN page's pill can stop reading "Synced" (app.js re-renders
@@ -34766,12 +34782,14 @@ def _unseen_edit_refusal(ctx) -> dict | None:
 
     if have <= seen:
         return None
+    from quam_state_manager.web.agent_api import _count_of     # the one plural style ("1 edit" / "N edits")
+    one = have - seen == 1
     return {"status": "unseen_changes", "have": have, "seen": seen,
             "paths": all_paths[seen:][:8],
             "message": (
-                f"{have - seen} edit(s) were made in another State Manager "
-                f"window and are not shown on this screen. Applying now would "
-                f"write them to the live chip too.")}
+                f"{_count_of(have - seen, 'edit')} {'was' if one else 'were'} made in another "
+                f"State Manager window and {'is' if one else 'are'} not shown on this screen. "
+                f"Applying now would write {'it' if one else 'them'} to the live chip too.")}
 
 
 def _staged_version_words(ctx) -> str:
@@ -35147,6 +35165,11 @@ def state_sync(*, _auto_mode=None, _held_override=None):
         _unseen = _unseen_edit_refusal(ctx)
         if _unseen is not None:
             return jsonify(_unseen), 409
+        # docs/254: asked BEFORE the pull below, which would clear the mark and then replay
+        # the kept values from the reapply stash onto the chip
+        _kept_ref = _unverified_kept_refusal(ctx)
+        if _kept_ref is not None:
+            return jsonify(_kept_ref), 409
 
     # docs/65 state-roundtrip: a SAVED/STAGED working copy (working_dirty — a
     # snapshot, a run's state, a revert, or /save'd edits; content that is NOT
@@ -35747,7 +35770,7 @@ def _crash_token(store) -> str:
 @_journal_press
 def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
                              force=False, patch=None, journal=True, walk=False,
-                             hub: dict | None = None):
+                             hub: dict | None = None, kept_gate: bool = True, kept_rows: dict | None = None):
     """Finish a ``mode=apply`` sync: save the re-applied edits to the working
     copy and push them to the live chip. Mirrors ``/state/apply-to-live`` but
     returns JSON so ``doStateSync`` can drive it. On a fresh staleness conflict
@@ -35771,7 +35794,10 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     than this door -- ``kind``/``src``/``undoes``/``units``/``run_uid``/``ref``
     (a Ctrl+Z step names the event it takes back, a redo the undo it takes
     back, a dataset apply its run). The result body carries the event id as
-    ``hub_event`` when the write landed."""
+    ``hub_event`` when the write landed.
+    ``kept_gate=False``: the caller replaced the working content wholesale (the dataset door),
+    so no unverified write's kept value rides on it (docs/254). ``kept_rows`` receives the old and
+    kept values from the pre-write live read so that door can persist an unverified mark."""
     store = ctx["store"]
     wc = ctx["working_copy"]
     saver = ctx["saver"]
@@ -35784,6 +35810,9 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     missing = working_copy.missing_live_message(wc) if not force else None
     if missing:
         return jsonify(status="error", conflict="missing_live", message=missing), 409
+    _kept_ref = _unverified_kept_refusal(ctx) if kept_gate else None
+    if _kept_ref is not None:
+        return jsonify(_kept_ref), 409
 
     # Re-stash exactly the edits now in the change log, so save()'s clear can't
     # lose them if the apply below hits a fresh conflict. Pin to the CAPTURED ctx
@@ -35865,6 +35894,8 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
                         "message": _UNBACKED_OVERWRITE_MSG}), 409
 
     _before_tree = None
+    if kept_rows is not None:
+        kept_rows["rows"] = None
     # docs/271: what this press records (see /state/apply-to-live)
     _hub = dict(hub or {})
     _staged = bool(ctx.get("staged_base"))
@@ -35893,6 +35924,13 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
             if journal and ctx.get("staged_base"):
                 _before_tree = _live_merged_tree(wc)
                 _bref["tree"] = _before_tree
+                if kept_rows is not None and _before_tree is not None:
+                    entries = Differ().diff(store, (_before_tree, {}), ignore_keys=set(), float_tolerance=0)
+                    kept_rows["rows"] = [{"path": e.dot_path, "old": e.new_value, "kept": e.old_value,
+                                          "src": "dataset_apply",
+                                          **({"absent": True} if e.change_type == "removed" else {}),
+                                          **({"removed": True} if e.change_type == "added" else {})}
+                                         for e in entries]
             working_copy.apply_to_live(
                 wc, force=force, record=_pend,
                 **({"backup_check": _forced_write_gate(wc, pre_apply_ts, _backup_hash, _bref)}
@@ -36077,6 +36115,8 @@ _LIVE_MOVED_AFTER_BACKUP_MSG = (
 #: v1.5.1 (SA-F2): the machine-readable answer of a live write that failed
 #: (never an HTTP 500: the failure is known, named and nothing was lost)
 LIVE_WRITE_FAILED = "live_write_failed"
+#: the tail of the door's live-write failure text (the edits stay in the tray)
+EDITS_KEPT = " Your edits are kept."
 BACKUP_FAILED = "backup_failed"
 WORKING_SAVE_FAILED = "working_save_failed"
 #: v1.5.1 (MINOR 10): a pull (Take live / re-apply / Pull & apply) that failed
@@ -36137,6 +36177,17 @@ def _write_denial(exc, live_folder=None) -> str:
     return ""
 
 
+#: an agent's or an approval's press while :func:`_unverified_write_held` (docs/254)
+UNVERIFIED_HELD_MSG = ("SM cannot tell whether the live chip matches its last sync (an earlier live write "
+                       "could not be verified); take live first")
+
+
+def _apply_pend_outcome() -> str:
+    """The write outcome (:func:`_write_outcome`) of the Apply press this request ran: "none"
+    when the press raised before its journal line existed, so before any live write."""
+    return _write_outcome(g.get("_apply_pend"))
+
+
 def _write_outcome(pending) -> str:
     """What a live write's journal line says happened (docs/271): ``landed``
     (the chip holds the written content), ``failed`` (it still holds the old
@@ -36147,6 +36198,102 @@ def _write_outcome(pending) -> str:
     if rec is None:
         return "none"
     return rec.outcome or "unknown"
+
+
+def _note_unverified_write(ctx, outcome: str, kept: list | None = None) -> None:
+    """A live write whose outcome (:func:`_write_outcome`) is "unknown" leaves nobody knowing
+    what the chip holds while the working copy keeps the written values (the dataset door and an
+    approval share this). The context is marked diverged, and the working copy's meta records it
+    (``working_copy.mark_unverified_write``), so a restart marks the rebuilt context the same way
+    (:func:`_build_quam_context`). An approval (``agent_api._stage_writes``) and an agent's own
+    press (:func:`_unverified_write_held`) then refuse until a person takes live or applies; a
+    person's own Apply press names the kept values first (:func:`_unverified_kept_refusal`).
+    *kept*: the rows the write kept (``{"path", "old", "kept", "src"}``, plus ``"absent": True``
+    for no live value or ``"removed": True`` for a deleted key), None when it wrote a whole
+    document without readable live values (docs/254)."""
+    if outcome == "unknown" and ctx is not None:
+        ctx["live_diverged"] = True
+        wc = ctx.get("working_copy")
+        if wc is not None:
+            working_copy.mark_unverified_write(wc, kept=kept)
+
+
+def _unverified_write_held(ctx) -> bool:
+    """True while the working copy carries :func:`_note_unverified_write`'s mark: it may hold saved
+    values of a live write nobody could verify, which no later press owns. The mark itself is the
+    fact (it survives a restart and a poll that lowers ``live_diverged``)."""
+    wc = (ctx or {}).get("working_copy")
+    return bool(getattr(wc, "unverified_write", None))
+
+
+UNVERIFIED_KEPT_LEAD = ("These values from an approval that may not have reached the chip will be "
+                        "written too.")
+UNVERIFIED_KEPT_LEAD_WHOLE = ("These values from an earlier live write that may not have reached the chip "
+                              "will be written too.")
+
+
+def _unverified_kept_value(value) -> str:
+    """Exact JSON for the values a person's confirmation would write (docs/254)."""
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _unverified_kept_rows(ctx) -> tuple[list, bool]:
+    """What a person's Apply would carry of the held mark's write (docs/254): ``([{"path",
+    "old", "value"}], named)``. *named*: the mark lists its rows, and a row counts while the working
+    copy still holds its kept value (a Ctrl+Z or a later edit took it out). A mark that names
+    none (older meta or unreadable pre-write live values) counts every value the working copy holds that
+    live does not, outside the tray's own edits. Live unreadable: no rows (the door's own
+    missing/unreadable refusals speak then)."""
+    wc, store = ctx.get("working_copy"), ctx.get("store")
+    named = getattr(wc, "unverified_kept", None)
+    rows: list = []
+    if named is not None:
+        with store._lock:
+            for k in named:
+                cur = _dot_get(store.merged, k["path"])
+                removed = cur is _DOT_MISSING and k.get("removed", False)
+                if removed or (not k.get("removed") and cur is not _DOT_MISSING
+                               and _differ_mod.compare_equal(cur, k.get("kept"), tolerance=None)):
+                    row = {"path": k["path"],
+                           "value": "(removed)" if removed else _unverified_kept_value(cur)}
+                    # Only marks written before rows included old need the kept-only display.
+                    if "old" in k:
+                        row["old"] = "not set" if k.get("absent") else _unverified_kept_value(k["old"])
+                    rows.append(row)
+        return rows, True
+    try:
+        entries = _working_vs_live_entries(ctx, None, None, working_copy.read_live_shared(wc))
+    except (OSError, ValueError, safe_io.LiveFileError):
+        logger.info("unverified-write preflight: live unreadable", exc_info=True)
+        return rows, False
+    with store._lock:
+        mine = {getattr(c, "dot_path", None) for c in store.change_log}
+    for e in entries:
+        if e.dot_path in mine:
+            continue
+        rows.append({"path": e.dot_path,
+                     "value": "(removed)" if e.change_type == "added" else _unverified_kept_value(e.old_value)})
+    return rows, False
+
+
+def _unverified_kept_refusal(ctx) -> dict | None:
+    """A person's press that would carry the values an unverified live write kept
+    (:func:`_note_unverified_write`) names them first, like Keep mine names what it replaces
+    (docs/86, docs/254). None: no mark, nothing of it left in the working copy, or the press
+    acknowledges THIS mark (``ack_unverified`` = the mark's id; a mark set after the confirm
+    opened has a new id and is named again)."""
+    wc = (ctx or {}).get("working_copy")
+    mark = getattr(wc, "unverified_write", None)
+    if not mark or request.values.get("ack_unverified") == mark:
+        return None
+    rows, named = _unverified_kept_rows(ctx)
+    if not rows:
+        return None
+    from_run = any(row.get("src") == "dataset_apply" for row in (getattr(wc, "unverified_kept", None) or []))
+    lead = UNVERIFIED_KEPT_LEAD if named and not from_run else UNVERIFIED_KEPT_LEAD_WHOLE
+    return {"ok": False, "status": "unverified_kept", "conflict": "unverified_kept", "token": mark,
+            "paths": [r_["path"] for r_ in rows], "rows": rows,
+            "message": lead + " Take live instead to see what the chip holds."}
 
 
 def _live_write_failure_text(ctx, exc, what: str = "Apply to live", outcome: str = "",
@@ -36235,14 +36382,17 @@ def _live_landed_stamp(ctx=None) -> int:
 
 
 def _live_write_failure_response(ctx, message: str, code: str, *, auto=None,
-                                 tray: bool = True, detail: str | None = None):
+                                 tray: bool = True, detail: str | None = None,
+                                 outcome: str | None = None):
     """v1.5.1 (SA-F2): a known live-write failure answers 409 (never 500),
     names itself in ``X-SM-Error-Code`` and carries the tray (so a read-only
     pill raised by this very failure shows) plus a persistent error in the
     status bar -- an error there stays until closed. JSON callers get
     ``{ok: false, error: <code>, message, tray_html}``. *auto*: an armed
     auto-apply session is ended first (a background writer never keeps
-    pushing at a chip that refused it)."""
+    pushing at a chip that refused it). *outcome*: the write's
+    :func:`_write_outcome`, given to JSON callers as ``write_outcome`` (an
+    approval tells "nothing was written" apart from "maybe written")."""
     if auto is not None and ctx is not None:
         ctx.pop("auto_apply", None)
     cause = _write_denial(getattr(g, "_merge_failure", None),
@@ -36250,7 +36400,8 @@ def _live_write_failure_response(ctx, message: str, code: str, *, auto=None,
     if ctx:
         _conflict_tray(ctx, ctx["store"], staged_conflict=bool(ctx.get("working_dirty")),
                        cause=("read-only" if cause == "denied" else "file locked" if cause == "held"
-                              else _merge_refusal_cause(getattr(g, "_merge_failure", message), code)))
+                              else _merge_refusal_cause(getattr(g, "_merge_failure", message), code)),
+                       unverified=outcome in ("unknown", "landed"))
     # v1.5.1 (r6 P2-6): the notice carries when a live write last landed, as
     # of this failure -- a later landing takes it down
     _landed = _live_landed_stamp(ctx)
@@ -36258,7 +36409,8 @@ def _live_write_failure_response(ctx, message: str, code: str, *, auto=None,
         resp = make_response(jsonify(ok=False, error=code, message=message,
                                      tray_html=_tray_html(), live_landed=_landed,
                                      live_landed_chip=_ctx_chip_key(ctx) or "",
-                                     **({"detail": detail} if detail else {})), 409)
+                                     **({"detail": detail} if detail else {}),
+                                     **({"write_outcome": outcome} if outcome else {})), 409)
     else:
         err = render_template("_status.html", level="error", message=message,
                               detail=detail, live_fail_at=_landed, live_fail_chip=_ctx_chip_key(ctx) or "")
@@ -36497,6 +36649,7 @@ def state_apply_to_live():
     warning and an explicit force-overwrite option.
     """
     ctx = _pin_request_ctx(_active_ctx())   # R3 C1: this press's chip
+    g.pop("_apply_pend", None)      # this press's own journal line, once it has one (_apply_pend)
     if not ctx or ctx.get("type") != "quam":
         return render_template("_status.html", message="No state loaded", level="warning")
     blocked = _archive_write_blocked(ctx)   # guard the CAPTURED ctx (TOCTOU)
@@ -36537,6 +36690,10 @@ def state_apply_to_live():
         _hold = _agent_apply_hold(ctx)
         if _hold is not None:
             return _hold
+        if _unverified_write_held(ctx):
+            # docs/254: the working copy may hold an earlier write's values nobody verified;
+            # an agent's press would carry them to the chip under its own name
+            return jsonify(ok=False, conflict="unverified_write", message=UNVERIFIED_HELD_MSG), 409
         _lk = _agent_edit_lock_refusal(ctx)
     else:
         # D-45: an Auto-Sync flush is not a person's press. The working copy
@@ -36586,6 +36743,11 @@ def state_apply_to_live():
     # files), and the tray keeps showing what SM holds that live does not.
     if not force and _apply_preflight(ctx):
         return _apply_stale_refusal(ctx, store, _auto)
+    # docs/254: a person's press never carries an unverified write's kept values unnamed
+    # (an agent's press was refused above; an approval refuses in agent_api._stage_writes)
+    _kept_ref = _unverified_kept_refusal(ctx)
+    if _kept_ref is not None:
+        return jsonify(_kept_ref), 409
 
     # QA correctness-r2-09: the live chip moved while the Keep-mine confirm was
     # open -- the user consented to replacing the values it named, not these.
@@ -36771,6 +36933,7 @@ def state_apply_to_live():
                       if (_staged or force) else None),
         units=lambda: ([u.get("id") for u in _jrn_units] + _saved_ids
                        + ([_bref["wh_unit"]["id"]] if _bref.get("wh_unit") else [])))
+    g._apply_pend = _pend       # an exception escaping this door still names its write outcome
     try:
         with _active_wc_lock(ctx):
             # docs/160 B (see the sync twin). QA correctness-r2-10: a FORCED
@@ -36840,8 +37003,8 @@ def state_apply_to_live():
         # read-only pill when this write discovered the denial.
         return _live_write_failure_response(
             ctx, _live_write_failure_text(ctx, exc, "Apply", outcome=_outcome, with_exc=False)
-            + " Your edits are kept.",
-            LIVE_WRITE_FAILED, auto=_auto, detail=str(exc))
+            + EDITS_KEPT,
+            LIVE_WRITE_FAILED, auto=_auto, detail=str(exc), outcome=_outcome)
     except Exception as exc:  # noqa: BLE001 — r16 6: honest message, never a dropped 500
         g._merge_failure = exc
         logger.exception("apply-to-live unexpected failure")
@@ -36852,6 +37015,11 @@ def state_apply_to_live():
                     f"{type(exc).__name__}: {exc}")
         if _auto:
             return _auto_disarm_response(ctx, _body, "error", status=500)
+        if request.headers.get("Accept", "").startswith("application/json"):
+            # the write may have happened before the exception: a JSON caller (an approval)
+            # gets the journal's outcome, as from the sync twin's unexpected exit
+            return jsonify(ok=False, message=f"Apply to live failed unexpectedly: {type(exc).__name__}: {exc}",
+                           write_outcome=_write_outcome(_pend)), 500
         return _body, 500
 
     _hub_stamp_units(_pend, _jrn_units)     # docs/271: before the commit writes them
@@ -48634,6 +48802,7 @@ def dataset_load_state(uid):
                 uid, ctx["path"])
 
     if apply_req:
+        _kept_rows = {}   # filled from the shared writer's pre-write live read
         # QA F1: which history dir files this chip BEFORE the push -- a run
         # whose state names another chip (extras.chip_name) moves it, and the
         # result line must say so (State History then lists the other name).
@@ -48645,7 +48814,7 @@ def dataset_load_state(uid):
         # apply core — same pre-apply snapshot (arms ↺ Revert last apply),
         # same staleness handling, same bookkeeping as the ⚡ button.
         try:
-            result = _sync_pull_apply_to_live(ctx, None)
+            result = _sync_pull_apply_to_live(ctx, None, kept_rows=_kept_rows, kept_gate=False)
             body = (result[0] if isinstance(result, tuple) else result).get_json()
         except Exception as exc:  # noqa: BLE001 -- v1.5.1: named, judged below
             logger.exception("dataset Apply to chip failed")
@@ -48663,7 +48832,8 @@ def dataset_load_state(uid):
             # reversibility via ↺ Revert last apply is what licenses this).
             # The unforced first attempt is what tells us drift existed at all.
             try:
-                result = _sync_pull_apply_to_live(ctx, None, force=True)
+                result = _sync_pull_apply_to_live(ctx, None, force=True,
+                                                  kept_rows=_kept_rows, kept_gate=False)
                 body = (result[0] if isinstance(result, tuple) else result).get_json()
             except Exception as exc:  # noqa: BLE001 -- v1.5.1: named, judged below
                 logger.exception("dataset Apply to chip (over drift) failed")
@@ -48720,8 +48890,7 @@ def dataset_load_state(uid):
         # own write look like outside drift, and "nothing was applied" false.
         _outcome = (body or {}).get("write_outcome")
         if _outcome in ("landed", "unknown"):
-            if _outcome == "unknown":
-                ctx["live_diverged"] = True   # nobody knows what the chip holds
+            _note_unverified_write(ctx, _outcome, kept=_kept_rows.get("rows"))
             _fail = ((body or {}).get("detail") or _fail).rstrip(".") + (
                 ". The run's state stays staged in the working copy; Take live (top "
                 "bar) shows what the live chip holds, Apply pushes the staged state again.")

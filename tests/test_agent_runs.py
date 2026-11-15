@@ -1310,7 +1310,7 @@ def test_two_true_new_keys_refused_message_lists_both(c, inst, synth_folder):
     rows += [{"path": "qubits.qA1.rb_scalar.x", "old": None, "new": 1.0, "created": True},
              {"path": "qubits.qA1.rb_list.3.a", "old": None, "new": 1.0, "created": True}]
     res = _refused(c, synth_folder, rows)
-    assert res["error"].startswith("2 of 12 value(s) cannot be staged"), res["error"]
+    assert res["error"].startswith("2 of 12 values cannot be staged"), res["error"]
     assert "qubits.qA1.rb_scalar.x" in res["error"] and "qubits.qA1.rb_list.3.a" in res["error"]
     assert "nothing was written" in res["error"] and "Apply to chip" in res["error"]
 
@@ -1594,10 +1594,11 @@ def test_structural_why_names_each_shape(w, merged, starts):
 def test_unstaged_message_lists_six_then_counts_the_rest():
     rows = [{"path": f"q.p{i}", "why": "new key the chip does not have"} for i in range(8)]
     msg = aa._unstaged_message(rows, 9)
-    assert msg.startswith("8 of 9 value(s) cannot be staged: q.p0 (")
+    assert msg.startswith("8 of 9 values cannot be staged: q.p0 (")
     assert "q.p5" in msg and "q.p6" not in msg and " and 2 more" in msg
     assert msg.endswith(aa.STRUCTURAL_WHAT_TO_DO)
     plain = aa._unstaged_message([{"path": "q.x", "why": "the value is odd"}], 1)
+    assert plain.startswith("1 of 1 value cannot be staged: q.x ("), plain
     assert plain.endswith("nothing was written"), plain
 
 

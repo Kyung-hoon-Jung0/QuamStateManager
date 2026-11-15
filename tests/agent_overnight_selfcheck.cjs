@@ -145,7 +145,10 @@ const starts = () => calls.filter(c => /\/start$/.test(c.url));
   // ================================================== agent-summary.js
   function section(msg) {
     return '<div id="agent-summary" class="agent-summary" data-plan="pl-a"><p class="ns-msg muted"></p>' +
-      '<div class="ns-item" data-ap="ap-1"><button data-ns-act="approve" data-id="ap-1">Write to chip</button>' +
+      '<div class="ns-item" data-ap="ap-1"><table><tbody>' +
+      '<tr data-seen-path="qubits.qA2.f_01" data-seen-now="5000000000"><td>qubits.qA2.f_01</td></tr>' +
+      '<tr data-seen-path="qubits.qA2.extras.later" data-seen-unknown="1"><td>qubits.qA2.extras.later</td></tr>' +
+      '</tbody></table><button data-ns-act="approve" data-id="ap-1">Write to chip</button>' +
       '<button data-ns-act="reject" data-id="ap-1">Reject</button></div>' +
       '<button class="ns-undo" data-ns-act="undo">Undo</button><span class="marker">' + msg + '</span></div>';
   }
@@ -160,6 +163,8 @@ const starts = () => calls.filter(c => /\/start$/.test(c.url));
   await tick(60);
   let made = sumCalls().slice(n0);
   ok(made[0] && /\/api\/agent\/approvals\/ap-1\/approve$/.test(made[0].url) && made[0].method === 'POST', 'Write to chip presses the approve door');
+  ok(made[0] && JSON.stringify(made[0].body) === JSON.stringify({ seen: [{ path: 'qubits.qA2.f_01', seen_now: 5000000000 },
+     { path: 'qubits.qA2.extras.later', seen_unknown: true }] }), 'Write to chip sends the now each listed row showed: ' + JSON.stringify(made[0] && made[0].body));
   ok(made[1] && made[1].url === '/agent/summary?plan=pl-a', 'then the summary is read again for its plan');
   ok(/re-read/.test(txt(document.querySelector('#agent-summary .marker'))), 'the page shows SM\'s answer, re-read');
   ok(txt(document.querySelector('#agent-summary .ns-msg')) === 'Written to the chip.', 'and says what happened, after the re-read');

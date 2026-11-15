@@ -336,3 +336,42 @@ def test_a_stage_that_cannot_be_written_is_a_named_409_and_keeps_the_edits(env, 
     assert not _ctx(env).get("live_readonly_hint")
     assert _live(env) == 0.08
     assert _listed(env) == []
+
+
+def test_after_a_restart_an_unverified_run_write_still_holds_a_later_approval(env, monkeypatch, tmp_path):
+    """The run's write raised and nobody can tell whether it reached the chip (outcome "unknown"),
+    so the run's state stays staged. After an SM restart (a fresh app on the same instance folder)
+    an approval for another field must not carry that staged state to the chip under its name."""
+    from quam_state_manager.core import approvals
+    real_outcome = routes._write_outcome
+    live = env["live"].resolve()
+    real_write = safe_io.write_state_wiring_bytes
+
+    def write(folder, *a, **kw):
+        if Path(folder).resolve() == live:
+            raise OSError(5, "simulated: the write could not be confirmed")
+        return real_write(folder, *a, **kw)
+
+    monkeypatch.setattr(safe_io, "write_state_wiring_bytes", write)
+    monkeypatch.setattr(routes, "_write_outcome", lambda pending: "unknown")
+    r = _press(env)
+    assert r.status_code == 409, (r.status_code, r.data[:400])
+    monkeypatch.setattr(safe_io, "write_state_wiring_bytes", real_write)
+    monkeypatch.setattr(routes, "_write_outcome", real_outcome)
+    assert _live(env) == 0.08                         # the chip never got the run's state
+    before = (env["live"] / "state.json").read_bytes()
+    routes._quam_cache.clear()
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    c = app.test_client()
+    assert c.post("/load", data={"folder": str(env["live"])}).status_code in (200, 302)
+    chip = c.get("/api/agent/chip").get_json()["chip_key"]
+    record = approvals.add(str(tmp_path / "_inst"), chip, kind="writes", node="synthetic", targets=[],
+                           writes=[{"path": "qubits.qA1.f_01", "old": 5.0e9, "new": 5.1e9}], reason="test",
+                           why_held="mode ask-writes", actor="by_agent")
+    r = c.post(f"/api/agent/approvals/{record['id']}/approve",
+               json={"writes": [{"path": "qubits.qA1.f_01", "new": 5.1e9, "seen_now": RUN_F01}]},
+               headers={"X-SM-Actor": "human"})
+    assert r.status_code == 409, r.get_json()
+    assert r.get_json()["error"].startswith("stale_live: SM cannot tell"), r.get_json()["error"]
+    assert (env["live"] / "state.json").read_bytes() == before
+    assert _live(env) == 0.08

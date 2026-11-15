@@ -629,3 +629,115 @@ failed**. All 11 `tests/agent_*selfcheck.cjs` files are green.
   only.
 - **"The session stays armed after the plan ended."** docs/253; seen ending
   here (step 5).
+
+An approval card labels a changed row "the node saw Y, now X". Each ticked existing leaf sends the raw `now` value rendered on that card as `seen_now`. Before staging any row, `approvals_decide` through `_stage_writes` compares the current value, in the card's own representation (`_card_value`: `_jsonable` and then the JSON provider's `_finite_or_none`, so NaN, inf and -inf read as null), with that value element by element using `differ.compare_equal` and its existing tolerance; a list or dict whose length or keys changed is a mismatch. A row the card showed as "not set" sends `seen_unknown: true` and is refused once the leaf is readable. A mismatch returns 409 with the moved path in `stage.path` and a refreshed approval view built by `_approval_card`, the same builder the feed uses (so each row keeps its display unit), leaving the approval pending and staging nothing; the card then updates only its now cells in place and keeps every typed value (a poll redraw keeps them too). The line the person reads, "<path> changed to <X> since the card showed <Y>; press again", is written in the browser by `apRefusedText` with the card's own `fmtRow`, from the refreshed row (its now, old and display unit) and what the press sent (its seen value and typed new), so X and Y read exactly as the card writes them, the four values formatted as one row. The server's `error` carries the same line for agents and the MCP, written by `agent_api._refusal_line` with `core/value_delta.py` `format_card_row`, a port of `fmtRow` that prints numbers as JavaScript does (an exact tie such as 0.03125 V rounds up to 0.0313 V; a list is its compact JSON text); `tests/fixtures/card_row_vectors.json` pins the two alike, from pytest and from `tests/agent_panel_selfcheck.cjs`. When the display scales the stored value (Hz shown in GHz), the line ends with the stored values in brackets, "(stored in Hz: now 5100000000, the card's 5000000000)"; a field stored in its display unit (ns, V) has no bracket. `seen_now` and `seen_unknown` belong to the press and are not stored in the approval record. Requests without `seen_now` retain their existing behavior; the live-write and unseen-edit gates are unchanged.
+
+The night summary's Write to chip press (`agent-summary.js` `decide`) joins the anchor. It still names no values, so the door writes what the card would tick by default, but each held row it lists carries `data-seen-now` (the `now` in the card's form, added by `summary_data` as `seen_now`) or `data-seen-unknown`, and the press sends them as `seen: [{path, seen_now} | {path, seen_unknown: true}]`. `approvals_decide` lays each onto the default write with that path, so a listed value that moved since the page showed it refuses with the same 409, and nothing is written. When a press sends `seen`, every row the door would write must be in it (with `seen_now` or `seen_unknown`); otherwise the door answers 409 "N values of this approval were not on the summary (...); nothing was written. Review it in the agent panel" ("1 value of this approval was not ..." for one; `agent_api.approvals_decide`) with the paths in `unseen`, and writes nothing. The summary lists at most 12 rows (`agent_overnight._rows`): an approval with 12 rows or fewer lists every one and keeps Write to chip; one with more shows the first 12, a line "and N more rows" ("and 1 more row" for one), and only Review in panel (a link to the agent page, whose card lists every value) beside Reject, never a write. The summary writes its now / old / new cells with the card's formatter (`summary_data` adds `cells` from `format_card_row` and `units.display_spec`; not set stays "not set"), and its refusal line says "since the summary showed" (and "the summary's" in the bracket) in that same unit. A person's approve press needs no `seen_changes` from the page: `_stage_writes` takes the empty-tray check inside the same store-lock hold as the staging, and, under the lock again just before the door, refuses (and takes back only its own rows) if any tray entry belongs to another group, then hands the door the count read under that lock, so an edit from another window is never pushed under the approval and one landing later makes the door's count refuse. The take-back (`agent_api._take_back_own`, newest own row first, under the store lock) never undoes another window: an own row that no later row touches (the same path, under it or above it) is discarded as before; an own plain set whose later rows are all another window's plain sets of exactly that path keeps that window's value, and the other window's row takes the own row's old value as its "before" (the tray reads old -> theirs, and Ctrl+Z on it restores old, never the refused value); any other overlap (a created key another window changed or deleted since, a later structural edit on or above it), or a row SM cannot discard, leaves that own row whole in the tray, and the refusal adds "N values of this approval could not be taken back because another window changed them since (...); a human decides in the window" ("1 value ... changed it since" for one; the text is built in `_stage_writes`'s `_take_back`), never a 500, at each of its three refusals: stale_live, the other-window check before the door (under the lock, after the staging), and the door when it refuses before its save (a refusal after the save is taken back by `_take_back_saved` instead). The empty-tray check never adds it: nothing of the approval is staged yet. With several later rows of the other window on that path, the FIRST takes the old value, so as many Ctrl+Z end at the chip's value. A refusal's "the tray holds 1 staged edit; apply or discard it" / "N staged edits; apply or discard them" counts the tray when `_tray_busy` reads it under the store lock, the one place it is read: at the empty-tray check it is every row in the tray (another window's or this window's edits, and any row of this approval kept by an earlier refusal), and at the other-window check it is the tray after the take-back (the other window's rows plus any own row that stayed). The counts in these texts share one helper (`agent_api._count_of`: "1 value" / "N values"), also used by the unstaged list ("1 of 2 values cannot be staged", `_unstaged_message`) and the door's unseen-edit refusal ("1 edit was made in another State Manager window ... write it" / "N edits were made ... write them", `routes._unseen_edit_refusal`); a tail joined to the door's message drops its closing period (`agent_api._then`), so the line reads as one sentence. A test (`test_no_approval_refusal_text_says_s_in_brackets`) keeps "(s)" out of every function that builds these texts, and the refusal tests assert no "(s)" and no ".;" at count 1 and 2. The in-hold check is pinned by a lock that lets another window's edit land just as the staging takes it (`test_the_empty_tray_check_shares_the_staging_lock_hold`). Dict values in both lines follow the order the browser holds them (`value_delta.js_key_order`): the JSON provider sorts keys, and a JS object then puts array-index keys first in numeric order. `js_to_fixed` / `js_to_exponential` round the exact double in a 1200-digit decimal context, so no finite double raises, and `_refusal_line` falls back to a line without numbers rather than answer 500.
+
+A refused live write (the door's 409 `live_write_failed`, "Apply failed: ... Your edits are kept.") that takes the approval's rows back says so: `_stage_writes` drops the door's "Your edits are kept." and adds the one taken-back clause, "; nothing was written, and the approval's values were taken back out of SM" (`agent_api._taken_back`, `TAKEN_BACK`), both when the door put its save back and the rows leave the tray, and when the save stood and `_take_back_saved` took them out of the working copy. A human press of Apply keeps the door's text (`routes.EDITS_KEPT`), and when no row of the approval could be taken back the door's text stays as it is. Pinned by `test_a_refused_live_write_says_the_approvals_values_were_taken_back` (both branches: exact text, empty tray, unchanged state.json). The overnight runner stages through the same `_stage_writes`, so its `apply_error` reads the same.
+
+That clause is said only when the chip certainly holds its old content. The door's write outcome
+(`routes._write_outcome`, handed to JSON callers as `write_outcome` by `_live_write_failure_response`) is "failed" (read
+back, the chip holds the old content) or "none" (no journal line committed, the write never happened): the door puts its
+save back (`_refused_after_save`), and when that is not provably safe the save stands and `_take_back_saved` takes the
+values out, as above. "unknown" (nobody can tell) and "landed" (the chip holds the write, its read-back or bookkeeping
+failed) keep the save (`_commit_journal`), and the chip may hold the approval's values: `_stage_writes` then leaves them
+in SM's working copy (taking them back would make SM show an old value the chip may no longer hold), sets
+`saved_in_working_copy` and `write_outcome`, and drops the door's "Your edits are kept." for the one clause "; the live
+write could not be verified, so the approval's values stay saved in SM's working copy until a person takes live or
+applies; check the chip" (`agent_api.KEPT_UNVERIFIED`, joined by `_door_lead_then`), after the door's "Apply is
+UNVERIFIED: ..." lead. It never says "nothing was written" there. The approval stays pending; the overnight runner reads
+`saved_in_working_copy` as "apply refused after the save" and parks no second approval of the same writes. A human press
+of Apply keeps the door's text. Pinned per outcome by `test_a_live_write_after_the_save_says_what_is_known_per_outcome`
+(exact text, tray, working copy, state.json) and `test_the_human_apply_press_text_carries_no_approval_clause`.
+
+Those kept values belong to no approval, so a later push must not carry them to the chip under another name (a Reject of
+the approval does not remove them either: the chip may hold them, so they stay, and a person's Apply names them first,
+see the preflight below). For "unknown", `_stage_writes` calls `routes._note_unverified_write`, the
+same helper the dataset door's Apply to chip uses for that outcome. It sets `ctx["live_diverged"] = True` and records
+the fact beside the working copy: `working_copy.mark_unverified_write` writes `unverified_write` (a UTC time) into the
+working copy's meta file (`<key>.meta.json`, with the sync point). The mark is cleared by a pull (`sync_from_live`: Take
+live, a discard), by a landed `apply_to_live` (a person's Apply, including the Apply of a Ctrl+Z row), and by
+`_build_quam_context` when the working content is back at the sync point. A restart (a fresh app on the same instance
+folder) reads the mark back: `_build_quam_context` raises `live_diverged` again while the working copy is dirty. Every
+later approval, a person's or the overnight runner's, then refuses at its stale_live check before the door, which reads
+the live hash, the flag and the mark (`routes._unverified_write_held`), with "stale_live: SM cannot tell whether the
+live chip matches its last sync (an earlier live write could not be verified); take live first"
+(`routes.UNVERIFIED_HELD_MSG`) when the hash alone has not moved, takes back only its own rows, and writes nothing. An
+agent's own `apply_to_live` (X-SM-Agent, past its apply-mode hold, so in auto mode too) refuses the same way: 409
+`{conflict: "unverified_write", message: UNVERIFIED_HELD_MSG}`.
+A person's own Apply press is the way out, but it never carries the kept values unnamed:
+`mark_unverified_write` records them in the meta file (`unverified_kept`, rows of path, old value, kept value and source, plus `absent` or `removed` when the key had no live value or the write deleted it), and
+`routes._unverified_kept_refusal` answers a press that does not acknowledge the mark with 409
+`{status: "unverified_kept", token: <the mark's id>, rows, message}`, the message "These values from an approval that
+may not have reached the chip will be written too. Take live instead to see what the chip holds."
+(`UNVERIFIED_KEPT_LEAD`). A row counts while the working copy still holds its kept value (a Ctrl+Z that took it out
+drops it; with no rows left the press is not asked). The UI-kit confirm (`smConfirm`) lists every row once as
+`path  old -> kept`. The server sends exact JSON value strings, preserving float precision and JSON lists.
+Exact JSON avoids `value_delta.format_value`'s compacted digits and `sync_status.fmt_value`'s 80-character truncation.
+The dialog shows those strings unchanged. A row written before marks included `old` shows `path  kept` alone;
+the sentence names no values. The dataset door records `old` from the shared writer's pre-write live read.
+Its rows also retain `src: "dataset_apply"`, so its dialog says "an earlier live write" after a restart too.
+A removed path retains its old value and a `removed` flag; the dialog shows `old -> (removed)`.
+An absent live path carries `absent: True` and shows `not set -> kept`; a real JSON null still shows `null`.
+OK re-sends the same request with `ack_unverified=<token>`, which writes them and clears the mark on landed; Cancel
+writes nothing; the values stay in SM. In the top bar, open Apply not verified and choose Take live to check what
+the chip holds. The tray has no pending edit rows for those saved values. The token is the mark's id (microseconds),
+so a mark set after the confirm opened is named again. The gate sits on every door that writes live for a person:
+/state/apply-to-live (tray, Review, Keep mine, an Auto-Sync flush) after its stale check, /state/sync mode=apply
+before its pull (the pull would clear the mark and the replay would carry the rows), and `_sync_pull_apply_to_live`
+(the walk); the dataset door passes `kept_gate=False` (it replaces the working content wholesale,
+so nothing kept rides on it), and a history restore writes a chosen version. A mark without rows (older meta or
+unreadable pre-write live values) names the working copy's differences from live
+outside the tray's own edits, led by `UNVERIFIED_KEPT_LEAD_WHOLE` ("These values from an earlier live write ...").
+With no mark held the press text is unchanged (contract 2 and docs/311 are otherwise unchanged). Pinned by
+`tests/test_unverified_kept_preflight.py`, which also walks every caller of the one writer.
+The mark, not the flag, is what these refusals need:
+the window's /state/drift poll keeps the flag on a dirty context (raise-only), and a restart loses the flag but not the
+mark. The dataset door's restart hole closes with the same change: on main, a run's write with outcome "unknown", an SM
+restart, and an approval for another field carried the run's staged state to the chip under the approval
+(`test_after_a_restart_an_unverified_run_write_still_holds_a_later_approval` fails on main 6d32a7dd: the chip ends at
+the run's joint_offset 0.079 with the approval's f_01), and now refuses with the text above and leaves state.json byte
+for byte.
+
+Ctrl+Z of the kept value alone does not clear the mark: the step stages the inverse row in the tray (SM shows the old
+value, the chip is still not known to match), and a later approval still refuses ("the tray holds 1 staged edit ..." or
+stale_live). So the kept-values text names only take live and apply; applying the Ctrl+Z row is the "applies" way
+(pinned by `test_ctrl_z_of_the_kept_value_then_apply_clears_the_unverified_write_mark` and
+`test_the_kept_values_text_offers_only_the_real_ways_out`).
+
+What the window shows after the unverified write: the sync control is in its "refused" state with 1 unapplied value
+(/state/drift answers `sync.state` "refused", `live_diverged` false: the poll reports the flag for a clean context only,
+and a poll that has judged the sync point decides the display). Its title used to read "Apply wrote nothing", then the
+cause ("unknown failure"), which is false when the write may have landed; for a write whose outcome is "unknown" or
+"landed" (`_live_write_failure_response` hands `_conflict_tray` `unverified`, which `sync_status.view` reports as
+`refused_unverified`) the control now reads "Apply not verified: check the chip" ("the write may have reached the live
+chip; take live to see what it holds."), and the sync panel's title reads "Your apply was not verified" with "Your apply
+at <time> could not be verified: the live chip may hold the write. Take live to see what it holds." (its summary
+sentence no longer ends "Nothing has been written yet.") A refusal whose write provably did not happen keeps "Apply
+wrote nothing ...". This applies to a person's Apply press as much as to an approval's. Pinned by
+`test_the_window_never_says_an_unverified_write_wrote_nothing` (unknown, landed, failed). After a restart the
+in-memory refusal is gone, so `_sync_view` reads the persisted mark (`wc.unverified_write`) and shows the same title
+and tooltip; /state/drift reports it as `sync.unverified` true with `sync.state` "refused".
+
+The door's unexpected-error exit (500 after its save) hands a JSON caller `write_outcome` as the sync twin does. The
+outcome is what the door reached: the door records its journal line (`_hub_pending`) in `g._apply_pend`, so a raise
+before that line exists reads "none", and `_stage_writes` takes the values back with the taken-back clause ("Apply to
+live failed unexpectedly: RuntimeError: ...; nothing was written, and the approval's values were taken back out of SM");
+a raise escaping the door is answered the same way (`routes._apply_pend_outcome`), and a request that could not even be
+set up is "none". `_stage_writes` reads a 500 whose outcome is not "failed" or "none" as "unknown" (the exception may
+follow the write): the values stay, the kept clause follows the door's "Apply to live failed unexpectedly: ..." line,
+and the context is marked. Pinned by `test_a_later_approval_never_writes_an_earlier_refused_approvals_values` (approval
+A refused with each outcome, with and without its Reject, the window's /state/drift poll between A and B, then B: an
+approval on another path in the same app, an approval after a restart, or an agent's own edit and apply_to_live in auto
+mode. B writes only its own row after "failed"/"none"; after "unknown" it refuses and state.json stays byte for byte;
+after "landed" it refuses in the same app, and after a restart B writes its own row only, since the rebuilt context
+finds the working copy equal to the chip that holds A's value),
+`test_a_refusal_after_an_unverified_write_leaves_the_live_file_byte_identical`,
+`test_the_unverified_write_mark_is_saved_beside_the_working_copy`, `test_a_take_live_clears_the_unverified_write_mark`,
+`test_an_unverified_write_names_why_a_later_approval_is_refused`,
+`test_an_unexpected_error_after_the_live_write_keeps_the_values`,
+`test_an_unexpected_error_before_the_live_write_takes_the_values_back` and
+`test_the_doors_unexpected_error_hands_a_json_caller_the_write_outcome`.
+
+Wording outside the approval doors that these texts also change: the door's unseen-edit refusal ("1 edit was made ... write it" / "N edits were made ... write them", `routes._unseen_edit_refusal`) is also the confirm text of Apply to live, the Keep mine push and the grid direct push, and the MCP `apply_to_live` error; "N of M values cannot be staged" (`_unstaged_message`) is also the overnight runner's `apply_error`. It is safe because no consumer parses these texts: app.js reads only `data.status === "unseen_changes"` and the paths (app.js:5357, 5894, 6064); mcp.py branches on `conflict` only and passes the body through (mcp.py:444-470); tests/stress_applylive_phases.cjs:184 and tests/state_sync_selfcheck.cjs:370 match "another State Manager window", which stays; tests/test_agent_runs.py:804 matches "cannot be staged", which stays.

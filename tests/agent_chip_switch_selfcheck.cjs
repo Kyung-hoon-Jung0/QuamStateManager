@@ -51,9 +51,9 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 30));
   // verifier P3 (second): the "now" column is the value SM holds now, not the
   // value the proposal was made from; a difference is shown and flagged
   const cells = [...apCard().querySelectorAll('.ag-ap-rows tbody tr')].map(tr => tr.children[1]);
-  ok(/5\.55/.test(cells[0].textContent) && /proposed from/.test(cells[0].textContent) && /4\.2/.test(cells[0].textContent)
-     && cells[0].classList.contains('ag-ap-moved'), 'a moved leaf: now = what SM holds, flagged with what it was proposed from: ' + cells[0].textContent);
-  ok(!/proposed from/.test(cells[1].textContent) && !cells[1].classList.contains('ag-ap-moved'), 'an unmoved leaf is not flagged: ' + cells[1].textContent);
+  ok(/5\.55/.test(cells[0].textContent) && /the node saw/.test(cells[0].textContent) && /4\.2/.test(cells[0].textContent)
+     && cells[0].classList.contains('ag-ap-moved'), 'a moved leaf: now = what SM holds, labelled with the value the node saw: ' + cells[0].textContent);
+  ok(!/the node saw/.test(cells[1].textContent) && !cells[1].classList.contains('ag-ap-moved'), 'an unmoved leaf is not flagged: ' + cells[1].textContent);
 
   // another window opens the 5Q chip; the server moved agent_seq, LiveWake says so
   cur = 'B';

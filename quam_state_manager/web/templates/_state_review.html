@@ -44,6 +44,7 @@
         {% elif _st == 'unreadable' and _sv.missing %}Live chip folder not found
         {% elif _st == 'unreadable' %}Can't read the live chip
         {% elif _st == 'collide' %}Both sides changed the same field
+        {% elif _st == 'refused' and _sv.refused_unverified %}Your apply was not verified
         {% elif _st == 'refused' %}Your apply wrote nothing
         {% elif _st in ('live', 'both') %}The live chip changed
         {% elif _st == 'mine' %}Your unapplied edits
@@ -65,11 +66,15 @@
       {%- if _nl %}The live chip changed {{ _nl }} value{{ 's' if _nl != 1 }} since SM last synced{% else %}The live chip has not changed since SM last synced{% endif -%}
       {%- if _nm %}; you have {{ _nf }} unapplied edit{{ 's' if _nf != 1 }}{% elif working_dirty %}; you have a saved or staged version that is not on the live chip{% endif -%}
       {%- if _nc %}; {{ _nc }} field{{ 's' if _nc != 1 }} {{ 'are' if _nc != 1 else 'is' }} in both{% endif -%}
-      . {% if _nl or _nm or working_dirty %}Nothing has been written yet.{% elif total == 0 %}No differences &mdash; what you see matches the live chip.{% else %}Nothing to do.{% endif %}
+      . {% if _sv.refused_unverified %}{% elif _nl or _nm or working_dirty %}Nothing has been written yet.
+      {% elif total == 0 %}No differences &mdash; what you see matches the live chip.{% else %}Nothing to do.{% endif %}
       <span class="sp-when muted">checked {{ checked_at | ts_local }}</span>
     {%- endif -%}
   </p>
-  {% if refused %}
+  {% if refused and refused.unverified %}
+  <p class="sp-note sp-note-warn">Your apply at {{ refused.at | ts_local }} could not be verified:
+    the live chip may hold the write. Take live to see what it holds.</p>
+  {% elif refused %}
   <p class="sp-note sp-note-warn">Your apply at {{ refused.at | ts_local }} wrote nothing: the live chip had changed in between.
     {%- if refused.auto_disarmed %} Auto-Sync has been turned <b>off</b>; it will not write again until you turn it back on.{% elif refused.auto_merging %} Auto-Sync is still on and will merge this itself; choose below only if you would rather decide.{% endif %}</p>
   {% endif %}

@@ -40,7 +40,7 @@ let feed = {
               counts: { total: 1, pending: 1 }, may_change: [{ target: 'q1', path: 'qubits.q1.xy.operations.x180.amplitude', now: 0.12 }] }],
     runs: [{ key: 'r1', node: '02_res', targets: ['q1'], status: 'ended', since: now - 200, result: { status: 'done', classification: 'ok', run_id: 77, applied: true, writes: [{ path: 'qubits.q1.f_01', old: 1, new: 2 }] } }],
     approvals: [{ id: 'ap-1', kind: 'writes', node: '05_power_rabi', targets: ['q1'], run_id: 78, why_held: 'mode ask-writes', reason: 'fit ok', created: now - 10,
-                  writes: [{ path: 'qubits.q1.f_01', old: 4.31e9, new: 4.32e9, origin: 'written by the node directly', capture_error: 'synthetic capture failure' }] }]
+                  writes: [{ path: 'qubits.q1.f_01', old: 4.31e9, now: 4.315e9, now_known: true, new: 4.32e9, origin: 'written by the node directly', capture_error: 'synthetic capture failure' }] }]
   },
   session: { alive: true, busy: false, backend: 'claude', ended: null },
   file: { owner: 'human:user-a', backend: 'claude', armed: false, stopped: false },
@@ -56,8 +56,18 @@ let setupBody = {
   todo: ['calibrations_folder', 'journal'],
 };
 const calls = [];
+let approveReply = null;      // one scripted answer for the next approve press
+let cardsGate = null;         // while set, a poll's answer waits on it
 global.fetch = window.fetch = function (url, opts) {
   calls.push({ url: String(url), method: (opts && opts.method) || 'GET', body: opts && opts.body ? JSON.parse(opts.body) : null, headers: opts && opts.headers });
+  if (approveReply && /\/approve$/.test(url)) {
+    const rep = approveReply; approveReply = null;
+    return Promise.resolve({ status: rep.status, json: function () { return Promise.resolve(rep.body); } });
+  }
+  if (cardsGate && /\/chat\/cards/.test(url)) {
+    const gate = cardsGate;
+    return gate.then(function () { return { status: 200, json: function () { return Promise.resolve(feed); } }; });
+  }
   let body = {};
   if (/\/chat\/cards/.test(url)) body = feed;
   else if (/\/chat\/backends/.test(url)) body = { ok: true, chip: 'PJ', default: 'claude', backends: { claude: { found: true, version: '2.1.263' }, codex: { found: false } } };
@@ -91,6 +101,7 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   ok(run && run.querySelector('a.ag-run').getAttribute('href') === '/dataset/by-run/77' && /1 write\(s\) applied to the chip/.test(run.textContent), 'a run card with the run link and its writes');
   const ap = cards.querySelector('[data-card="approval:ap-1"]');
   ok(ap && ap.querySelector('.ag-approve') && ap.querySelector('input.ag-ap-new').value === '4320000000', 'an approval card with an editable proposed value');
+  ok(ap.textContent.includes('the node saw 4310000000, now 4315000000'), 'a changed row names the node value and the displayed value');
   ok(ap.textContent.includes('written by the node directly'), 'direct node writes are labelled on the approval card');
   ok(ap.textContent.includes('cannot be staged: synthetic capture failure'), 'unstageable node writes show their reason on the card');
   const nowCol = home.querySelector('.ag-now');
@@ -109,10 +120,106 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
 
   // approve sends the EDITED rows
   ap.querySelector('input.ag-ap-new').value = '4325000000';
+  ap.querySelector('input.ag-ap-new').focus();
+  feed.live.approvals[0].writes[0].now = 4.316e9;
+  await P.poll(true); await tick();
+  P.apPreview(ap.querySelector('input.ag-ap-new'));
+  ok(ap.textContent.includes('the node saw 4310000000, now 4315000000'), 'editing after a poll keeps the displayed comparison value');
   calls.length = 0;
   P.approve('ap-1', ap.querySelector('.ag-approve'));
   await tick(30);
   ok(calls[0].url === '/api/agent/approvals/ap-1/approve' && calls[0].body.writes[0].new === 4325000000 && calls[0].body.writes[0].path === 'qubits.q1.f_01', 'approve carries the edited value');
+  ok(calls[0].body.writes[0].seen_now === 4.315e9, 'approve carries the rendered now even when a poll has newer data');
+  ap.querySelector('input.ag-ap-new').blur();
+
+  // a typed value survives a poll redraw and the "changed since the card showed" refusal
+  await P.poll(true); await tick();
+  let apInp = ap.querySelector('input.ag-ap-new');
+  apInp.value = '4330000000'; P.apPreview(apInp);
+  feed.live.approvals[0].writes[0].now = 4.317e9;
+  await P.poll(true); await tick();
+  apInp = ap.querySelector('input.ag-ap-new');
+  ok(apInp.value === '4330000000' && apInp.getAttribute('data-seen-now') === '4317000000', 'a poll redraw keeps the typed value and shows the new now');
+  const fresh = JSON.parse(JSON.stringify(feed.live.approvals[0]));
+  fresh.writes[0].now = 4.318e9;
+  approveReply = { status: 409, body: { ok: false, error: 'qubits.q1.f_01 changed to 4318000000 since the card showed 4317000000; press again',
+    stage: { staged: 0, applied: false, seen_now_changed: true }, approval: fresh } };
+  let release; cardsGate = new Promise(function (r) { release = r; });
+  P.approve('ap-1', ap.querySelector('.ag-approve'));
+  await tick(30);
+  apInp = ap.querySelector('input.ag-ap-new');
+  ok(apInp.value === '4330000000', 'after the refusal the typed value is still in the input');
+  ok(apInp.getAttribute('data-seen-now') === '4318000000' && ap.textContent.includes('now 4318000000'), 'the refusal updates the now cells in place from the returned card');
+  calls.length = 0;
+  P.approve('ap-1', ap.querySelector('.ag-approve'));
+  await tick(30);
+  const pressAgain = calls.find(function (c) { return /\/approve$/.test(c.url); });
+  ok(pressAgain && pressAgain.body.writes[0].new === 4330000000 && pressAgain.body.writes[0].seen_now === 4.318e9, 'the second press sends the typed value against the new now');
+  cardsGate = null; release(); await tick(30);
+  feed.live.approvals[0].writes[0].now = 4.315e9;
+
+  // a row the card showed as "not set" says so on the press
+  const keptApprovals = feed.live.approvals;
+  feed.live.approvals = [{ id: 'ap-unset', kind: 'writes', node: 'synthetic', targets: ['q1'], created: now,
+    writes: [{ path: 'qubits.q1.extras.later', old: 1, new: 2, now_known: false }] }];
+  await P.poll(true); await tick();
+  const unset = cards.querySelector('[data-card="approval:ap-unset"]');
+  ok(unset && /not set/.test(unset.textContent), 'a row SM cannot read shows not set');
+  calls.length = 0;
+  P.approve('ap-unset', unset.querySelector('.ag-approve'));
+  await tick(30);
+  const unsetPress = calls.find(function (c) { return /\/approve$/.test(c.url); });
+  ok(unsetPress && unsetPress.body.writes[0].seen_unknown === true && !('seen_now' in unsetPress.body.writes[0]), 'a not set row sends the not set marker');
+
+  // the refusal's returned card carries the display unit, so the refreshed now cell keeps it
+  const unitSpec = { unit: 'GHz', scale: 1e-9, dp: 4, stored: 'Hz' };
+  feed.live.approvals = [{ id: 'ap-unit', kind: 'writes', node: 'synthetic', targets: ['q1'], created: now,
+    writes: [{ path: 'qubits.q1.f_01', old: 5.0e9, new: 5.2e9, now: 5.0e9, now_known: true, display: unitSpec }] }];
+  await P.poll(true); await tick();
+  const unitCard = cards.querySelector('[data-card="approval:ap-unit"]');
+  ok(unitCard && unitCard.textContent.includes('5.0000 GHz'), 'a card with a display unit shows its now in that unit');
+  const unitFresh = JSON.parse(JSON.stringify(feed.live.approvals[0]));
+  unitFresh.writes[0].now = 5.1e9;
+  // the server's text is for agents: the person's line is written by the card's own fmtRow
+  approveReply = { status: 409, body: { ok: false, error: 'server text for agents',
+    stage: { staged: 0, applied: false, seen_now_changed: true, path: 'qubits.q1.f_01' }, approval: unitFresh } };
+  let releaseUnit; cardsGate = new Promise(function (r) { releaseUnit = r; });
+  const unitToasts = [], keepToast = window.showToast;
+  window.showToast = function (m, l) { unitToasts.push([String(m), l]); };
+  P.approve('ap-unit', unitCard.querySelector('.ag-approve'));
+  await tick(30);
+  window.showToast = keepToast;
+  ok(unitCard.textContent.includes('now 5.1000 GHz') && !unitCard.textContent.includes('5100000000'), 'after the refusal the now cells keep the display unit');
+  ok(unitToasts.length === 1 && unitToasts[0][1] === 'error' && unitToasts[0][0] ===
+     "qubits.q1.f_01 changed to 5.1000 GHz since the card showed 5.0000 GHz; press again (stored in Hz: now 5100000000, the card's 5000000000)",
+     'the refusal toast is written from the returned card row: ' + JSON.stringify(unitToasts));
+  cardsGate = null; releaseUnit(); await tick(30);
+  feed.live.approvals = keptApprovals;
+  await P.poll(true); await tick();
+
+  // one formatter: the card's fmtRow and apRefusedText against the vectors core/value_delta.py also passes
+  const cardVectors = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'card_row_vectors.json'), 'utf8'));
+  // The browser receives every dict through the app's JSON provider, which sorts keys as
+  // strings (Flask sort_keys; pinned in test_approval_now_anchor.py); JSON.parse then puts
+  // array-index keys first. Feed the vectors the way the page gets them.
+  const asServed = function (v) {
+    if (Array.isArray(v)) return v.map(asServed);
+    if (v && typeof v === 'object') return JSON.parse('{' + Object.keys(v).sort().map(function (k) {
+      return JSON.stringify(k) + ':' + JSON.stringify(asServed(v[k]));
+    }).join(',') + '}');
+    return v;
+  };
+  const asNumbers = function (c) {      // JSON has no NaN / Infinity: "numbers" names the strings that are numbers
+    return c.values.map(function (v, i) { return (c.numbers || []).indexOf(i) >= 0 ? Number(v) : asServed(v); });
+  };
+  cardVectors.rows.forEach(function (c) {
+    const got = P.fmtRow(asNumbers(c), c.display);
+    ok(JSON.stringify(got) === JSON.stringify(c.expect), 'card row vector: ' + c.case + ' ' + JSON.stringify(got));
+  });
+  cardVectors.refusals.forEach(function (c) {
+    const got = P.apRefusedText(c.path, asServed(c.row), asServed(c.sent));
+    ok(got === c.expect, 'refusal vector: ' + c.case + ' ' + got);
+  });
 
   // W7-1: a 25c-shaped JSON-text value edits as a STRING literal, never an array.
   const lossText = '  [{"detuning_hz": 123000000.0, "reason": "synthetic\\nmap"}]  ';
