@@ -668,10 +668,11 @@ Rule (Generate, `_align_output_timing`, the last band / delay step of the build 
 - every used MW-FEM analog output gets `reference - latency(its band)`: 20 ns for a band 1 / 3 output
   on a chip that also uses band 2, otherwise 0 (whichever line the port carries; every element on it
   moves with it).
-- every LF-FEM output carrying a flux line (qubit z, coupler) gets the reference.
-- a resonator whose readout output got `s` gets `time_of_flight += s`.
+- every used LF-FEM output (flux, coupler, and any other element: drive, readout, TWPA pump) gets the reference.
+- a resonator whose readout output got `s` gets `tof_on_grid(time_of_flight + s)` (see the time of
+  flight grid below).
 - a chip in one class builds byte for byte as before (`tests/test_mw_band_align_live.py`); an OPX+
-  output and an LF-FEM output that is not a flux line are left alone. The build writes no digital
+  output is left alone. The build writes no digital
   marker delays on MW elements, so nothing else moves.
 
 These are starting values: FIR / IIR output filters add latency, so xy-z timing is calibrated on the
@@ -685,6 +686,81 @@ a coupler's moving qubit's shift to the coupler, and the readout shift to the ti
 offer names the resonators whose time of flight to re-check and the qubits whose xy-readout spacing
 changes. Ports a rebuild adds follow the source chip's base (`follow_source_time_base`): an
 unshifted source gives them today's per-band values, so the offer covers them too.
+
+Time of flight grid (`generator/_script_common.py` `tof_on_grid`, the one rule for the build, the
+standalone script and SM): when SM computes or moves a time of flight, it writes the nearest multiple
+of 4 ns, with ties upward and a minimum of 28 ns. The source is the QOP job submit error: "Time of
+flight must be a multiple of 4 and greater or equal than 28". This was checked for MW-FEM readout; the
+same rule applies to every readout, provisionally untested on LF-FEM and OPX+.
+- MW readout port delays keep their requested delta and the time of flight rounds; LF readout ports
+  keep the `_readout_delay` alignment (the time of flight stays exact and the output offset is named).
+- A rounded move names the sum, the written value and its consequence (`tof_rounded_note`): the
+  acquisition starts `nearest - sum` ns after (or before) the return, named in the note. That is at
+  most 2 ns from rounding to the grid, and more when the sum is below the 28 ns floor (a sum of 10
+  is written as 28: 18 ns after). Either way the time of flight is measured again.
+- The Re-generate band shift plan writes `new` = the nearest allowed value and keeps `sum` = the raw
+  sum. SM never replaces a QUAM pointer with a literal at the resonator leaf: a pointer may be shared
+  by several elements, and overwriting it would cut the link silently. A stored pointer is read, value and
+  leaf in one walk, by SM's one `#./` follower, `pointer_path.resolve_field_target(..., cross=True)`
+  (`output_timing.stored_tof`); the app-wide `pointer_resolver` is not changed and keeps every `#./`
+  raw. The walk follows a `#./` that names a stored leaf (at the resonator leaf or in the middle of
+  a chain), crosses a pointer inside a target path (`#/a/ref/x` with `a.ref = "#/b"` reads `b.x`,
+  and a `#./` found there is relative to `b`, as quam reads it), and follows at most 64 pointers
+  in the whole walk (`pointer_path._MAX_HOPS`: every pointer followed counts once, at the leaf, in
+  the middle of a path and inside every crossing; 64 in total resolve, 65 do not; nothing is
+  cached). A cycle is the same pointer met again at the same leaf with the same path still to walk:
+  crossing `a.ref` once toward `x` and once toward `y` is not one (`b.x = "#/a/ref/y"` reads `b.y`).
+  A list is indexed as quam reads one (`str.isdigit()`, then `int()`): `#/a/0`, `#/a/12`, `#/a/007` (item 7)
+  and a non-ASCII decimal digit such as U+0661 ARABIC-INDIC DIGIT ONE (item 1) index `a`; the key U+00B2
+  SUPERSCRIPT TWO (isdigit, not int-able),
+  `#/a/-1`, `#/a/+1`, `#/a/ 1` and `#/a/0_1` name nothing, so such a pointer stays raw and is not resolvable.
+  A leaf is named by its real keys joined with "/", the form a QUAM pointer to it takes, so a key
+  holding a "." keeps it (`#/shared/tof.base` is named `shared/tof.base`). It is named by the leaf
+  it lands on, with "(through <first hop>)" for a chain; it is listed in `tof_unplaced` (with its
+  `target`) and Apply leaves the pointer string at that leaf. When the target is a time of flight
+  the same plan moves, the item carries `follows`.
+  If the target moves by the same amount as the resonator's own readout output, it reads "Time of
+  flight of q2 is a reference to <target>; it follows that value (now 48 ns).". If not (the readout
+  output does not move, or the target was rounded or raised to the floor), the item carries `lag`
+  (target move minus own readout move, in ns) and reads "...; it follows that value to 48 ns, but
+  q2's readout did not move (or: moved 20 ns), so q2's time of flight is now 22 ns later than its
+  readout. Give q2 its own value if that is not meant.". When the readout moved and the
+  difference is only the grid (the qubit's own value, the target's old value plus its own readout
+  move, would be written as the same value: q3 on the moved output follows q1 26 -> 48 ns, its
+  own 46 would round to 48), it reads instead "...; it follows that value to 48 ns. The 2 ns
+  difference to its readout is only the 4 ns grid (multiples of 4 ns, at least 28 ns): q3's own
+  value would round to the same 48 ns, so no action is needed."; a readout that did not move keeps
+  the advice (its own value would not be written). The question's and the offer's "Re-check the
+  time of flight of ..." clause names only qubits that need action: every moved one and a `lag`
+  reference that is not only the grid; a grid-only reference (the item carries `grid_only`) is not
+  in it, its sentence above says no action is needed, and with no qubit to name there is no
+  clause (the mixed case reads "Re-check the time of flight of q1, q2." with q3 grid-only). Either
+  way the sentence is in the offer, so it is seen before Apply. Any other pointer
+  to a finite number reads "... is a reference to <target>; it is not moved. Move it at <target> if
+  that is meant."; the target moves only as its own element's line. A pointer that gives no finite
+  number (dangling, a cycle, text, a bool, nan / inf, a `#./` naming a leaf that is not stored, a chain
+  over 64 pointers) reads "... is a reference to <target> that does not resolve to a number (it
+  holds nan); it is not moved."; for a `#./` naming a leaf that is not stored the parenthesis is
+  "(#./inferred_x names a leaf that is not stored)" and the target is the chain leaf holding it
+  (the leaf it names when the resonator leaf itself holds it). Any other stored value the rule
+  cannot place is not written: it is listed in `tof_unplaced` with a sentence naming why (no time
+  of flight stored, a value that is not a number, a value that is not finite, or a sum that is
+  negative), and the rest of the shift is still offered.
+  The Re-generate question names the qubits not moved in one clause (every one of them; a `follows`
+  item is not in it); the full sentence is its own line under it, in the offer text and in the
+  applied note. After Apply the output timing review (`output_timing.summary` `tof_unplaced`) lists
+  each such resonator with the same sentence (the `lag` from the moved value's old and new time of
+  flight and the readout delay against the source chip): all of them come from
+  `output_timing.tof_unplaced_note` over the sentence helpers in `generator/_script_common.py`. On a
+  Re-generate whose readout output delay is the source chip's (nothing moved there this run), a
+  reference to a finite number is not listed, the same as an unchanged literal; a value that gives
+  no number is still named.
+- A value the user set stays as entered, with the reason and nearest allowed value (`tof_kept_note`);
+  on an undelayed readout output the review names only the grid.
+- A value with no record of who set it stays as entered. Its off-grid warning says SM has no record
+  of who set it (`tof_unrecorded_note`), then gives the same grid reason and nearest allowed value.
+- A default SM pre-filled, or a builder value nobody set, is written on the grid. Stored values SM
+  does not move stay unchanged.
 
 ## Recommend core layout on a loaded chip
 

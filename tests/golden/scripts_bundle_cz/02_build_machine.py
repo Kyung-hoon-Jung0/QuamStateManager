@@ -42,7 +42,9 @@ CR_PORT_MODE = ''
 PAIR_LINES = []
 
 # ======================================================================
-# Machinery — VERBATIM from the State Manager's generator/run_build.py
+# Machinery: VERBATIM from the State Manager files
+#   generator/_script_common.py
+#   generator/run_build.py
 # (the exact code the wizard ran to build this chip). Edit the DATA
 # blocks above instead; change these only if you know the QUAM stack.
 # ======================================================================
@@ -57,6 +59,55 @@ _BAND_COMPAT_SAME = {(1, 1), (3, 3), (2, 2)}
 _BAND_COMPAT_13 = {(3, 1), (1, 3)}
 _BANDS_13_NOTE = 'QOP 3.5 or later only (QOP 3.3 and 3.4 refuse bands 1 and 3 on coupled ports)'
 _PORT_SHARING_NOTE = 'QOP 3.3, 3.4 and 3.6 known issue: MW-FEM port sharing on the same or coupled ports can cause ports or upconverters to stop playing (fixed in QOP 3.5 and 3.7)'
+
+def tof_on_grid(value):
+    """Return validity, nearest allowed ns (ties upward), and the QOP reason.
+
+    Invalid numeric inputs have no nearest value and raise ValueError.
+    Kept here so standalone generated scripts need only the standard library.
+    """
+    import math
+
+    if isinstance(value, bool):
+        raise ValueError("time of flight must be a finite non-negative number")
+    try:
+        v = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("time of flight must be a finite non-negative number") from exc
+    if not math.isfinite(v) or v < 0:
+        raise ValueError("time of flight must be a finite non-negative number")
+    nearest = max(28, 4 * math.floor(v / 4 + 0.5))
+    ok = v == nearest
+    return ok, nearest, "" if ok else "the controller takes multiples of 4 ns, at least 28 ns"
+
+def tof_rounded_note(raw, nearest, reason):
+    """The sentence for a time of flight SM moved and rounded onto the grid.
+
+    ``raw`` is the moved value before rounding (old time of flight plus the
+    readout output delay change), ``nearest`` what was written, ``reason``
+    the rule's reason. The acquisition window then starts ``nearest - raw``
+    ns after (or before) the signal's return, so the note asks for a new
+    measurement.
+    """
+    off = nearest - raw
+    side = "after" if off > 0 else "before"
+    return (f"Time of flight {raw:g} ns rounded {'up' if off > 0 else 'down'} to "
+            f"{nearest:g} ns ({reason}): acquisition starts {abs(off):g} ns {side} "
+            "the return; measure time of flight again.")
+
+def _tof_grid_consequence(nearest, reason):
+    """The grid rule and nearest allowed value for a kept time of flight."""
+    return f"{reason} (nearest allowed {nearest:g} ns)."
+
+def tof_kept_note(value, nearest, reason):
+    """The sentence for an off-grid time of flight the user set, which SM keeps."""
+    return (f"Time of flight {value:g} ns is kept as you set it, but "
+            + _tof_grid_consequence(nearest, reason))
+
+def tof_unrecorded_note(value, nearest, reason):
+    """The sentence for an off-grid value whose setter SM has no record of."""
+    return (f"Time of flight {value:g} ns is kept: SM has no record of who set it, but "
+            + _tof_grid_consequence(nearest, reason))
 
 def _norm_index(qubit_id):
     """Normalise a spec qubit id to the index QubitReference expects.
@@ -623,11 +674,9 @@ def _readout_delay(value, old):
     that step is rounded toward the smaller absolute change (162 from 0 gives
     160, not 164: both are 2 ns off). A result below 0 is raised to the
     smallest non-negative value on that step and ``clamped`` is True.
-    Provisional [derived]: the QM docs do not state a 4 ns rule for the time
-    of flight. Introduction/config.md line 93 says only that "some" config time
-    values "are required to be divisible by 4" (pulse length, integration
-    weights), and a port delay is set in 1 ns steps (Guides/features.md line
-    1283), so this step is a precaution, and the readout output then runs
+    This existing LF readout alignment is retained. QOP job submit requires
+    time of flight to be a multiple of 4 and at least 28 ns; ``tof_on_grid``
+    validates the resulting value separately. The readout output runs
     ``delay - value`` ns off the other outputs, which the build names."""
     change = value - old
     step = 4 * int(change / 4.0)          # int() truncates toward 0
@@ -664,11 +713,11 @@ def _undo_readout(port, old, value, qid, undo):
     return (f"the time of flight of {qid}, so the delay of "
             f"{_out_label(port)} stays {old:g} ns (asked {value:g} ns)")
 
-def _align_output_timing(machine, spec=None):
+def _align_output_timing(machine, spec=None, tof_moves=None):
     """Put every output of a generated chip on one time base.
 
     Runs last among the steps that touch bands or delays (after
-    ``_fix_coupled_bands``) and owns all three assignments:
+    ``_fix_coupled_bands``) and applies these timing rules:
     - every used MW-FEM analog output gets ``target - latency(its band)``
       (20 ns for a band 1 / 3 port on a chip that also uses band 2, else 0);
     - every used LF-FEM analog output gets ``target`` (flux, coupler, and any
@@ -676,15 +725,24 @@ def _align_output_timing(machine, spec=None):
     - a resonator whose readout output's delay really changed by ``ds`` gets
       its time of flight moved by ``ds`` [derived; simulator check in the
       build notes]: the pulse leaves ``ds`` later in program time, so the
-      acquisition starts ``ds`` later. A readout output's delay is kept on
-      the 4 ns time of flight grid (``_readout_delay``), for LF and MW alike.
+      acquisition starts ``ds`` later. The resulting time of flight uses
+      ``tof_on_grid``; ``tof_moves`` records its old value and original sum.
+      LF readout delays retain the existing ``_readout_delay`` alignment.
       A delay that could not be set moves nothing and is named; a time of
       flight that could not be moved puts its port's delay back, so the next
-      call repairs it. A time of flight the user set stays as set and one
-      warning names those qubits; values with no record of their source
-      (``_tof_provenance``) stay too, under one grouped line. A Re-generate
-      (``tof_follows_source``) gets the source chip's values from the merge,
-      so neither line is written then.
+      call repairs it. A time of flight the user set stays as set (on a
+      moved readout output one warning per delay change names those
+      qubits); values with no record of their source (``_tof_provenance``)
+      stay too (on a moved readout output under one grouped line). A
+      Re-generate (``tof_follows_source``) gets the source chip's values from
+      the merge, so neither line is written then;
+    - unless ``tof_follows_source``, every stored time of flight is checked
+      against the grid, on an undelayed readout output too: an off-grid
+      value neither typed nor unrecorded is written as the nearest allowed
+      value, with a per-qubit warning (and a ``tof_defaults`` entry off the
+      grid is named as written on the grid); an off-grid typed value stays
+      with ``tof_kept_note``, an off-grid unrecorded one stays with
+      ``tof_unrecorded_note`` (SM has no record of who set it).
     A physical port reached twice (``_output_key``) is set once.
     Idempotent: the time of flight moves by the change of its readout port's
     delay in this call (``new - old``), so a second call moves nothing.
@@ -705,6 +763,7 @@ def _align_output_timing(machine, spec=None):
         if rr is not None and getattr(rr, "opx_output", None) is not None:
             readers.setdefault(_output_key(rr.opx_output), []).append((qid, rr))
     moved, failed, rounded, done = {}, [], [], set()
+    tof_notes = []
 
     def assign(port, value):
         key = _output_key(port)
@@ -713,7 +772,7 @@ def _align_output_timing(machine, spec=None):
         done.add(key)
         old = getattr(port, "delay", 0)
         old = old if isinstance(old, (int, float)) and not isinstance(old, bool) else 0
-        if key in readers:
+        if key in readers and not _is_mw_output(port):
             asked, (value, clamped) = value, _readout_delay(value, old)
             if value != asked:
                 off = value - asked
@@ -739,17 +798,26 @@ def _align_output_timing(machine, spec=None):
             return
         # the time of flight moves with the delay, or the delay goes back:
         # never a new delay beside an old time of flight
-        undo = []
+        undo, pending_notes, pending_moves = [], [], {}
         for qid, rr in readers.get(key, ()):
             tof = getattr(rr, "time_of_flight", None)
             if tof is None or qid in unrecorded or qid in typed:
                 continue
             try:
-                rr.time_of_flight = tof + ds
+                ok, value_tof, reason = tof_on_grid(tof + ds)
+                rr.time_of_flight = value_tof
+                pending_moves[qid] = {"from": tof, "sum": tof + ds}
+                if not ok:
+                    note = tof_rounded_note(tof + ds, value_tof, reason)
+                    pending_moves[qid]["grid_note"] = note
+                    pending_notes.append(f"{qid}: {note}")
                 undo.append((qid, rr, tof))
             except (ValueError, TypeError):
                 failed.append(_undo_readout(port, old, value, qid, undo))
                 return
+        tof_notes.extend(pending_notes)
+        if tof_moves is not None:
+            tof_moves.update(pending_moves)
         moved[key] = ds
 
     for p in mw:
@@ -759,7 +827,33 @@ def _align_output_timing(machine, spec=None):
     for p in _lf_output_ports(machine):
         if hasattr(p, "delay"):
             assign(p, target)
-    warnings, kept, quiet = [], {}, []
+    warnings, kept, quiet = list(tof_notes), {}, []
+    if not carried:
+        for qid, q in qubits.items():
+            rr = getattr(q, "resonator", None)
+            tof = getattr(rr, "time_of_flight", None)
+            if tof is None:
+                continue
+            kept_as_set = qid in typed or qid in unrecorded
+            defaults = (((spec or {}).get("populate") or {}).get("options") or {}).get("tof_defaults") or {}
+            raw_default = defaults.get(qid)
+            try:
+                if not kept_as_set and raw_default is not None:
+                    default_ok, default_nearest, default_reason = tof_on_grid(raw_default)
+                    if not default_ok:
+                        warnings.append(f"{qid}: The default time of flight {float(raw_default):g} ns "
+                                        f"was written as {default_nearest:g} ns ({default_reason}).")
+                ok, nearest, reason = tof_on_grid(tof)
+            except ValueError:
+                continue   # not a number SM can place: left as it is
+            if not ok:
+                if kept_as_set:
+                    note = tof_kept_note if qid in typed else tof_unrecorded_note
+                    warnings.append(f"{qid}: {note(tof, nearest, reason)}")
+                else:
+                    rr.time_of_flight = nearest
+                    warnings.append(f"{qid}: Time of flight {tof:g} ns was written as "
+                                    f"{nearest:g} ns ({reason}).")
     for qid, q in qubits.items():
         rr = getattr(q, "resonator", None)
         ds = moved.get(_output_key(getattr(rr, "opx_output", None)), 0) if rr is not None else 0
@@ -1198,6 +1292,10 @@ def apply_populate(machine, populate, handle_pairs=True):
 
     for qid, vals in (populate.get("resonator") or {}).items():
         if qid in qubits and getattr(qubits[qid], "resonator", None) is not None:
+            defaults = (populate.get("options") or {}).get("tof_defaults") or {}
+            if (qid in defaults and "time_of_flight" in vals
+                    and _same_number(defaults[qid], vals["time_of_flight"])):
+                vals = {**vals, "time_of_flight": tof_on_grid(vals["time_of_flight"])[1]}
             _apply_resonator(qubits[qid].resonator, vals)
 
     for qid, vals in (populate.get("qubit") or {}).items():

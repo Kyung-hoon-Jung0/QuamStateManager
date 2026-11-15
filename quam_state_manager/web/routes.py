@@ -51211,7 +51211,8 @@ def regenerate_build():
                                 for i in _plan["flux"]) if _plan["flux"] else "") +
                             (". Time of flight: " + "; ".join(
                                 f"{i['qubit']} {value_delta.describe_moved(i.get('old'), i.get('new'), 'ns')}"
-                                for i in _plan["tof"]) if _plan["tof"] else "") + ".")
+                                for i in _plan["tof"]) if _plan["tof"] else "") + "." +
+                            "".join(" " + i["note"] for i in _plan.get("tof_unplaced") or ()))
                 except Exception as exc:   # noqa: BLE001 (reported, not raised)
                     note = ((note + " ") if note else "") + (
                         f"The chip was built, but the MW outputs could not be shifted: {exc}")

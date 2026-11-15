@@ -1,10 +1,13 @@
 """Shared helpers for the standalone ``generator/`` scripts.
 
-Imported ONLY by the sibling scripts (``run_build.py``,
-``run_generate_config.py``) that run under an *external* user-selected
-interpreter — it is NEVER imported by ``quam_state_manager`` and may use
-only the Python standard library. The scripts add this directory to
-``sys.path`` defensively before importing (CPython normally prepends the
+Imported by the sibling generator scripts (for example ``run_build.py``)
+that run under an *external* user-selected interpreter: it may use only the
+Python standard library. The SM process loads it in two ways, both for the
+time of flight grid rule and sentences: ``core.output_timing`` re-exports
+those helpers, and ``core.script_emitter`` loads ``run_build.py`` (which
+imports this module) to copy them into the emitted build script.
+The build and SM share these rules and sentences. The
+scripts add this directory to ``sys.path`` defensively before importing (CPython normally prepends the
 script's own directory, but ``PYTHONSAFEPATH`` / ``-P`` suppress that).
 
 PyInstaller ships the whole ``generator/`` directory as data files
@@ -104,3 +107,125 @@ def out_of_env_sources() -> dict:
             continue
         out[af] = [st.st_mtime_ns, st.st_size]
     return dict(sorted(out.items()))
+
+
+def tof_on_grid(value):
+    """Return validity, nearest allowed ns (ties upward), and the QOP reason.
+
+    Invalid numeric inputs have no nearest value and raise ValueError.
+    Kept here so standalone generated scripts need only the standard library.
+    """
+    import math
+
+    if isinstance(value, bool):
+        raise ValueError("time of flight must be a finite non-negative number")
+    try:
+        v = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("time of flight must be a finite non-negative number") from exc
+    if not math.isfinite(v) or v < 0:
+        raise ValueError("time of flight must be a finite non-negative number")
+    nearest = max(28, 4 * math.floor(v / 4 + 0.5))
+    ok = v == nearest
+    return ok, nearest, "" if ok else "the controller takes multiples of 4 ns, at least 28 ns"
+
+
+def tof_rounded_note(raw, nearest, reason):
+    """The sentence for a time of flight SM moved and rounded onto the grid.
+
+    ``raw`` is the moved value before rounding (old time of flight plus the
+    readout output delay change), ``nearest`` what was written, ``reason``
+    the rule's reason. The acquisition window then starts ``nearest - raw``
+    ns after (or before) the signal's return, so the note asks for a new
+    measurement.
+    """
+    off = nearest - raw
+    side = "after" if off > 0 else "before"
+    return (f"Time of flight {raw:g} ns rounded {'up' if off > 0 else 'down'} to "
+            f"{nearest:g} ns ({reason}): acquisition starts {abs(off):g} ns {side} "
+            "the return; measure time of flight again.")
+
+
+def tof_kept_note(value, nearest, reason):
+    """The sentence for an off-grid time of flight the user set, which SM keeps."""
+    return (f"Time of flight {value:g} ns is kept as you set it, but "
+            + _tof_grid_consequence(nearest, reason))
+
+
+def _tof_grid_consequence(nearest, reason):
+    """The grid rule and nearest allowed value for a kept time of flight."""
+    return f"{reason} (nearest allowed {nearest:g} ns)."
+
+
+def tof_unrecorded_note(value, nearest, reason):
+    """The sentence for an off-grid value whose setter SM has no record of."""
+    return (f"Time of flight {value:g} ns is kept: SM has no record of who set it, but "
+            + _tof_grid_consequence(nearest, reason))
+
+
+# The sentences for a stored time of flight a band shift does not write.
+# The plan, its offer, the applied note and the result review all print
+# these, so the wording exists once.
+
+def tof_not_moved_note(qubit, why_not):
+    """A stored value the grid rule cannot place (``why_not`` names why)."""
+    return f"Time of flight of {qubit} is not moved: {why_not}; measure time of flight again."
+
+
+def _via(target, through):
+    return f"{target} (through {through})" if through and through != target else f"{target}"
+
+
+def tof_reference_note(qubit, target, through=None):
+    """A stored reference to a number nothing in this run moves; ``target``
+    is the leaf the chain lands on, ``through`` its first hop."""
+    return (f"Time of flight of {qubit} is a reference to {_via(target, through)}; it is not "
+            f"moved. Move it at {target} if that is meant.")
+
+
+def tof_grid_only(value, lag, readout_shift):
+    """True when a reference that follows a moved time of flight (now
+    ``value``) differs from its own readout move only by the grid: the
+    readout moved (``readout_shift``), there is a difference (``lag``), and
+    the qubit's own value, ``value - lag``, would be written as the same
+    ``value``. Such a qubit needs no action (it is not re-checked)."""
+    if not lag or not readout_shift:
+        return False
+    try:
+        return tof_on_grid(value - lag)[1] == value
+    except (TypeError, ValueError):
+        return False
+
+
+def tof_follows_note(qubit, target, value, through=None, readout_shift=None, lag=0):
+    """A stored reference to a time of flight this same run moves: the link
+    is kept, so the value follows its target (``value`` is the target's new
+    value). ``lag`` is how much more the target moves than this qubit's own
+    readout output (``readout_shift`` ns): when it is not 0 the time of
+    flight no longer matches the readout, and the sentence says by how much.
+    When the readout moved and the difference is only the grid (this
+    qubit's own value, the target's old value moved with its own readout,
+    ``value - lag``, would be written as the same ``value``), the sentence
+    says no action is needed. A readout that did not move would keep its
+    own value unwritten, so that case keeps the advice."""
+    head = f"Time of flight of {qubit} is a reference to {_via(target, through)}; it follows "
+    if not lag:
+        return head + f"that value (now {value:g} ns)."
+    moved = ("did not move" if not readout_shift else f"moved {readout_shift:g} ns")
+    side = "later" if lag > 0 else "earlier"
+    if tof_grid_only(value, lag, readout_shift):
+        return (head + f"that value to {value:g} ns. The {abs(lag):g} ns difference to its "
+                "readout is only the 4 ns grid (multiples of 4 ns, at least 28 ns): "
+                f"{qubit}'s own value would round to the same {value:g} ns, so no action is "
+                "needed.")
+    return (head + f"that value to {value:g} ns, but {qubit}'s readout {moved}, so {qubit}'s "
+            f"time of flight is now {abs(lag):g} ns {side} than its readout. Give {qubit} its "
+            "own value if that is not meant.")
+
+
+def tof_reference_not_number_note(qubit, target, held=None):
+    """A stored reference that does not resolve to a finite number (dangling,
+    a cycle, text, nan / inf, or a form the resolver does not follow).
+    ``held`` is the text naming what the landing leaf holds, when known."""
+    return (f"Time of flight of {qubit} is a reference to {target} that does not resolve to "
+            f"a number{f' ({held})' if held else ''}; it is not moved.")

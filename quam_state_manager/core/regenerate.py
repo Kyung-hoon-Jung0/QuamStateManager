@@ -20,8 +20,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from . import (additions, config_generator, output_timing, path_match, regen_merge, regen_script, regen_spec,
-               rename_lineage, safe_io)
+from . import (additions, config_generator, output_timing, path_match, pointer_resolver, regen_merge,
+               regen_script, regen_spec, rename_lineage, safe_io)
 
 
 def reconstruct_from_folder(
@@ -483,6 +483,11 @@ def _num(v) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
+def _stored_tof(doc: dict, rr: dict, path: str):
+    """:func:`output_timing.stored_tof` (the one reading)."""
+    return output_timing.stored_tof(doc, rr, path)
+
+
 def _node(doc: dict, path: str):
     node = doc
     for part in path.split("/"):
@@ -511,9 +516,21 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
     each MW output of an earlier band gets ``s = 20`` ns; a qubit whose xy
     port shifted gets ``z += s``; a coupler port gets ``+= s`` of its pair's
     moving qubit (control when unset; a shared port is decided by the first
-    pair in chip order); a resonator gets ``time_of_flight += s`` of its
-    readout output port. Items: ``ports``, ``flux``, ``tof`` and ``spacing``
-    (qubits whose xy and readout shifts differ)."""
+    pair in chip order); a resonator's time of flight becomes
+    ``tof_on_grid(time_of_flight + s)`` of its readout output port (the item
+    keeps ``old``, the written ``new`` and the raw ``sum``). Items: ``ports``, ``flux``, ``tof`` and ``spacing``
+    (qubits whose xy and readout shifts differ). A stored time of flight the
+    grid rule cannot place (missing, not a number after its pointer is
+    resolved, not finite, or negative after the shift) is not written; it
+    goes to ``tof_unplaced`` with the reason, and the rest of the shift is
+    still offered. A stored QUAM pointer is never replaced by a literal, even
+    one that resolves to a number: it goes to ``tof_unplaced`` with a sentence
+    naming the leaf its chain lands on (``target``). When that leaf is a time
+    of flight this plan moves, the item carries ``follows`` and its sentence
+    says the reference follows the planned new value (also for a resonator
+    whose own readout output is not shifted); a pointer that does not resolve
+    to a finite number is named as such. Every sentence is
+    :func:`output_timing.tof_unplaced_note`."""
     try:
         mw = output_timing.mw_outputs_in_use(state, wiring)
         bands = {p.get("band") for _, p in mw}
@@ -526,7 +543,7 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
         shift = {path: target - lat[p.get("band")] for path, p in mw
                  if p.get("band") in lat and target - lat[p.get("band")] > 0}
         doc = {"wiring": (wiring or {}).get("wiring") or {}, **(state or {})}
-        plan = {"ports": [], "flux": [], "tof": [], "spacing": []}
+        plan = {"ports": [], "flux": [], "tof": [], "tof_unplaced": [], "spacing": []}
         for path, p in mw:
             if path in shift:
                 plan["ports"].append({"port": path, "port_label": _port_label(p, path),
@@ -534,6 +551,7 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
                                       "new": shift[path]})
         seen: set = set()
         xy_shift: dict = {}
+        refs: list = []
         for qid, q in ((state or {}).get("qubits") or {}).items():
             if not isinstance(q, dict):
                 continue
@@ -551,9 +569,32 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
             rr = q.get("resonator") if isinstance(q.get("resonator"), dict) else {}
             ro_path, _ = _resolve_ref(doc, rr.get("opx_output"))
             r = shift.get(ro_path, 0)
-            if r and _num(rr.get("time_of_flight")):
-                plan["tof"].append({"qubit": qid, "path": f"qubits/{qid}/resonator/time_of_flight",
-                                    "old": rr["time_of_flight"], "new": rr["time_of_flight"] + r})
+            path = f"qubits/{qid}/resonator/time_of_flight"
+            if r or pointer_resolver.is_pointer(rr.get("time_of_flight")):
+                reading = _stored_tof(doc, rr, path)
+                old, why_not, ref = reading
+                if ref is not None:
+                    # a pointer is never replaced by a literal: the link stays,
+                    # and its sentence depends on what this run moves (below);
+                    # one on an unshifted readout is named only if it follows
+                    refs.append({"qubit": qid, "path": path, "old": old, "sum": None,
+                                 "target": ref["target"], "_reading": reading,
+                                 "_shift": r})
+                elif r:
+                    unplaced = output_timing.tof_unplaced_note(qid, reading, shift=r)
+                    if unplaced is not None:
+                        # one stored value the rule cannot place: the other
+                        # lines are still offered, this one is named and not written
+                        plan["tof_unplaced"].append({
+                            "qubit": qid, "path": path, "old": old,
+                            "sum": old + r if why_not is None else None, "note": unplaced[0]})
+                    else:
+                        raw = old + r
+                        ok, nearest, reason = output_timing.tof_on_grid(raw)
+                        item = {"qubit": qid, "path": path, "old": old, "new": nearest, "sum": raw}
+                        if not ok:
+                            item["grid_note"] = output_timing.tof_rounded_note(raw, nearest, reason)
+                        plan["tof"].append(item)
             if rr and s != r:
                 plan["spacing"].append({"qubit": qid, "xy_shift": s, "readout_shift": r})
         for pid, pair in ((state or {}).get("qubit_pairs") or {}).items():
@@ -568,9 +609,43 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
                 plan["flux"].append({"pair": pid, "port": c_path,
                                      "port_label": _port_label(c_port, c_path),
                                      "old": c_port["delay"], "new": c_port["delay"] + s})
+        # a reference to a time of flight this run moves follows it (the
+        # planned new value); any other reference is named as not moved
+        moved = {t["path"]: t["new"] for t in plan["tof"]}
+        moved_by = {t["path"]: t["new"] - t["old"] for t in plan["tof"]}
+        order = list(((state or {}).get("qubits") or {}))
+        for item in refs:
+            r = item.pop("_shift")
+            note, kind = output_timing.tof_unplaced_note(
+                item["qubit"], item.pop("_reading"), moved, shift=r, moved_by=moved_by)
+            if not r and kind != "follows":
+                continue
+            item["note"] = note
+            if kind == "follows":
+                item["follows"] = True
+                lag = output_timing.follows_lag(moved_by, item["target"], r)
+                if lag:
+                    # the link moves this time of flight off its own readout
+                    item["lag"] = lag
+                    if output_timing.tof_grid_only(moved[item["target"]], lag, r):
+                        # only the grid: its own value would be the same, no action
+                        item["grid_only"] = True
+            plan["tof_unplaced"].append(item)
+        plan["tof_unplaced"].sort(key=lambda t: order.index(t["qubit"]))
         return plan if plan["ports"] else None
     except (AttributeError, TypeError, ValueError, KeyError):
         return None
+
+
+def _recheck(plan: dict) -> list:
+    """Qubits whose time of flight is measured again: every moved one, and a
+    reference that follows a value moved by a different amount than its own
+    readout output (``lag``), in chip order of the plan's lists. A reference
+    whose difference is only the grid (``grid_only``) needs no action and is
+    not named; with no qubit to name there is no clause."""
+    out = [t["qubit"] for t in plan.get("tof") or ()]
+    return out + [t["qubit"] for t in plan.get("tof_unplaced") or ()
+                  if t.get("lag") and not t.get("grid_only") and t["qubit"] not in out]
 
 
 def mw_band_shift_question(plan: dict) -> dict:
@@ -578,9 +653,14 @@ def mw_band_shift_question(plan: dict) -> dict:
     ``{"kind", "question", "why"}``; the per-qubit consequences are the
     review's own lines under it."""
     why = "Band 1/3 MW outputs leave 20 ns before band 2 ones."
-    if plan.get("tof"):
-        why += (" Re-check the time of flight of " +
-                ", ".join(t["qubit"] for t in plan["tof"]) + ".")
+    recheck = _recheck(plan)
+    if recheck:
+        why += " Re-check the time of flight of " + ", ".join(recheck) + "."
+    still = [t["qubit"] for t in plan.get("tof_unplaced") or () if not t.get("follows")]
+    if still:
+        # the full sentence is the question's own line under it; one clause
+        # here (a reference that follows a moved value is not "not moved")
+        why += " Time of flight of " + ", ".join(still) + " is not moved."
     return {"kind": "mw_shift", "question": "Shift the band 1/3 MW outputs by 20 ns?",
             "why": why}
 
@@ -588,9 +668,11 @@ def mw_band_shift_question(plan: dict) -> dict:
 def mw_band_shift_offer_text(plan: dict) -> str:
     """The question for :func:`mw_band_shift_plan`."""
     text = ("Band 1/3 MW outputs leave 20 ns before band 2 ones. Shift them by 20 ns?")
-    if plan.get("tof"):
-        text += (" Re-check the time of flight of " +
-                 ", ".join(t["qubit"] for t in plan["tof"]) + ".")
+    recheck = _recheck(plan)
+    if recheck:
+        text += " Re-check the time of flight of " + ", ".join(recheck) + "."
+    for t in plan.get("tof_unplaced") or ():
+        text += " " + t["note"]
     if plan.get("spacing"):
         text += (" The xy-readout spacing of " +
                  ", ".join(s["qubit"] for s in plan["spacing"]) +

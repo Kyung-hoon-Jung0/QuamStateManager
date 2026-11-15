@@ -280,10 +280,10 @@ class TestAlignCouplerDelays:
     def test_build_aligns_after_the_band_fixup(self):
         src = _RUN_BUILD.read_text(encoding="utf-8")
         fix = src.index("        _fix_coupled_bands(machine, spec, warnings)\n")
-        call = src.index("        warnings.extend(_align_output_timing(machine, spec))\n")
+        call = src.index("        warnings.extend(_align_output_timing(machine, spec, tof_moves))\n")
         assert call > fix
         # the build has one timing call; the coupler rule is only its fallback
-        assert src.count("_align_output_timing(machine, spec))") == 1
+        assert src.count("_align_output_timing(machine, spec, tof_moves))") == 1
         assert "warnings.extend(_align_coupler_delays(" not in src
         assert "return _align_coupler_delays(machine)" in src
 

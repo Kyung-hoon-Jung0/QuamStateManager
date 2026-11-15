@@ -25,7 +25,10 @@ QUAM state files use a custom JSON pointer syntax to avoid duplicating values:
 |-------------|---------|---------|
 | **Absolute** `#/` | `"#/qubits/qA1/anharmonicity"` | Navigate from the JSON root to this path |
 | **Relative-up** `#../` | `"#../x180_DragCosine/length"` | Go to parent dict, then navigate down |
-| **Self-ref** `#./` | `"#./inferred_intermediate_frequency"` | Runtime-computed by QUAM (never resolved by us) |
+| **Self-ref** `#./` | `"#./inferred_intermediate_frequency"` | Runtime alias (never resolved by `pointer_resolver`) |
+
+The opt-in field follower `pointer_path.resolve_field_target` does follow a `#./` that names a stored
+leaf (docs/01).
 
 For example, a qubit's `x90` pulse length is `"#../x180_DragCosine/length"` -- meaning "use the same length as the x180 pulse." When we display this value, we show both the pointer and its resolved concrete value (e.g. `40` nanoseconds).
 

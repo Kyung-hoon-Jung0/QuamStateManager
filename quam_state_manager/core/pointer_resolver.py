@@ -4,6 +4,10 @@ QUAM state files use three pointer flavors:
   - Absolute:     "#/qubits/qA1/anharmonicity"         -> traverse from root
   - Relative-up:  "#../x180_DragCosine/length"          -> go to parent, traverse down
   - Self-ref:     "#./inferred_intermediate_frequency"   -> QUAM runtime alias, never resolved
+                  here, at the leaf or in the middle of a chain (returned raw; Compare's
+                  "derived" rule relies on it). The opt-in field follower
+                  ``pointer_path.resolve_field_target`` follows a ``#./`` that names a stored
+                  leaf (for example, state_get, Live-Edit, the time-of-flight band shift).
 
 Most pointers resolve to a concrete value in one hop, but real data DOES
 contain chains — both a value that is itself a pointer, and a path that

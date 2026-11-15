@@ -5087,7 +5087,7 @@
     var groups = [], byKey = {};
     (t.tof || []).forEach(function (x) {
       var k = (x.moved ? "m|" + x.value + "|" + (typeof x.from === "number" ? x.from : "") : "k") +
-        "|" + x.shift;
+        "|" + x.shift + "|" + (x.grid_note || "");
       if (!byKey[k]) { byKey[k] = { x: x, q: [] }; groups.push(byKey[k]); }
       byKey[k].q.push(x.qubit);
     });
@@ -5095,6 +5095,13 @@
       var p = document.createElement("p");
       p.className = "ui-note";
       var x = g.x, one = g.q.length === 1;
+      // a value the user set off the grid on an undelayed readout output:
+      // nothing moved and nothing to measure again, only the grid to name
+      if (x.grid_only && x.grid_note) {
+        p.textContent = g.q.join(", ") + ": " + x.grid_note;
+        wrap.appendChild(p);
+        return;
+      }
       p.textContent = x.moved
         ? "Time of flight moved from " + (typeof x.from === "number" ? x.from : x.value - x.shift) +
           " to " + x.value + " ns with " +
@@ -5102,6 +5109,7 @@
         : "Time of flight left as you set it on " + g.q.join(", ") + "; " +
           (one ? "its" : "their") + " readout output is delayed by " + x.shift +
           " ns: measure time of flight again.";
+      if (x.grid_note) p.textContent += " " + x.grid_note;
       wrap.appendChild(p);
     });
     if ((t.tof_unrecorded || []).length) {
@@ -5119,6 +5127,8 @@
         "chip and " + (oneC ? "its" : "their") + " time of flight was not moved: measure time " +
         "of flight again.");
     }
+    // a stored value SM did not place: the server's one sentence, as is
+    (t.tof_unplaced || []).forEach(function (u) { quiet(u.note); });
     if (t.note) quiet(t.note);
     return wrap;
   }
@@ -12625,8 +12635,9 @@
         });
         (res.mw_shift.tof || []).forEach(function (d) {
           shiftLines.push("Time of flight of " + d.qubit + ": " + d.old + " to " + d.new +
-            " ns; re-check it on the chip.");
+            " ns. " + (d.grid_note || "Re-check it on the chip."));
         });
+        (res.mw_shift.tof_unplaced || []).forEach(function (d) { shiftLines.push(d.note); });
         (res.mw_shift.spacing || []).forEach(function (d) {
           shiftLines.push("xy-readout spacing of " + d.qubit + " changes by " +
             Math.abs(d.xy_shift - d.readout_shift) + " ns.");
