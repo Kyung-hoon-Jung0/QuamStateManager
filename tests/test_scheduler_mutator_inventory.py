@@ -22,6 +22,10 @@ _NON_STAGING_POSTS = {
     'pulse_class_page.pulse_class_save',
     'pulse_class_page.pulse_class_preview',
     'pulse_class_page.pulse_class_save_file',
+    # Slot gate class: keeps a class draft in the instance folder (like the
+    # pulse class editor's save); the agent's gate plan reads only.
+    'main.api_cz_gate_slot_class',
+    'agent.cz_gate_plan',
     # Load checks save a fresh store into scratch space, never the loaded store.
     'main.state_load_check',
     # Port tests operate on hardware and instance run/settings sidecars; none

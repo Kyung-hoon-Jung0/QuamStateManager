@@ -1229,6 +1229,13 @@ function tableWidths(el, sw, cw) {
            && $('#czg-new-body [data-czg-new-save]'),
            'Cancel: no request, the row says nothing was written and offers the save again');
         ok(doc.activeElement === $('#czg-new-body [data-czg-new-save]'), 'Cancel focuses Save the class file');
+        for (const message of ['Class saving is locked while a run is in progress; try again when it ends. <i>Wait</i>', null]) {
+            queue['save-config'].push(() => [409, Object.assign({ ok: false, error: 'scheduler_running' }, message ? { message } : {})]);
+            $('#czg-new-body [data-czg-new-save]').click(); await ready();
+            const line = $('[data-czg-new-problem]');
+            ok(line.textContent === (message || 'scheduler_running') && !line.querySelector('i'),
+               'class save lock shows the message as text or the existing error fallback');
+        }
         queue['save-config'].push(() => [409, { ok: false, confirm: CONFIRM }]);
         $('#czg-new-body [data-czg-new-save]').click();
         await ready();
