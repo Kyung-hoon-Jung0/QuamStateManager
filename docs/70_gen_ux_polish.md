@@ -49,8 +49,8 @@ removed on drop / Escape / cleanup.
 
 The docked monitor `#gen-wiring-monitor` (the which-port panel above the
 diagram): font 0.84em → **0.95em**, tag 0.82em → 0.9em, src/tgt bolded, and
-`position: sticky; top: 0` inside the `#table-pane` scroller so it stays
-visible while dragging near the bottom of a tall rack.
+in the page flow with the diagram. It was `position: sticky; top: 0` at
+first; that was dropped later because the bar covered the rack it described.
 
 ## CG4 — typography
 
@@ -83,7 +83,7 @@ untouched.
 `tests/generate_slotmenu_selfcheck.cjs` (fixed positioning, zoom correction,
 no scroll terms, pane-scroll + Escape close) and
 `tests/generate_dragghost_selfcheck.cjs` (ghost lifecycle, body-append, label,
-zoom-corrected follow, grip label, sticky/enlarged monitor CSS) — driven by
+zoom-corrected follow, grip label, enlarged in-flow monitor CSS) — driven by
 `tests/test_gen_ux_selfchecks.py`. Font pins live in
 `tests/test_web.py::TestFontPresetsR15` (preset values + topbar labels in
 sync). The `_test` harness exports gained `openSlotMenu`/`hideSlotMenu`/

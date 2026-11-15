@@ -63,8 +63,10 @@ function makeWizard(o) {
   SRC.forEach(src => new win.Function(src).call(win));
   // Execute the shipped app-wide shortcut listener, not a test imitation.
   const app = read('web/static/app.js').replace(/\r\n/g, '\n');
-  const start = app.indexOf('document.addEventListener("keydown", function(evt) {\n    if (!((evt.ctrlKey');
+  const HEAD = 'document.addEventListener("keydown", function(evt) {' + '\n';
+  const start = app.indexOf(HEAD);
   if (start < 0) throw new Error('wizard undo keyboard listener missing');
+  if (app.indexOf(HEAD, start + 1) >= 0) throw new Error('more than one app-wide keydown listener: name the one to run');
   const end = app.indexOf('\n});', start) + '\n});'.length;
   win.eval(app.slice(start, end));
   return { win, srv };

@@ -41,14 +41,15 @@ def test_config_viewer_offers_generate_only_with_an_environment(tmp_path, monkey
     assert "First pick the Python environment" not in html
 
 
-def test_wiring_monitor_follows_the_rack_and_docks_at_the_bottom():
+def test_wiring_monitor_follows_the_rack_and_stays_in_the_flow():
     t = (WEB / "templates" / "_generate.html").read_text(encoding="utf-8")
     assert t.index('id="gen-wiring-diagram"') < t.index('id="gen-wiring-monitor"')
     assert t.index('id="gen-pop-wiring-diagram"') < t.index('id="gen-pop-wiring-monitor"')
     css = (WEB / "static" / "style.css").read_text(encoding="utf-8")
     rule = re.search(r"\.gen-wiring-monitor\s*\{[^}]*\}", css).group(0)
-    assert re.search(r"position:\s*sticky", rule) and re.search(r"bottom:\s*0", rule)
-    assert not re.search(r"\btop:\s*0", rule)
+    # In the flow under the rack: docked (sticky) it covered the rack's bottom rows.
+    assert not re.search(r"position:\s*(sticky|fixed|absolute)", rule)
+    assert not re.search(r"\b(top|bottom):\s*0", rule)
 
 
 def test_both_output_folder_inputs_share_the_compact_rule():

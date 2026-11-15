@@ -10,8 +10,8 @@
 // The fix: a body-appended #gen-drag-ghost (position:fixed, pointer-events:
 // none, zoom-corrected clientX/Y follow, validity-tinted) created on drag
 // start, moved on every mousemove, removed on drop/cancel; the monitor grew
-// (0.84em → 0.95em) and became position:sticky so it stays visible while the
-// tall diagram scrolls.
+// (0.84em → 0.95em). It was sticky at first; it now stays in the page flow
+// with the diagram, because a sticky bar covered the rack it described.
 //
 // Run: node tests/generate_dragghost_selfcheck.cjs   (needs jsdom)
 'use strict';
@@ -70,12 +70,13 @@ const T = G._test;
 
 ok(typeof T.attachWiringDrag === 'function', 'G0: _test.attachWiringDrag exported');
 
-// CSS pins — ghost styling + the enlarged sticky monitor
+// CSS pins — ghost styling + the enlarged monitor, in the flow
 const ghostRule = (CSS.match(/#gen-drag-ghost\s*\{[^}]*\}/) || [''])[0];
 ok(/position:\s*fixed/.test(ghostRule), 'G1: ghost is position:fixed');
 ok(/pointer-events:\s*none/.test(ghostRule), 'G1: ghost is pointer-events:none (never steals the drop)');
 const monRule = (CSS.match(/\.gen-wiring-monitor\s*\{[^}]*\}/) || [''])[0];
-ok(/position:\s*sticky/.test(monRule), 'G2: monitor is sticky (visible during long drags)');
+ok(!/position:\s*(sticky|fixed|absolute)/.test(monRule) && !/\b(top|bottom):\s*0/.test(monRule),
+  'G2: monitor sits in the flow under the rack, never docked over its bottom rows');
 ok(/font-size:\s*0\.9[5-9]em|font-size:\s*1em/.test(monRule),
   'G2: monitor text enlarged (was 0.84em ≈ 12.6px)');
 
