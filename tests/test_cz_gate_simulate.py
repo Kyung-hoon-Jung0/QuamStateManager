@@ -274,13 +274,30 @@ def test_build_turns_a_refused_length_into_a_gate_answer(monkeypatch):
 @pytest.mark.parametrize("field,val", [
     ("t0_ns", "x"), ("elements", 5), ("t0_ns", [1]), ("volts", "12"), ("elements", "ab"),
     ("volts", [0.1, float("nan")]), ("volts", [0.1, float("inf")]), ("volts", [True]), ("volts", ["0.1"]),
-    ("elements", ["q1.z", 3]), ("t0_ns", float("nan")), ("t0_ns", True), ("t0_ns", "3"), ("volts", []), ("volts", {0.1: 0})])
+    ("elements", ["q1.z", 3]), ("t0_ns", float("nan")), ("t0_ns", True), ("t0_ns", "3"), ("volts", []), ("volts", {0.1: 0}),
+    ("t0_ns", False), ("t0_ns", ""), ("t0_ns", {}), ("elements", False), ("elements", 0), ("elements", {}),
+    ("fem", True), ("port", 1.9), ("port", "2"), ("controller", None), ("controller", ""), ("fem", None)])
 def test_malformed_port_entry_is_dropped_others_kept(field, val):
     good = {"controller": "con1", "fem": 1, "port": 1, "volts": [0.1], "dt_ns": 1.0}
-    bad = dict(good, port=2, **{field: val})
+    bad = dict(good, port=2)
+    bad[field] = val
     shaped = sim._shape_ports([bad, good])
     assert [p["port"] for p in shaped] == [1]
     assert shaped[0]["volts"] == [0.1] and shaped[0]["controller"] == "con1"
+
+
+def test_port_entry_defaults_and_integral_and_numpy_numbers():
+    np = pytest.importorskip("numpy")
+    base = {"controller": "con1", "fem": 1, "port": 1, "volts": [0.1]}
+    a = sim._shape_ports([dict(base, t0_ns=None, elements=None)])[0]
+    assert a["t0_ns"] == 0.0 and a["elements"] == [] and a["key"] == "con1/1/1"
+    for t0 in (0, 0.0):
+        assert sim._shape_ports([dict(base, t0_ns=t0)])[0]["t0_ns"] == 0.0
+    b = sim._shape_ports([dict(base, port=2.0, fem=np.int64(5))])[0]
+    assert b["port"] == 2 and b["fem"] == 5 and b["key"] == "con1/5/2"
+    c = sim._shape_ports([dict(base, volts=[np.float32(0.5), np.int64(2)])])[0]
+    assert c["volts"] == [0.5, 2.0]
+    assert sim._shape_ports([dict(base, volts=[np.bool_(True)])]) == []
 
 
 def test_port_entry_that_is_not_a_dict_is_dropped():

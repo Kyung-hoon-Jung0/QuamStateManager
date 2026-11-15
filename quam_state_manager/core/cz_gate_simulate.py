@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import math
+import numbers
 import os
 import re
 import threading
@@ -106,31 +107,41 @@ def target_of(settings: dict, creds: Optional[dict]) -> tuple[Optional[dict], st
     return {"local": local, "saas": saas}, label, limit
 
 
+def _real(x: Any) -> bool:
+    """A finite real number that is not a bool (numpy scalars included)."""
+    if isinstance(x, bool) or type(x).__name__ == "bool_":
+        return False
+    return isinstance(x, numbers.Real) and math.isfinite(float(x))
+
+
+def _whole(x: Any) -> bool:
+    """A real number with an integral value that is not a bool (2 and 2.0 pass, 1.9 does not)."""
+    return _real(x) and float(x) == int(x)
+
+
 def _shape_ports(ports: Any) -> list:
     """Each port as the contract states it; a malformed entry is dropped,
-    never padded."""
-    def _real(x: Any) -> bool:
-        return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
-
+    never padded. ``t0_ns`` and ``elements`` default only when missing or None."""
     out = []
     for p in ports if isinstance(ports, list) else []:
         if not isinstance(p, dict):
             continue
-        raw_volts, raw_el = p.get("volts"), p.get("elements") or []
-        raw_t0 = p.get("t0_ns") or 0.0
+        raw_volts, raw_el, raw_t0 = p.get("volts"), p.get("elements"), p.get("t0_ns")
+        raw_el = [] if raw_el is None else raw_el
+        raw_t0 = 0.0 if raw_t0 is None else raw_t0
         if not isinstance(raw_volts, (list, tuple)) or not all(_real(v) for v in raw_volts):
             continue
         if not isinstance(raw_el, (list, tuple)) or not all(isinstance(e, str) for e in raw_el):
             continue
         if not _real(raw_t0):
             continue
-        try:
-            volts = [float(v) for v in raw_volts]
-            con, fem, port = str(p["controller"]), int(p["fem"]), int(p["port"])
-            elements = list(raw_el)
-            t0 = float(raw_t0)
-        except (KeyError, TypeError, ValueError):
+        con, raw_fem, raw_port = p.get("controller"), p.get("fem"), p.get("port")
+        if not (isinstance(con, str) and con) or not _whole(raw_fem) or not _whole(raw_port):
             continue
+        fem, port = int(raw_fem), int(raw_port)
+        volts = [float(v) for v in raw_volts]
+        elements = list(raw_el)
+        t0 = float(raw_t0)
         if not volts:
             continue
         try:
