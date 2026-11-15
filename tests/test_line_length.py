@@ -7,8 +7,11 @@
 Lower a count when lines are re-wrapped (a count that went down is reported, for both tables); never raise it.
 3. New text: for every committed file the branch adds or modifies (git diff main...HEAD, i.e. from the
    merge-base, renames counted as added files) that is not in the tables, every line of an added file and
-   every added line of a modified file must be ASCII and at most 120 characters. Skipped when git or the main
-   ref is absent, and when no file differs from main (on main or right after a merge).
+   every added line of a modified file must be ASCII and at most 120 characters. Content is read from the commit
+   (git show HEAD:<path> for an added file, the committed diff for a modified one), never the working tree.
+   Skipped: the whole check when git or the main ref is absent or when no file differs from main (on main or
+   right after a merge); per file, a file in the tables and a binary file (git diff --numstat prints "-" for it).
+   A text file that is not UTF-8 is a failure naming the file.
 """
 import subprocess
 import warnings
@@ -111,15 +114,29 @@ def test_no_new_non_ascii_line(rel):
     judge(rel, found, MAX_NON_ASCII_LINES[rel], "lines with a non-ASCII character")
 
 
-def _git(*args: str) -> str:
+def _git_bytes(*args: str) -> bytes:
     try:
-        done = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True,
-                              encoding="utf-8", timeout=30)
+        done = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, timeout=30)
     except (OSError, subprocess.SubprocessError) as exc:
         pytest.skip(f"git is not usable: {exc}")
     if done.returncode != 0:
-        pytest.skip(f"git {' '.join(args)} failed (no main ref?): {done.stderr.strip()[:120]}")
+        pytest.skip(f"git {' '.join(args)} failed (no main ref?): "
+                    f"{done.stderr.decode('utf-8', 'replace').strip()[:120]}")
     return done.stdout
+
+
+def _git(*args: str) -> str:
+    return _git_bytes(*args).decode("utf-8", "replace")
+
+
+def binary_paths(numstat: str) -> set[str]:
+    """Paths git reports as binary in 'git diff --numstat -z' (no renames): '-<TAB>-<TAB>path' records."""
+    out = set()
+    for rec in numstat.split("\0"):
+        parts = rec.split("\t", 2)
+        if len(parts) == 3 and parts[0] == "-" and parts[1] == "-":
+            out.add(parts[2])
+    return out
 
 
 def added_lines(diff: str) -> list[str]:
@@ -145,6 +162,10 @@ def test_added_lines_and_bad_new_lines_see_what_they_should():
     assert bad_new_lines(["fine", "bad " + chr(0x661)]) == ["bad " + chr(0x661)]
 
 
+def test_binary_paths_reads_numstat_records():
+    assert binary_paths("1\t0\ta.md\0-\t-\tb.png\0-\t-\tc d.bin\0") == {"b.png", "c d.bin"}
+
+
 def test_new_text_is_ascii_and_within_120_characters():
     """Branch-time check (main...HEAD, from the merge-base): added files whole, modified files only their
     added lines, for files outside the two tables. A renamed file counts as added. Skipped when nothing differs."""
@@ -154,20 +175,23 @@ def test_new_text_is_ascii_and_within_120_characters():
         pytest.skip("no file differs from main (on main or right after a merge): nothing to check")
     added = {n for n in _git(*flags, "--diff-filter=A", "main...HEAD").split("\0") if n}
     tabled = set(MAX_LONG_LINES) | set(MAX_NON_ASCII_LINES)
-    bad = {}
+    binary = binary_paths(_git(*flags[:-1], "--numstat", "main...HEAD"))
+    bad, not_utf8 = {}, []
     for rel in names:
-        path = ROOT / rel
-        if rel in tabled or not path.is_file():
+        if rel in tabled or rel in binary:
             continue
         try:
             if rel in added:
-                lines = path.read_text(encoding="utf-8").splitlines()
+                lines = _git_bytes("show", f"HEAD:{rel}").decode("utf-8").splitlines()
             else:
-                lines = added_lines(_git("-c", "core.quotePath=false", "diff", "--no-renames", "-U0",
-                                         "main...HEAD", "--", rel))
+                diff = _git_bytes("-c", "core.quotePath=false", "diff", "--no-renames", "-U0",
+                                  "main...HEAD", "--", rel)
+                lines = added_lines(diff.decode("utf-8"))
         except UnicodeDecodeError:
-            continue  # a binary file
+            not_utf8.append(rel)
+            continue
         found = bad_new_lines(lines)
         if found:
             bad[rel] = len(found)
+    assert not not_utf8, f"text files that are not UTF-8: {not_utf8}"
     assert not bad, f"new text with a non-ASCII character or a line over {LIMIT} characters: {bad}"
