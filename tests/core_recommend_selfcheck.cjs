@@ -11,6 +11,12 @@ let fails = 0;
 let asserts = 0;
 function ok(c, m) { asserts++; if (!c) { console.error('FAIL: ' + m); fails++; } else { console.log('ok - ' + m); } }
 function wait(ms) { return new Promise((r) => setTimeout(r, ms || 0)); }
+// Wait until cond() holds, polling every 2 ms, capped at 2 s; false at the cap.
+async function until(cond, capMs) {
+  const end = Date.now() + (capMs || 2000);
+  while (Date.now() < end) { if (cond()) return true; await wait(2); }
+  return cond();
+}
 
 const dom = new JSDOM('<!doctype html><html><body><div id="host"></div><div id="tiles"></div></body></html>',
   { url: 'http://localhost/topology', pretendToBeVisual: true, runScripts: 'outside-only' });
@@ -69,7 +75,7 @@ const CR = window.CoreRecommend;
 
   box.querySelector('[data-core-rec-open]').click();
   ok(!pv.hidden && apply.disabled, 'open: preview shown, Stage still disabled while the note loads');
-  await wait(5);
+  await until(() => !apply.disabled);
   ok(!apply.disabled && !note.hidden && note.textContent.indexOf('ARMED') >= 0, 'armed note shown, Stage enabled');
 
   box.querySelector('[data-core-rec-cancel]').click();
@@ -77,20 +83,21 @@ const CR = window.CoreRecommend;
 
   window.__noteMode = 'fail';
   box.querySelector('[data-core-rec-open]').click();
-  await wait(5);
+  await until(() => note.textContent === CR.NOTE_FAILED);
   ok(apply.disabled && note.textContent === 'Could not read the Auto-Sync state; try again.', 'note failure keeps Stage disabled');
   apply.click();
-  await wait(5);
+  // Negative check: nothing may happen, so a bounded wait (not a settle) is the only option.
+  await wait(50);
   ok(window.__applied.length === 0, 'a disabled Stage applies nothing');
 
   window.__noteMode = 'idle';
   box.querySelector('[data-core-rec-open]').click();
-  await wait(5);
+  await until(() => !apply.disabled);
   ok(!apply.disabled && note.hidden, 'no note when Auto-Sync is idle');
   let seen = null;
   CR.onApplied((list) => { seen = list; });
   apply.click();
-  await wait(10);
+  await until(() => seen !== null);
   ok(window.__applied.length === 1 && JSON.stringify(window.__applied[0]) === JSON.stringify(FIXES), 'Stage hands the exact items to applyDiagFixAll');
   ok(Array.isArray(seen) && seen.length === 0, 'findings re-read after the apply');
   ok(window.document.querySelector('[data-core-rec-slot]').innerHTML === '', 'slot re-rendered from the new findings');

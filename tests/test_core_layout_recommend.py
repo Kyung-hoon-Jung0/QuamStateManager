@@ -260,3 +260,107 @@ def test_create_guard_holds_even_for_an_offered_item(chip, monkeypatch, bad):
     r = chip["client"].post("/diagnostics/apply-fix", json={"items": [bad]})
     assert r.status_code == 400 and r.get_json()["error"] == "fix may only create a missing core key"
     assert chip["store"].change_log == []
+
+
+# --- the Diagnostics page only points to the button ---------------------------------
+def _other_fixable():
+    """A finding of another kind with a one-click fix (its button must stay)."""
+    from quam_state_manager.core.diagnostics import Finding
+    return Finding(severity="warning", category="downconverter_mismatch", location="qubits.q9.resonator",
+                   message="downconverter frequency differs from the LO",
+                   fixes=[{"action": "set_value", "dot_path": "qubits.q9.resonator.lo", "value": "5e9",
+                           "label": "Use the LO"}])
+
+
+def _diag_page(chip, monkeypatch, extra=()):
+    from quam_state_manager.web import routes
+    real = routes._active_chip_findings
+    monkeypatch.setattr(routes, "_active_chip_findings",
+                        lambda store, **kw: list(real(store, **kw)) + list(extra))
+    return chip["client"].get("/diagnostics").get_data(as_text=True)
+
+
+def _diag_fix_buttons(html):
+    import re
+    return re.findall(r'<button[^>]*class="[^"]*\bdiag-fix\b[^"]*"[^>]*>([^<]*)</button>', html)
+
+
+def test_diagnostics_page_offers_no_core_leaf_and_keeps_other_fixes(chip, monkeypatch):
+    html = _diag_page(chip, monkeypatch, [_other_fixable()])
+    assert "10 / 8" in html or "cores on con1 FEM 1" in html
+    core_paths = {f["dot_path"] for f in _items(chip)}
+    assert not [p for p in core_paths if f'data-dot-path="{p}"' in html]
+    assert 'data-dot-path="qubits.q9.resonator.lo"' in html  # the other kind keeps its button
+    assert _diag_fix_buttons(html).count("Use the LO") == 1
+    assert "Convert to pointer" not in _diag_fix_buttons(html)
+    assert "diag-fix-all" not in html and "Stage this layout" not in html
+
+
+def test_ratchet_no_core_finding_renders_a_default_labelled_fix_button(chip, monkeypatch):
+    """Even a core finding that still carries items (a future path skipping the
+    page strip) renders no diag-fix button on the Diagnostics page."""
+    from quam_state_manager.core import core_layout as live_cl
+    monkeypatch.setattr(live_cl, "page_findings", lambda fs: fs)
+    html = _diag_page(chip, monkeypatch)
+    assert not [b for b in _diag_fix_buttons(html) if b.strip() == "Convert to pointer"]
+    assert 'data-dot-path="qubits.q1.xy.core"' not in html
+
+
+def test_diagnostics_fix_all_never_groups_core_items():
+    from quam_state_manager.core import diagnostics as dg
+    s = _null_chip().s
+    s2 = copy.deepcopy(s)
+    fds = [f for f in cl.surface_findings(s, "diagnostics") if f.category == cl.CATEGORY]
+    twin = copy.deepcopy(fds[0])
+    twin.location = "con1 FEM 2"
+    for fx in (fds[0].fixes or []) + (twin.fixes or []):
+        fx["kind"] = "core"
+    groups = dg.finding_groups([fds[0], twin])
+    assert groups and all(g["bulk"] == [] for g in groups)
+    assert s == s2
+
+
+def test_diagnostics_line_names_where_the_button_is(chip):
+    html = chip["client"].get("/diagnostics").get_data(as_text=True)
+    assert cl.FIX_DIAGNOSTICS in html and cl.FIX_RECOMMEND not in html
+    assert "Load check or Chip Status" in cl.FIX_DIAGNOSTICS and " -- " not in cl.FIX_DIAGNOSTICS
+
+
+def test_one_core_item_alone_is_refused_whole(chip):
+    items = _items(chip)
+    one = [i for i in items if i["action"] == "set_value"][0]
+    r = chip["client"].post("/diagnostics/apply-fix", json={"items": [one]})
+    assert r.status_code == 409
+    body = r.get_json()
+    assert body["error_kind"] == "core_layout_partial" and "nothing was changed" in body["error"]
+    assert chip["store"].change_log == []
+    r = chip["client"].post("/diagnostics/apply-fix", json={"items": items[:-1]})
+    assert r.status_code == 409 and chip["store"].change_log == []
+    # form posts (the per-item button path) are refused the same way
+    r = chip["client"].post("/diagnostics/apply-fix", data={**one, "pointer": ""})
+    assert r.status_code == 409 and chip["store"].change_log == []
+
+
+def test_chip_status_core_refresh_selfcheck():
+    import shutil
+    import subprocess
+    from pathlib import Path
+    if shutil.which("node") is None:
+        pytest.skip("node not on PATH")
+    root = Path(__file__).resolve().parents[1]
+    for name in ("chip_status_core_refresh_selfcheck.cjs", "core_recommend_selfcheck.cjs"):
+        r = subprocess.run(["node", str(root / "tests" / name)], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", cwd=str(root), timeout=120)
+        if r.returncode == 2 and "jsdom not installed" in (r.stderr or ""):
+            pytest.skip("jsdom not installed")
+        assert r.returncode == 0, (r.stdout + r.stderr)
+
+
+def test_page_findings_strips_core_items_only():
+    core = [f for f in cl.surface_findings(_null_chip().s, "diagnostics") if f.category == cl.CATEGORY][0]
+    assert core.fixes and core.preview  # Chip Status still gets them from the shared lint
+    other = _other_fixable()
+    out = cl.page_findings([core, other])
+    assert out[0].fixes is None and out[0].preview is None and out[0].fix is None
+    assert out[1] is other and other.fixes
+    assert core.fixes  # the shared lint result is not changed in place

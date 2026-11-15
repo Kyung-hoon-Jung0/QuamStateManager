@@ -51815,7 +51815,10 @@ def diagnostics_view():
     store = _store()
     if not store:
         return _no_chip("diagnostics", "diagnostics")
-    findings = _active_chip_findings(store)
+    from quam_state_manager.core.core_layout import page_findings as _core_page_findings
+    # The core layout recommendation is pressed as one group in Load check or
+    # Chip Status; this page lists the finding without per-leaf fix items.
+    findings = _core_page_findings(_active_chip_findings(store))
     template = "_diagnostics.html" if _is_htmx() else "diagnostics.html"
     return render_template(
         template,
@@ -52097,6 +52100,9 @@ def diagnostics_apply_fix():
     # and require a live finding offering EXACTLY each fix. This one check
     # enforces chip identity, current values and current wiring pairing.
     offered = _diag_offered_fixes(modifier.store)
+    refusal = _core_partial_refusal(clean, modifier.store.merged)
+    if refusal:
+        return jsonify(ok=False, error_kind="core_layout_partial", error=refusal), 409
     for item in clean:
         if item["action"] not in ("set_value", "set_pointer", "create_value"):
             return jsonify(ok=False, error="unsupported fix action"), 400
@@ -52200,6 +52206,24 @@ def _diag_offered_fixes(store) -> set:
         if fix.get("action") in ("set_value", "create_value"):
             out.add((fix["action"], fix.get("dot_path"), fix.get("value")))
     return out
+
+
+CORE_PARTIAL_REFUSAL = ("A core layout recommendation is staged only as a whole, from Recommend "
+                        "core layout in Load check or Chip Status; nothing was changed.")
+
+
+def _core_partial_refusal(clean: list, merged: dict) -> str | None:
+    """The refusal sentence when a press carries part of a FEM's core layout
+    recommendation (one leaf of a layout would leave a half layout); None when every
+    FEM it touches is pressed whole, or it touches none."""
+    from quam_state_manager.core.core_layout import offered_groups as _core_groups
+
+    pressed = {(it["action"], it["dot_path"], it["value"]) for it in clean}
+    for group in _core_groups(merged):
+        keys = {(f.get("action"), f.get("dot_path"), f.get("value")) for f in group}
+        if keys & pressed and not keys <= pressed:
+            return CORE_PARTIAL_REFUSAL
+    return None
 
 
 @bp.route("/diagnostics/core-findings", methods=["GET"])

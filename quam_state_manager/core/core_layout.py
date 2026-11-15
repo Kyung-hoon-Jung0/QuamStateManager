@@ -101,6 +101,9 @@ DETAIL_GROUP_ITEM = "{name} ({cost})"
 DETAIL_OWN_ITEM = "{element} (own, {cost})"
 OWN_CORE_NAME = "own"
 FIX_RECOMMEND = "Fix: press Recommend core layout, or move elements off this FEM."
+# The Diagnostics page has no Recommend button; it names where the button is.
+FIX_DIAGNOSTICS = ("Fix: press Recommend core layout in Load check or Chip Status, "
+                   "or move elements off this FEM.")
 FIX_REVIEW = "Fix: tick Share one core per qubit (xy + readout), or move elements off this FEM."
 DETAIL_STATIC = ("Static worst case: every declared element is counted as if one program played them all; "
                  "measure_accumulated needs more.")
@@ -699,7 +702,7 @@ def surface_fix_line(fem_finding_values: dict, surface: str) -> str:
         return FIX_REVIEW
     rec = fem_finding_values.get("recommend") or {}
     if rec.get("button"):
-        return FIX_RECOMMEND
+        return FIX_DIAGNOSTICS if surface == "diagnostics" else FIX_RECOMMEND
     return rec.get("panel_line") or FIX_MOVE
 
 
@@ -758,7 +761,7 @@ def finding_line(finding) -> dict:
     """One finding as a surface shows it: the warning line plus its detail lines."""
     v = finding.values if isinstance(finding.values, dict) else {}
     info = getattr(finding, "severity", None) == "info"
-    return {"kind": v.get("kind"), "location": finding.location, "message": finding.message,
+    return {"kind": v.get("kind"), "category": CATEGORY, "location": finding.location, "message": finding.message,
             "severity": "info" if info else "warning",
             "line": (INFO_LINE_PREFIX if info else LINE_PREFIX).format(message=finding.message),
             "detail": [ln for ln in (finding.detail or "").split("\n") if ln],
@@ -1033,6 +1036,26 @@ def recommend_layout(state: dict) -> dict:
             "unresolved": [u for u in unresolved if key in where.get(u["element"], [key])],
         }
     return out
+
+
+def offered_groups(state: dict) -> list:
+    """The recommendation items per FEM, one list per FEM that offers any. The apply
+    door stages a FEM's items only all together, never one leaf of a layout."""
+    try:
+        return [list(p["fixes"]) for p in recommend_layout(state)["fems"].values() if p["fixes"]]
+    except Exception:  # noqa: BLE001 - nothing offered is a refusal, never a crash
+        return []
+
+
+def page_findings(findings: list) -> list:
+    """The Diagnostics page form of the findings: a core layout finding carries no
+    fix items and no preview there (the recommendation is pressed as one group in
+    Load check or Chip Status). Other findings are returned unchanged."""
+    import dataclasses
+
+    return [dataclasses.replace(f, fix=None, fixes=None, preview=None)
+            if getattr(f, "category", None) == CATEGORY and dataclasses.is_dataclass(f) else f
+            for f in findings]
 
 
 def offered_fixes(state: dict) -> list:

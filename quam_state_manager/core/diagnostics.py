@@ -3498,6 +3498,8 @@ def finding_groups(rows, ids=None) -> list[dict]:
     for g in groups.values():
         kinds: dict[str, dict] = {}
         for f in g["items"]:
+            if f.category == "core_layout":  # pressed as one group elsewhere, never "Set all" here
+                continue
             for fix in (f.fixes or []):
                 if isinstance(fix, dict) and fix.get("kind"):
                     k = kinds.setdefault(fix["kind"], {"kind": fix["kind"],

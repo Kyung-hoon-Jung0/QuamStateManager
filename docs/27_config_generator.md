@@ -700,6 +700,13 @@ be read. Unreadable ports are named, not placed.
   They are written into the working copy as one undo group. A missing `core` key is created (`create_value`,
   allowed only for a missing `.core` leaf) and `thread` is set to null. Nothing reaches the live files unless
   Auto-Sync is armed, and the preview says so before the press.
-- `GET /diagnostics/core-findings` re-reads the findings afterwards.
+- apply-fix stages a FEM's items only all together: a press that carries some but not all of one FEM's
+  recommendation items answers 409 (`core_layout_partial`) and changes nothing, so no half layout is staged.
+- `GET /diagnostics/core-findings` re-reads the findings afterwards. Chip Status re-counts its "structural
+  issues" tile and verdict banner from that re-read, through its one counting function.
+- The Diagnostics page only points to the button: its fix line names Load check and Chip Status
+  (`FIX_DIAGNOSTICS`), the finding carries no fix items there (`core_layout.page_findings`), no per-item button and
+  no "Set all".
 - On a run archive (read-only), no fixes are offered and apply-fix answers 409.
-- Tests: `tests/test_core_layout_recommend.py` and `tests/core_recommend_selfcheck.cjs`.
+- Tests: `tests/test_core_layout_recommend.py`, `tests/core_recommend_selfcheck.cjs` and
+  `tests/chip_status_core_refresh_selfcheck.cjs`.
