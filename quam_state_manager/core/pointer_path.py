@@ -37,10 +37,13 @@ def _scalar(value: Any) -> Any:
 def _list_item(node: list, seg: str, digits_only: bool = False) -> tuple[bool, Any]:
     """The item of list *node* that key *seg* names: (found, value).
 
-    With *digits_only* (the cross walk) only a key of plain digits indexes,
-    as quam reads a list (``quam/utils/string_reference.py``:
-    ``if next_attr.isdigit() and isinstance(obj, (list, UserList))``), so
-    "-1", "+1", " 1" and "0_1" name nothing. Otherwise any text ``int()``
+    With *digits_only* (the cross walk) a key indexes as quam reads a list
+    (``quam/utils/string_reference.py``:
+    ``if next_attr.isdigit() and isinstance(obj, (list, UserList))``, then
+    ``int()``): a string ``str.isdigit()`` accepts and ``int()`` reads, so
+    "007" and non-ASCII decimal digits such as "١" index; "²"
+    (isdigit but not int-able) names nothing and stays a raw pointer with a
+    warning, as do "-1", "+1", " 1" and "0_1". Otherwise any text ``int()``
     reads indexes (the click-to-edit default, unchanged).
     """
     if digits_only and not seg.isdigit():

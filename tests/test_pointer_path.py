@@ -325,8 +325,13 @@ def _agrees(merged: dict, path: list[str]) -> dict:
     return ref
 
 
-def _random_graph(rng, roots="abc", keys="xyz", lists: bool = False, list_share: float = 0.2) -> dict:
-    """Small random pointer graph; with *lists* a *list_share* of containers are lists, indexed by "0", "1", ..."""
+def _random_graph(
+    rng, roots="abc", keys="xyz", lists: bool = False, list_share: float = 0.2, max_items: int = 2
+) -> dict:
+    """Small random pointer graph; with *lists* a *list_share* of containers are lists, indexed by "0", "1", ...
+
+    A list holds 1 to *max_items* items.
+    """
     def path() -> str:
         return "#/" + "/".join([rng.choice(roots)] + [rng.choice(keys) for _ in range(rng.randint(0, 3))])
 
@@ -335,7 +340,7 @@ def _random_graph(rng, roots="abc", keys="xyz", lists: bool = False, list_share:
         if depth == 0 or roll < 0.3:
             return path() if rng.random() < 0.6 else 26
         if lists and rng.random() < list_share:
-            return [node(depth - 1) for _ in range(rng.randint(1, 2))]
+            return [node(depth - 1) for _ in range(rng.randint(1, max_items))]
         return {k: node(depth - 1) for k in rng.sample(keys, rng.randint(1, 3))}
 
     m = {k: node(3) for k in roots}
@@ -752,7 +757,7 @@ def test_cross_agrees_with_the_reference_on_list_indices():
     keys = ("0", "1", "x", "01", "\u0661", "\u00b2") + _INT_ONLY_INDICES
     why: dict = {}
     for _ in range(1000):
-        merged = _random_graph(rng, "abc", keys, lists=True, list_share=0.5)
+        merged = _random_graph(rng, "abc", keys, lists=True, list_share=0.5, max_items=3)
         path = ["q", "leaf"]
         if rng.random() < 0.5:
             path = [rng.choice("abc")] + [rng.choice(keys) for _ in range(rng.randint(1, 3))]
