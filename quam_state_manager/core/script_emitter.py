@@ -86,12 +86,17 @@ _RUNTIME_FUNCS = (
     "_band_for", "_delay_for_band", "_is_lf_output", "_apply_lf_delay",
     "_qop_minor", "_qop_allows_13", "_band_compat", "_qop_port_sharing_affected",
     "_bands_covering", "_port_key", "_fix_coupled_bands", "_out_label", "_align_coupler_delays",
+    "_is_mw_output", "_used_port_paths", "_container_ports", "_ports_in_use", "_mw_output_ports",
+    "_output_timing_plan", "_set_delay", "_tof_provenance", "_user_set_tof", "_lf_output_ports",
+    "_same_number", "_output_key", "_readout_delay", "_undo_readout",
+    "_align_output_timing",
     "_default_flux_upsampling",
     "_set_port_lo", "_set_channel_lo", "_set_channel_band", "_operation",
     "_apply_resonator", "_apply_qubit", "_apply_flux", "_apply_pulses",
     "_twpa_of", "_apply_twpa", "_apply_twpa_qubits",
     "_make_cz_gate", "_apply_pairs", "apply_populate",
-    "_apply_dual_upconverters", "_pin_cores",
+    "_apply_dual_upconverters", "_pin_ports", "_pin_same_fem",
+    "_pin_set", "_pin_twpa_cores", "_pin_cores",
     "_pulse_class", "_cz_variant_pulses", "_seed_cz_variant",
     "_cr_flavor", "_import_cr_gate", "_make_cr_gate", "_seed_cr_gate",
     "_import_stark_cz_gate", "_make_stark_cz_gate", "_make_xy_detuned",
@@ -143,7 +148,11 @@ def _constraint(ch) -> str:
     """The qualang_tools spec call for a wizard channel dict, or ``None``.
 
     Mirrors run_build._make_constraint; only the fields the wizard actually
-    pinned are written (unspecified kwargs default to None = free)."""
+    pinned are written (unspecified kwargs default to None = free). A channel
+    that names a kind but pins no field renders as ``fn()``, never ``None``,
+    exactly as run_build passes it: the allocator treats a constrained line
+    differently from a free one (it changes the ports), and add_twpa_lines
+    reads ``isolation_constraints=None`` as "no isolation line"."""
     if not ch:
         return "None"
     kind = ch.get("kind")
@@ -169,7 +178,7 @@ def _constraint(ch) -> str:
     else:
         return "None"
     args = ", ".join(f"{k}={v!r}" for k, v in fields if v is not None)
-    return f"{fn}({args})" if args else "None"
+    return f"{fn}({args})"
 
 
 # Allocation line-type keys (WiringLineType.value) for the reference comments.
@@ -608,14 +617,14 @@ def _emit_build(spec: dict, chip: str, stamp: str, allocation: dict | None = Non
         w("    for _w in _finalize_coupler_only(machine, _spec):")
         w('        print(f"WARNING: {_w}", file=sys.stderr)')
     w('_apply_coupler_models(machine, POPULATE)')
-    w('if (POPULATE.get("options") or {}).get("pin_cores"):')
+    w('if (POPULATE.get("options") or {}).get("pin_cores") is not False:')
     w("    _pin_cores(machine)")
     # G1: the same coupled-band rule the wizard's build applies, so the
     # script writes the chip the wizard wrote
     w("for _w in _fix_coupled_bands(machine, _spec, []):")
     w('    print(f"WARNING: {_w}", file=sys.stderr)')
-    # the coupler LF ports take their pair's flux delay, after the band fix-up
-    w("for _w in _align_coupler_delays(machine):")
+    # one time base for MW outputs, flux LF ports and time of flight, after the band fix-up
+    w("for _w in _align_output_timing(machine, _spec):")
     w('    print(f"WARNING: {_w}", file=sys.stderr)')
     # G12: flux / coupler LF ports upsample in `pulse` mode, as the wizard's build does
     w("_default_flux_upsampling(machine, _spec)")

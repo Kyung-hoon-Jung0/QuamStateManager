@@ -42,7 +42,8 @@
       qdac: { communication_type: "Ethernet", ip_address: "", port: 5025,
               usb_device: null, lib: "@py", qubits: {} },
       lines: [],
-      populate: {},
+      // shared OPX cores per qubit (xy + readout): on for a new chip
+      populate: { options: { pin_cores: true } },
       pair_gate: "cz_tunable"
     };
   }
@@ -1671,6 +1672,20 @@
         npairs[(map[c] || c) + "-" + (map[t] || t)] = pop.pairs[key];
       });
       pop.pairs = npairs;
+    }
+    // The pre-filled time-of-flight record follows a rename too: a renamed
+    // qubit's untouched pre-fill is still the wizard's, not the user's.
+    if (pop.options && pop.options.tof_defaults) {
+      var ntd = {};
+      Object.keys(pop.options.tof_defaults).forEach(function (qid) {
+        ntd[map[qid] || qid] = pop.options.tof_defaults[qid];
+      });
+      pop.options.tof_defaults = ntd;
+    }
+    if (pop.options && pop.options.tof_unrecorded) {
+      pop.options.tof_unrecorded = pop.options.tof_unrecorded.map(function (qid) {
+        return map[qid] || qid;
+      });
     }
     // The auto-prefill record follows a rename, so a renamed row is not
     // mistaken for a new one (QA generate-r2-05).
@@ -4987,34 +5002,201 @@
     _dragGhostSrc = null;
   }
 
-  // The Review row for coupler port delays, under the build's own conditions:
-  // only LF-FEM coupler outputs take the moving qubit's flux port delay
-  // (run_build _align_coupler_delays), and Re-generate keeps stored values and
-  // offers the flux delay only for ports holding 0 (core/regenerate).
-  function couplerLineOnLf(ln) {
-    var ch = ln.channel;
-    if (ch && ch.con != null) {
-      return femTypeAt(ch.con, ch.out_slot != null ? ch.out_slot : ch.slot) === "lf-fem";
+  // The Review row "Output timing" states the build's RULE in words, never a
+  // prediction of numbers: the build (run_build _align_output_timing) works
+  // per port and per dedicated line, and the values it wrote are listed under
+  // the build result (outputTimingResultTable, from result.output_timing).
+  function outputTimingReviewText(sp) {
+    if (!(sp.lines || []).length) return null;
+    if (state.mode === "regenerate") {
+      return "Stored port delays and times of flight are kept. A chip that mixes band 2 with " +
+        "bands 1 and 3 and holds 0 on its MW outputs is offered a 20 ns shift of the earlier " +
+        "outputs before the build.";
     }
-    var c = ((allocEntry(ln.element) || {}).c || [])[0];
-    return !!c && femTypeAt(c.con, c.slot) === "lf-fem";
+    return "The build aligns outputs in time: when MW band 2 and bands 1 / 3 are both in use, " +
+      "band 1 / 3 outputs get 20 ns and every flux port the band 2 value; otherwise nothing " +
+      "is added. The values written are listed after the build.";
   }
 
-  function couplerDelayReviewText(sp) {
-    var lines = sp.lines.filter(function (ln) { return ln.line === "coupler"; });
-    if (!lines.length) return null;
-    if (!lines.some(couplerLineOnLf)) {
-      return "The coupler outputs are not LF-FEM outputs, so the flux delay rule does not " +
-        "apply: their delays are left as they are.";
+  // What the build or Re-generate wrote, read from the built chip by the
+  // server (core/output_timing.py summary): one kit table, or null.
+  function outputTimingResultTable(t) {
+    if (!t || (!(t.mw || []).length && !(t.flux || []).length)) return null;
+    var wrap = document.createElement("div");
+    var head = document.createElement("p");
+    head.textContent = "Output timing written:";
+    wrap.appendChild(head);
+    var table = document.createElement("table");
+    table.className = "ui-table";
+    var tr = document.createElement("tr");
+    ["Output", "Port", "Delay (ns)"].forEach(function (h) {
+      var th = document.createElement("th");
+      th.className = "ui-table-head";
+      th.textContent = h;
+      tr.appendChild(th);
+    });
+    table.appendChild(tr);
+    function row(kind, label, delay) {
+      var r = document.createElement("tr");
+      [kind, label, delay].forEach(function (v, i) {
+        var td = document.createElement("td");
+        td.className = "ui-table-cell" + (i === 2 ? " ui-table-num" : "");
+        td.textContent = String(v);
+        r.appendChild(td);
+      });
+      table.appendChild(r);
     }
-    if (state.mode === "regenerate") {
-      return "Stored coupler port delays are kept. Ports holding 0 are offered the moving " +
-        "qubit's flux port delay before the build.";
+    (t.mw || []).forEach(function (m) {
+      row("MW" + (m.band != null ? " band " + m.band : ""), m.label, m.delay);
+    });
+    (t.flux || []).forEach(function (f) {
+      row((f.kind === "lf" ? "LF output " : "Flux ") + f.of, f.label, f.delay);
+    });
+    wrap.appendChild(table);
+    function quiet(text) {
+      var p = document.createElement("p");
+      p.className = "ui-note";
+      p.textContent = text;
+      wrap.appendChild(p);
     }
-    return "Each coupler LF-FEM port gets its pair's moving-qubit flux port delay (the control " +
-      "qubit when none is set; with no flux line, the delay for that qubit's drive band). A " +
-      "coupler port shared by pairs that disagree keeps the first pair's value, and the build " +
-      "result names both.";
+    // One line per group, never one identical sentence per qubit: the moved
+    // defaults by (shift, new value), the values the user set by shift.
+    var groups = [], byKey = {};
+    (t.tof || []).forEach(function (x) {
+      var k = (x.moved ? "m|" + x.value + "|" + (typeof x.from === "number" ? x.from : "") : "k") +
+        "|" + x.shift;
+      if (!byKey[k]) { byKey[k] = { x: x, q: [] }; groups.push(byKey[k]); }
+      byKey[k].q.push(x.qubit);
+    });
+    groups.forEach(function (g) {
+      var p = document.createElement("p");
+      p.className = "ui-note";
+      var x = g.x, one = g.q.length === 1;
+      p.textContent = x.moved
+        ? "time of flight moved from " + (typeof x.from === "number" ? x.from : x.value - x.shift) +
+          " to " + x.value + " ns with " +
+          (one ? "its" : "their") + " readout output: " + g.q.join(", ") + "."
+        : "time of flight left as you set it on " + g.q.join(", ") + "; " +
+          (one ? "its" : "their") + " readout output is delayed by " + x.shift +
+          " ns: measure time of flight again.";
+      wrap.appendChild(p);
+    });
+    if ((t.tof_unrecorded || []).length) {
+      quiet("This draft does not record which time of flight values were pre-filled, so the " +
+        "time of flight of " + t.tof_unrecorded.join(", ") + " was kept while the readout " +
+        "output is delayed: measure time of flight again.");
+    }
+    if ((t.tof_unchanged || []).length) {
+      quiet("Readout output delays are the same as on the source chip, so no time of flight " +
+        "moved: " + t.tof_unchanged.join(", ") + ".");
+    }
+    if ((t.tof_check || []).length) {
+      var oneC = t.tof_check.length === 1;
+      quiet("The readout output delay of " + t.tof_check.join(", ") + " differs from the source " +
+        "chip and " + (oneC ? "its" : "their") + " time of flight was not moved: measure time " +
+        "of flight again.");
+    }
+    if (t.note) quiet(t.note);
+    return wrap;
+  }
+
+  // Static core budget of the built chip (server: core_layout.review_summary).
+  // Warning lines go under the verdict; the build stays a success.
+  function coreLayoutWarnings(cl) {
+    var out = [];
+    ((cl && cl.findings) || []).forEach(function (f) {
+      if (!f || !f.line) return;
+      var box = document.createElement("div");
+      var info = f.severity === "info";
+      box.className = "ui-callout ui-callout--" + (info ? "note" : "warn");
+      box.setAttribute("data-core-layout", info ? "info" : "warn");
+      var p = document.createElement("p");
+      p.className = "ui-callout-text ui-callout-title";
+      p.textContent = f.line;
+      box.appendChild(p);
+      (f.detail || []).forEach(function (d) {
+        var dp = document.createElement("p");
+        dp.className = "ui-callout-text";
+        dp.textContent = d;
+        box.appendChild(dp);
+      });
+      out.push(box);
+    });
+    return out;
+  }
+
+  // One kit table per FEM: element | core | source key | controller / FEM | cost,
+  // a total line with the limit; a FEM within its limit and over 8 rows folds.
+  function coreLayoutTable(cl) {
+    var t = cl && cl.table;
+    if (!t || !(t.fems || []).length) return null;
+    var wrap = document.createElement("div");
+    wrap.setAttribute("data-core-layout", "table");
+    var head = document.createElement("p");
+    head.textContent = "Core layout (static count):";
+    wrap.appendChild(head);
+    t.fems.forEach(function (f) {
+      var table = document.createElement("table");
+      table.className = "ui-table";
+      var tr = document.createElement("tr");
+      ["Element", "Core", "Source key", "Controller / FEM", "Cost"].forEach(function (h, i) {
+        var th = document.createElement("th");
+        th.className = "ui-table-head" + (i === 4 ? " ui-table-num" : "");
+        th.textContent = h;
+        tr.appendChild(th);
+      });
+      table.appendChild(tr);
+      (f.rows || []).forEach(function (r) {
+        var row = document.createElement("tr");
+        [r.element, r.core, r.source, r.place, r.cost].forEach(function (v, i) {
+          var td = document.createElement("td");
+          td.className = "ui-table-cell" + (i === 4 ? " ui-table-num" : "") +
+            (i === 1 && !r.shared && /^own core/.test(r.core) ? " ui-table-muted" : "");
+          td.textContent = String(v == null ? "" : v);
+          row.appendChild(td);
+        });
+        table.appendChild(row);
+      });
+      var tot = document.createElement("tr");
+      var td = document.createElement("td");
+      td.className = "ui-table-cell";
+      td.colSpan = 5;
+      var strong = document.createElement("strong");
+      strong.textContent = f.place + ": " + f.total;
+      td.appendChild(strong);
+      tot.appendChild(td);
+      table.appendChild(tot);
+      if (!f.over && (f.rows || []).length > 8) {
+        var det = document.createElement("details");
+        det.className = "ui-disclosure";
+        var sum = document.createElement("summary");
+        sum.className = "ui-disclosure-summary";
+        sum.textContent = f.place + ": " + f.total + " (" + f.rows.length + " elements)";
+        det.appendChild(sum);
+        det.appendChild(table);
+        wrap.appendChild(det);
+      } else {
+        var cap = document.createElement("p");
+        cap.className = "ui-verdict ui-verdict--" + (f.over ? "warn" : "ok");
+        var dot = document.createElement("span");
+        dot.className = "ui-dot";
+        var key = document.createElement("span");
+        key.className = "ui-verdict-key";
+        key.textContent = f.place + ": " + f.total + (f.over ? ", over the limit" : "");
+        cap.appendChild(dot);
+        cap.appendChild(key);
+        wrap.appendChild(cap);
+        wrap.appendChild(table);
+      }
+    });
+    if (cl.risk_note) {
+      var rn = document.createElement("p");
+      rn.className = "ui-note";
+      rn.setAttribute("data-core-layout", "risk");
+      rn.textContent = cl.risk_note;
+      wrap.appendChild(rn);
+    }
+    return wrap;
   }
 
   function femTypeAt(con, slot) {
@@ -8635,6 +8817,8 @@
   // Populate-protect bookkeeping (docs/72): cells the user explicitly owns
   // this wizard session — typed, Set-all'd, preset-applied or re-solved.
   function markPopulateTouched(group, rid, field) {
+    // A user action on a pre-filled time of flight makes it the user's.
+    if (group === "resonator" && field === "time_of_flight") forgetTofDefault(rid);
     if (state.mode !== "regenerate") {
       if (!state.populateTouched) state.populateTouched = {};
       state.populateTouched[group + "|" + rid + "|" + field] = 1;
@@ -8942,6 +9126,7 @@
   }
 
   function specWithCoBands() {
+    ensurePinCores(state.spec);
     var cb = (loBandFindings(computeLoAssignments()).coBands) || {};
     var keys = Object.keys(cb);
     if (!keys.length) return state.spec;
@@ -10260,6 +10445,35 @@
     }
     return rec;
   }
+  // The time-of-flight cells the wizard pre-filled, { qid: value }, sent with
+  // the spec so the build moves them with a delayed readout output; a cell
+  // the user then changes (typed, bulk fill, preset Overwrite) leaves it.
+  function tofDefaults(create) {
+    var pop = state.spec.populate || (state.spec.populate = {});
+    var opts = pop.options || (create ? (pop.options = {}) : null);
+    if (!opts) return null;
+    if (!opts.tof_defaults && create) opts.tof_defaults = {};
+    return opts.tof_defaults || null;
+  }
+  function forgetTofDefault(rid) {
+    var d = tofDefaults(false);
+    if (d && Object.prototype.hasOwnProperty.call(d, rid)) delete d[rid];
+    var opts = (state.spec.populate || {}).options || {};
+    var u = opts.tof_unrecorded;
+    if (u && u.indexOf(rid) >= 0) {
+      u.splice(u.indexOf(rid), 1);
+      if (!u.length) delete opts.tof_unrecorded;
+    }
+  }
+  // Starting the record on a draft saved before it existed: the times of
+  // flight that draft already held have no known source; list them so the
+  // build keeps them under one grouped line instead of calling them typed.
+  function startTofRecord(preTof) {
+    var opts = (state.spec.populate || (state.spec.populate = {})).options;
+    if (opts && opts.tof_defaults) return;
+    tofDefaults(true);
+    if (preTof.length) state.spec.populate.options.tof_unrecorded = preTof.slice();
+  }
   function autoApplyStandardDefaults() {
     // Regenerate shows a REAL chip's values — auto-filling blanks with the
     // synthetic standard preset would present defaults the chip never had
@@ -10293,7 +10507,22 @@
       .then(function (p) {
         if (!p || !p.ok || !p.sections) return;
         if (state.autoPresetRows !== rec) return;   // the wizard was reset meanwhile
+        var rr = (state.spec.populate || {}).resonator || {};
+        var emptyTof = {};
+        Object.keys(freshQ).forEach(function (q) {
+          var v = (rr[q] || {}).time_of_flight;
+          if (v == null || v === "") emptyTof[q] = 1;
+        });
+        var preTof = Object.keys(rr).filter(function (q) {
+          var v = (rr[q] || {}).time_of_flight;
+          return v != null && v !== "";
+        });
         var report = applyPreset(p, false, { q: freshQ, pairs: freshP });
+        var rrAfter = (state.spec.populate || {}).resonator || {};
+        Object.keys(emptyTof).forEach(function (q) {
+          var v = (rrAfter[q] || {}).time_of_flight;
+          if (v != null && v !== "") { startTofRecord(preTof); tofDefaults(true)[q] = v; }
+        });
         // Recorded only once the preset arrived — an offline visit retries.
         Object.keys(freshQ).forEach(function (q) { rec.q[q] = 1; });
         Object.keys(freshPKeys).forEach(function (k) { rec.pairs[k] = 1; });
@@ -10483,7 +10712,32 @@
     });
   }
 
+  // Shared OPX cores: the spec always carries populate.options.pin_cores
+  // explicitly. A spec without the key counts as on (the build treats it
+  // the same way); the checkbox mirrors the stored value.
+  function ensurePinCores(spec) {
+    var pop = spec.populate || (spec.populate = {});
+    var opt = pop.options || (pop.options = {});
+    if (typeof opt.pin_cores !== "boolean") opt.pin_cores = opt.pin_cores !== false;
+    return opt.pin_cores;
+  }
+
+  function syncPinCoresUi() {
+    var chk = document.getElementById("gen-pin-cores-chk");
+    if (!chk) return;
+    chk.checked = ensurePinCores(state.spec);
+    if (!chk.dataset.bound) {
+      chk.dataset.bound = "1";
+      chk.addEventListener("change", function () {
+        ensurePinCores(state.spec);
+        state.spec.populate.options.pin_cores = !!chk.checked;
+        saveDraft();
+      });
+    }
+  }
+
   function enterPopulateStep() {
+    syncPinCoresUi();
     // Clear any stale live-preview panel from a previous visit to this step.
     if (window.GenPreview && window.GenPreview.reset) window.GenPreview.reset();
     renderPopulateIntro();   // QA regenerate-r2-31
@@ -10714,8 +10968,9 @@
       var b = ((sp.populate || {}).coupler_models || {})[id];
       rows.push([id, "coupler model: " + (b && Object.keys(b).length && !couplerModelError(id) ? "set" : "not set")]);
     });
-    var couplerRow = couplerDelayReviewText(sp);
-    if (couplerRow) rows.push(["Coupler port delay", couplerRow]);
+    var timingRow = outputTimingReviewText(specWithCoBands());
+    if (timingRow) rows.push(["Output timing", timingRow,
+      "Starting values: output filters add latency, so calibrate xy-z timing on the chip."]);
     var modelErrors = couplerModelErrors();
     if (modelErrors.length) rows.push(["Coupler model errors", modelErrors.join("; ")]);
     var roReview = readoutReviewText();   // docs/242: what to cable, per feedline
@@ -10841,6 +11096,12 @@
     var cells = el.querySelectorAll("td");
     rows.forEach(function (r, i) {
       cells[i].textContent = r[1];
+      if (r[2]) {
+        var note = document.createElement("p");
+        note.className = "ui-note";
+        note.textContent = r[2];
+        cells[i].appendChild(note);
+      }
       // QA F21: the flagged path cells wear the warning colour
       if (String(r[1]).indexOf(REL_FLAG) >= 0) cells[i].classList.add("gen-cap-degrade");
     });
@@ -11498,12 +11759,17 @@
         msg.className = "gen-build-warn-line";
       }
       el.appendChild(msg);
+      coreLayoutWarnings(res.core_layout).forEach(function (w) { el.appendChild(w); });
+      var timingTable = outputTimingResultTable(r.output_timing);
       (r.warnings || []).forEach(function (w) {
+        // the kept time-of-flight sentence is said once, beside the table
+        if (timingTable && /time of flight left as you set it /.test(w)) return;
         var wel = document.createElement("p");
         wel.className = "gen-build-warn-line";
         wel.textContent = "⚠ " + w;
         el.appendChild(wel);
       });
+      if (timingTable) el.appendChild(timingTable);
       if (cellErrs.length) {
         var cel = document.createElement("p");
         cel.className = "gen-build-warn-line gen-build-cell-errs";
@@ -11515,6 +11781,8 @@
           " — fix them before running this chip.";
         el.appendChild(cel);
       }
+      var coreTable = coreLayoutTable(res.core_layout);
+      if (coreTable) el.appendChild(coreTable);
       // Editable-scripts export outcome (best-effort side artefact).
       if (res.scripts) {
         var sc = document.createElement("p");
@@ -12209,10 +12477,62 @@
       return;
     }
 
-    if (res.confirm_kind === "coupler_delay") {
-      // An old wizard wrote 0 to coupler flux ports; the merge keeps stored
-      // values, so the server offers the z delay once. The answer rides the
-      // next build request; nothing changes unless the user says set.
+    if (res.confirm_kind === "coupler_delay" || res.confirm_kind === "mw_shift") {
+      // One question step for both stored-delay offers. An old wizard wrote 0
+      // to coupler flux ports, and a chip built before the output time base
+      // holds 0 on every MW output while it mixes band 2 with bands 1 / 3;
+      // the merge keeps stored values, so the server asks once. The answers
+      // ride the next build request; nothing changes unless the user accepts.
+      var asked = { coupler: !!(res.coupler_delay || []).length, shift: !!res.mw_shift };
+      state.regenCouplerDelayAck = asked.coupler ? null : state.regenCouplerDelayAck;
+      state.regenMwShiftAck = asked.shift ? null : state.regenMwShiftAck;
+      var answered = function () {
+        if ((!asked.coupler || state.regenCouplerDelayAck) &&
+            (!asked.shift || state.regenMwShiftAck)) runBuild();
+      };
+      var answerButtons = function (choices, set) {
+        choices.forEach(function (b) {
+          var btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = b[2] + " " + b[3] + " " + b[4];
+          btn.textContent = b[1];
+          btn.addEventListener("click", function () {
+            set(b[0]);
+            el.querySelectorAll("." + b[4]).forEach(function (o) { o.disabled = o !== btn; });
+            answered();
+          });
+          el.appendChild(btn);
+        });
+      };
+      if (asked.shift) {
+        var shiftLines = [];
+        (res.mw_shift.ports || []).forEach(function (d) {
+          shiftLines.push("MW output " + (d.port_label || d.port) + " (band " + d.band +
+            "): delay " + d.old + " to " + d.new + " ns");
+        });
+        (res.mw_shift.flux || []).forEach(function (d) {
+          shiftLines.push((d.qubit ? "Flux port of " + d.qubit : "Coupler port of " + d.pair) +
+            " (" + (d.port_label || d.port) + "): " + d.old + " to " + d.new + " ns");
+        });
+        (res.mw_shift.tof || []).forEach(function (d) {
+          shiftLines.push("Time of flight of " + d.qubit + ": " + d.old + " to " + d.new +
+            " ns; re-check it on the chip");
+        });
+        (res.mw_shift.spacing || []).forEach(function (d) {
+          shiftLines.push("xy-readout spacing of " + d.qubit + " changes by " +
+            Math.abs(d.xy_shift - d.readout_shift) + " ns");
+        });
+        shiftLines.forEach(function (t) {
+          var line = document.createElement("p");
+          line.className = "gen-build-warn-line";
+          line.textContent = "\u2022 " + t + ".";
+          el.appendChild(line);
+        });
+        answerButtons([["shift", "Shift them by 20 ns", "btn-sm", "gen-mw-shift-shift", "gen-mw-shift"],
+                       ["keep", "Keep as stored", "btn-sm outline", "gen-mw-shift-keep", "gen-mw-shift"]],
+                      function (v) { state.regenMwShiftAck = v; });
+      }
+      if (!asked.coupler) return;
       (res.coupler_delay || []).forEach(function (d) {
         var line = document.createElement("p");
         line.className = "gen-build-warn-line";
@@ -12222,18 +12542,9 @@
           "qubit's flux port has " + d.z_delay + " ns.";
         el.appendChild(line);
       });
-      [["set", "Set the couplers to the z delay", "btn-sm"],
-       ["keep", "Keep 0", "btn-sm outline"]].forEach(function (b) {
-        var btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = b[2] + " gen-coupler-delay-" + b[0];
-        btn.textContent = b[1];
-        btn.addEventListener("click", function () {
-          state.regenCouplerDelayAck = b[0];
-          runBuild();
-        });
-        el.appendChild(btn);
-      });
+      answerButtons([["set", "Set the couplers to the z delay", "btn-sm", "gen-coupler-delay-set", "gen-coupler-delay"],
+                     ["keep", "Keep 0", "btn-sm outline", "gen-coupler-delay-keep", "gen-coupler-delay"]],
+                    function (v) { state.regenCouplerDelayAck = v; });
       return;
     }
 
@@ -12722,6 +13033,7 @@
         fsp_ack: state.mode === "regenerate" ? (state.regenFspAck || {}) : null,
         // the answer to the coupler-delay offer ("set" / "keep"), if asked
         coupler_delay_ack: state.mode === "regenerate" ? (state.regenCouplerDelayAck || null) : null,
+        mw_shift_ack: state.mode === "regenerate" ? (state.regenMwShiftAck || null) : null,
         // QA regenerate-r2-35: the hydrate-time source stamp + the user's
         // "build anyway" to a changed source.
         source_hash: state.mode === "regenerate" ? (state.regenSourceHash || null) : null,
@@ -13976,6 +14288,7 @@
     state.regenFilled = {};   // fill-empty preset cells (review of r2-03)
     state.regenFspAck = {};   // QA regenerate-r2-06: answers belong to one source chip
     state.regenCouplerDelayAck = null;   // so does the coupler-delay answer
+    state.regenMwShiftAck = null;        // and the MW output shift answer
     repaintFromState();
     // repaintFromState() only syncs the scalar inputs — the Chassis grid, the
     // Qubits pair list, and the chip board render separately. Force them from the
@@ -14032,6 +14345,13 @@
       qopReviewLines: qopReviewLines,
       enterReviewStep: enterReviewStep,
       specWithCoBands: specWithCoBands,   // docs/301 F33
+      outputTimingReviewText: outputTimingReviewText,
+      showBuildConfirm: showBuildConfirm,
+      outputTimingResultTable: outputTimingResultTable,
+      coreLayoutTable: coreLayoutTable,
+      coreLayoutWarnings: coreLayoutWarnings,
+      syncPinCoresUi: syncPinCoresUi,
+      loadDraft: loadDraft,
       coupledBandBlockers: coupledBandBlockers,   // G1
       recomputeLOs: recomputeLOs,
       runBuild: runBuild,               // QA regenerate-r2-06

@@ -649,3 +649,39 @@ See the plan file for the full phase breakdown and dependency order.
   datas already ships the whole `generator/` dir, so the shared module
   travels with the frozen bundle automatically — verify the next
   `dist/` listing once.
+
+## Output timing across FEMs and bands
+
+Official figure (`documentation-website/docs/docs/docs/Guides/opx1000_fems.md`, lines 113-121):
+"Relative to an LF-FEM analog output port, the additional delay of an MW-FEM analog output port is
+approximately: `155 ns` for Bands 1 and 3, `175 ns` for Band 2 ... Band 2 is delayed by an additional
+`20 ns` compared to Bands 1 and 3."
+
+The owner's measurement gives 141 ns (bands 1 and 3) and 161 ns (band 2); SM uses those
+(`_BAND_TO_DELAY_NS` in `generator/run_build.py`). Both sources agree on the 20 ns difference, which
+is what the rule depends on.
+
+Rule (Generate, `_align_output_timing`, the last band / delay step of the build and of the emitted
+`02_build_machine.py`):
+- latency classes, not bands: band 2 versus bands 1 and 3. The reference is the LATEST class in use
+  (a port delay can only be positive), i.e. 161 ns when any used MW-FEM output is in band 2, else 141.
+- every used MW-FEM analog output gets `reference - latency(its band)`: 20 ns for a band 1 / 3 output
+  on a chip that also uses band 2, otherwise 0 (whichever line the port carries; every element on it
+  moves with it).
+- every LF-FEM output carrying a flux line (qubit z, coupler) gets the reference.
+- a resonator whose readout output got `s` gets `time_of_flight += s`.
+- a chip in one class builds byte for byte as before (`tests/test_mw_band_align_live.py`); an OPX+
+  output and an LF-FEM output that is not a flux line are left alone. The build writes no digital
+  marker delays on MW elements, so nothing else moves.
+
+These are starting values: FIR / IIR output filters add latency, so xy-z timing is calibrated on the
+chip (calibrated z delays land well below the reference). The Review row "Output timing" says what
+the build will do for the spec on screen.
+
+Re-generate never changes stored delays silently. A chip that mixes band 2 with bands 1 / 3 and holds
+0 on every MW output is asked once (`mw_shift_ack`: `shift` / `keep`, in the same question step as the
+coupler-delay offer): shift each earlier MW output by 20 ns, add the qubit's xy shift to its z delay,
+a coupler's moving qubit's shift to the coupler, and the readout shift to the time of flight. The
+offer names the resonators whose time of flight to re-check and the qubits whose xy-readout spacing
+changes. Ports a rebuild adds follow the source chip's base (`follow_source_time_base`): an
+unshifted source gives them today's per-band values, so the offer covers them too.

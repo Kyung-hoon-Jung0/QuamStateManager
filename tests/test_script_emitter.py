@@ -179,6 +179,23 @@ def test_twpa_id_is_stripped_like_the_wizard_build():
         assert f"add_twpa_lines(twpas=[{wire}]" in src
 
 
+def test_twpa_isolation_without_pinned_fields_is_still_wired():
+    """A TWPA line whose channel names only a kind (no port pinned) makes the
+    wizard pass an empty spec object, and add_twpa_lines wires the line; the
+    emitted call must pass the same object, not None (None = no isolation)."""
+    spec = {"twpas": [{"id": "twpa1", "qubits": []}, {"id": "twpa2", "qubits": []}],
+            "qubits": [], "qubit_pairs": [], "lines": [
+                {"element": "twpa1", "line": "twpa_pump", "channel": None},
+                {"element": "twpa1", "line": "twpa_isolation", "channel": {"kind": "mw_fem"}},
+                {"element": "twpa2", "line": "twpa_pump", "channel": {"kind": "mw_fem"}}]}
+    src = _bundle(spec, alloc={})["01_make_wiring.py"]
+    assert ("connectivity.add_twpa_lines(twpas=['1'], "
+            "isolation_constraints=mw_fem_spec())") in src
+    assert ("connectivity.add_twpa_lines(twpas=['2'], "
+            "pump_constraints=mw_fem_spec())") in src
+    assert "twpas=['2'], pump_constraints=mw_fem_spec(), isolation" not in src
+
+
 def test_twpa_ids_match_build_connectivity_exactly(monkeypatch):
     """Parity with the wizard build itself: the ids build_connectivity hands
     add_twpa_lines are the ids the emitted 01 hands it."""
@@ -390,3 +407,28 @@ class TestReadmeNaturalOrder:
         readme = script_emitter.emit_bundle(
             _tee_spec(ids), None, {}, "chip", STAMP)["README.md"]
         assert "(qA2, qA10, qB1)" in readme
+
+
+def test_emitted_scripts_move_a_prefilled_time_of_flight_like_the_wizard_build():
+    """A mixed-band spec whose time of flight the wizard pre-filled: the emitted
+    build script carries the prefill record and runs the same rule, so the
+    script gives the same time of flight as the wizard build."""
+    import inspect as _inspect
+    from tests.test_run_build_delay import _chip, _load_helpers
+
+    spec = _base()
+    spec["populate"]["resonator"] = {"q1": {"time_of_flight": 28}, "q2": {"time_of_flight": 28}}
+    spec["populate"]["options"] = {"tof_defaults": {"q1": 28, "q2": 28}}
+    src = _bundle(spec)["02_build_machine.py"]
+    rb = _load_helpers()
+    for fn in ("_user_set_tof", "_align_output_timing"):
+        assert _inspect.getsource(getattr(rb, fn)) in src, f"{fn} not verbatim"
+    populate = next(ast.literal_eval(n.value) for n in ast.parse(src).body
+                    if isinstance(n, ast.Assign)
+                    and getattr(n.targets[0], "id", None) == "POPULATE")
+    assert populate["options"]["tof_defaults"] == {"q1": 28, "q2": 28}
+    emitted, wizard = _chip([2, 2], ro_band=3, tof=28), _chip([2, 2], ro_band=3, tof=28)
+    assert rb._align_output_timing(emitted, {"populate": populate}) == []
+    assert rb._align_output_timing(wizard, spec) == []
+    assert [q.resonator.time_of_flight for q in emitted.qubits.values()] == \
+        [q.resonator.time_of_flight for q in wizard.qubits.values()] == [48, 48]

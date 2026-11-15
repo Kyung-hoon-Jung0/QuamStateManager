@@ -36903,6 +36903,17 @@ def _loadcheck_env_name(python_path: str) -> str:
     return parent.name or str(p)
 
 
+def _loadcheck_core_findings(merged: dict) -> list:
+    """The static core budget warnings for the load check (never raises)."""
+    try:
+        from quam_state_manager.core import core_layout
+        return [core_layout.finding_line(f)
+                for f in core_layout.surface_findings(merged, "load_check")]
+    except Exception:  # noqa: BLE001 -- the load verdict never depends on the count
+        logger.warning("core budget skipped in the load check", exc_info=True)
+        return []
+
+
 @bp.route("/state/load-check", methods=["POST"])
 def state_load_check():
     """Probe Quam.load on the CURRENT working state in the project's env."""
@@ -37003,7 +37014,8 @@ def state_load_check():
                         "detail": detail,
                         "lib_versions": result.get("lib_versions") or {},
                         "env": env_info,
-                        "links": links})
+                        "links": links,
+                        "core_findings": _loadcheck_core_findings(merged_copy)})
     finally:
         try:
             shutil.rmtree(tmp_root)
@@ -50204,6 +50216,9 @@ def generate_build():
             try:
                 _st, _wr = safe_io.read_state_wiring(Path(output_path))
                 config_generator.annotate_unplayable(outcome, _st, _wr)
+                config_generator.annotate_core_layout(outcome, _st, _wr)
+                from quam_state_manager.core import output_timing
+                output_timing.annotate(outcome, _st, _wr, spec=spec)
             except (OSError, ValueError) as exc:
                 logger.warning("frequency check skipped: %s", exc)
 
@@ -50712,18 +50727,33 @@ def regenerate_build():
         if coupler_delay_ack not in (None, "set", "keep"):
             return jsonify({"ok": False, "error": (
                 "The coupler delay answer must be \"set\" or \"keep\".")}), 400
-        if coupler_delay_ack is None:
+        # A stored chip that mixes MW band 2 with bands 1 / 3 and holds 0 on
+        # every MW output is offered the output time base as one shift; asked
+        # in the same question step as the coupler offer when both apply.
+        mw_shift_ack = data.get("mw_shift_ack")
+        if mw_shift_ack not in (None, "shift", "keep"):
+            return jsonify({"ok": False, "error": (
+                "The MW output shift answer must be \"shift\" or \"keep\".")}), 400
+        if coupler_delay_ack is None or mw_shift_ack is None:
             try:
                 _old = unsaved[:2] if unsaved else safe_io.read_state_wiring(Path(source_folder))
-                _mismatch = regenerate.coupler_delay_mismatches(*_old, spec)
+                _mismatch = (regenerate.coupler_delay_mismatches(*_old, spec)
+                             if coupler_delay_ack is None else [])
+                _shift = regenerate.mw_band_shift_plan(*_old) if mw_shift_ack is None else None
             except (OSError, ValueError, TypeError, KeyError):
-                _mismatch = []
-            if _mismatch:
-                return jsonify({
-                    "ok": False, "needs_confirm": True, "confirm_kind": "coupler_delay",
-                    "coupler_delay": _mismatch,
-                    "error": regenerate.coupler_delay_offer_text(_mismatch),
-                })
+                _mismatch, _shift = [], None
+            if _mismatch or _shift:
+                ask = {"ok": False, "needs_confirm": True,
+                       "confirm_kind": "coupler_delay" if _mismatch else "mw_shift"}
+                texts = []
+                if _mismatch:
+                    ask["coupler_delay"] = _mismatch
+                    texts.append(regenerate.coupler_delay_offer_text(_mismatch))
+                if _shift:
+                    ask["mw_shift"] = _shift
+                    texts.append(regenerate.mw_band_shift_offer_text(_shift))
+                ask["error"] = " ".join(texts)
+                return jsonify(ask)
 
         live_note = _regen_source_live_note(src_p)   # judged as the source is read
         outcome = regenerate.run_regenerate(
@@ -50747,7 +50777,7 @@ def regenerate_build():
                 res = outcome["result"] = {}
             note = None
             if coupler_delay_ack == "keep":
-                note = "Coupler port delays left at 0 as chosen."
+                note = "Coupler port delays kept as stored, as chosen."
             elif coupler_delay_ack == "set":
                 try:
                     _set = regenerate.set_coupler_delays(output_path, spec)
@@ -50759,6 +50789,58 @@ def regenerate_build():
                     note = ("The chip was built, but the coupler delays could not be "
                             f"set: {exc}")
                     outcome["coupler_delay_error"] = str(exc)
+            if mw_shift_ack == "keep":
+                note = ((note + " ") if note else "") + (
+                    "MW outputs left unshifted as chosen: band 1/3 outputs still leave "
+                    "20 ns before band 2 ones.")
+            _plan = None
+            if mw_shift_ack == "shift":
+                try:
+                    _plan = regenerate.apply_mw_band_shift(output_path)
+                    if not _plan:
+                        note = ((note + " ") if note else "") + (
+                            "The band shift was not applied: " + regenerate.mw_band_shift_skip_reason(
+                                *safe_io.read_state_wiring(Path(output_path))) + ".")
+                    if _plan:
+                        res["mw_shift"] = _plan
+                        note = ((note + " ") if note else "") + (
+                            "MW outputs shifted: " +
+                            "; ".join(f"{i['port_label']} {i['new']:g} ns" for i in _plan["ports"]) +
+                            (". Flux ports: " + "; ".join(
+                                f"{i['port_label']} {i['old']:g} -> {i['new']:g} ns"
+                                for i in _plan["flux"]) if _plan["flux"] else "") +
+                            (". Time of flight: " + "; ".join(
+                                f"{i['qubit']} {i['old']:g} -> {i['new']:g} ns"
+                                for i in _plan["tof"]) if _plan["tof"] else "") + ".")
+                except Exception as exc:   # noqa: BLE001 (reported, not raised)
+                    note = ((note + " ") if note else "") + (
+                        f"The chip was built, but the MW outputs could not be shifted: {exc}")
+                    outcome["mw_shift_error"] = str(exc)
+            if coupler_delay_ack == "keep" and _plan:
+                # the keep note names what the band shift then did to those ports
+                _moved = [i for i in _plan["flux"] if i.get("pair")]
+                if _moved:
+                    note = note.replace(
+                        "Coupler port delays kept as stored, as chosen.",
+                        "Coupler port delays kept as stored, as chosen; moved with the band "
+                        "shift: " + "; ".join(f"{i['old']:g} to {i['new']:g} on {i['port_label']}"
+                                              for i in _moved) + ".", 1)
+            # The same core budget review the Generate result carries.
+            try:
+                config_generator.annotate_core_layout(
+                    outcome, *safe_io.read_state_wiring(Path(output_path)))
+            except (OSError, ValueError) as exc:
+                logger.warning("core layout summary skipped: %s", exc)
+            try:
+                from quam_state_manager.core import output_timing
+                output_timing.annotate(
+                    outcome, *safe_io.read_state_wiring(Path(output_path)),
+                    tof_moved={i["qubit"]: i.get("old")
+                               for i in (_plan or {}).get("tof", [])},
+                    source=(tuple(unsaved[:2]) if unsaved
+                            else safe_io.read_state_wiring(src_p)))
+            except (OSError, ValueError) as exc:
+                logger.warning("output timing summary skipped: %s", exc)
             if note:
                 res["warnings"] = list(res.get("warnings") or []) + [note]
     finally:
