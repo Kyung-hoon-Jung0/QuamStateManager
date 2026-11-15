@@ -182,9 +182,15 @@ def test_the_notice_never_blocks_a_press(chip2):
     assert "1 gate waits for Re-check" in _page(chip2, "/pair/q1-q2")
     m = _ctx(chip2)["modifier"]
     m.delete_subtree("qubit_pairs.q1-q2.macros.cz_sq.extras")
-    r = chip2.post("/api/pulse/cz-gate/make-active", json={"pair": "q1-q2", "gate": "cz_sq"})
-    assert r.status_code == 200, r.get_data(as_text=True)[:300]
+    r = chip2.post("/api/pulse/cz-gate/make-active",
+                   data={"pair": "q1-q2", "gate": "cz_sq", "scope": "list"},
+                   headers={"HX-Request": "true"})
+    body = r.get_data(as_text=True)
+    assert r.status_code == 200, body[:300]
     assert _merged(chip2)["qubit_pairs"]["q1-q2"]["macros"]["cz"] == "#./cz_sq"
+    # the list's own answer carries the notice of the gate that still waits
+    assert "gate-status-list" in body and "1 gate waits for Re-check" in body
+    assert "q2-q3 / cz_b (ShapeB.py)" in body and SENTENCE in body
 
 
 def test_the_pulses_slot_refreshes_on_the_gate_list_events(chip2):
