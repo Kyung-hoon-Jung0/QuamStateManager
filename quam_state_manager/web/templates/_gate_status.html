@@ -1,5 +1,7 @@
 {# The one status line of a CZ gate (web/gate_status_routes.py, core/gate_status.py).
-   `line`: {pair, gate, items, pills, active, present, edit_paths, note, note_tone}.
+   `line`: {pair, gate, items, pills, active, present, edit_paths, notices, recheck,
+   note, note_tone}. `notices`: the class files the chip needs, shown under the row
+   for as long as the gate records them.
    One row: the gate's name, the pills that say something, the actions, and a
    "details" disclosure listing every item with its explanation. Which items
    are pills is decided by core/gate_status (item.pill), not here. #}
@@ -22,6 +24,13 @@
                     hx-target="#inspector-pane" hx-swap="innerHTML"
                     title="Open this gate's pulses to edit their values">Edit values</button>
             {% endif %}
+            {% if line.recheck %}
+            <button type="button" class="btn-sm outline secondary gate-status-recheck"
+                    hx-post="/api/pulse/cz-gate/recheck"
+                    hx-vals='{{ ({"pair": line.pair, "gate": line.gate, "scope": "list"} if in_list else {"pair": line.pair, "gate": line.gate}) | tojson }}'
+                    hx-target="{{ 'closest .gate-status-list' if in_list else 'closest .gate-status' }}" hx-swap="outerHTML"
+                    title="Check the gate with the class file as it is now, then record the new file (one Ctrl+Z)">Re-check</button>
+            {% endif %}
             {% if not line.active %}
             <button type="button" class="btn-sm outline secondary gate-status-activate"
                     hx-post="/api/pulse/cz-gate/make-active"
@@ -36,6 +45,7 @@
         </span>
         {% endif %}
     </div>
+    {% for it in line.notices or [] %}<div class="ui-text-quiet" data-status-key="needs">{{ it.text }}</div>{% endfor %}
     {% if line.note %}{% if line.note_tone == 'danger' %}{% with message=line.note %}{% include '_gate_fail.html' %}{% endwith %}{% else %}{{ ui.ui_callout(line.note_tone, 'Note', line.note) }}{% endif %}{% endif %}
     <div class="gate-status-slot" role="status" aria-live="polite"></div>
 </div>

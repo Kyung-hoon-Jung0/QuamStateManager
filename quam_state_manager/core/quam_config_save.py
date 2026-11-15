@@ -269,6 +269,24 @@ def lab_package(python):
     return lab if lab.name == "quam_config" else lab / "quam_config"
 
 
+def _sm_classes(instance, scope, creates=(), classes=()):
+    """``(name, qclass)`` of every SM class draft of *scope* that the gate
+    uses: named in *classes*, or used by a value in *creates*. Sorted by
+    name, so every caller sees the same order."""
+    classes = {c for c in classes if isinstance(c, str)}
+    root = Path(instance) / D.DRAFTS_DIR / D._scope_key(scope)
+    if not root.is_dir():
+        return []
+    out = []
+    for folder in sorted(root.iterdir(), key=lambda f: f.name):
+        if not folder.is_dir():
+            continue
+        qclass = f"quam_config.{folder.name}.{folder.name}"
+        if qclass in classes or any(_uses(value, qclass, {}) for _, value in creates):
+            out.append((folder.name, qclass))
+    return out
+
+
 def class_refusal(instance, scope, creates=(), classes=(), lab_folder=None):
     """Why a gate cannot be created yet: it uses (in *creates*, or by name in
     *classes*) an SM class whose file is not saved to quam_config. None when
@@ -276,25 +294,48 @@ def class_refusal(instance, scope, creates=(), classes=(), lab_folder=None):
 
     A draft that was never published and shares its name with a lab class
     file in *lab_folder* (no SM header) does not stand for that class."""
-    classes = {c for c in classes if isinstance(c, str)}
-    root = Path(instance) / D.DRAFTS_DIR / D._scope_key(scope)
-    if not root.is_dir():
-        return None
-    for folder in root.iterdir():
-        if not folder.is_dir():
-            continue
-        qclass = f"quam_config.{folder.name}.{folder.name}"
-        if qclass not in classes and not any(_uses(value, qclass, {}) for _, value in creates):
-            continue
-        receipt = W.published_record(instance, scope, folder.name)
+    for name, _qclass in _sm_classes(instance, scope, creates, classes):
+        receipt = W.published_record(instance, scope, name)
         target = receipt.get("path")
-        if not target and lab_folder and _lab_made(Path(lab_folder) / f"{folder.name}.py"):
+        if not target and lab_folder and _lab_made(Path(lab_folder) / f"{name}.py"):
             continue
         if not target or not Path(target).is_file():
-            return f"Save {folder.name} to quam_config before creating a gate that uses it."
+            return f"Save {name} to quam_config before creating a gate that uses it."
         if receipt.get("importable") is not True:
             return "The selected environment does not import this class file. Save it to its quam_config folder first."
     return None
+
+
+def proportional_flag(value):
+    """The receipt's proportional result as True, False or None: the lab
+    check gives a record ``{"proportional": ...}``, an older receipt a bool."""
+    if isinstance(value, dict):
+        value = value.get("proportional")
+    return value if isinstance(value, bool) else None
+
+
+def class_files(instance, scope, creates=(), classes=()):
+    """The ``extras.sm_class_files`` list of a gate that uses SM classes: one
+    entry per published SM class, copied from its publish receipt
+    (``qclass``, ``file``, ``sha256``, ``proportional``). Empty when the gate
+    uses none. No source text."""
+    out = []
+    for name, qclass in _sm_classes(instance, scope, creates, classes):
+        receipt = W.published_record(instance, scope, name)
+        if not receipt.get("path") or not receipt.get("sha"):
+            continue
+        out.append({"qclass": receipt.get("qclass") or qclass,
+                    "file": Path(receipt["path"]).name, "sha256": receipt["sha"],
+                    "proportional": proportional_flag(receipt.get("proportional"))})
+    return out
+
+
+def published_path(instance, scope, qclass):
+    """The file Save to quam_config published for *qclass*, or None."""
+    name = str(qclass).rsplit(".", 1)[-1]
+    if not name or instance is None:
+        return None
+    return W.published_record(instance, scope, name).get("path") or None
 
 
 def _lab_made(path):
