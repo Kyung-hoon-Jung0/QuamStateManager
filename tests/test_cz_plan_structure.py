@@ -47,7 +47,8 @@ def test_validity_decided_once(values, text, kind):
 
 def test_validity_markup_and_idle(tmp_path):
     html = _client(tmp_path).get("/cz-plan").get_data(as_text=True)
-    assert re.search(r'class="muted"[^>]*>in range \(quad, generic limit\)</span>', html)
+    assert re.search(r'class="ui-pill ui-pill--ok" data-validity-class="ok">in range</span> '
+                     r'<small class="muted" data-validity-words="1">\(quad, generic limit\)</small>', html)
     assert _row(["idle", "idle"])["validity"] is None
     assert 'class="czp-prose czp-validity"' in html
 

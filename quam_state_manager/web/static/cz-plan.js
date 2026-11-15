@@ -66,9 +66,39 @@
         match.innerHTML = (cut >= 0 ? esc(summary.slice(0, cut)) + ' <span class="ui-badge ui-badge--warn" data-validity-warn="1">\u26a0 ' +
                 esc(result.validity) + '</span>' + esc(summary.slice(cut)) : esc(summary)) +
             help('same rule as official node 30');
+        matchStats(root, [['Required amplitude', result.amplitude_v, false], ['Stored amplitude', result.stored_amplitude_v, false],
+            ['Stored minus required', result.difference_v, true]]);
         ['target_detuning_hz', 'amplitude_v', 'stored_amplitude_v', 'difference_v', 'tier', 'line', 'conversion'].forEach(function (key) {
             match.setAttribute('data-' + key.replace(/_/g, '-'), result[key] == null ? '' : result[key]);
         });
+    }
+
+    /* Up to four kit stat tiles from [label, value, unit, note?, tone?] rows; a row without a value
+       is left out (never a fabricated 0). Text through textContent. */
+    function statTiles(grid, rows) {
+        grid.textContent = '';
+        rows.filter(function (t) { return t[1] != null && t[1] !== ''; }).slice(0, 4).forEach(function (t) {
+            var tile = document.createElement('div'), label = document.createElement('div'), value = document.createElement('p');
+            tile.className = 'ui-stat' + (t[4] ? ' ui-stat--' + t[4] : '');
+            label.className = 'ui-stat-label'; label.textContent = t[0];
+            value.className = 'ui-stat-value'; value.textContent = t[1];
+            if (t[2]) { var unit = document.createElement('span'); unit.className = 'ui-stat-unit'; unit.textContent = t[2]; value.appendChild(unit); }
+            tile.appendChild(label); tile.appendChild(value);
+            if (t[3]) { var note = document.createElement('p'); note.className = 'ui-stat-note'; note.textContent = t[3]; tile.appendChild(note); }
+            grid.appendChild(tile);
+        });
+        return grid.children.length;
+    }
+
+    // The JSON routes send numbers or null, never numeric strings.
+    function tileNumber(v) { return typeof v === 'number' && Number.isFinite(v); }
+
+    // The per-pair sentence's three numbers (required, stored, stored minus required), in mV.
+    function matchStats(root, rows) {
+        var grid = root.querySelector('#czp-match-stats');
+        if (!grid) return;
+        var mv = function (v, sign) { return !tileNumber(v) ? null : (sign && v > 0 ? '+' : '') + (v * 1e3).toFixed(1); };
+        grid.hidden = !statTiles(grid, (rows || []).map(function (r) { return [r[0], mv(r[1], r[2]), 'mV']; }));
     }
 
     // [derived], check S2-STAGE: proposals use the existing Review edit door.
@@ -869,7 +899,7 @@
                 return;
             }
             var gl = gls.find(function (g) { return g.role === ln.role; }) || null;
-            h.push('<div class="czp-card-q ui-cz-plan-card"><strong>' + esc(ln.role) + ' ' + esc(ln.name) + '</strong>' +
+            h.push('<div class="czp-card-q ui-cz-plan-card ui-panel"><strong>' + esc(ln.role) + ' ' + esc(ln.name) + '</strong>' +
                 (ln.moves ? ' <small class="muted">plays ' + esc((ln.pulse_path || '').split('.').pop()) + (ln.pulse_class ? ' (' + esc(ln.pulse_class) + ')' : '') + '</small>' : ' <small class="muted">does not move</small>') +
                 '<dl>' +
                 '<dt>Z amp</dt><dd title="' + esc(ln.amp_title || '') + '">' + esc(ln.amp_text || '\u2014') + '</dd>' +
@@ -902,7 +932,7 @@
         });
         var near = r.nearest;
         var count = cal.warning_count != null ? cal.warning_count : (cal.warnings || []).length;
-        h.push('<div class="czp-card-q ui-cz-plan-card"><strong>Operation</strong><dl>' +
+        h.push('<div class="czp-card-q ui-cz-plan-card ui-panel" data-card="operation"><strong>Operation</strong><div class="ui-stats" role="group" aria-label="Operation" data-op-stats></div><dl>' +
             '<dt>Δ at the operation</dt><dd>' + fmtMHz(r.detuning_hz, true) + ' <small class="muted">(idle ' + fmtMHz(r.idle_detuning_hz, true) + ')</small></dd>' +
             '<dt>Nearest resonance</dt><dd>' + (near ? '<span data-near-words="1" title="' + esc(near.name + ': \u0394 ' + fmtMHz(near.distance_hz, true) + ' from the condition (\u0394 = f_control \u2212 f_target)') + '">' + esc(near.words || (near.name + ' ' + fmtMHz(near.distance_hz, true))) + '</span>' + (near.lobe ? ' (' + esc(near.lobe) + ', closest across played lobes)' : '') : '\u2014') + '</dd>' +
              (r.a4 ? '<dt>Duration</dt><dd class="czp-a4-duration">' + a4Duration(r.a4) + '</dd>' :
@@ -920,6 +950,11 @@
             '</dl></div>');
         h.push('</div>');
         el.innerHTML = h.join('');
+        var opStats = el.querySelector('[data-op-stats]');
+        var mhz = function (v, sign) { return !tileNumber(v) ? null : (sign && v > 0 ? '+' : '') + (v / 1e6).toFixed(1); };
+        if (opStats && !statTiles(opStats, [['\u0394 at the operation', mhz(r.detuning_hz, true), 'MHz'],
+                ['From nearest resonance', near ? mhz(near.distance_hz, true) : null, 'MHz', near ? near.name : null],
+                ['Duration', r.a4 || !tileNumber(r.duration_ns) ? null : String(r.duration_ns), 'ns']])) opStats.remove();
         renderSolve(root, r);
     }
 
@@ -1070,6 +1105,7 @@
         root.setAttribute('data-selected', op);
         root.setAttribute('data-loading', '1');
         var match = root.querySelector('#czp-match');
+        matchStats(root, []);
         if (match) { match.textContent = 'Solving amplitude…'; ['target-detuning-hz', 'amplitude-v', 'stored-amplitude-v', 'difference-v', 'tier', 'line'].forEach(function (k) { match.removeAttribute('data-' + k); }); }
         root.removeAttribute('data-failed');
         Array.prototype.forEach.call(root.querySelectorAll('.czp-row'), function (tr) {
@@ -1373,6 +1409,41 @@
         });
     }
 
+    /* The plan's conclusion: how many of the operations the table shows are in range, outside
+       range, of unknown validity or not playable. One count over the shown rows' own state
+       (data-plan-state, set by the template from the cells it renders); re-run on every filter. */
+    var PLAN_STATES = ['in-range', 'outside', 'unknown', 'not-playable'];
+    function planCounts(rows) {
+        var c = { shown: 0, 'in-range': 0, outside: 0, unknown: 0, 'not-playable': 0 };
+        Array.prototype.forEach.call(rows, function (tr) {
+            if (tr.hidden) return;
+            var st = tr.getAttribute('data-plan-state');
+            c.shown++;
+            c[PLAN_STATES.indexOf(st) >= 0 ? st : 'unknown']++;
+        });
+        return c;
+    }
+    function renderPlanSummary(root) {
+        var box = root.querySelector('[data-plan-summary]');
+        var c = planCounts(root.querySelectorAll('.czp-row'));
+        if (!box) return c;
+        var tone = !c.shown ? 'neutral' : c['not-playable'] ? 'danger' : c.outside ? 'warn' : c.unknown ? 'neutral' : 'ok';
+        var v = box.querySelector('[data-plan-verdict]');
+        v.className = 'ui-verdict ui-verdict--' + tone + ' ui-verdict--strong';
+        v.setAttribute('role', tone === 'danger' ? 'alert' : 'status');
+        box.querySelector('[data-plan-key]').textContent = !c.shown ? 'No operation is shown.' : c['in-range'] + ' of ' + plural(c.shown, 'operation', 'operations') + ' in range';
+        box.querySelector('[data-plan-why]').textContent = !c.shown ? '' : c.outside + ' outside range, ' + c.unknown + ' validity unknown, ' +
+            c['not-playable'] + ' not playable';
+        var tones = { 'in-range': '', outside: 'warn', unknown: 'quiet', 'not-playable': 'danger' };
+        PLAN_STATES.forEach(function (st) {
+            var tile = box.querySelector('[data-plan-tile="' + st + '"]');
+            if (!tile) return;
+            tile.className = 'ui-stat' + (c[st] && tones[st] ? ' ui-stat--' + tones[st] : '');
+            tile.querySelector('[data-plan-value]').textContent = String(c[st]);
+        });
+        return c;
+    }
+
     function filterRows(root, op) {
         var rows = root.querySelectorAll('.czp-row'), shown = 0, sel = root.getAttribute('data-selected');
         Array.prototype.forEach.call(rows, function (tr) {
@@ -1381,6 +1452,7 @@
             if (on) shown++;
         });
         groupRows(root);
+        renderPlanSummary(root);
         var note = root.querySelector('#czp-filter-note');
         if (note) {
             note.hidden = !op;
@@ -1514,7 +1586,7 @@
             });
     }
 
-    window.CzPlan = { mount: mount, refresh: refresh, _esc: esc, _deltaRange: deltaRange,
+    window.CzPlan = { mount: mount, refresh: refresh, _esc: esc, _deltaRange: deltaRange, _planCounts: planCounts,
                       drawMap: function (root) { return window.CzMap ? window.CzMap.draw(root) : Promise.resolve(); } };
     document.addEventListener('DOMContentLoaded', mount);
     document.addEventListener('htmx:afterSwap', mount);
