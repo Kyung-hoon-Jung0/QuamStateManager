@@ -935,12 +935,15 @@ def _live_write_with_outcome(case, monkeypatch, outcome):
         raise OSError(5, "read-back failed")
     monkeypatch.setattr(working_copy, "apply_to_live", raises)
     monkeypatch.setattr(routes, "_write_outcome", lambda pending: outcome)
-    # "failed" and "none" put the door's save back; this pins the branch where the save stands
-    monkeypatch.setattr(routes, "_press_undo", lambda ctx, press: False)
+    if outcome == "failed":
+        # "failed" puts the door's save back; making that unsafe reaches the branch where the save
+        # stands. "unknown" and "landed" keep the save on their own (the door never calls it there)
+        monkeypatch.setattr(routes, "_press_undo", lambda ctx, press: False)
     return press(case, [{"path": "value", "new": 30, "seen_now": 10}])
 
 
-_KEPT = "; the live write could not be verified, so the approval's values stay in SM's working copy; check the chip"
+_KEPT = ("; the live write could not be verified, so the approval's values stay in SM's working copy until a "
+         "person takes live or applies; check the chip")
 
 
 @pytest.mark.parametrize("outcome, text, sm_value, chip_value", [
@@ -992,3 +995,119 @@ def test_the_human_apply_press_text_carries_no_approval_clause(tmp_path, monkeyp
     assert response.get_json()["message"] == ("Apply is UNVERIFIED: SM cannot tell whether the live chip holds "
                                               "the write \u2014 [Errno 5] read-back failed Your edits are kept.")
     assert response.get_json()["write_outcome"] == "unknown"
+
+
+def _first_refused_then_second(tmp_path, monkeypatch, outcome, reject_first):
+    """Approval A (``value`` 10 -> 30) is refused at its live write with the door's write outcome
+    ``outcome``; then, with the live write working again, approval B (``third`` 5 -> 7) is pressed.
+    Returns B's response and the case."""
+    from quam_state_manager.core import working_copy
+    from quam_state_manager.web import routes
+    case = _case(tmp_path, {"value": 10, "third": 5}, [{"path": "value", "old": 10, "new": 30}])
+    live = case[2] / "state.json"
+    armed = [True]
+    real_apply, real_outcome = working_copy.apply_to_live, routes._write_outcome
+
+    def first_raises(*a, **k):
+        if not armed[0]:
+            return real_apply(*a, **k)
+        if outcome == "landed":
+            live.write_text(json.dumps({"value": 30, "third": 5}), encoding="utf-8")
+        raise OSError(5, "read-back failed")
+    monkeypatch.setattr(working_copy, "apply_to_live", first_raises)
+    monkeypatch.setattr(routes, "_write_outcome", lambda pending: outcome if armed[0] else real_outcome(pending))
+    first = press(case, [{"path": "value", "new": 30, "seen_now": 10}])
+    assert first.status_code == 409, first.get_json()
+    armed[0] = False
+    client = case[1]
+    if reject_first:
+        assert client.post(f"/api/agent/approvals/{case[5]['id']}/reject", json={},
+                           headers={"X-SM-Actor": "human"}).status_code == 200
+    second = approvals.add(str(case[3]), case[4], kind="writes", node="synthetic", targets=[],
+                           writes=[{"path": "third", "old": 5, "new": 7}], reason="test",
+                           why_held="mode ask-writes", actor="by_agent")
+    response = client.post(f"/api/agent/approvals/{second['id']}/approve",
+                           json={"writes": [{"path": "third", "new": 7, "seen_now": 5}]},
+                           headers={"X-SM-Actor": "human"})
+    return response, case
+
+
+@pytest.mark.parametrize("reject_first", [False, True])
+@pytest.mark.parametrize("outcome", ["failed", "none", "unknown", "landed"])
+def test_a_later_approval_never_writes_an_earlier_refused_approvals_values(tmp_path, monkeypatch, outcome,
+                                                                          reject_first):
+    response, case = _first_refused_then_second(tmp_path, monkeypatch, outcome, reject_first)
+    chip = json.loads((case[2] / "state.json").read_text(encoding="utf-8"))
+    if outcome in ("failed", "none"):
+        # A's values were taken back out of SM: B writes only its own row
+        assert response.status_code == 200, response.get_json()
+        assert chip == {"value": 10, "third": 7}
+        return
+    # maybe written: A's values stay in SM, so B must not carry them to the chip under its own name
+    assert response.status_code == 409, response.get_json()
+    error = response.get_json()["error"]
+    assert error.startswith("stale_live: "), error
+    _assert_plain(error)
+    assert response.get_json()["how"] == "the approval stays pending; take live, then approve again"
+    assert chip == ({"value": 30, "third": 5} if outcome == "landed" else {"value": 10, "third": 5})
+    with case[0].app_context():
+        ctx = _ctx(case)
+        assert ctx["store"].merged["third"] == 5            # B's own row was taken back
+        assert ctx["store"].merged["value"] == 30           # A's value stays, as SM shows it
+        if outcome == "unknown":
+            assert ctx["live_diverged"] is True             # the person sees it and decides
+    assert case[1].get("/api/agent/tray").get_json()["entries"] == []
+
+
+def test_an_unverified_write_names_why_a_later_approval_is_refused(tmp_path, monkeypatch):
+    response, _ = _first_refused_then_second(tmp_path, monkeypatch, "unknown", True)
+    assert response.get_json()["error"] == (
+        "stale_live: SM cannot tell whether the live chip matches its last sync (an earlier live write could "
+        "not be verified); take live first"), response.get_json()["error"]
+
+
+@pytest.mark.parametrize("outcome", ["landed", "unknown"])
+def test_an_unexpected_error_after_the_live_write_keeps_the_values(tmp_path, monkeypatch, outcome):
+    """The door's unexpected-error exit (500) may follow the write itself: the approval reads it as
+    "unknown", so SM never shows 10 while the chip holds 30."""
+    from quam_state_manager.core import working_copy
+    from quam_state_manager.web import routes
+    case = _case(tmp_path, {"value": 10, "third": 5}, [{"path": "value", "old": 10, "new": 30}])
+    live = case[2] / "state.json"
+
+    def writes_then_breaks(*a, **k):
+        live.write_text(json.dumps({"value": 30, "third": 5}), encoding="utf-8")
+        raise RuntimeError("bookkeeping broke")
+    monkeypatch.setattr(working_copy, "apply_to_live", writes_then_breaks)
+    monkeypatch.setattr(routes, "_write_outcome", lambda pending: outcome)
+    response = press(case, [{"path": "value", "new": 30, "seen_now": 10}])
+    assert response.status_code == 409, response.get_json()
+    body = response.get_json()
+    assert body["error"] == "Apply to live failed unexpectedly: RuntimeError: bookkeeping broke" + _KEPT, body["error"]
+    _assert_plain(body["error"])
+    assert body["stage"]["saved_in_working_copy"] is True
+    assert body["stage"]["write_outcome"] == "unknown"
+    assert approvals.get(str(case[3]), case[4], case[5]["id"])["status"] == "pending"
+    with case[0].app_context():
+        assert _ctx(case)["store"].merged["value"] == 30
+        assert _ctx(case)["live_diverged"] is True
+    assert json.loads(live.read_text(encoding="utf-8")) == {"value": 30, "third": 5}
+
+
+def test_the_doors_unexpected_error_hands_a_json_caller_the_write_outcome(tmp_path, monkeypatch):
+    from quam_state_manager.core import working_copy
+    from quam_state_manager.web import routes
+    case = _case(tmp_path, {"value": 10, "third": 5}, [{"path": "value", "old": 10, "new": 30}])
+
+    def breaks(*a, **k):
+        raise RuntimeError("bookkeeping broke")
+    monkeypatch.setattr(working_copy, "apply_to_live", breaks)
+    monkeypatch.setattr(routes, "_write_outcome", lambda pending: "landed")
+    client = case[1]
+    assert client.post("/field/edit", data={"dot_path": "value", "value": "30"}).status_code == 200
+    response = client.post("/state/apply-to-live", data={"seen_changes": "1"},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == 500
+    body = response.get_json()
+    assert (body["ok"], body["write_outcome"]) == (False, "landed"), body
+    assert body["message"] == "Apply to live failed unexpectedly: RuntimeError: bookkeeping broke"

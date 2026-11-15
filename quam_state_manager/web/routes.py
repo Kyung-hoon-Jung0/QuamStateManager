@@ -36031,6 +36031,14 @@ def _write_outcome(pending) -> str:
     return rec.outcome or "unknown"
 
 
+def _note_unverified_write(ctx, outcome: str) -> None:
+    """A live write whose outcome (:func:`_write_outcome`) is "unknown" leaves nobody knowing
+    what the chip holds: the context is marked diverged, so the person sees it and every later
+    push goes through the diverged handling first (the dataset door and an approval share this)."""
+    if outcome == "unknown" and ctx is not None:
+        ctx["live_diverged"] = True
+
+
 def _live_write_failure_text(ctx, exc, what: str = "Apply to live", outcome: str = "",
                              with_exc: bool = True) -> str:
     """The honest message of a failed live write. A denial discovered NOW
@@ -36738,6 +36746,11 @@ def state_apply_to_live():
                     f"{type(exc).__name__}: {exc}")
         if _auto:
             return _auto_disarm_response(ctx, _body, "error", status=500)
+        if request.headers.get("Accept", "").startswith("application/json"):
+            # the write may have happened before the exception: a JSON caller (an approval)
+            # gets the journal's outcome, as from the sync twin's unexpected exit
+            return jsonify(ok=False, message=f"Apply to live failed unexpectedly: {type(exc).__name__}: {exc}",
+                           write_outcome=_write_outcome(_pend)), 500
         return _body, 500
 
     _hub_stamp_units(_pend, _jrn_units)     # docs/271: before the commit writes them
@@ -48606,8 +48619,7 @@ def dataset_load_state(uid):
         # own write look like outside drift, and "nothing was applied" false.
         _outcome = (body or {}).get("write_outcome")
         if _outcome in ("landed", "unknown"):
-            if _outcome == "unknown":
-                ctx["live_diverged"] = True   # nobody knows what the chip holds
+            _note_unverified_write(ctx, _outcome)   # nobody knows what the chip holds
             _fail = ((body or {}).get("detail") or _fail).rstrip(".") + (
                 ". The run's state stays staged in the working copy; Take live (top "
                 "bar) shows what the live chip holds, Apply pushes the staged state again.")
