@@ -115,6 +115,69 @@
     "why_not_checked": null
    }
   },
+  "failed_beside_note_and_unrun": {
+   "_about": "A note counts as passed; partly and not_run checks do not: 1 failed, 3 passed.",
+   "outcome": {
+    "failed": [
+     {
+      "check": "range",
+      "label": "output range check",
+      "reason": "The pulse leaves the output range."
+     }
+    ],
+    "kind": "failed",
+    "not_run": [],
+    "passed": 3,
+    "reason": "The pulse leaves the output range.",
+    "summary": "1 of 6 checks failed: output range check.",
+    "total": 6
+   },
+   "reasons": {},
+   "result": {
+    "checked": true,
+    "error": null,
+    "gates": [
+     {
+      "checks": {
+       "length": {
+        "message": "Passed.",
+        "status": "pass"
+       },
+       "load_config": {
+        "message": "Passed.",
+        "status": "pass"
+       },
+       "ops": {
+        "message": "Only some operations were compared.",
+        "partly": true,
+        "status": "pass"
+       },
+       "preview": {
+        "message": "No preview for this pulse class.",
+        "not_run": true,
+        "status": "pass"
+       },
+       "range": {
+        "message": "The pulse leaves the output range.",
+        "status": "fail"
+       },
+       "timeline": {
+        "message": "The timeline is shown for reading only.",
+        "status": "note"
+       }
+      },
+      "gate": "cz_sq",
+      "pair": "q1-q2",
+      "partly_checked": [],
+      "ran": true,
+      "timeline": null,
+      "unchecked": []
+     }
+    ],
+    "status": "ok",
+    "why_not_checked": null
+   }
+  },
   "none": {
    "outcome": {
     "failed": [],

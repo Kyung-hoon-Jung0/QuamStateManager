@@ -2,8 +2,8 @@
 
 The check reads ``git diff <merge-base with main>`` (the working tree included) over code, tests, templates
 and docs, so it costs one git call and judges only what the branch adds; data files (``.json``) are left
-out because their bytes are pinned. On main itself, or without git or a main branch, there is nothing to
-judge and the test skips.
+out because their bytes are pinned. On main itself the merge-base is HEAD, so it judges the uncommitted
+edits there; without git or a main branch there is nothing to judge and the test skips.
 """
 import re
 import shutil
@@ -20,8 +20,8 @@ JUDGED = re.compile(r"\.(py|js|cjs|html|css|md)$")
 SKIPPED = ("node_modules/", "quam_state_manager/web/static/vendor/")
 
 
-def _git(*args):
-    return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True,
+def _git(*args, root=ROOT):
+    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
                           encoding="utf-8", errors="replace", timeout=60)
 
 
@@ -42,16 +42,42 @@ def long_added_lines(diff_text, limit=LIMIT):
     return out
 
 
+def long_lines_against_main(root=ROOT):
+    """The long added lines of *root* against its merge-base with main, or None with no main to compare."""
+    base = _git("merge-base", "main", "HEAD", root=root)
+    if base.returncode or not base.stdout.strip():
+        return None
+    diff = _git("diff", "-U0", "--no-color", "--no-ext-diff", base.stdout.strip(), "--",
+                "quam_state_manager", "tests", "docs", "build", root=root)
+    assert diff.returncode == 0, diff.stderr
+    return long_added_lines(diff.stdout)
+
+
 def test_lines_a_branch_adds_fit_the_width():
     if not shutil.which("git"):
         pytest.skip("git not installed")
-    base = _git("merge-base", "main", "HEAD")
-    if base.returncode or not base.stdout.strip():
+    found = long_lines_against_main()
+    if found is None:
         pytest.skip("no main branch to compare with")
-    diff = _git("diff", "-U0", "--no-color", "--no-ext-diff", base.stdout.strip(), "--",
-                "quam_state_manager", "tests", "docs", "build")
-    assert diff.returncode == 0, diff.stderr
-    assert not long_added_lines(diff.stdout), long_added_lines(diff.stdout)
+    assert not found, found
+
+
+def test_on_main_the_check_judges_the_uncommitted_edits(tmp_path):
+    """What the module docstring says: on main the merge-base is HEAD, so committed lines are not
+    judged and an uncommitted long line is."""
+    if not shutil.which("git"):
+        pytest.skip("git not installed")
+    for args in (("init", "-q", "-b", "main"), ("config", "user.email", "t@example.invalid"),
+                 ("config", "user.name", "t"), ("config", "core.autocrlf", "false")):
+        assert _git(*args, root=tmp_path).returncode == 0
+    f = tmp_path / "tests" / "a.py"
+    f.parent.mkdir()
+    f.write_text("x = 1\n" + "#" * (LIMIT + 1) + "\n", encoding="utf-8")
+    assert _git("add", "-A", root=tmp_path).returncode == 0
+    assert _git("commit", "-q", "-m", "c", root=tmp_path).returncode == 0
+    assert long_lines_against_main(tmp_path) == []
+    f.write_text(f.read_text(encoding="utf-8") + "y" * (LIMIT + 1) + "\n", encoding="utf-8")
+    assert long_lines_against_main(tmp_path) == [("tests/a.py", 3, LIMIT + 1)]
 
 
 def test_the_width_check_finds_a_long_line():

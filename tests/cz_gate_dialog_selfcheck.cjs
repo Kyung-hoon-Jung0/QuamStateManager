@@ -781,7 +781,7 @@ function tableWidths(el, sw, cw) {
     type($('#czg-name'), 'cz_r12b');
     await settle();
     // the shared cases: the banner and the summary read the server's outcome
-    for (const name of ['partly', 'checked', 'failed']) {
+    for (const name of ['partly', 'checked', 'failed', 'failed_beside_note_and_unrun']) {
         const cs = OUTCOME_CASES[name];
         if (name !== 'partly') { type($('#czg-name'), 'cz_oc_' + name); await settle(); }
         const scrolled = [];
@@ -804,6 +804,9 @@ function tableWidths(el, sw, cw) {
         } else if (name === 'checked') {
             ok(/every check passed/.test(alertText()) && /^6 of 6 passed$/.test($('#czg-checks-sum').textContent),
                'shared case checked: every check passed, 6 of 6');
+        } else if (name === 'failed_beside_note_and_unrun') {
+            ok(/^1 failed, 3 passed$/.test($('#czg-checks-sum').textContent),
+               'shared case failed beside a note, a partly and a not-run check: 1 failed, 3 passed (the note counts)');
         } else {
             ok(/^1 failed, 5 passed$/.test($('#czg-checks-sum').textContent),
                'shared case failed: one failing of six reads 1 failed, 5 passed (the server count, never 0 passed)');

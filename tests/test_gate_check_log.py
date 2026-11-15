@@ -74,6 +74,33 @@ def test_a_failed_check_still_counts_the_checks_that_passed():
     assert (len(oc["failed"]), oc["passed"]) == (1, 4)
 
 
+def test_a_failed_check_counts_a_note_but_not_a_check_that_did_not_run_in_full():
+    """Beside the failure: length, load_config pass and timeline note count (3);
+    ops ``partly`` and preview ``not_run`` do not: "1 failed, 3 passed" of 6."""
+    oc = _oc("failed_beside_note_and_unrun")
+    assert (oc["kind"], len(oc["failed"]), oc["passed"], oc["total"]) == (log.KIND_FAILED, 1, 3, 6)
+    checks = CASES["failed_beside_note_and_unrun"]["result"]["gates"][0]["checks"]
+    assert checks["timeline"]["status"] == "note"
+    assert checks["ops"].get("partly") and checks["preview"].get("not_run")
+
+
+def test_one_rule_says_a_check_counts_as_passed():
+    """The failed and partly outcomes count with the same rule, clause by clause."""
+    rule = log._counts_as_passed
+    assert rule("t", {"status": "pass"}, set()) and rule("t", {"status": "note"}, set())
+    assert not rule("t", {"status": "fail"}, set())
+    assert not rule("t", {"status": "skipped"}, set())
+    assert not rule("t", {"status": "pass"}, {"t"})
+    assert not rule("t", {"status": "pass", "not_run": True}, set())
+    assert not rule("t", {"status": "note", "partly": True}, set())
+    assert not rule("t", "pass", set())
+    # the partly outcome counts a note beside a check that could not run
+    c = json.loads(json.dumps(CASES["partly"]))
+    gate = c["result"]["gates"][0]
+    gate["checks"]["timeline"] = {"message": "Shown for reading.", "status": "note"}
+    assert log.outcome(c["result"], gate, reasons=c["reasons"])["passed"] == 5
+
+
 def test_result_of_a_check():
     assert log.result_of(None) == (log.NOT_CHECKED, "no check ran")
     assert log.result_of(_oc("checked")) == (log.CHECKED, None)

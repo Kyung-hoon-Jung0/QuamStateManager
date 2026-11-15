@@ -57,6 +57,23 @@ def _counted(name: str, c: Any) -> bool:
     """Use one inclusion rule for the client checks and the stored count."""
     return not (name in UNCOUNTED_NOTES and isinstance(c, dict) and c.get("status") == "note")
 
+
+def _unrun(entry: dict | None) -> set:
+    """The check names the lab's code did not run in full for this gate."""
+    entry = entry or {}
+    return set(entry.get("unchecked") or []) | set(entry.get("partly_checked") or [])
+
+
+def _counts_as_passed(name: str, c: Any, unrun: set) -> bool:
+    """The one rule for "this check counts as passed", on a failure or not.
+
+    A ``pass`` or ``note`` check counts; one the lab's code did not run in
+    full (named in *unrun*, or marked ``not_run`` / ``partly``) does not.
+    """
+    return (isinstance(c, dict) and c.get("status") in ("pass", "note")
+            and name not in unrun and not c.get("not_run") and not c.get("partly"))
+
+
 _LOCK = threading.Lock()
 
 
@@ -203,12 +220,8 @@ def outcome(result: dict | None, entry: dict | None, *,
     if out["failed"]:
         # the checks that passed beside the failed ones are still counted:
         # "1 failed, 5 passed", never "1 failed, 0 passed"
-        unrun = set((entry or {}).get("unchecked") or []) | set(
-            (entry or {}).get("partly_checked") or [])
-        out["passed"] = sum(
-            1 for name, c in checks.items()
-            if isinstance(c, dict) and c.get("status") in ("pass", "note")
-            and name not in unrun and not c.get("not_run") and not c.get("partly"))
+        unrun = _unrun(entry)
+        out["passed"] = sum(1 for name, c in checks.items() if _counts_as_passed(name, c, unrun))
         out["kind"] = KIND_FAILED
         out["reason"] = out["failed"][0]["reason"]
         out["summary"] = (f"{len(out['failed'])} of {out['total']} checks failed: "
@@ -222,7 +235,7 @@ def outcome(result: dict | None, entry: dict | None, *,
                          or "no check ran")
         out["summary"] = "Not checked with the lab's code: " + _short(out["reason"]) + "."
         return out
-    unchecked = set(entry.get("unchecked") or []) | set(entry.get("partly_checked") or [])
+    unchecked = _unrun(entry)
     for name, c in checks.items():
         c = c if isinstance(c, dict) else {}
         if (name in unchecked or c.get("status") == "skipped" or c.get("not_run")
@@ -232,7 +245,7 @@ def outcome(result: dict | None, entry: dict | None, *,
                 if c.get("partly") and c.get("status") != "skipped" else _short(c.get("message")))
             out["not_run"].append({"check": name, "label": CHECK_LABELS.get(name, name),
                                    "reason": why})
-        elif c.get("status") in ("pass", "note"):
+        elif _counts_as_passed(name, c, unchecked):
             out["passed"] += 1
     if not out["not_run"]:
         out["kind"] = KIND_CHECKED
