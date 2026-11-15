@@ -87,6 +87,31 @@ def test_bad_record_is_missing_and_refuses_activation(rig, name):
     assert len(store.change_log) == changes and rig._calls == []
 
 
+@pytest.mark.parametrize("digest", [None, "", 5, "missing-key"])
+def test_record_without_a_hash_is_missing_and_refuses_activation(rig, tmp_path, digest):
+    path = tmp_path / "GateShape.py"
+    record = dict(_entry(path), qclass="quam_config.Shape.Shape")
+    if digest == "missing-key":
+        del record["sha256"]
+    else:
+        record["sha256"] = digest
+    assert path.exists()
+    _record(rig, record)
+    items, _ = _items(_macro([record]))
+    assert items["class"]["tone"] == "warn"
+    assert items["class"]["text"] == "class file missing"
+    assert items["class"]["why"] == "its class file record has no content hash"
+    assert "no file name or content hash" in class_file_check._file_problem(tmp_path, record)
+    store = _ctx(rig)["store"]
+    before, seq, changes = copy.deepcopy(store.state), store.mutation_seq, len(store.change_log)
+    response = _ma(rig)
+    assert response.status_code == 409
+    error = response.get_json()["error"]
+    assert "no content hash" in error and "Delete the gate and make it again" in error
+    assert store.state == before and store.mutation_seq == seq
+    assert len(store.change_log) == changes and rig._calls == []
+
+
 def test_raw_reader_preserves_records_that_live_write_must_refuse(tmp_path):
     for record in ({"file": 7}, {"sha256": "abc"}, {"file": "Shape.py"}):
         macro = _macro([record, None, "ignored"])
@@ -130,12 +155,54 @@ def test_class_file_record_parser_has_one_implementation():
         defined += [(path.name, n.name) for n in ast.walk(tree)
                     if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in readers]
     assert sorted(defined) == [("gate_status.py", n) for n in sorted(readers)]
-    root = pkg / "core"
-    for name in ("gate_status", "class_file_check"):
-        tree = ast.parse((root / (name + ".py")).read_text(encoding="utf-8"))
-        parsing = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
-                   and isinstance(n.func, ast.Attribute) and n.func.attr == "get"
-                   and n.args and isinstance(n.args[0], ast.Constant)
-                   and n.args[0].value in ("extras", "sm_class_files")]
-        assert len(parsing) == (2 if name == "gate_status" else 0)
     assert class_file_check.sm_class_files is gate_status.class_file_records
+
+
+def _is_extras(node, names):
+    """True for ``x.get("extras")``, ``x["extras"]``, either with an ``or`` default or a conditional,
+    or a name bound from one."""
+    if isinstance(node, ast.Name):
+        return node.id in names
+    if isinstance(node, ast.IfExp):
+        return _is_extras(node.body, names) or _is_extras(node.orelse, names)
+    if isinstance(node, ast.BoolOp):
+        return any(_is_extras(v, names) for v in node.values)
+    if isinstance(node, ast.Subscript):
+        return isinstance(node.slice, ast.Constant) and node.slice.value == "extras"
+    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get" and bool(node.args)
+            and isinstance(node.args[0], ast.Constant) and node.args[0].value == "extras")
+
+
+def _extras_reads(tree):
+    """Reads of the ``sm_class_files`` key out of a macro's extras: a ``.get``
+    or subscript of it on an extras value (inline or through a name bound from
+    one), or a ``"sm_class_files" in extras`` test."""
+    names = {t.id for n in ast.walk(tree) if isinstance(n, ast.Assign) and _is_extras(n.value, set())
+             for t in n.targets if isinstance(t, ast.Name)}
+    found = []
+    for n in ast.walk(tree):
+        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "get"
+                and n.args and isinstance(n.args[0], ast.Constant)
+                and n.args[0].value == "sm_class_files" and _is_extras(n.func.value, names)):
+            found.append(n)
+        elif (isinstance(n, ast.Subscript) and isinstance(n.slice, ast.Constant)
+                and n.slice.value == "sm_class_files" and _is_extras(n.value, names)):
+            found.append(n)
+        elif (isinstance(n, ast.Compare) and isinstance(n.left, ast.Constant)
+                and n.left.value == "sm_class_files"
+                and any(isinstance(op, ast.In) for op in n.ops)
+                and any(_is_extras(c, names) for c in n.comparators)):
+            found.append(n)
+    return found
+
+
+def test_only_gate_status_reads_the_class_file_extras_key():
+    """No module but core/gate_status.py reads ``sm_class_files`` out of a
+    macro's extras, however it names the variables."""
+    pkg = Path(__file__).resolve().parents[1] / "quam_state_manager"
+    own = pkg / "core" / "gate_status.py"
+    assert len(_extras_reads(ast.parse(own.read_text(encoding="utf-8")))) == 1
+    for path in pkg.rglob("*.py"):
+        if path != own:
+            assert not _extras_reads(ast.parse(path.read_text(encoding="utf-8"))), path.name

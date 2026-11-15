@@ -97,7 +97,9 @@ quam_config refuse its own file, nor make gates using the class wait again.
 - Make active reads the same states as the line (`gate_status.class_file_states`) before the lab check: a missing
   file refuses with "Save <file> to quam_config first", a changed one with "Re-check the gate first"; nothing is
   written. A record that names no file reads "class file missing" (why: "its class file record has no file name"),
-  as the live-write check refuses it, and Make active refuses it too.
+  as the live-write check refuses it, and Make active refuses it too. A record that names a file but has no (or an
+  empty) hash reads the same line with why "its class file record has no content hash"; Make active refuses it with
+  "Delete the gate and make it again" (no Re-check is offered on a "missing" line).
 - For as long as a gate records a file, its line shows "this chip now needs quam_config/<file>.py; every computer
   that opens this state needs the same file" (dialog, pair detail and pulse detail all render the same partial).
 - "Re-check" (shown on a "changed" line, `POST /api/pulse/cz-gate/recheck`) runs the lab check of the existing gate

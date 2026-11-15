@@ -332,6 +332,10 @@ def _class_file_refusal(states: list[tuple[dict, str]]) -> str | None:
     if not all(gate_status.names_file(f) for f, _st in states):
         return ("Its class file record has no file name, so SM cannot tell which file the "
                 "gate needs. Delete the gate and make it again. It was not made active.")
+    if not all(gate_status.has_hash(f) for f, _st in states):
+        return ("Its class file record has no content hash, so SM cannot tell whether the file "
+                "is the one the gate was checked with. Delete the gate and make it again. "
+                "It was not made active.")
     gone = [f["file"] for f, st in states if st == "missing"]
     moved = [f["file"] for f, st in states if st == "changed"]
     parts = []

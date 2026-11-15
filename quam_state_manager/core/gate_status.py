@@ -10,8 +10,8 @@ order:
    classes, the class files compared with the files in the folder they were
    published to: "class file present" / "class file missing:
    quam_config/<file>.py" / "class file changed since the gate was checked"
-   / "class file missing" for a record that names no file (the live-write
-   check refuses it too); else "not a class SM made"; "class <name> not importable in <env>" when
+   / "class file missing" for a record that names no file or carries no hash (the
+   live-write check refuses it too); else "not a class SM made"; "class <name> not importable in <env>" when
    the selected env cannot import the gate's class (a missing or changed
    file is said first);
 4. ``scaling``: "amplitude scaling: checked" / "not proportional" / "not
@@ -71,6 +71,12 @@ def names_file(record: dict) -> bool:
     return isinstance(name, str) and bool(name)
 
 
+def has_hash(record: dict) -> bool:
+    """True when *record* carries a non-empty string content hash."""
+    digest = record.get("sha256")
+    return isinstance(digest, str) and bool(digest)
+
+
 def sm_class_files(macro: Any) -> list[dict]:
     """The records of :func:`class_file_records` that name their file."""
     return [f for f in class_file_records(macro) if names_file(f)]
@@ -94,8 +100,9 @@ def file_state(entry: dict, path: str | None) -> str:
 def class_file_states(macro: Any, where) -> list[tuple[dict, str]]:
     """``(record, state)`` of every raw record of *macro*: :func:`file_state`
     at ``where(qclass)`` (the published path), "missing" for a record that
-    names no file. The status line and Make active both read this."""
-    return [(f, file_state(f, where(f.get("qclass"))) if names_file(f) else "missing")
+    names no file or carries no hash. The status line and Make active both read this."""
+    return [(f, file_state(f, where(f.get("qclass")))
+             if names_file(f) and has_hash(f) else "missing")
             for f in class_file_records(macro)]
 
 
@@ -104,6 +111,9 @@ def _class_files(states: list[tuple[dict, str]]) -> dict:
     if not all(names_file(f) for f in files):
         return _item("class", "class file missing", "warn",
                      "its class file record has no file name")
+    if not all(has_hash(f) for f in files):
+        return _item("class", "class file missing", "warn",
+                     "its class file record has no content hash")
     gone = [f for f, st in states if st == "missing"]
     moved = [f for f, st in states if st == "changed"]
     if gone:
