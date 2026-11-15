@@ -198,6 +198,29 @@ def line_count_words(n):
     return "1 line" if n == 1 else "%d lines" % n
 
 
+#: the example gate's lines as its table shows them: (line, starts at, ends at), ns
+EXAMPLE_SPANS = (("q1.z", 161, 261), ("coupler_q1_q2", 0, 60))
+
+
+def timing_tile(spans):
+    """The Timing tile of *spans* as the gate dialog shows it: value, note and
+    tone come from ``gate_timeline_view.tiles`` (the dialog's rule), and only
+    the warn and danger tones are kept, as cz-gate.js ``renderTiles`` does."""
+    from quam_state_manager.core.gate_timeline_view import tiles
+    lanes = [{"key": k, "group": "gate", "segments": [{"start_ns": a, "end_ns": b}]} for k, a, b in spans]
+    t = next(t for t in tiles({"lanes": lanes}) if t["key"] == "timing")
+    return {"label": t["label"], "value": t["value"], "unit": t["unit"], "note": t["note"],
+            "tone": t["tone"] if t["tone"] in ("warn", "danger") else None}
+
+
+def gap_note(tile):
+    """The line the gate dialog adds under its verdict for a warn Timing tile
+    (cz-gate.js ``renderCheck``, one pair), or None when the tile is not warn."""
+    if tile.get("tone") != "warn":
+        return None
+    return "The gate lines have a %s ns gap with no overlap. Check the port delays." % tile["value"]
+
+
 def reading_form(state):
     """The form column of the reading-order example (a new two-line gate)."""
     amp = "3.0" if state == "danger" else "0.1"
@@ -233,11 +256,13 @@ def reading_evidence(state):
                "why": "Checked on a copy of the chip: it loads, and the gate runs."} if ok else
               {"part": "verdict", "strong": True, "tone": "danger", "key": "Cannot be created yet",
                "why": "q1.z would play 3 V; the port limit is 2.5 V. Lower the amplitude and check again."})
+    timing = timing_tile(EXAMPLE_SPANS)
+    gap = gap_note(timing)
     stats = {"part": "stats", "label": "Key numbers", "tiles": [
         {"label": "Lines", "value": "2"},
         {"label": "Gate length", "value": "261", "unit": "ns"},
         {"label": "Highest level", "value": "0.1" if ok else "3", "unit": "V on q1.z", "tone": None if ok else "danger"},
-        {"label": "Timing", "value": "101", "unit": "ns gap"}]}
+        timing]}
     rows = [[{"text": "cz_fast_pulse_q1_q2", "line": 1}, "100 ns", "0.1 V" if ok else {"text": "3 V", "tone": "danger", "note": "limit 2.5 V"},
              {"text": "161 ns", "tone": "warn", "note": "port delay"}],
             [{"text": "cz_fast_coupler_pulse_q1_q2", "line": 2}, "60 ns", "0.05 V", "0 ns"]]
@@ -260,7 +285,7 @@ def reading_evidence(state):
             "body": [{"part": "placeholder", "text": "The lane chart renders here (gate timeline component)"}]}
     return [{"part": "zone", "step": 3, "title": "Result", "fill": True,
              "summary": [{"text": "checked", "level": "ok"} if ok else {"text": "1 problem", "level": "danger"}],
-             "body": [banner, stats, wave, table, chk, written]}]
+             "body": [banner] + ([{"part": "note", "text": gap}] if gap else []) + [stats, wave, table, chk, written]}]
 
 
 def _reading():
@@ -276,7 +301,7 @@ def _reading():
         (sec, "Stats, one abnormal tile", {"part": "stats", "label": "Key numbers", "tiles": [
             {"label": "Lines", "value": "2"}, {"label": "Gate length", "value": "261", "unit": "ns"},
             {"label": "Highest level", "value": "3", "unit": "V on q1.z", "tone": "danger"},
-            {"label": "Timing", "value": "101", "unit": "ns gap", "tone": "warn"}]}),
+            timing_tile(EXAMPLE_SPANS)]}),
         (sec, "Checks, one failed and one skipped", {"part": "checks", "checks": [
             {"name": "Chip loads", "state": "pass"}, {"name": "Pulse lengths", "state": "pass"},
             {"name": "Output range", "state": "fail", "why": "3 V on q1.z is above the 2.5 V limit."},

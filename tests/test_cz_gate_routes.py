@@ -681,14 +681,61 @@ def test_the_kit_gate_example_says_what_the_dialog_says():
     from quam_state_manager.web import ui_kit_fixtures as kit
     js = (Path(__file__).resolve().parents[1] / "quam_state_manager/web/static/cz-gate.js").read_text(encoding="utf-8")
     assert "nl === 1 ? '1 line' : nl + ' lines'" in js
-    assert (kit.line_count_words(1), kit.line_count_words(2), kit.line_count_words(3)) == ("1 line", "2 lines", "3 lines")
+    words = (kit.line_count_words(1), kit.line_count_words(2), kit.line_count_words(3))
+    assert words == ("1 line", "2 lines", "3 lines")
     for state in ("ok", "danger"):
         pulses = [z for z in kit.reading_form(state) if z.get("title") == "Pulses"]
         assert len(pulses) == 1
         slots = [b for b in pulses[0]["body"] if b.get("part") == "slot"]
         assert pulses[0]["summary"] == [kit.line_count_words(len(slots))]
-        tiles = {t["label"]: t for t in kit.reading_evidence(state)[0]["body"][1]["tiles"]}
+        body = kit.reading_evidence(state)[0]["body"]
+        stats = [b for b in body if b.get("part") == "stats"]
+        assert len(stats) == 1
+        tiles = {t["label"]: t for t in stats[0]["tiles"]}
         assert tiles["Lines"]["value"] == str(len(slots))
+        # the Timing tile and the note under the verdict follow the dialog's rule
+        _assert_timing_as_the_dialog(kit, tiles["Timing"], [b["text"] for b in body if b.get("part") == "note"])
+
+
+def _assert_timing_as_the_dialog(kit, tile, notes):
+    """*tile* is what gate_timeline_view.tiles gives for the example's lines,
+    with the tone the dialog keeps, and *notes* hold the dialog's gap line
+    exactly when that tile is a gap."""
+    from quam_state_manager.core import gate_timeline_view as gtv
+    lanes = [{"key": k, "group": "gate", "segments": [{"start_ns": a, "end_ns": b}]}
+             for k, a, b in kit.EXAMPLE_SPANS]
+    rule = next(t for t in gtv.tiles({"lanes": lanes}) if t["key"] == "timing")
+    assert (tile["value"], tile["unit"], tile["note"]) == (rule["value"], rule["unit"], rule["note"])
+    assert tile["tone"] == (rule["tone"] if rule["tone"] in ("warn", "danger") else None)
+    js = (Path(__file__).resolve().parents[1] / "quam_state_manager/web/static/cz-gate.js").read_text(encoding="utf-8")
+    assert "t.key === 'timing' && t.tone === 'warn'" in js
+    assert "'The gate lines have a ' + t.value + ' ns gap with no overlap. Check the port delays.'" in js
+    gap = "The gate lines have a %s ns gap with no overlap. Check the port delays." % rule["value"]
+    assert notes == ([gap] if rule["tone"] == "warn" else [])
+    # the example's lines do not meet: the tile must look like a gap
+    assert rule["tone"] == "warn" and tile["tone"] == "warn"
+
+
+def test_every_kit_timing_tile_follows_the_dialog_rule():
+    """Every Timing tile anywhere in the kit is the dialog's tile for the
+    example's lines, so a gap is never shown without the warn tone."""
+    from quam_state_manager.web import ui_kit_fixtures as kit
+    found = []
+
+    def walk(o):
+        if isinstance(o, dict):
+            if o.get("part") == "stats":
+                found.extend(t for t in o["tiles"] if t.get("label") == "Timing")
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, (list, tuple)):
+            for v in o:
+                walk(v)
+    walk([kit.specs(), kit.reading_evidence("ok"), kit.reading_evidence("danger")])
+    assert len(found) >= 3
+    for t in found:
+        _assert_timing_as_the_dialog(kit, t, ["The gate lines have a %s ns gap with no overlap. Check the "
+                                              "port delays." % t["value"]])
     assert "together" not in json.dumps([kit.specs(), kit.reading_form("ok"), kit.reading_form("danger"),
                                          kit.reading_evidence("ok"), kit.reading_evidence("danger")])
 
