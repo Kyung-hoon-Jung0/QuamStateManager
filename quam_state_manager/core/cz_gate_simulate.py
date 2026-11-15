@@ -108,10 +108,14 @@ def target_of(settings: dict, creds: Optional[dict]) -> tuple[Optional[dict], st
 
 
 def _real(x: Any) -> bool:
-    """A finite real number that is not a bool (numpy scalars included)."""
-    if isinstance(x, bool) or type(x).__name__ == "bool_":
+    """A finite real number that is not a bool (numpy scalars included; an
+    integer too large for a float is not one)."""
+    if isinstance(x, bool) or not isinstance(x, numbers.Real):
         return False
-    return isinstance(x, numbers.Real) and math.isfinite(float(x))
+    try:
+        return math.isfinite(float(x))
+    except (OverflowError, ValueError):
+        return False
 
 
 def _whole(x: Any) -> bool:

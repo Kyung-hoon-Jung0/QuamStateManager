@@ -276,7 +276,8 @@ def test_build_turns_a_refused_length_into_a_gate_answer(monkeypatch):
     ("volts", [0.1, float("nan")]), ("volts", [0.1, float("inf")]), ("volts", [True]), ("volts", ["0.1"]),
     ("elements", ["q1.z", 3]), ("t0_ns", float("nan")), ("t0_ns", True), ("t0_ns", "3"), ("volts", []), ("volts", {0.1: 0}),
     ("t0_ns", False), ("t0_ns", ""), ("t0_ns", {}), ("elements", False), ("elements", 0), ("elements", {}),
-    ("fem", True), ("port", 1.9), ("port", "2"), ("controller", None), ("controller", ""), ("fem", None)])
+    ("fem", True), ("port", 1.9), ("port", "2"), ("controller", None), ("controller", ""), ("fem", None),
+    ("fem", 10**400), ("port", 10**400), ("t0_ns", 10**400), ("volts", [0.1, 10**400])])
 def test_malformed_port_entry_is_dropped_others_kept(field, val):
     good = {"controller": "con1", "fem": 1, "port": 1, "volts": [0.1], "dt_ns": 1.0}
     bad = dict(good, port=2)
