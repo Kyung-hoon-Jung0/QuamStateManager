@@ -1120,7 +1120,7 @@
 .ui-panel-hint { min-width: 0; color: var(--ui-text-2); font-size: var(--ui-fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* a quiet line under a panel head when the head has no room for the hint: wraps, never cut */
 .ui-panel-sub { margin: 0; padding: var(--ui-gap-1) var(--ui-gap-3) 0; color: var(--ui-text-2); font-size: var(--ui-fs-xs); white-space: normal; overflow-wrap: anywhere; }
-.ui-panel-sum { display: flex; align-items: center; gap: var(--ui-gap-2); margin-left: auto; flex: 0 0 auto; color: var(--ui-text-2); font-size: var(--ui-fs-sm); white-space: nowrap; }
+.ui-panel-sum { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-gap-2); margin-left: auto; flex: 0 1 auto; min-width: 0; color: var(--ui-text-2); font-size: var(--ui-fs-sm); white-space: normal; }
 .ui-panel-body { display: flex; flex-direction: column; gap: var(--ui-gap-2); padding: var(--ui-gap-2) var(--ui-gap-3); }
 .ui-panel-body--flush { padding: 0; }
 .ui-panel-body--flush > .ui-table { width: 100%; margin: 0; }
