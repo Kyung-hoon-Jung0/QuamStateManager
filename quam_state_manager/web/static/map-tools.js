@@ -54,7 +54,8 @@
         // number of targets (a recipe counts targets)
         var targets = c.targets;
         if (!Number.isInteger(c.n_verified) || c.n_verified <= 0 || !Array.isArray(targets) || !targets.length) return {chip: no, reason: 'evidence'};
-        if (c.n_verified > targets.length) return {chip: no, reason: 'partial'};
+        // more verified writes than targets is inconsistent proof, not a partial cover
+        if (c.n_verified > targets.length) return {chip: no, reason: 'evidence'};
         if (targets.every(function (t) { return t && t.path; }) &&
             new Set(targets.map(function (t) { return t.path; })).size > c.n_verified) return {chip: no, reason: 'partial'};
         if (c.verified_against && c.verified_against !== 'patches' && c.verified_against !== 'proposals') return {chip: no, reason: 'evidence'};
@@ -62,7 +63,7 @@
         if (!tier) tier = targets[0] && targets[0].evidence_tier;
         if (!/^(applied|proposed)$/.test(tier) || (c.evidence_tier && c.evidence_tier !== tier) ||
             targets.some(function (t) { return !t || t.evidence_tier !== tier; })) return {chip: no, reason: 'evidence'};
-        if (c.evidence_tier === 'proposed' || c.verified_against === 'proposals') return {chip: 'proposed, not applied', reason: ''};
+        if (tier === 'proposed') return {chip: 'proposed, not applied', reason: ''};
         return {chip: 'verified on this run', reason: ''};
     }
     function verification(payload) { return judge(payload).chip; }

@@ -75,6 +75,38 @@ chips({ clickable: { verification_note: note } });
 tile._mapTools.destroy(); delete tile._mapTools;
 assert.deepStrictEqual(hints(), [], 'destroy removes the hint'); n++;
 
+// the full grid: n_verified x number of targets x evidence tier -> chip text + hint. "Only some
+// values were saved" appears only when 0 < n_verified < targets; anything else not verified gets
+// the general verify rule, never a specific false sentence.
+const NV = [['missing', undefined], ['null', null], ['"2"', '2'], ['-1', -1], ['0', 0], ['1', 1], ['2', 2], ['3', 3]];
+const TIERS = ['none', 'proposed', 'applied', 'missing'];
+const grid = [];
+for (const [nvName, nv] of NV) for (const nt of [0, 1, 2]) for (const tier of TIERS) {
+    const targets = [];
+    for (let i = 0; i < nt; i++) {
+        const tg = { path: 'qubits.q0.p' + i };
+        if (tier === 'proposed' || tier === 'applied') tg.evidence_tier = tier;
+        else if (tier === 'missing') tg.evidence_tier = null;
+        targets.push(tg);
+    }
+    const clickable = { targets };
+    if (nvName !== 'missing') clickable.n_verified = nv;
+    const label = 'grid n_verified=' + nvName + ' targets=' + nt + ' tier=' + tier;
+    const got = honest(chips({ clickable }), label);
+    const valid = Number.isInteger(nv) && nv > 0 && nt > 0;
+    let chip = 'not verified on this run', hint = [w.MapTools.VERIFY_HINT];
+    if (valid && nv < nt) hint = [w.MapTools.PARTIAL_HINT];
+    else if (valid && nv === nt && tier === 'applied') { chip = 'verified on this run'; hint = []; }
+    else if (valid && nv === nt && tier === 'proposed') { chip = 'proposed, not applied'; hint = []; }
+    assert.deepStrictEqual(got, [chip], label + ': chip ' + JSON.stringify(got)); n++;
+    assert.deepStrictEqual(hints(), hint, label + ': hint ' + JSON.stringify(hints())); n++;
+    grid.push(nvName + ' | ' + nt + ' | ' + tier + ' | ' + chip + ' | ' + (hint.length ? (hint[0] === w.MapTools.PARTIAL_HINT ? 'partial' : 'verify rule') : 'none'));
+}
+// the over-count boundary named by the review: two writes for one applied target
+chips({ clickable: { n_verified: 2, targets: [{ path: 'qubits.q0.f', evidence_tier: 'applied' }] } });
+assert.deepStrictEqual(hints(), [w.MapTools.VERIFY_HINT], 'more writes than targets states the verify rule, not only some'); n++;
+if (process.env.VERIFY_GRID_OUT) fs.writeFileSync(process.env.VERIFY_GRID_OUT, grid.join('\n') + '\n');
+
 // real gated recipe payloads from the server (the Python driver passes them in)
 if (process.argv[2]) {
     const cases = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
