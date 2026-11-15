@@ -4,6 +4,7 @@ The fake stands in for the lab's code only (cz_gate_routes.run_check); the
 chip copies, the token, the rule and the write are the real ones."""
 import copy
 import json
+import re
 import tempfile
 from pathlib import Path
 
@@ -358,7 +359,7 @@ def test_dialog_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):
     r = subprocess.run([node, str(root / "tests" / "cz_gate_dialog_selfcheck.cjs")], env=env,
                        capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
-    assert "(332 assertions)" in r.stdout
+    assert "ok cz_gate_dialog_selfcheck (347 assertions)" in r.stdout
 
 
 def test_simulate_client_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):
@@ -672,3 +673,24 @@ def test_tunable_refusals_carry_no_class_field(chip):
     assert not row["ok"] and "class_refusals" not in row
     ok = chip.c.post(PLAN, json=_body()).get_json()["pairs"][0]
     assert ok["ok"] and "class_refusals" not in ok
+
+
+def _rule(css, sel):
+    m = re.search(r"(?<![\w.#-])" + re.escape(sel) + r"\s*\{([^}]*)\}", css)
+    assert m, sel
+    return m.group(1)
+
+
+def _decls(body):
+    return {k.strip(): v.strip() for k, v in (d.split(":", 1) for d in body.split(";") if ":" in d)}
+
+
+def test_dialog_tables_scroll_and_hint_has_a_gap():
+    base = Path(__file__).resolve().parent.parent / "quam_state_manager" / "web" / "static"
+    css = (base / "ui-kit.css").read_text(encoding="utf-8")
+    assert _decls(_rule(css, ".ui-xscroll"))["overflow-x"] == "auto"
+    assert _decls(_rule(css, ".ui-xscroll"))["max-width"] == "100%"
+    assert _decls(_rule(css, ".ui-xscroll-table > .ui-table .ui-table-num"))["white-space"] == "nowrap"
+    assert _decls(_rule(css, ".ui-xscroll-table"))["min-width"] == "0"
+    mt = (base / "map-tools.css").read_text(encoding="utf-8")
+    assert _decls(_rule(mt, "[data-verify-hint]"))["margin-inline-start"] == "var(--ui-gap-2)"

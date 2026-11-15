@@ -819,10 +819,11 @@
         resultQuiet();
         if (!show) return;
         var U = UIkit();
-        host.appendChild(U.table(null, [
+        host.appendChild(scrollTable(U.table(null, [
             ['Model gate', { chip: fp.model_gate[1] }],
             ['On the pair', { chip: fp.model_gate[0] }],
-            ['Not inherited', (fp.reset || []).join(', ') || 'nothing']], true, [], 'From the model gate'));
+            ['Not inherited', (fp.reset || []).join(', ') || 'nothing']], true, [], 'From the model gate')));
+        syncScrollRegions();
         host.appendChild(el('p', 'ui-text-quiet', 'The new gate copies the model gate\'s structure; the lab\'s code must run it before it is written.'));
     }
     var NUMBER_RE = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
@@ -1300,6 +1301,33 @@
         if (s.indexOf('e') < 0) return s;
         return Math.abs(x) >= 1e-6 && Math.abs(x) < 1e21 ? x.toFixed(12).replace(/0+$/, '').replace(/\.$/, '') : s;
     }
+    /* Every table of the dialog sits in the kit's sideways-scrolling wrapper: a narrow panel scrolls the
+       table inside itself and never cuts a column. The wrapper is a keyboard stop only while it really
+       scrolls sideways (see syncScrollRegions); otherwise it is plain layout. */
+    function scrollTable(t) {
+        var w = el('div', 'ui-xscroll ui-xscroll-table');
+        w.setAttribute('data-czg-table-scroll', '');
+        w.appendChild(t);
+        return w;
+    }
+    /* Decide, for each table wrapper, whether it scrolls sideways now: only then it is focusable and
+       named as a scrollable region. Called when the dialog opens, when a table is redrawn and on resize. */
+    function syncScrollRegions() {
+        var d = $('czg-dialog');
+        if (!d) return;
+        Array.prototype.forEach.call(d.querySelectorAll('[data-czg-table-scroll]'), function (w) {
+            if (w.scrollWidth > w.clientWidth) {
+                var t = w.querySelector('table');
+                w.setAttribute('tabindex', '0');
+                w.setAttribute('role', 'region');
+                w.setAttribute('aria-label', 'Scrollable table region: ' + ((t && t.getAttribute('aria-label')) || 'table'));
+            } else {
+                w.removeAttribute('tabindex');
+                w.removeAttribute('role');
+                w.removeAttribute('aria-label');
+            }
+        });
+    }
     function num(v, unit) {
         if (v === null || v === undefined) return '';
         if (typeof v === 'number') return fmt(v) + (unit ? ' ' + unit : '');
@@ -1383,7 +1411,7 @@
                 }
             });
         });
-        host.appendChild(t);
+        host.appendChild(scrollTable(t));
         var over = rows.filter(function (r) { var t = r.tones || {}; return t.max === 'danger' || t.min === 'danger'; }).length;
         if (sum) sum.textContent = over ? over + ' over the limit' : flagged ? flagged + ' differ' : 'all as entered';
         rows.forEach(function (r) { (r.why || []).forEach(function (w) { host.appendChild(el('p', 'ui-text-quiet', rowName(r) + ': ' + w)); }); });
@@ -1539,6 +1567,7 @@
         renderPairSwitch();
         openLabel();
         simButton();
+        syncScrollRegions();
     }
     /* What the checks that ran came to, in the server's words (one judgement
        for the banner, the summary and the record): "every check passed." or
@@ -2024,7 +2053,7 @@
         var w = cols.clientWidth;
         if (w > 0 && w < need) d.setAttribute('data-czg-stacked', ''); else d.removeAttribute('data-czg-stacked');
     }
-    window.addEventListener('resize', function () { if (S) layoutStack(); });
+    window.addEventListener('resize', function () { if (S) { layoutStack(); syncScrollRegions(); } });
     function init() {
         var src = $('czg-data');
         S.data = JSON.parse((src && src.textContent) || '{}');
@@ -2040,6 +2069,7 @@
         renderWrites();
         refresh();
         layoutStack();
+        syncScrollRegions();
         return plan();
     }
     function open(opts) {
