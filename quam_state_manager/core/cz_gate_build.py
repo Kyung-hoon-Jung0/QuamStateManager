@@ -584,15 +584,23 @@ def _dot(segs: tuple, key: str | None = None) -> str:
 _LIST_INDEX = re.compile(r"0|[1-9][0-9]*")
 
 
+def list_index(node: list, seg) -> int | None:
+    """The position *seg* names in the list *node*: a plain non-negative
+    decimal index without a leading zero or sign, inside the list. None
+    otherwise."""
+    if isinstance(seg, str) and _LIST_INDEX.fullmatch(seg) and int(seg) < len(node):
+        return int(seg)
+    return None
+
+
 def _walk_path(merged: Any, segs) -> Any:
-    """The node at *segs*; a list step must be a plain non-negative decimal
-    index without a leading zero or sign. _SENTINEL when it does not exist."""
+    """The node at *segs*; a list step follows :func:`list_index`.
+    _SENTINEL when it does not exist."""
     node = merged
     for seg in segs:
         if isinstance(node, dict) and seg in node:
             node = node[seg]
-        elif (isinstance(node, list) and isinstance(seg, str)
-              and _LIST_INDEX.fullmatch(seg) and int(seg) < len(node)):
+        elif isinstance(node, list) and list_index(node, seg) is not None:
             node = node[int(seg)]
         else:
             return _SENTINEL
