@@ -208,7 +208,8 @@ class TestTheDiffPage:
         html = _get(env, f"/diff?a={env['refs'][0]}&b={env['refs'][2]}&view=list") \
             .get_data(as_text=True)
         assert "diff-wb-list" in html and "val-delta" in html
-        assert "qubits.qA1.T1" in html
+        # dotted paths carry a <wbr> soft break after each dot (narrow widths)
+        assert "qubits.qA1.T1" in html.replace("<wbr>", "")
 
     def test_a_bare_diff_opens_on_what_you_changed(self, env):
         """No picking required: the newest snapshot vs the loaded chip."""
