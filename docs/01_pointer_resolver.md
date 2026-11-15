@@ -13,7 +13,7 @@ A standalone module that resolves QUAM's custom JSON pointer syntax. QUAM state 
 | `#./`  | `"#./inferred_RF_frequency"` | **Self-ref** -- QUAM runtime alias, returned as-is (never resolved here) |
 
 A `#./` is followed only by the separate, opt-in field follower
-`core/pointer_path.py:resolve_field_target` (when the leaf it names is stored): `state_get`
+`core/pointer_path.py:resolve_field_target` (when the leaf it names is stored), for example in `state_get`
 (docs/257), Live-Edit click-to-edit, and the time-of-flight band shift (`output_timing.stored_tof`,
 with `cross=True`, docs/27). The resolver itself never follows one, at the leaf or in the middle of a
 chain; Compare's "derived" rule (`compare.py`, a chain ending on `#./`) relies on that.

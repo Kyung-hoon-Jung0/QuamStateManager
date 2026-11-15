@@ -42,7 +42,9 @@ CR_PORT_MODE = ''
 PAIR_LINES = []
 
 # ======================================================================
-# Machinery — VERBATIM from the State Manager's generator/run_build.py
+# Machinery: VERBATIM from the State Manager files
+#   generator/_script_common.py
+#   generator/run_build.py
 # (the exact code the wizard ran to build this chip). Edit the DATA
 # blocks above instead; change these only if you know the QUAM stack.
 # ======================================================================
@@ -93,10 +95,19 @@ def tof_rounded_note(raw, nearest, reason):
             f"{nearest:g} ns ({reason}): acquisition starts {abs(off):g} ns {side} "
             "the return; measure time of flight again.")
 
+def _tof_grid_consequence(nearest, reason):
+    """The grid rule and nearest allowed value for a kept time of flight."""
+    return f"{reason} (nearest allowed {nearest:g} ns)."
+
 def tof_kept_note(value, nearest, reason):
     """The sentence for an off-grid time of flight the user set, which SM keeps."""
-    return (f"Time of flight {value:g} ns is kept as you set it, but {reason} "
-            f"(nearest allowed {nearest:g} ns).")
+    return (f"Time of flight {value:g} ns is kept as you set it, but "
+            + _tof_grid_consequence(nearest, reason))
+
+def tof_unrecorded_note(value, nearest, reason):
+    """The sentence for an off-grid value whose setter SM has no record of."""
+    return (f"Time of flight {value:g} ns is kept: SM has no record of who set it, but "
+            + _tof_grid_consequence(nearest, reason))
 
 def _norm_index(qubit_id):
     """Normalise a spec qubit id to the index QubitReference expects.
@@ -706,7 +717,7 @@ def _align_output_timing(machine, spec=None, tof_moves=None):
     """Put every output of a generated chip on one time base.
 
     Runs last among the steps that touch bands or delays (after
-    ``_fix_coupled_bands``) and owns all three assignments:
+    ``_fix_coupled_bands``) and applies these timing rules:
     - every used MW-FEM analog output gets ``target - latency(its band)``
       (20 ns for a band 1 / 3 port on a chip that also uses band 2, else 0);
     - every used LF-FEM analog output gets ``target`` (flux, coupler, and any
@@ -719,11 +730,19 @@ def _align_output_timing(machine, spec=None, tof_moves=None):
       LF readout delays retain the existing ``_readout_delay`` alignment.
       A delay that could not be set moves nothing and is named; a time of
       flight that could not be moved puts its port's delay back, so the next
-      call repairs it. A time of flight the user set stays as set and one
-      warning names those qubits; values with no record of their source
-      (``_tof_provenance``) stay too, under one grouped line. A Re-generate
-      (``tof_follows_source``) gets the source chip's values from the merge,
-      so neither line is written then.
+      call repairs it. A time of flight the user set stays as set (on a
+      moved readout output one warning per delay change names those
+      qubits); values with no record of their source (``_tof_provenance``)
+      stay too (on a moved readout output under one grouped line). A
+      Re-generate (``tof_follows_source``) gets the source chip's values from
+      the merge, so neither line is written then;
+    - unless ``tof_follows_source``, every stored time of flight is checked
+      against the grid, on an undelayed readout output too: an off-grid
+      value neither typed nor unrecorded is written as the nearest allowed
+      value, with a per-qubit warning (and a ``tof_defaults`` entry off the
+      grid is named as written on the grid); an off-grid typed value stays
+      with ``tof_kept_note``, an off-grid unrecorded one stays with
+      ``tof_unrecorded_note`` (SM has no record of who set it).
     A physical port reached twice (``_output_key``) is set once.
     Idempotent: the time of flight moves by the change of its readout port's
     delay in this call (``new - old``), so a second call moves nothing.
@@ -829,7 +848,8 @@ def _align_output_timing(machine, spec=None, tof_moves=None):
                 continue   # not a number SM can place: left as it is
             if not ok:
                 if kept_as_set:
-                    warnings.append(f"{qid}: {tof_kept_note(tof, nearest, reason)}")
+                    note = tof_kept_note if qid in typed else tof_unrecorded_note
+                    warnings.append(f"{qid}: {note(tof, nearest, reason)}")
                 else:
                     rr.time_of_flight = nearest
                     warnings.append(f"{qid}: Time of flight {tof:g} ns was written as "

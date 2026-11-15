@@ -44,7 +44,7 @@ _SCRIPT_DIR = str(Path(__file__).resolve().parent)
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 from _script_common import tof_on_grid  # noqa: E402
-from _script_common import tof_kept_note, tof_rounded_note  # noqa: E402
+from _script_common import _tof_grid_consequence, tof_kept_note, tof_rounded_note, tof_unrecorded_note  # noqa: E402
 from _script_common import QDAC_COMPONENTS_MODULE  # noqa: E402
 from _script_common import library_versions as _library_versions  # noqa: E402
 # The capability catalog is the single source of truth for what the QM stack
@@ -1098,7 +1098,7 @@ def _align_output_timing(machine, spec=None, tof_moves=None):
     """Put every output of a generated chip on one time base.
 
     Runs last among the steps that touch bands or delays (after
-    ``_fix_coupled_bands``) and owns all three assignments:
+    ``_fix_coupled_bands``) and applies these timing rules:
     - every used MW-FEM analog output gets ``target - latency(its band)``
       (20 ns for a band 1 / 3 port on a chip that also uses band 2, else 0);
     - every used LF-FEM analog output gets ``target`` (flux, coupler, and any
@@ -1111,11 +1111,19 @@ def _align_output_timing(machine, spec=None, tof_moves=None):
       LF readout delays retain the existing ``_readout_delay`` alignment.
       A delay that could not be set moves nothing and is named; a time of
       flight that could not be moved puts its port's delay back, so the next
-      call repairs it. A time of flight the user set stays as set and one
-      warning names those qubits; values with no record of their source
-      (``_tof_provenance``) stay too, under one grouped line. A Re-generate
-      (``tof_follows_source``) gets the source chip's values from the merge,
-      so neither line is written then.
+      call repairs it. A time of flight the user set stays as set (on a
+      moved readout output one warning per delay change names those
+      qubits); values with no record of their source (``_tof_provenance``)
+      stay too (on a moved readout output under one grouped line). A
+      Re-generate (``tof_follows_source``) gets the source chip's values from
+      the merge, so neither line is written then;
+    - unless ``tof_follows_source``, every stored time of flight is checked
+      against the grid, on an undelayed readout output too: an off-grid
+      value neither typed nor unrecorded is written as the nearest allowed
+      value, with a per-qubit warning (and a ``tof_defaults`` entry off the
+      grid is named as written on the grid); an off-grid typed value stays
+      with ``tof_kept_note``, an off-grid unrecorded one stays with
+      ``tof_unrecorded_note`` (SM has no record of who set it).
     A physical port reached twice (``_output_key``) is set once.
     Idempotent: the time of flight moves by the change of its readout port's
     delay in this call (``new - old``), so a second call moves nothing.
@@ -1221,7 +1229,8 @@ def _align_output_timing(machine, spec=None, tof_moves=None):
                 continue   # not a number SM can place: left as it is
             if not ok:
                 if kept_as_set:
-                    warnings.append(f"{qid}: {tof_kept_note(tof, nearest, reason)}")
+                    note = tof_kept_note if qid in typed else tof_unrecorded_note
+                    warnings.append(f"{qid}: {note(tof, nearest, reason)}")
                 else:
                     rr.time_of_flight = nearest
                     warnings.append(f"{qid}: Time of flight {tof:g} ns was written as "

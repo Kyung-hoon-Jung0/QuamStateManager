@@ -79,6 +79,10 @@ _QDAC_FUNCS = ("_import_qdac_components", "_find_bias_tee_class",
 # other recipe (the extension layout included) stays byte-for-byte.
 _COUPLER_ONLY_CONSTS = ("_COUPLER_ONLY",)
 _COUPLER_ONLY_FUNCS = ("_coupler_only_pulse_key", "_seed_coupler_only", "_finalize_coupler_only")
+# The time of flight grid rule and its sentences, emitted first (run_build
+# imports them from generator/_script_common.py).
+_TOF_GRID_FUNCS = ("tof_on_grid", "tof_rounded_note", "_tof_grid_consequence",
+                   "tof_kept_note", "tof_unrecorded_note")
 _RUNTIME_FUNCS = (
     "_norm_index", "_parse_pair", "_quam_pair_id", "_norm_pair_qubits",
     "_match_populate_pairs", "number", "coupler_model", "_apply_coupler_models",
@@ -122,12 +126,24 @@ def _run_build():
     return _rb_module
 
 
+def _banner_sources(funcs) -> list[str]:
+    """The files (relative to the package) that define ``funcs``, sorted."""
+    package = _RUN_BUILD_PATH.parent.parent
+    return sorted({Path(inspect.getsourcefile(fn)).resolve().relative_to(package).as_posix()
+                   for fn in funcs})
+
+
 def _runtime_block(extra_consts: tuple = (), extra_funcs: tuple = ()) -> str:
-    """The verbatim run_build machinery 02 embeds (cached per process)."""
+    """The machinery 02 embeds: each function copied verbatim from the file
+    that defines it, under a banner listing those files, read from the
+    copied functions themselves (``_banner_sources``)."""
     mod = _run_build()
+    funcs = [getattr(mod, name) for name in
+             _TOF_GRID_FUNCS + tuple(_RUNTIME_FUNCS) + tuple(extra_funcs)]
     parts = [
         "# ======================================================================",
-        "# Machinery — VERBATIM from the State Manager's generator/run_build.py",
+        "# Machinery: VERBATIM from the State Manager files",
+        *(f"#   {source}" for source in _banner_sources(funcs)),
         "# (the exact code the wizard ran to build this chip). Edit the DATA",
         "# blocks above instead; change these only if you know the QUAM stack.",
         "# ======================================================================",
@@ -136,8 +152,8 @@ def _runtime_block(extra_consts: tuple = (), extra_funcs: tuple = ()) -> str:
     for name in tuple(_RUNTIME_CONSTS) + tuple(extra_consts):
         parts.append(f"{name} = {getattr(mod, name)!r}")
     parts.append("")
-    for name in ("tof_on_grid", "tof_rounded_note", "tof_kept_note") + tuple(_RUNTIME_FUNCS) + tuple(extra_funcs):
-        parts.append(inspect.getsource(getattr(mod, name)).rstrip("\n"))
+    for fn in funcs:
+        parts.append(inspect.getsource(fn).rstrip("\n"))
         parts.append("")
     return "\n".join(parts)
 

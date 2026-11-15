@@ -2,10 +2,10 @@
 
 One pure reading (plain dicts, no QM imports) of the delays a build or a
 Re-generate wrote: per MW-FEM output in use its band and delay, the LF-FEM
-output delays, and the resonators whose readout output carries a delay
-(with what happened to their time of flight). The wizard's build result
-and Re-generate's result both list this, so the page never predicts numbers
-the build did not write.
+output delays, and what happened to the resonators' time of flight (on a
+fresh build also a typed off-grid value on an undelayed readout output).
+The wizard's build result and Re-generate's result both list this, so the
+page never predicts numbers the build did not write.
 
 "In use" and "which time of flight is the user's" are the build's own
 functions (``generator/run_build.py`` ``_used_port_paths`` and
@@ -20,7 +20,7 @@ import math
 from quam_state_manager.core import pointer_path, pointer_resolver
 from quam_state_manager.generator._script_common import (  # noqa: F401  (re-exported)
     tof_follows_note, tof_grid_only, tof_kept_note, tof_not_moved_note, tof_on_grid,
-    tof_reference_not_number_note, tof_reference_note, tof_rounded_note)
+    tof_reference_not_number_note, tof_reference_note, tof_rounded_note, tof_unrecorded_note)
 
 
 def _grid(value):
@@ -263,7 +263,12 @@ def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=(),
     ``tof``: per resonator whose readout output has a delay ``s > 0`` (or,
     on a Re-generate, a delay of 0 that differs from the source chip's) and
     whose time of flight this run moved or would have moved:
-    ``{qubit, shift, value, moved}``.
+    ``{qubit, shift, value, moved}``. A ``tof_typed`` value off the grid
+    carries ``grid_note`` (:func:`tof_kept_note`) and is listed on a delay-0
+    output too, with ``grid_only`` True. A moved Re-generate entry may carry
+    ``from`` (below), ``sum`` (old value plus the delay change, before
+    rounding) and ``grid_note`` (:func:`tof_rounded_note`, when that sum was
+    rounded onto the stored value).
 
     A fresh build (``tof_moved`` None) moved every resonator except
     ``tof_typed`` (kept as the user set it, ``moved`` False) and
@@ -284,7 +289,10 @@ def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=(),
     output whose stored time of flight is not a finite number (a reference,
     text, nan, none stored), with :func:`tof_unplaced_note`'s sentence, the
     one the band shift plan and its applied note print; a reference to a
-    time of flight this run moved is listed even on an undelayed output."""
+    time of flight this run moved is listed even on an undelayed output. A
+    reference to a finite number is left out when its output delay is the
+    source chip's (as an unchanged literal); a reference that gives no
+    number is still named on a delayed output."""
     try:
         doc = _doc(state, wiring)
         mw = [{"port": p, "label": port_label(v, p), "band": v.get("band"),
@@ -416,7 +424,9 @@ def annotate(outcome: dict, state: dict, wiring: dict, tof_moved=None, spec=None
              source=None) -> None:
     """Put :func:`summary` on ``outcome["result"]["output_timing"]``; a fresh
     build passes its ``spec`` (who set each time of flight), a Re-generate
-    passes ``tof_moved`` and the source chip's ``(state, wiring)``."""
+    passes ``tof_moved`` and the source chip's ``(state, wiring)``. On a fresh
+    build each moved ``tof`` item takes the build's ``res["tof_moves"]`` entry
+    for its qubit (``from``, ``sum`` and, when rounded, ``grid_note``)."""
     res = outcome.get("result") if isinstance(outcome, dict) else None
     if isinstance(res, dict):
         typed, unrec = tof_provenance(spec) if tof_moved is None else (set(), set())

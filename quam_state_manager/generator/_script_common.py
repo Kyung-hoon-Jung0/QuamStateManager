@@ -4,9 +4,7 @@ Imported ONLY by the sibling scripts (``run_build.py``,
 ``run_generate_config.py``) that run under an *external* user-selected
 interpreter: it may use only the Python standard library. The one
 exception to "never imported by ``quam_state_manager``" is the time of
-flight grid rule and helpers, re-exported by ``core.output_timing``:
-``tof_follows_note``, ``tof_grid_only``, ``tof_kept_note``, ``tof_not_moved_note``, ``tof_on_grid``,
-``tof_reference_not_number_note``, ``tof_reference_note``, ``tof_rounded_note``.
+flight grid rule and sentence helpers re-exported by ``core.output_timing``.
 The build and SM share these rules and sentences. The
 scripts add this directory to ``sys.path`` defensively before importing (CPython normally prepends the
 script's own directory, but ``PYTHONSAFEPATH`` / ``-P`` suppress that).
@@ -149,8 +147,19 @@ def tof_rounded_note(raw, nearest, reason):
 
 def tof_kept_note(value, nearest, reason):
     """The sentence for an off-grid time of flight the user set, which SM keeps."""
-    return (f"Time of flight {value:g} ns is kept as you set it, but {reason} "
-            f"(nearest allowed {nearest:g} ns).")
+    return (f"Time of flight {value:g} ns is kept as you set it, but "
+            + _tof_grid_consequence(nearest, reason))
+
+
+def _tof_grid_consequence(nearest, reason):
+    """The grid rule and nearest allowed value for a kept time of flight."""
+    return f"{reason} (nearest allowed {nearest:g} ns)."
+
+
+def tof_unrecorded_note(value, nearest, reason):
+    """The sentence for an off-grid value whose setter SM has no record of."""
+    return (f"Time of flight {value:g} ns is kept: SM has no record of who set it, but "
+            + _tof_grid_consequence(nearest, reason))
 
 
 # The sentences for a stored time of flight a band shift does not write.

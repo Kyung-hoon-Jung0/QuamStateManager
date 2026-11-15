@@ -142,14 +142,21 @@ def test_emitted_build_contains_and_executes_the_shared_rule():
     assert m.qubits["q1"].resonator.time_of_flight == 36
 
 
-def test_unrecorded_off_grid_is_kept_and_named():
+@pytest.mark.parametrize("typed", [False, True])
+def test_kept_off_grid_names_known_provenance(typed):
     mod = _load_helpers()
-    m = _machine([2, 2], ro_band=2, tof=46)
-    spec = {"populate": {"resonator": {"q1": {"time_of_flight": 46},
-                                       "q2": {"time_of_flight": 46}}}}
+    m = _machine([2, 2], ro_band=2, tof=30)
+    spec = {"populate": {"resonator": {"q1": {"time_of_flight": 30},
+                                       "q2": {"time_of_flight": 30}}}}
+    if typed:
+        spec["populate"]["options"] = {"tof_defaults": {}}
+    assert mod._tof_provenance(spec) == (({"q1", "q2"}, set()) if typed else (set(), {"q1", "q2"}))
     notes = mod._align_output_timing(m, spec)
-    assert [q.resonator.time_of_flight for q in m.qubits.values()] == [46, 46]
-    assert any(n == "q1: " + KEPT_46 for n in notes)
+    assert all(q.resonator.opx_output.delay == 0 for q in m.qubits.values())
+    assert [q.resonator.time_of_flight for q in m.qubits.values()] == [30, 30]
+    head = "is kept as you set it" if typed else "is kept: SM has no record of who set it"
+    expected = f"Time of flight 30 ns {head}, but " + REASON + " (nearest allowed 32 ns)."
+    assert notes == [f"{qid}: {expected}" for qid in m.qubits]
 
 
 def test_a_value_the_rule_cannot_place_is_left_alone():

@@ -432,3 +432,40 @@ def test_emitted_scripts_move_a_prefilled_time_of_flight_like_the_wizard_build()
     assert rb._align_output_timing(wizard, spec) == []
     assert [q.resonator.time_of_flight for q in emitted.qubits.values()] == \
         [q.resonator.time_of_flight for q in wizard.qubits.values()] == [48, 48]
+
+
+def _banner_lines(block):
+    return [line[4:] for line in block.splitlines() if line.startswith("#   ")]
+
+
+def _defined_in(rel_paths):
+    """Function name -> the file (of ``rel_paths``) whose top level defines it,
+    read with ast, independent of the emitter's own lookup."""
+    package = script_emitter._RUN_BUILD_PATH.parent.parent
+    where = {}
+    for rel in rel_paths:
+        tree = ast.parse((package / rel).read_text(encoding="utf-8"))
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                where.setdefault(node.name, set()).add(rel)
+    return where
+
+
+def test_runtime_banner_names_the_files_the_copied_functions_come_from():
+    block = script_emitter._runtime_block()
+    assert _banner_lines(block) == ["generator/_script_common.py", "generator/run_build.py"]
+    where = _defined_in(_banner_lines(block))
+    copied = [n.name for n in ast.parse(block).body if isinstance(n, ast.FunctionDef)]
+    assert {"tof_on_grid", "tof_kept_note", "tof_unrecorded_note"} <= set(copied)
+    # every copied function is defined in exactly one listed file, and every listed file gives one
+    assert all(len(where.get(name, ())) == 1 for name in copied)
+    assert {f for name in copied for f in where[name]} == set(_banner_lines(block))
+
+
+def test_runtime_banner_follows_an_extra_function_to_its_file(monkeypatch):
+    from quam_state_manager.core import output_timing
+
+    monkeypatch.setattr(script_emitter._run_build(), "summary", output_timing.summary, raising=False)
+    block = script_emitter._runtime_block(extra_funcs=("summary",))
+    assert _banner_lines(block) == ["core/output_timing.py", "generator/_script_common.py",
+                                    "generator/run_build.py"]

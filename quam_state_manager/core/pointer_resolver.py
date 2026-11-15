@@ -7,7 +7,7 @@ QUAM state files use three pointer flavors:
                   here, at the leaf or in the middle of a chain (returned raw; Compare's
                   "derived" rule relies on it). The opt-in field follower
                   ``pointer_path.resolve_field_target`` follows a ``#./`` that names a stored
-                  leaf (state_get, Live-Edit, the time-of-flight band shift).
+                  leaf (for example, state_get, Live-Edit, the time-of-flight band shift).
 
 Most pointers resolve to a concrete value in one hop, but real data DOES
 contain chains — both a value that is itself a pointer, and a path that

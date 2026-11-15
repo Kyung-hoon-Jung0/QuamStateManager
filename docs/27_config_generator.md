@@ -756,8 +756,11 @@ same rule applies to every readout, provisionally untested on LF-FEM and OPX+.
   reference to a finite number is not listed, the same as an unchanged literal; a value that gives
   no number is still named.
 - A value the user set stays as entered, with the reason and nearest allowed value (`tof_kept_note`);
-  on an undelayed readout output the review names only the grid. A default SM pre-filled, or a
-  builder value nobody set, is written on the grid. Stored values SM does not move stay unchanged.
+  on an undelayed readout output the review names only the grid.
+- A value with no record of who set it stays as entered. Its off-grid warning says SM has no record
+  of who set it (`tof_unrecorded_note`), then gives the same grid reason and nearest allowed value.
+- A default SM pre-filled, or a builder value nobody set, is written on the grid. Stored values SM
+  does not move stay unchanged.
 
 ## Recommend core layout on a loaded chip
 
