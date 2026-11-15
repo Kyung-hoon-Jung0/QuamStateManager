@@ -3839,14 +3839,57 @@ def _unit_ts(unit: dict) -> float | None:
 _UNIT_ASK_AFTER_S = 8 * 3600
 
 
+def _journal_window_id() -> str | None:
+    """The existing per-document identity; background writers have none."""
+    return request.headers.get("X-SM-Window-ID") if has_request_context() else None
+
+
 def _unit_needs_ask(unit: dict) -> bool:
-    """T1-F2 / R2 MINOR 4: a Ctrl+Z writing this unit's inverse on the live
-    chip asks first -- the unit was recorded before this SM process started,
-    or more than ``_UNIT_ASK_AFTER_S`` ago."""
+    """A browser asks once before walking another window's journal unit.
+
+    Headerless callers retain the existing age-based live-write rule.
+    Browser requests always carry the document's X-SM-Window-ID.
+    """
+    window_id = _journal_window_id()
+    if window_id:
+        return (unit.get("meta") or {}).get("window_id") != window_id
     if _unit_from_previous_session(unit):
         return True
     ts = _unit_ts(unit)
     return ts is not None and time.time() - ts > _UNIT_ASK_AFTER_S
+
+
+def _journal_window_ask(unit: dict, direction: str):
+    """Return the existing kit-dialog event before any journal mutation."""
+    if (not _journal_window_id()
+            or request.headers.get("X-SM-Agent")
+            or not _unit_needs_ask(unit)
+            or request.values.get("ack_prev_window") == "1"):
+        return None
+    entries = unit.get("entries") or []
+    if not entries:
+        return None
+    anchor = entries[0]
+    what = str(anchor.get("path") or "the recorded change")
+    if len(entries) > 1:
+        what = f"{len(entries)} changes including {what}"
+    elif anchor.get("created") or anchor.get("deleted"):
+        restoring = bool(anchor.get("deleted")) == (direction == "/undo")
+        what += " restored" if restoring else " removed"
+    else:
+        value = anchor.get("old" if direction == "/undo" else "new")
+        what += " to " + _fmt_msg_val(value)
+    # Keep the question one ASCII line even for a Unicode path or value.
+    what = what.encode("ascii", "backslashreplace").decode("ascii")
+    what = " ".join(what.split())
+    effect = ("writes the chip" if _undo_live_enabled()
+              else "stages only; the chip stays unchanged")
+    verb = "Undo" if direction == "/undo" else "Redo"
+    resp = make_response(_tray_html())
+    resp.headers["HX-Trigger"] = json.dumps({"undoAskPrevSession": {
+        "unit_id": str(unit.get("id") or ""), "direction": direction,
+        "message": f"{verb} another window's change: {what}; Ctrl+Z {effect}."}})
+    return resp
 
 
 def _unit_from_previous_session(unit: dict) -> bool:
@@ -3946,6 +3989,7 @@ def _journal_prepare(store, ctx, meta: dict | None = None) -> list[dict]:
             return []
         m = dict(meta or {})
         m.setdefault("owner_pid", os.getpid())
+        m.setdefault("window_id", _journal_window_id())
         return undo_journal.units_from_log([
             e for e in store.change_log
             if not str(e.group_id or "").startswith("restore-applied:")], meta=m)
@@ -5035,7 +5079,8 @@ def _wholesale_unit(before: dict | None, ctx: dict, src: str,
         # Recreating a document has no prior state that Ctrl+Z can restore.
         return {"id": uuid.uuid4().hex[:12], "ts": time.time(), "entries": [],
                 "meta": {"src": src, "wholesale": True, "no_previous_state": True,
-                         "owner_pid": os.getpid()}}
+                         "owner_pid": os.getpid(),
+                         "window_id": _journal_window_id()}}
     try:
         store = ctx["store"]
         # docs/271: a door that knows what it is writing (restore-live writes
@@ -5114,7 +5159,8 @@ def _wholesale_unit(before: dict | None, ctx: dict, src: str,
     # which filters on src == "auto", listed nothing for a wholesale flush: the
     # one surface docs/117 designates as the feedback after an auto write was
     # silent about the largest write it can make, and offered no ✕ to undo it.
-    meta = {"src": src, "wholesale": True, "owner_pid": os.getpid(), "at": time.time()}
+    meta = {"src": src, "wholesale": True, "owner_pid": os.getpid(), "at": time.time(),
+            "window_id": _journal_window_id()}
     if _auto_apply_state(ctx):
         meta["auto"] = True
     if cap and len(entries) > _WHOLESALE_UNIT_CAP:
@@ -12647,9 +12693,19 @@ def _remember_notice_window(ctx):
 
 @bp.before_request
 def _track_notice_window():
+    from quam_state_manager.core.loader import edit_window_id
+    g._edit_window_token = edit_window_id.set(_journal_window_id())
     ctx = _active_ctx()
     if ctx is not None:
         _remember_notice_window(ctx)
+
+
+@bp.teardown_request
+def _clear_edit_window(_exc):
+    from quam_state_manager.core.loader import edit_window_id
+    token = g.pop("_edit_window_token", None)
+    if token is not None:
+        edit_window_id.reset(token)
 
 
 def _snapshot_notice_recipients(ctx):
@@ -31197,6 +31253,9 @@ def _undo_journal_step(ctx, n_req: int = 1):
                         "This step recorded no values — skipped; the chip is unchanged"),
             "entries": [], "level": "warning", **_walk_burst_extra(n_req)}})
         return resp
+    question = _journal_window_ask(unit, "/undo")
+    if question is not None:
+        return question
     gid = undo_journal.GID_PREFIX + str(unit.get("id") or cursor)
     ops = undo_journal.inverse_ops(unit)
 
@@ -31610,7 +31669,8 @@ def _undo_live_flush(ctx, store, modifier, unit: dict, staged: list, *,
     # R2 MINOR 4: also an edit older than 8 h of THIS session; and the yes is
     # the presser's WINDOW's (it sends ack_prev_window once it said yes), not
     # the chip context's -- a yes in one window was a yes in every window.
-    if (_unit_needs_ask(unit)
+    if (not _journal_window_id()
+            and _unit_needs_ask(unit)
             and request.values.get("ack_prev_window", "") != "1"
             and request.values.get("ack_prev_session", "") != str(unit.get("id") or "")):
         _rollback_walk_step(ctx, store, modifier, staged)
@@ -31854,6 +31914,24 @@ def redo():
     busy = _journal_ready_refusal(ctx, "redone")
     if busy is not None:
         return busy
+
+    units = ctx.get("undo_units") or []
+    cursor = int(ctx.get("undo_cursor") or 0)
+    top = store.change_log[-1].group_id if store.change_log else None
+    candidate = None
+    if isinstance(top, str) and top.startswith(undo_journal.GID_PREFIX):
+        candidate = next((u for u in units
+                          if undo_journal.GID_PREFIX + str(u.get("id")) == top), None)
+    elif not store.change_log and cursor < len(units):
+        frames = ctx.get("redo_stack") or []
+        if not frames or (frames[-1].get("kind") == "jrn_live"
+                          and ctx.get("redo_seq") == store.mutation_seq
+                          and frames[-1].get("unit_id") == units[cursor].get("id")):
+            candidate = units[cursor]
+    if candidate is not None:
+        question = _journal_window_ask(candidate, "/redo")
+        if question is not None:
+            return question
 
     top_gid = store.change_log[-1].group_id if store.change_log else None
     if isinstance(top_gid, str) and top_gid.startswith(undo_journal.GID_PREFIX):

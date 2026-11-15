@@ -9936,13 +9936,9 @@ window.UndoQueue = (function () {
     var MAX = 20;
     var q = [], busy = false, waiting = false, _fullToastAt = 0;
     var _ackPrev = "";        // T1-F2: the earlier-session unit the user said yes to
-    /* R2 MINOR 4: the yes to undoing an old edit on the live chip belongs to
-       THIS window (sessionStorage, per chip folder) -- it was kept per chip
-       context on the server, so one window's yes covered every window. */
-    function _yesKey() { return "sm.undoOldOk." + String(window.__chipKey || ""); }
-    function _windowSaidYes() {
-        try { return window.sessionStorage.getItem(_yesKey()) === "1"; } catch (e) { return false; }
-    }
+    // Consent lasts for this document only. A reload asks again.
+    var _otherWindowYes = false;
+    function _windowSaidYes() { return _otherWindowYes; }
     /* The queue's OWN htmx sync source (docs/124 M-11). It must NOT be the
        tray: htmx 2.0.4's per-element sync (default strategy "last") lives on
        the SOURCE element, and both the grid ⚡ apply (applyEditsToLive) and
@@ -10060,7 +10056,7 @@ window.UndoQueue = (function () {
                               return a;
                           })(),
                           // R2 MINOR 4: this window already said yes once
-                          ack_prev_window: (item.path === "/undo" && _windowSaidYes()) ? "1" : "" },
+                          ack_prev_window: _windowSaidYes() ? "1" : "" },
             });
         } catch (e) { done(); return; }
         /* A /undo that never settles used to hold `busy` FOREVER — every
@@ -10115,7 +10111,7 @@ window.UndoQueue = (function () {
         ackPrevSession: function (unitId) { _ackPrev = String(unitId || ""); },
         /* R2 MINOR 4: remember this window's yes (per chip folder) */
         rememberPrevSessionYes: function () {
-            try { window.sessionStorage.setItem(_yesKey(), "1"); } catch (e) {}
+            _otherWindowYes = true;
         },
         /* R2 MINOR 4: drop the presses queued behind one the server asked
            about -- they were pressed before the answer; a Cancel must not
@@ -10149,20 +10145,21 @@ document.addEventListener("undoAskPrevSession", function (evt) {
     var d = (evt && evt.detail) || {};
     // R2 MINOR 4: presses queued behind the asked one wait for this answer
     if (window.UndoQueue && window.UndoQueue.drain) window.UndoQueue.drain();
-    window.smConfirm(String(d.message || "This Ctrl+Z writes the live chip.")
-        + "\n\nOK = undo it on the live chip.\nCancel = leave the chip as it is.").then(function (yes) {
+    window.smConfirm(String(d.message || "Undo another window's change?"))
+        .then(function (yes) {
         if (yes && window.UndoQueue) {
             window.UndoQueue.ackPrevSession(d.unit_id);
             if (window.UndoQueue.rememberPrevSessionYes) window.UndoQueue.rememberPrevSessionYes();
-            window.UndoQueue.push("/undo");
+            window.UndoQueue.push(d.direction === "/redo" ? "/redo" : "/undo");
         } else if (!yes && window.showToast) {
-            window.showToast("Not undone — nothing was written.", "info");
+            window.showToast("Not undone; nothing was written.", "info");
         }
     });
 });
 
 document.addEventListener("keydown", function(evt) {
-    if (!((evt.ctrlKey || evt.metaKey) && (evt.key === "z" || evt.key === "Z")
+    var redoKey = evt.shiftKey || evt.key === "y" || evt.key === "Y";
+    if (!((evt.ctrlKey || evt.metaKey) && (evt.key === "z" || evt.key === "Z" || evt.key === "y" || evt.key === "Y")
           && !evt.altKey)) return;
     var a = document.activeElement;
     var inGridCell = !!(a && a.classList && a.classList.contains("bulk-cell"));
@@ -10190,14 +10187,14 @@ document.addEventListener("keydown", function(evt) {
         if (a.value !== _base) {
             // typed, not committed: Ctrl+Z undoes the typing; Ctrl+Shift+Z is
             // the browser's (a server redo would overwrite the typing)
-            if (evt.shiftKey) return;
+            if (redoKey) return;
             evt.preventDefault();
             a.value = _base;
             a.dispatchEvent(new Event("input", { bubbles: true }));
             return;
         }
     }
-    if (evt.shiftKey) {
+    if (redoKey) {
         // ---- redo chain (docs/107) ----
         // Wizard MOUNTED → swallow (the wizard has no redo; letting the press
         // fall through to chip-level redo would act behind the user's back).

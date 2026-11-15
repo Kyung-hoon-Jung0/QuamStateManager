@@ -468,3 +468,19 @@ separate units (harmless, ≤ pre-R-A1). Pinned by
 `tests/test_undo_live.py::TestReplayNeverMergesTwoGestures` (the Round-2 repro,
 mutation-checked). Lesson, again: re-review a fix campaign's own fixes — this
 defect was in the very commit that closed the original of the same bug.
+
+
+## Window confirmation for journal steps
+
+Edits retain their creating window through a different window's Apply.
+Browser journal captures stamp `meta.window_id` from the existing document
+header `X-SM-Window-ID` (also used for multi-window replacement notices).
+A missing stamp is another window. Before undo or redo mutates that step,
+the existing kit confirmation names the change and whether Ctrl+Z writes
+the chip (ON) or stages only (OFF). No changes nothing; Yes repeats the
+request with `ack_prev_window=1`. Consent lives only in document memory,
+covers later undo and redo steps, and resets on reload. Same-window steps
+need no new question. Headerless callers retain the earlier age-based
+live-write confirmation. Agent undo-mine and robot policy are unchanged.
+The unseen-edit gate precedes the question; the live door and grouped
+rollback still run after consent, including the class-file-left notice.

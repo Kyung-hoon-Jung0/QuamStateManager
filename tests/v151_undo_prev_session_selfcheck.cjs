@@ -109,15 +109,40 @@ function ask(unit) {
     const undo2 = ajaxCalls.filter((c) => c.u === '/undo');
     ok(undo2.length === 2 && !undo2[1].o.values.ack_prev_session,
        'B1: the next press does not carry the yes again -- ' + JSON.stringify(undo2[1] && undo2[1].o.values));
-    ok(undo2[1].o.values.ack_prev_window === '1' && SESSION.getItem('sm.undoOldOk.chip_k-0123abcd') === '1',
+    ok(undo2[1].o.values.ack_prev_window === '1' && SESSION.getItem('sm.undoOldOk.chip_k-0123abcd') === null,
        'B2: ...it carries the yes of THIS window, kept per window -- ' + JSON.stringify(undo2[1].o.values));
-    SESSION._m.clear();
+    window.__chipKey = 'another-scope';
     window.UndoQueue.push('/undo');
     await tick(80);
     const undo3 = ajaxCalls.filter((c) => c.u === '/undo');
-    ok(undo3.length === 3 && undo3[2].o.values.ack_prev_window === '',
-       'B3: a window that never said yes sends none -- ' + JSON.stringify(undo3[2].o.values));
+    ok(undo3.length === 3 && undo3[2].o.values.ack_prev_window === '1',
+       'B3: consent stays in this document across chip changes -- ' + JSON.stringify(undo3[2].o.values));
 
+    // A fresh queue closure models document initialization.
+    const appSource = fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8');
+    const queueStart = appSource.indexOf('window.UndoQueue = (function');
+    const queueEnd = appSource.indexOf('})();', queueStart) + 5;
+    window.eval(appSource.slice(queueStart, queueEnd));
+    window.UndoQueue.push('/redo');
+    await tick(80);
+    ok(ajaxCalls[ajaxCalls.length - 1].o.values.ack_prev_window === '',
+       'reload resets consent even when storage survives');
+    window.UndoQueue.rememberPrevSessionYes();
+    window.UndoQueue.push('/redo');
+    await tick(80);
+    ok(ajaxCalls[ajaxCalls.length - 1].o.values.ack_prev_window === '1',
+       'redo carries document consent too');
+    d.dispatchEvent(new window.CustomEvent('undoAskPrevSession', { detail: {
+        unit_id: 'redo-unit', direction: '/redo',
+        message: 'Redo another window change; Ctrl+Z stages only.' } }));
+    await clickConfirm(true);
+    ok(ajaxCalls[ajaxCalls.length - 1].u === '/redo'
+       && ajaxCalls[ajaxCalls.length - 1].o.values.ack_prev_window === '1',
+       'redo question Yes repeats redo with consent');
+    d.body.focus();
+    d.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'y', ctrlKey: true, bubbles: true }));
+    await tick(80);
+    ok(ajaxCalls[ajaxCalls.length - 1].u === '/redo', 'Ctrl+Y routes to redo');
     /* E: presses queued behind the asked one */
     let release;
     hold = { p: new Promise((r) => { release = r; }) };
