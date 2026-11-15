@@ -685,3 +685,36 @@ a coupler's moving qubit's shift to the coupler, and the readout shift to the ti
 offer names the resonators whose time of flight to re-check and the qubits whose xy-readout spacing
 changes. Ports a rebuild adds follow the source chip's base (`follow_source_time_base`): an
 unshifted source gives them today's per-band values, so the offer covers them too.
+
+## Recommend core layout on a loaded chip
+
+When a FEM's static core count is over its limit, the Load check and Chip Status core layout warning can carry a
+"Recommend core layout" button. `core_layout.recommended_assignment(state)` runs the wizard build's own
+`_pin_cores` (loaded from `generator/run_build.py`, not copied) over the raw state through a small proxy.
+`recommend_layout(state)` turns that into one preview per FEM: cores before and after, the shared groups,
+every `core` / `thread` leaf that changes, elements that keep a name others leave, and every port that could not
+be read. Unreadable ports are named, not placed.
+- The button shows only when cores are over, the layout lowers the count, and the firm count after it fits.
+  Otherwise one panel line says why: still over, routes over, or no lower layout.
+- Stage posts the preview's items to `/diagnostics/apply-fix`, which re-checks them against the current offer.
+  They are written into the working copy as one undo group. A missing `core` key is created (`create_value`,
+  allowed only for a missing `.core` leaf) and `thread` is set to null. Nothing reaches the live files unless
+  Auto-Sync is armed, and the preview says so before the press.
+- apply-fix stages a FEM's items only all together: a press that carries some but not all of one FEM's
+  recommendation items answers 409 (`core_layout_partial`) and changes nothing, so no half layout is staged.
+- `GET /diagnostics/core-findings` re-reads the findings afterwards. Chip Status re-counts its "structural
+  issues" tile and verdict banner from that re-read, through its one counting function.
+- The same re-read runs on every `diagnostics-changed` event (sent by undo, redo and every local edit), wherever
+  the slot is shown, so a Ctrl+Z brings the finding, the button, the tile count and the banner back without a
+  reload. One document listener (capture phase), inert when no slot is mounted; one read at a time, a call during
+  a read asks for one more read after it, so answers never cross. A preview open at that moment is closed by the
+  re-render with one line, once, in that slot only, saying the recommendation was read again (or that no core layout
+  finding remains); the event of the user's own Stage press is exempt. The rule is "a re-render happened after the
+  event": when any read of the coalesced chain succeeded, the slot gets its one line even if a later read failed; when
+  every read failed (rejected, non-200, bad JSON or no findings list), no line and the open preview stays as it was.
+- The Diagnostics page only points to the button: its fix line names Load check and Chip Status
+  (`FIX_DIAGNOSTICS`), the finding carries no fix items there (`core_layout.page_findings`), no per-item button and
+  no "Set all".
+- On a run archive (read-only), no fixes are offered and apply-fix answers 409.
+- Tests: `tests/test_core_layout_recommend.py`, `tests/core_recommend_selfcheck.cjs` and
+  `tests/chip_status_core_refresh_selfcheck.cjs`.

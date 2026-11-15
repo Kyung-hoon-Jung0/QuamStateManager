@@ -57,7 +57,9 @@
 {%- for dk, dl in diag_domains if dk not in eorder -%}{%- if dorder.append((dk, dl)) -%}{%- endif -%}{%- endfor -%}
 {%- set fe = namespace(done=false) -%}
 {%- macro fix_buttons(f) -%}
-  {%- set opts = f.fixes if f.fixes else ([f.fix] if f.fix else []) -%}
+  {#- A core layout finding is never fixed leaf by leaf here: its recommendation
+      is one group, pressed in Load check or Chip Status. -#}
+  {%- set opts = [] if f.category == 'core_layout' else (f.fixes if f.fixes else ([f.fix] if f.fix else [])) -%}
   {%- for fx in opts -%}
     {%- if fx.action in ('set_pointer', 'set_value') %}
     <button type="button" class="btn-sm outline diag-fix"

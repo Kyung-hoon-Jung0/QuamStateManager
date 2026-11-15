@@ -84,6 +84,7 @@ class Finding:
     vack_key: str = ""      # FB-03: identity for the "I know - intended" door (diag_ack)
     value_paths: list | None = None  # FB-03: chip leaves the check READ (ack fingerprint)
     values: Any = None      # FB-03: inputs that are not chip leaves (generated config, reports)
+    preview: Any = None     # what a multi-item fix will change, shown before the press
 
     def as_dict(self) -> dict:
         return {
@@ -100,6 +101,7 @@ class Finding:
             "ack_key": self.ack_key,
             "fixes": self.fixes,
             "vack_key": self.vack_key,
+            "preview": self.preview,
         }
 
 
@@ -3496,6 +3498,8 @@ def finding_groups(rows, ids=None) -> list[dict]:
     for g in groups.values():
         kinds: dict[str, dict] = {}
         for f in g["items"]:
+            if f.category == "core_layout":  # pressed as one group elsewhere, never "Set all" here
+                continue
             for fix in (f.fixes or []):
                 if isinstance(fix, dict) and fix.get("kind"):
                     k = kinds.setdefault(fix["kind"], {"kind": fix["kind"],

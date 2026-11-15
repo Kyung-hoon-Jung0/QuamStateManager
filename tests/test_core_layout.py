@@ -703,4 +703,5 @@ def test_controller_level_fix_says_this_controller():
         m.el(f"q{i}", "xy", opx_output=m.port("mw_outputs", "con1", 1))
     d = [cl.finding_line(f) for f in cl.surface_findings(m.s, "load_check")
          if f.values.get("kind") == "fem_budget"][0]["detail"]
-    assert "Fix: move elements off this FEM." in d
+    # FEM level: no layout lowers ten xy-only elements, so the fix line is the still-over panel line.
+    assert d[1] == "Static count still 10 / 8 on con1 FEM 1 after the recommendation; move elements off that FEM."

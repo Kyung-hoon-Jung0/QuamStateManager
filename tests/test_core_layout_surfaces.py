@@ -69,7 +69,7 @@ def test_diagnostics_collects_the_core_finding_and_warns():
              if f.category == "core_layout"]
     assert [f.message for f in found] == [OVER]
     lines = found[0].detail.split("\n")
-    assert lines[1] == cl.FIX_MOVE and lines[-1] == cl.DETAIL_OTHER_CAUSE
+    assert lines[1] == cl.FIX_DIAGNOSTICS and lines[-1] == cl.DETAIL_OTHER_CAUSE
     assert diagnostics.summarize(found)["warning"] == 1 and found[0].severity == "warning"
     assert diagnostics.domain_of("core_layout") == "connectivity"
 
@@ -101,7 +101,8 @@ def test_load_check_carries_core_findings_and_stays_ok(env, probe):  # noqa: F81
     assert body["ok"] is True
     cf = body["core_findings"]
     assert [f["line"] for f in cf] == ["Core layout warning: " + OVER]
-    assert cf[0]["kind"] == "fem_budget" and cl.FIX_MOVE in cf[0]["detail"]
+    assert cf[0]["kind"] == "fem_budget" and cl.FIX_RECOMMEND in cf[0]["detail"]
+    assert cl.FIX_DIAGNOSTICS not in cf[0]["detail"]
 
 
 def test_diagnostics_page_lists_the_finding_line_by_line(env):
@@ -109,7 +110,9 @@ def test_diagnostics_page_lists_the_finding_line_by_line(env):
     if OVER not in html:
         html = env["client"].get("/diagnostics/list").get_data(as_text=True)
     assert OVER in html
-    assert "<br><code>" + cl.FIX_MOVE + "</code>" in html
+    # The Diagnostics page has no Recommend button: its line says where the button is.
+    assert "<br><code>" + cl.FIX_DIAGNOSTICS + "</code>" in html
+    assert cl.FIX_RECOMMEND not in html
 
 
 def test_load_check_js_renders_the_warning_under_loads_ok():

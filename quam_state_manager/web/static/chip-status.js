@@ -6184,6 +6184,7 @@ window.ChipStatus.mount = function (opts) {
                 '</div></a>';
         tiles.innerHTML = html;
         if (window.htmx) htmx.process(tiles);
+        if (window.CoreRecommend) window.CoreRecommend.mountAfter(tiles, diagFindings);
 
         // ── Plain-language verdict banner (traffic light) ────────────
         var banner = document.getElementById('topo-verdict-banner');
@@ -6744,6 +6745,32 @@ window.ChipStatus.mount = function (opts) {
         var hc = document.querySelectorAll('.heatmap-cell[data-metric]');
         for (var j = 0; j < hc.length; j++) _paintCell(hc[j]);
     };
+
+    // After a staged core layout recommendation the core findings are re-read;
+    // the tile and the verdict banner re-count through buildHealthSummary, the
+    // one counting path. Non-core findings are kept; an acknowledgement stays
+    // with its location. One listener for every mount, bound to the latest one.
+    window.ChipStatus._coreRefresh = function (list) {
+        var acked = {};
+        diagFindings.forEach(function (f) {
+            if (f && f.category === 'core_layout' && f.acknowledged) acked[f.location] = f.acknowledged;
+        });
+        diagFindings = diagFindings.filter(function (f) { return !f || f.category !== 'core_layout'; })
+            .concat((list || []).map(function (f) {
+                var d = {};
+                for (var k in f) if (Object.prototype.hasOwnProperty.call(f, k)) d[k] = f[k];
+                d.category = 'core_layout';
+                if (acked[d.location]) d.acknowledged = acked[d.location];
+                return d;
+            }));
+        buildHealthSummary();
+    };
+    if (window.CoreRecommend && !window.ChipStatus._coreRefreshBound) {
+        window.ChipStatus._coreRefreshBound = true;
+        window.CoreRecommend.onApplied(function (list) {
+            if (window.ChipStatus._coreRefresh) window.ChipStatus._coreRefresh(list);
+        });
+    }
 
     // Build the health summary + Overview tiles eagerly (cheap, no Plotly).
     buildHealthSummary();
