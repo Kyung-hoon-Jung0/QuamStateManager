@@ -9,6 +9,11 @@ pulse detail of a gate pulse show. Its actions:
   checks the EXISTING gate with the lab's code again (no creates), then sets
   the pair's ``cz`` alias to ``#./<gate>`` as one ordinary edit (one Ctrl+Z),
   guarded by the store sequence the check ran at, and records the check;
+* "Re-check", on a gate whose class file changed since it was checked:
+  ``POST /api/pulse/cz-gate/recheck`` ``{pair, gate}`` runs the lab check of
+  the EXISTING gate with the class files as they are now and, when the gate
+  loads and runs, writes the new file record (``extras.sm_class_files``) as
+  one ordinary edit (one Ctrl+Z), guarded like Make active;
 * "Delete gate": ``GET /pulse/cz-gate/delete-offer?pair=&gate=`` shows what
   goes (:func:`core.gate_parts.gate_parts`); its button posts the existing
   delete-together door with ``gate`` set.
@@ -20,10 +25,11 @@ from __future__ import annotations
 
 import logging
 
-from flask import g, jsonify, make_response, render_template, request
+from flask import current_app, g, jsonify, make_response, render_template, request
 
 from quam_state_manager.core import cz_gate_build as cgb
-from quam_state_manager.core import gate_check, gate_check_log, gate_parts, gate_status
+from quam_state_manager.core import cz_gate_create, gate_check, gate_check_log, gate_parts, gate_status
+from quam_state_manager.core import quam_config_save
 from quam_state_manager.web import routes as R
 from quam_state_manager.web.request_body import json_object, json_text
 from quam_state_manager.web.routes import bp
@@ -59,14 +65,35 @@ def _env_info(store):
     return missing, name
 
 
+def _scope(ctx) -> str:
+    """The chip's key the class drafts are kept under (as the gate dialog)."""
+    try:
+        return R._ctx_chip_key(ctx or R._active_ctx()) or "no-chip"
+    except Exception:  # noqa: BLE001
+        return "no-chip"
+
+
+def _class_path(ctx):
+    """``qclass -> path`` of the published SM class files of this chip."""
+    try:
+        instance = current_app.instance_path
+    except RuntimeError:
+        instance = None
+    scope = _scope(ctx)
+    return lambda qclass: quam_config_save.published_path(instance, scope, qclass)
+
+
 def gate_line(store, ctx, pair: str, gate: str, *, env=None, folder=None,
               note: str | None = None, note_tone: str = "neutral") -> dict:
     """Everything ``_gate_status.html`` renders for one gate."""
     missing, env_name = env if env is not None else _env_info(store)
     folder = folder if folder is not None else _check_folder(ctx or {})
     items = gate_status.status(store, ctx, pair, gate, check_folder=folder,
-                               missing_classes=missing, env_name=env_name)
+                               missing_classes=missing, env_name=env_name,
+                               class_path=_class_path(ctx))
     pills = [i for i in items if i.get("pill")]
+    notices = [i for i in items if i["key"] == "needs"]
+    recheck = any(i["key"] == "class" and i["text"] == gate_status.FILE_CHANGED for i in items)
     # the details list the check first: its reason and time are not in the pill
     details = ([i for i in items if i["key"] == "check"]
                + [i for i in items if i["key"] != "check"])
@@ -80,7 +107,7 @@ def gate_line(store, ctx, pair: str, gate: str, *, env=None, folder=None,
         except Exception:  # noqa: BLE001 -- the line stays without the link
             edit = []
     return {"pair": pair, "gate": gate, "items": items, "pills": pills,
-            "details": details, "active": active,
+            "details": details, "active": active, "notices": notices, "recheck": recheck,
             "present": present, "edit_paths": edit, "note": note,
             "note_tone": note_tone}
 
@@ -140,6 +167,7 @@ def _broken_line(pair: str, gate: str, exc: BaseException) -> dict:
             "why": f"{type(exc).__name__}: {exc}", "pill": True}
     return {"pair": pair, "gate": gate, "items": [item], "pills": [item],
             "details": [item], "active": False, "present": False, "edit_paths": [],
+            "notices": [], "recheck": False,
             "note": None, "note_tone": "neutral"}
 
 
@@ -387,6 +415,108 @@ def api_cz_gate_make_active():
     return jsonify(ok=True, active=gate, path=path, tray_html=R._tray_html(),
                    checked=bool(check.get("all_checked")), record_error=None if not note
                    else rec.get("error"))
+
+
+def _line_response(store, ctx, pair, gate, body, note, note_tone="warn"):
+    """The htmx answer of a gate write: the list, or the one line."""
+    if str(body.get("scope") or "") == "list":
+        gl = gate_list(store, ctx, pair)
+        for ln in gl["lines"]:
+            if ln["gate"] == gate and note:
+                ln["note"], ln["note_tone"] = note, note_tone
+        resp = make_response(render_template("_gate_status_list.html", gate_lines=gl)
+                             + R._tray_oob())
+    else:
+        resp = make_response(render_template(
+            "_gate_status.html", line=gate_line(store, ctx, pair, gate, note=note,
+                                                note_tone=note_tone)) + R._tray_oob())
+    resp.headers["HX-Trigger"] = "pulses-changed"
+    return R._lab_toast(resp)
+
+
+@bp.route("/api/pulse/cz-gate/recheck", methods=["POST"])
+def api_cz_gate_recheck():
+    """Check a gate whose SM-made class file changed with the files as they
+    are now, then write the new file record (see the module doc)."""
+    ctx = R._active_ctx()
+    store = R._store()
+    modifier = R._modifier()
+    htmx = bool(request.headers.get("HX-Request"))
+    if not store or not modifier:
+        return jsonify(ok=False, error=R._no_chip_msg()), 400
+    body = json_object(request.form.to_dict)
+    pair, gate = json_text(body, "pair"), json_text(body, "gate")
+    kw = dict(htmx=htmx, pair=pair, gate=gate, store=store, ctx=ctx)
+    if ctx and (ctx.get("origin") or "live") != "live":
+        return _refuse(ARCHIVE_REFUSAL, 409, **kw)
+    lk = R._agent_edit_lock_refusal(ctx)
+    if lk is not None:
+        return _refuse(_text_of(lk), 409, **kw) if htmx else lk
+    bad = _gate_problem(store, pair, gate)
+    if bad:
+        return _refuse(bad, 404 if htmx else 400, **kw)
+    with store._lock:
+        macro = store.merged["qubit_pairs"][pair]["macros"][gate]
+        old = gate_status.sm_class_files(macro)
+        cls = str(macro.get("__class__") or "")
+        seq0 = store.mutation_seq
+    if not old:
+        return _refuse(f"{gate} uses no class SM made, so there is no class file to "
+                       "check again.", 409, **kw)
+    try:
+        new = quam_config_save.class_files(current_app.instance_path, _scope(ctx),
+                                           classes=[f.get("qclass") for f in old])
+    except quam_config_save.ClassFileError as exc:
+        return _refuse(str(exc), 409, **kw)
+    if {f.get("qclass") for f in new} != {f.get("qclass") for f in old}:
+        return _refuse("A class file of this gate is not saved to quam_config any more, so "
+                       "it cannot be checked again. Save the class to quam_config first.",
+                       409, **kw)
+    try:
+        python_path = R.config_generator.get_selected_env(current_app.instance_path)
+    except Exception:  # noqa: BLE001
+        python_path = None
+    check = gate_check.check_gates(store, python_path, [(pair, gate)])
+    entry = gate_check.gate_result(check, pair, gate)
+    allowed, _state, reason = cz_gate_create.may_create(
+        check, entry, gate_class=cls, layout="known", sm_classes=True)
+    if not allowed:
+        return _refuse(f"The gate did not pass the lab check with the class files as they "
+                       f"are now: {reason} The gate's file record was not changed.", 400,
+                       **kw, check=check)
+    moved = quam_config_save.class_files_moved(current_app.instance_path, _scope(ctx), new)
+    if moved:
+        return _refuse(moved, 409, **kw)
+    path = f"qubit_pairs.{pair}.macros.{gate}.extras.sm_class_files"
+    info = g.lab_info = {"notes": []}
+    release = R._lab_hold(store, [path])
+    try:
+        with store._lock:
+            moved = store.mutation_seq != seq0 or (
+                check.get("seq") is not None
+                and not gate_check.chip_copy.store_at_seq(store, check))
+            if moved:
+                return _refuse("The chip changed while the gate was checked. Nothing was "
+                               "written; press Re-check again.", 409, **kw, stale=True)
+            refusal = R._lab_write_refusal(store, [(path, new)], info=info)
+            if refusal:
+                return _refuse(str(refusal[0]), 400, **kw)
+            modifier.set_value(path, new)
+    finally:
+        release()
+    try:
+        rec = gate_check_log.record_check(R._history(), ctx["path"], store.merged,
+                                          pair, gate, check)
+    except Exception as exc:  # noqa: BLE001 -- the record never fails the write
+        rec = {"ok": False, "error": str(exc)}
+    note = None
+    if not rec.get("ok"):
+        note = (f"{gate} was checked again, but the check record could not be saved: "
+                f"{rec.get('error')}.")
+    if htmx:
+        return _line_response(store, ctx, pair, gate, body, note)
+    return jsonify(ok=True, path=path, files=new, tray_html=R._tray_html(),
+                   record_error=None if not note else rec.get("error"))
 
 
 def delete_gate_together(ctx, modifier, body: dict):

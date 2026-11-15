@@ -54,7 +54,9 @@ from typing import Any
 from flask import current_app, jsonify, render_template, request
 
 from quam_state_manager.core import chip_copy, cz_gate_build as cgb, cz_gate_create
-from quam_state_manager.core.quam_config_save import class_refusal, lab_package
+from quam_state_manager.core.quam_config_save import (ClassFileError, class_files,
+                                                      class_files_moved, class_refusal,
+                                                      lab_package)
 from quam_state_manager.core import gate_check, gate_check_log, gate_intent, gate_timeline_view, pulse_catalog
 from quam_state_manager.web import request_body
 from quam_state_manager.web import routes as R
@@ -266,13 +268,44 @@ def _plan_all(merged: dict, body: dict) -> list[tuple[str, dict]]:
             **({"spectators": spect[pid]} if pid in spect else {}))
         why = why or class_refusal(current_app.instance_path, scope, res.get("creates") or [],
                                    lab_folder=lab_folder)
+        files = []
+        if not why:
+            try:
+                files = class_files(current_app.instance_path, scope, res.get("creates") or [],
+                                    classes=requested)
+            except ClassFileError as exc:
+                why = str(exc)
         if why:
             res = {"error": why, "refusals": [why]}
+        else:
+            _record_class_files(res, pid, body["gate_name"], files)
         if i == 0:
             first = res
         out.append((pid, res))
     cgb.count_request_spectators(merged, out)
     return out
+
+
+#: the hint added to a refusal of a gate with SM-made classes whose class has
+#: no extras slot (the lab check's own load failure names the key)
+EXTRAS_SLOT_REFUSAL = ("A gate that uses a class SM made records its class files in the "
+                       "gate's extras; this gate class has no extras slot, so it cannot be "
+                       "combined with a class SM made.")
+
+
+def _record_class_files(plan: dict, pid: str, gate: str, files: list[dict]) -> None:
+    """Put the SM-made class files into the planned macro's
+    ``extras.sm_class_files`` (in place), so the lab check loads the gate as
+    it will be written. A plan without SM-made classes is left alone."""
+    plan["sm_class_files"] = files
+    if not files:
+        return
+    mpath = f"qubit_pairs.{pid}.macros.{gate}"
+    for path, value in plan.get("creates") or []:
+        if path == mpath and isinstance(value, dict):
+            extras = value.get("extras") if isinstance(value.get("extras"), dict) else {}
+            value["extras"] = {**extras, "sm_class_files": copy.deepcopy(files)}
+            return
 
 
 def _creates_sig(plan: dict) -> str:
@@ -434,7 +467,7 @@ def _settings(p: dict) -> list[dict]:
     reset = set(p.get("reset") or [])
     out = []
     for k in sorted(macro):
-        if k == "__class__" or k in pulses or k in reset:
+        if k in ("__class__", "extras") or k in pulses or k in reset:
             continue
         v = macro[k]
         ref = isinstance(v, str) and v.startswith("#")
@@ -694,6 +727,7 @@ def api_cz_gate_check():
         previews[(pid, body["gate_name"])] = pv
         skipped_by[pid] = sk
     res = run_check(store, _env_python(), gates, creates, previews) if gates else None
+    scope = R._ctx_chip_key(R._active_ctx()) or "no-chip"
     out_pairs, verdicts, sigs, checks_by = [], {}, {}, {}
     for pid, p in plans:
         if "error" in p:
@@ -705,7 +739,13 @@ def api_cz_gate_check():
             continue
         entry = gate_check.gate_result(res or {}, pid, body["gate_name"])
         allowed, state, reason = cz_gate_create.may_create(
-            res, entry, gate_class=body["gate_class"], layout=p.get("layout"))
+            res, entry, gate_class=body["gate_class"], layout=p.get("layout"),
+            sm_classes=bool(p.get("sm_class_files")))
+        if not allowed and p.get("sm_class_files") and "extras" in reason:
+            reason = f"{reason} {EXTRAS_SLOT_REFUSAL}"
+        moved = class_files_moved(current_app.instance_path, scope, p.get("sm_class_files"))
+        if moved:
+            allowed, state, reason = False, cz_gate_create.NOT_CHECKED, moved
         couplers = {_element(op) for op in (p.get("operations") or {}).values()
                     if (op.get("channel") or "").startswith(("coupler", "the coupler"))}
         src = p.get("sources") or {}

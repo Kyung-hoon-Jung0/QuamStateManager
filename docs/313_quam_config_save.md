@@ -76,9 +76,30 @@ write also adds a history line. Save to file updates only `target.json` (the sta
 `published.json` is written only by Save to quam_config, so a copy saved elsewhere does not make the next Save to
 quam_config refuse its own file, nor make gates using the class wait again.
 
+## The class file record on a gate, and its status
+
+- A gate macro that uses SM-made classes (its gate class or pulse classes) gets `extras.sm_class_files` when it is
+  created: one entry per class, `{qclass, file, sha256, proportional}` (`quam_config_save.class_files`). `sha256` is
+  the hash of the published file's bytes, read before the lab check; the publication record gives only the path,
+  the class and `proportional`. A published file that is not there refuses the gate, naming the file. After the check
+  the files are read again (`class_files_moved`): bytes that changed during the check refuse it, nothing is written.
+  The entry goes into the planned macro, so the lab check loads the gate as it will be written; a gate class without
+  an `extras` slot fails that load and the refusal says why. No source text goes
+  into state. A gate without SM-made classes gets no key. Readers use `gate_status.sm_class_files(macro)`.
+- A gate with SM-made classes is created only when the lab check loaded the chip and ran the gate (`load_config` and
+  `ops` passed): "not checked" refuses it, whatever its class (`cz_gate_create.may_create(..., sm_classes=True)`).
+- The status line compares each record with the bytes of the published file (path from the publication record):
+  "class file present" (a detail), "class file missing: quam_config/<file>.py" (several missing files: all named, in
+  record order, joined with ", quam_config/"), "class file changed since the gate was checked", or "not a class SM
+  made" (a detail). Scaling: "amplitude scaling: checked" / "not proportional" /
+  "not known" (a detail) from the recorded `proportional`.
+- For as long as a gate records a file, its line shows "this chip now needs quam_config/<file>.py; every computer
+  that opens this state needs the same file" (dialog, pair detail and pulse detail all render the same partial).
+- "Re-check" (shown on a "changed" line, `POST /api/pulse/cz-gate/recheck`) runs the lab check of the existing gate
+  with the files as they are now and, when it loads and runs, writes the new records as one edit (one Ctrl+Z). The
+  hashes are taken the same way as at create (before the check, read again after it); a class that is no longer
+  published, or a file that changed during the check, refuses without writing.
+
 ## Seams left for the next piece
 
 - The live-write check before Apply belongs inside `working_copy.apply_to_live`; this door does not write live.
-- `extras` on gate macros (file name, hash, proportional result) are written when a gate is created or re-checked,
-  not here; the publication record (`published.json` next to the draft) carries `path`, `sha`, `qclass`,
-  `importable` and `proportional` for that.

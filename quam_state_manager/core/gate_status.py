@@ -6,13 +6,22 @@ order:
 1. ``where``: "only in the working copy" / "on the chip" (the macro path is in
    the live files, read through the shared live read) / "cannot tell: ...";
 2. ``active``: "active" / "not active" (``query.pair_operational_gate``);
-3. ``class``: "not a class SM made", or "class <name> not importable in
-   <env>" when the selected env cannot import the gate's class;
-4. ``scaling``: "amplitude scaling: not known";
+3. ``class``: for a gate whose ``extras.sm_class_files`` names SM-made
+   classes, the class files compared with the files in the folder they were
+   published to: "class file present" / "class file missing:
+   quam_config/<file>.py" / "class file changed since the gate was checked";
+   else "not a class SM made"; "class <name> not importable in <env>" when
+   the selected env cannot import the gate's class (a missing or changed
+   file is said first);
+4. ``scaling``: "amplitude scaling: checked" / "not proportional" / "not
+   known", from the recorded ``proportional`` of the SM-made classes;
 5. ``spectators`` (only for a gate with spectators): "spectator phases not
    calibrated" when their phase shifts are all 0;
 6. ``check``: "checked with the lab's code <when>" / "not checked: <reason>"
    / "values changed since the check" / "no check record".
+
+A gate with SM-made classes also carries one ``needs`` item per file, the
+notice that the chip needs that file (:data:`NEEDS_NOTICE`).
 
 Tones: ``ok``, ``accent``, ``neutral``, ``warn`` (only what needs action).
 Each item carries ``pill``: True for an item that says something about this
@@ -22,11 +31,86 @@ raises on chip shape; SM never imports the QM stack.
 """
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
 from typing import Any
 
 from quam_state_manager.core import gate_check_log
 from quam_state_manager.core.gate_parts import active_gate, content_hash
 from quam_state_manager.core.query import pair_operational_gate
+
+
+#: the notice of a chip that needs a class file SM made, kept for as long as a
+#: gate records the file
+NEEDS_NOTICE = ("this chip now needs quam_config/{file}; every computer that opens this "
+                "state needs the same file")
+FILE_PRESENT = "class file present"
+FILE_MISSING = "class file missing: quam_config/{file}"
+FILE_CHANGED = "class file changed since the gate was checked"
+NOT_SM_CLASS = "not a class SM made"
+SCALING_CHECKED = "amplitude scaling: checked"
+SCALING_NOT = "amplitude scaling: not proportional"
+SCALING_UNKNOWN = "amplitude scaling: not known"
+
+
+def sm_class_files(macro: Any) -> list[dict]:
+    """The SM-made class files a gate macro records
+    (``extras.sm_class_files``): ``[{qclass, file, sha256, proportional}]``,
+    [] for a gate without them. Entries that are not records are dropped."""
+    extras = macro.get("extras") if isinstance(macro, dict) else None
+    files = extras.get("sm_class_files") if isinstance(extras, dict) else None
+    if not isinstance(files, list):
+        return []
+    return [f for f in files if isinstance(f, dict) and isinstance(f.get("file"), str)]
+
+
+def file_state(entry: dict, path: str | None) -> str:
+    """``"present"`` / ``"missing"`` / ``"changed"`` of one recorded class
+    file: the bytes at *path* (where it was published) hashed and compared
+    with the recorded sha256."""
+    if not path:
+        return "missing"
+    try:
+        data = Path(path).read_bytes()
+    except OSError:
+        return "missing"
+    return "present" if hashlib.sha256(data).hexdigest() == entry.get("sha256") else "changed"
+
+
+def _class_files(files: list[dict], where) -> dict:
+    states = [(f, file_state(f, where(f.get("qclass")))) for f in files]
+    gone = [f for f, st in states if st == "missing"]
+    moved = [f for f, st in states if st == "changed"]
+    if gone:
+        if len(gone) == 1:
+            name = gone[0]["file"]
+            return _item("class", FILE_MISSING.format(file=name), "warn",
+                         f"The gate uses {gone[0].get('qclass') or name}, and its file is not in "
+                         "the folder it was saved to.")
+        names = [f["file"] for f in gone]
+        return _item("class", FILE_MISSING.format(file=", quam_config/".join(names)), "warn",
+                     "The gate uses " + ", ".join(f.get("qclass") or f["file"] for f in gone)
+                     + ", and their files are not in the folder they were saved to.")
+    if moved:
+        return _item("class", FILE_CHANGED, "warn",
+                     "The file differs from the one the gate was checked with: "
+                     + ", ".join(f["file"] for f in moved) + ". Re-check runs the lab check "
+                     "with the file as it is now.")
+    return _item("class", FILE_PRESENT, "ok",
+                 "Same file as when the gate was checked: "
+                 + ", ".join(f["file"] for f in files) + ".", pill=False)
+
+
+def _scaling(files: list[dict]) -> dict:
+    flags = [f.get("proportional") for f in files]
+    if any(v is False for v in flags):
+        return _item("scaling", SCALING_NOT, "warn",
+                     "An SM-made pulse class of this gate does not scale with amplitude.")
+    if any(v is True for v in flags):
+        return _item("scaling", SCALING_CHECKED, "ok",
+                     "The SM-made pulse classes were checked to scale with amplitude.")
+    return _item("scaling", SCALING_UNKNOWN, "neutral",
+                 "SM does not know whether the waveform scales with amplitude.", pill=False)
 
 
 def _item(key: str, text: str, tone: str = "neutral", why: str = "", *,
@@ -109,14 +193,17 @@ def _check(folder, merged: dict, pair: str, gate: str) -> dict:
 
 
 def status(store, ctx: dict | None, pair: str, gate: str, *,
-           check_folder=None, missing_classes=None, env_name: str | None = None
-           ) -> list[dict]:
+           check_folder=None, missing_classes=None, env_name: str | None = None,
+           class_path=None) -> list[dict]:
     """The status items of gate *gate* of pair *pair* (see the module doc).
 
     *check_folder*: the chip's folder of the check record
     (:func:`gate_check_log.chip_dir`); None reads as "no check record".
     *missing_classes*: the selected env's classes it cannot import (the env
-    manifest), with *env_name* for the text."""
+    manifest), with *env_name* for the text.
+    *class_path*: ``qclass -> path`` of the file Save to quam_config
+    published (:func:`quam_config_save.published_path`); without it every
+    recorded class file reads as missing."""
     merged = getattr(store, "merged", None)
     merged = merged if isinstance(merged, dict) else {}
     pairs = merged.get("qubit_pairs")
@@ -134,14 +221,22 @@ def status(store, ctx: dict | None, pair: str, gate: str, *,
         items.append(_item("active", "not active", "neutral",
                            "The pair's cz alias names another gate or none.", pill=False))
     cls = str(macro.get("__class__") or "")
-    if cls and missing_classes and cls in set(missing_classes):
+    files = sm_class_files(macro)
+    file_item = _class_files(files, class_path or (lambda q: None)) if files else None
+    if file_item is not None and file_item["tone"] == "warn":
+        items.append(file_item)
+    elif cls and missing_classes and cls in set(missing_classes):
         items.append(_item("class", f"class {cls.rsplit('.', 1)[-1]} not importable in "
                            f"{env_name or 'the selected env'}", "warn", cls))
+    elif file_item is not None:
+        items.append(file_item)
     else:
-        items.append(_item("class", "not a class SM made", "neutral", cls, pill=False))
-    items.append(_item("scaling", "amplitude scaling: not known", "neutral",
-                       "SM does not yet test whether the waveform scales with amplitude.",
-                       pill=False))
+        items.append(_item("class", NOT_SM_CLASS, "neutral", cls, pill=False))
+    items.append(_scaling(files))
+    for f in files:
+        items.append(_item("needs", NEEDS_NOTICE.format(file=f["file"]), "neutral",
+                           f"{f.get('qclass') or f['file']} is a class file SM made.",
+                           pill=False))
     sp = _spectators(macro)
     if sp is not None:
         items.append(sp)

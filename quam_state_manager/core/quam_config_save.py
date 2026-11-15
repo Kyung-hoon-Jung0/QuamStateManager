@@ -269,6 +269,24 @@ def lab_package(python):
     return lab if lab.name == "quam_config" else lab / "quam_config"
 
 
+def _sm_classes(instance, scope, creates=(), classes=()):
+    """``(name, qclass)`` of every SM class draft of *scope* that the gate
+    uses: named in *classes*, or used by a value in *creates*. Sorted by
+    name, so every caller sees the same order."""
+    classes = {c for c in classes if isinstance(c, str)}
+    root = Path(instance) / D.DRAFTS_DIR / D._scope_key(scope)
+    if not root.is_dir():
+        return []
+    out = []
+    for folder in sorted(root.iterdir(), key=lambda f: f.name):
+        if not folder.is_dir():
+            continue
+        qclass = f"quam_config.{folder.name}.{folder.name}"
+        if qclass in classes or any(_uses(value, qclass, {}) for _, value in creates):
+            out.append((folder.name, qclass))
+    return out
+
+
 def class_refusal(instance, scope, creates=(), classes=(), lab_folder=None):
     """Why a gate cannot be created yet: it uses (in *creates*, or by name in
     *classes*) an SM class whose file is not saved to quam_config. None when
@@ -276,28 +294,88 @@ def class_refusal(instance, scope, creates=(), classes=(), lab_folder=None):
 
     A draft that was never published and shares its name with a lab class
     file in *lab_folder* (no SM header) does not stand for that class."""
-    classes = {c for c in classes if isinstance(c, str)}
-    root = Path(instance) / D.DRAFTS_DIR / D._scope_key(scope)
-    if not root.is_dir():
-        return None
-    for folder in root.iterdir():
-        if not folder.is_dir():
-            continue
-        qclass = f"quam_config.{folder.name}.{folder.name}"
-        if qclass not in classes and not any(_uses(value, qclass, {}) for _, value in creates):
-            continue
-        receipt = W.published_record(instance, scope, folder.name)
+    for name, _qclass in _sm_classes(instance, scope, creates, classes):
+        receipt = W.published_record(instance, scope, name)
         target = receipt.get("path")
-        if not target and lab_folder and _lab_made(Path(lab_folder) / f"{folder.name}.py"):
+        if not target and lab_folder and _lab_made(Path(lab_folder) / f"{name}.py"):
             continue
         if not target or not Path(target).is_file():
-            text = f"Save {folder.name} to quam_config before creating a gate that uses it."
+            text = f"Save {name} to quam_config before creating a gate that uses it."
             if not target and not lab_folder:
-                text += f" If {folder.name} is a lab class, rename or delete the draft named {folder.name}."
+                text += f" If {name} is a lab class, rename or delete the draft named {name}."
             return text
         if receipt.get("importable") is not True:
             return "The selected environment does not import this class file. Save it to its quam_config folder first."
     return None
+
+
+def proportional_flag(value):
+    """The receipt's proportional result as True, False or None: the lab
+    check gives a record ``{"proportional": ...}``, an older receipt a bool."""
+    if isinstance(value, dict):
+        value = value.get("proportional")
+    return value if isinstance(value, bool) else None
+
+
+class ClassFileError(ValueError):
+    """A class file a gate needs is published but cannot be read; the
+    message names the file and is the gate's refusal."""
+
+
+def _file_sha(path):
+    """The sha256 of the bytes at *path*, or None when it cannot be read."""
+    try:
+        return D.sha256_bytes(Path(path).read_bytes())
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def class_files(instance, scope, creates=(), classes=()):
+    """The ``extras.sm_class_files`` list of a gate that uses SM classes: one
+    entry per published SM class (``qclass``, ``file``, ``sha256``,
+    ``proportional``). ``sha256`` is the hash of the file's bytes as they are
+    now in the folder it was published to; the publish receipt gives only
+    the path, the class and the amplitude result. Empty when the gate uses
+    none. No source text.
+
+    Raises :class:`ClassFileError` naming the file when a published file is
+    not there any more."""
+    out = []
+    for name, qclass in _sm_classes(instance, scope, creates, classes):
+        receipt = W.published_record(instance, scope, name)
+        path = receipt.get("path")
+        if not path:
+            continue
+        file = Path(path).name
+        sha = _file_sha(path)
+        if sha is None:
+            raise ClassFileError(
+                f"The class file quam_config/{file} is not in the folder it was saved to. "
+                f"Save {name} to quam_config again before using it in a gate.")
+        out.append({"qclass": receipt.get("qclass") or qclass, "file": file, "sha256": sha,
+                    "proportional": proportional_flag(receipt.get("proportional"))})
+    return out
+
+
+def class_files_moved(instance, scope, files):
+    """Read the recorded class files again (after the lab check): the
+    refusal naming the first file whose bytes differ from *files* now, or
+    None when every file is as it was hashed before the check."""
+    for f in files or []:
+        path = published_path(instance, scope, f.get("qclass"))
+        if not path or _file_sha(path) != f.get("sha256"):
+            return (f"The class file quam_config/{f.get('file')} changed while the gate was "
+                    "checked, so the check does not stand for it. Nothing was written; "
+                    "check the gate again.")
+    return None
+
+
+def published_path(instance, scope, qclass):
+    """The file Save to quam_config published for *qclass*, or None."""
+    name = str(qclass).rsplit(".", 1)[-1]
+    if not name or instance is None:
+        return None
+    return W.published_record(instance, scope, name).get("path") or None
 
 
 def _lab_made(path):
