@@ -44,4 +44,45 @@ ok(w.document.activeElement === w.document.querySelector('.gate-status-delete'),
 w = page();
 w.document.getElementById('other').dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 ok(w.document.querySelector('.gate-delete-offer') !== null, 'Esc elsewhere leaves the offer');
+
+/* the zone's undo / pull refresh waits while an offer is open, then runs once */
+function zonePage(withOffer) {
+    const dom = new JSDOM('<body><section class="gate-status-list"><div class="gate-status">'
+        + '<div class="gate-status-row"><button class="gate-status-delete">Delete</button></div>'
+        + '<div class="gate-status-slot">' + (withOffer ? '<div class="gate-delete-offer">'
+        + '<button class="gate-delete-cancel">Cancel</button></div>' : '') + '</div></div></section></body>',
+        { runScripts: 'outside-only' });
+    const w = dom.window;
+    w.eval(SRC);
+    w.__refresh = 0;
+    w.document.querySelector('.gate-status-list').addEventListener('gate-list-refresh', function () { w.__refresh++; });
+    return w;
+}
+function confirmOn(w, type) {
+    const zone = w.document.querySelector('.gate-status-list');
+    const e = new w.CustomEvent('htmx:confirm', { bubbles: true, cancelable: true,
+        detail: { elt: zone, triggeringEvent: { type: type } } });
+    zone.dispatchEvent(e);
+    return e.defaultPrevented;
+}
+w = zonePage(true);
+ok(confirmOn(w, 'cellsReverted') === true, 'undo refresh is held while an offer is open');
+ok(w.document.querySelector('.gate-status-list').getAttribute('data-gate-stale') === '1', 'the zone is marked stale');
+ok(w.document.querySelector('.gate-delete-offer') !== null, 'the open offer stays');
+w.document.querySelector('.gate-delete-cancel').click();
+ok(w.__refresh === 1, 'closing the offer runs the held refresh once');
+ok(!w.document.querySelector('.gate-status-list').hasAttribute('data-gate-stale'), 'stale mark cleared');
+ok(confirmOn(w, 'gate-list-refresh') === false, 'the released refresh itself is not held');
+
+w = zonePage(true);
+confirmOn(w, 'stateRestored');
+const slot = w.document.querySelector('.gate-status-slot');
+slot.innerHTML = '';
+slot.dispatchEvent(new w.CustomEvent('htmx:afterSwap', { bubbles: true }));
+ok(w.__refresh === 1, 'a server-closed offer also releases the held pull refresh');
+
+w = zonePage(false);
+ok(confirmOn(w, 'cellsReverted') === false, 'no offer open: the refresh runs at once');
+w.document.querySelector('.gate-status-slot').dispatchEvent(new w.CustomEvent('htmx:afterSwap', { bubbles: true }));
+ok(w.__refresh === 0, 'nothing held, nothing re-run');
 console.log('ALL OK (' + n + ' assertions)');

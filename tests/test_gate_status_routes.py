@@ -472,7 +472,7 @@ def test_undo_of_a_zone_delete_brings_the_row_back_through_the_list_route(rig):
     zone = rig.get("/pair/q1-q2", headers=HX).get_data(as_text=True)
     head = zone.split('<section class="ui-zone gate-status-list')[1].split(">")[0]
     assert 'hx-get="/pulse/cz-gate/list?pair=q1-q2"' in head
-    assert 'hx-trigger="cellsReverted from:document"' in head and 'hx-swap="outerHTML"' in head
+    assert "cellsReverted from:document" in head and 'hx-swap="outerHTML"' in head
     _del_list(rig, "cz_sq")
     assert _rows(rig.get("/pulse/cz-gate/list?pair=q1-q2").get_data(as_text=True)) == ["cz_two"]
     assert rig.post("/undo").status_code == 200
@@ -523,3 +523,106 @@ def test_empty_zone_is_one_row_tall():
     css = (Path(__file__).parent.parent / "quam_state_manager/web/static/ui-kit.css").read_text(encoding="utf-8")
     rule = css.split(".gate-status-list.ui-zone--quiet > .ui-zone-body {")[1].split("}")[0]
     assert "min-height: 0" in rule
+
+
+HOLDER = "qubit_pairs.q1-q2.macros.other_gate.flux_pulse_target"
+
+
+def _by_name_holder(monkeypatch):
+    from quam_state_manager.web import routes as R
+    monkeypatch.setattr(R, "_by_name_cut", lambda store, paths: [HOLDER])
+
+
+def test_zone_by_name_refusal_names_the_real_next_step(rig, monkeypatch):
+    _by_name_holder(monkeypatch)
+    n = len(_ctx(rig)["store"].change_log)
+    r = _del_list(rig, "cz_sq")
+    body = r.get_data(as_text=True)
+    assert r.status_code == 200 and r.headers.get("HX-Retarget") == "closest .gate-status-list"
+    row = body.split('data-gate="cz_sq"')[1].split('data-gate="cz_two"')[0]
+    assert HOLDER in row and "cannot be deleted while a slot uses it" in row
+    assert "Json Tree" in row and "confirm step" not in body and "anyway" not in body
+    assert _rows(body) == ["cz_sq", "cz_two"] and len(_ctx(rig)["store"].change_log) == n
+
+
+def test_pulse_detail_by_name_refusal_is_the_json_it_was(rig, monkeypatch):
+    """No scope (the pulse detail's offer), htmx or not: the very answer the door
+    gave before the zone existed, the shared 409 JSON, byte for byte."""
+    from quam_state_manager.web import routes as R
+    _by_name_holder(monkeypatch)
+    with rig._app.test_request_context():
+        want, code = R._by_name_refused_json([HOLDER])
+        want = want.get_data()
+    for headers in (HX, {}):
+        r = rig.post("/api/pulse/delete-together", headers=headers,
+                     data={"pair": "q1-q2", "gate": "cz_sq"})
+        assert (r.status_code, r.get_data()) == (code, want)
+        assert "HX-Retarget" not in r.headers
+
+
+def test_failed_zone_delete_leaves_the_working_copy_file_untouched(rig, monkeypatch):
+    """The real batch runs; its second delete fails, so the first one is rolled
+    back. The working copy on disk is byte-identical afterwards."""
+    import hashlib
+    from quam_state_manager.core import modifier as M
+    st = _ctx(rig)["store"]
+    folder = st.folder_path
+
+    def md5s():
+        return {p.name: hashlib.md5(p.read_bytes()).hexdigest()
+                for p in sorted(folder.iterdir()) if p.is_file()}
+    before, before_state = md5s(), json.dumps(st.state, sort_keys=True)
+    real, calls = M.Modifier.delete_subtree, []
+
+    def second_fails(self, dot_path, **kw):
+        calls.append(dot_path)
+        if len(calls) == 2:
+            raise KeyError(dot_path)
+        return real(self, dot_path, **kw)
+    monkeypatch.setattr(M.Modifier, "delete_subtree", second_fails)
+    body = _del_list(rig, "cz_sq").get_data(as_text=True)
+    assert len(calls) >= 2 and _rows(body) == ["cz_sq", "cz_two"]
+    assert "ui-fail-row" in body.split('data-gate="cz_sq"')[1].split('data-gate="cz_two"')[0]
+    assert md5s() == before and json.dumps(st.state, sort_keys=True) == before_state
+
+
+@pytest.mark.parametrize("q", ["", "?pair=", "?pair=nope", "?pair=q1-q2%22%3E"])
+def test_list_route_answers_nothing_for_a_missing_or_unknown_pair(rig, q):
+    r = rig.get("/pulse/cz-gate/list" + q)
+    assert r.status_code == 204 and r.get_data() == b""
+
+
+def test_list_route_urlencodes_an_odd_pair_name(tmp_path):
+    s, _ = add_gate(chip())
+    s["qubit_pairs"]['q1 & "q2"'] = s["qubit_pairs"].pop("q1-q2")
+    folder = write(tmp_path / "chip", s)
+    c = create_app(testing=True, instance_path=str(tmp_path / "inst")).test_client()
+    assert c.post("/load", data={"folder": str(folder)}).status_code in (200, 302)
+    r = c.get("/pulse/cz-gate/list?pair=q1%20%26%20%22q2%22")
+    body = r.get_data(as_text=True)
+    assert r.status_code == 200
+    assert 'hx-get="/pulse/cz-gate/list?pair=q1%20%26%20%22q2%22"' in body
+    assert 'data-gate-pair="q1 &amp; &#34;q2&#34;"' in body or 'data-gate-pair="q1 &amp; &quot;q2&quot;"' in body
+
+
+def test_read_only_chip_list_offers_no_live_delete(rig):
+    """An archive (read-only) chip: neither the zone's offer nor its confirm
+    removes anything; both say why in readable words, on disk nothing moves."""
+    from quam_state_manager.web.gate_status_routes import ARCHIVE_REFUSAL
+    ctx = _ctx(rig)
+    ctx["origin"] = "archive"
+    st = ctx["store"]
+    before, n = json.dumps(st.state), len(st.change_log)
+    off = rig.get("/pulse/cz-gate/delete-offer?pair=q1-q2&gate=cz_sq&scope=list", headers=HX)
+    r = _del_list(rig, "cz_sq")
+    body = r.get_data(as_text=True)
+    assert ARCHIVE_REFUSAL in body and "deleted" not in body.lower().replace("not deleted", "")
+    assert json.dumps(st.state) == before and len(st.change_log) == n
+    assert off.status_code < 500
+
+
+def test_zone_refreshes_on_undo_and_on_a_sync_pull(rig):
+    body = rig.get("/pulse/cz-gate/list?pair=q1-q2").get_data(as_text=True)
+    trig = body.split('hx-trigger="')[1].split('"')[0]
+    assert {t.strip() for t in trig.split(",")} == {
+        "cellsReverted from:document", "stateRestored from:document", "gate-list-refresh"}

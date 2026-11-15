@@ -4,11 +4,12 @@
    one door that creates its first gate. `gate_lines`: web/gate_status_routes.gate_list.
    Make active and Delete answer this whole partial, so the summary and the rows update together;
    `gate_lines.notice` (a delete's result) sits above the rows, outside any row. An undo or redo
-   (`cellsReverted`) re-fetches the list. #}
+   (`cellsReverted`) or a sync pull (`stateRestored`) re-fetches the list; while a delete offer is
+   open static/gate-status.js holds that refresh until the offer closes (`gate-list-refresh`). #}
 {% import "_ui.html" as ui %}
 {% if gate_lines and gate_lines.pair %}
 <section class="ui-zone gate-status-list{% if not gate_lines.count %} ui-zone--quiet{% endif %}" aria-label="CZ gates" data-gate-pair="{{ gate_lines.pair }}"
-         hx-get="/pulse/cz-gate/list?pair={{ gate_lines.pair | urlencode }}" hx-trigger="cellsReverted from:document" hx-target="this" hx-swap="outerHTML">
+         hx-get="/pulse/cz-gate/list?pair={{ gate_lines.pair | urlencode }}" hx-trigger="cellsReverted from:document, stateRestored from:document, gate-list-refresh" hx-target="this" hx-swap="outerHTML">
     <div class="ui-zone-head">
         <h3 class="ui-zone-title">CZ gates</h3>
         <button type="button" class="btn-sm outline" data-czg-open data-czg-pair="{{ gate_lines.pair }}" title="Create a new CZ gate on this pair">+ Gate</button>

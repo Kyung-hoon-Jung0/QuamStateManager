@@ -120,6 +120,14 @@ def gone_notice(pair: str, gate: str) -> dict:
             "text": "Another window may have deleted it. The list below is the chip as it is now."}
 
 
+def by_name_note(holders: list[str]) -> str:
+    """The zone's sentence for a delete a by-name slot blocks: what blocks it
+    and where to change that (the zone has no delete-anyway door)."""
+    return ("Not deleted: this gate's operation is played by name in " + ", ".join(holders)
+            + ", so the gate cannot be deleted while a slot uses it. Point those slots at "
+            "another operation in Json Tree, then delete again.")
+
+
 def _pair_exists(store, pair: str) -> bool:
     with store._lock:
         pairs = store.merged.get("qubit_pairs")
@@ -421,8 +429,9 @@ def delete_gate_together(ctx, modifier, body: dict):
         paths.append(parts["alias"])
     by_name = R._by_name_cut(store, paths)
     if by_name and str(body.get("force") or "") != "1":
-        refused = R._by_name_refused_json(by_name)
-        return say(_text_of(refused), 409) if htmx else refused
+        if in_list and _pair_exists(store, pair) and not _gate_problem(store, pair, gate):
+            return list_answer(store, ctx, pair, gate=gate, row_note=by_name_note(by_name))
+        return R._by_name_refused_json(by_name)
     payload = {"updates": [{"dot_path": p, "delete": True} for p in paths],
                "group": "new", "expect_chip": body.get("expect_chip") or "",
                "force_chip": body.get("force_chip")}

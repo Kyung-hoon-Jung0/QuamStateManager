@@ -6,13 +6,27 @@
     'use strict';
     if (window.GateStatus) return;
 
+    /* The pair's gate zone re-fetches itself on an undo, a redo or a sync pull.
+       While a delete offer is open in it that refresh waits (the offer would be
+       wiped under the user's eyes); it runs once the last offer closes. */
+    function offerOpen(zone) {
+        return !!(zone && zone.querySelector('.gate-status-slot .gate-delete-offer'));
+    }
+    function releaseRefresh(zone) {
+        if (!zone || !zone.hasAttribute('data-gate-stale') || offerOpen(zone)) return;
+        zone.removeAttribute('data-gate-stale');
+        zone.dispatchEvent(new CustomEvent('gate-list-refresh'));
+    }
+
     function closeOffer(from) {
         var offer = from && from.closest ? from.closest('.gate-delete-offer') : null;
         if (!offer) return false;
         var row = offer.closest('.gate-status');
         var slot = offer.closest('.gate-status-slot');
+        var zone = offer.closest('.gate-status-list');
         if (slot) slot.innerHTML = '';
         else offer.remove();
+        releaseRefresh(zone);
         var del = row ? row.querySelector('.gate-status-delete') : null;
         if (del && del.focus) del.focus();
         return true;
@@ -26,13 +40,23 @@
         if (ev.key !== 'Escape') return;
         if (closeOffer(ev.target)) { ev.preventDefault(); ev.stopPropagation(); }
     });
+    document.addEventListener('htmx:confirm', function (ev) {
+        var d = ev.detail || {};
+        var zone = d.elt;
+        if (!zone || !zone.classList || !zone.classList.contains('gate-status-list')) return;
+        if (d.triggeringEvent && d.triggeringEvent.type === 'gate-list-refresh') return;
+        if (!offerOpen(zone)) return;
+        ev.preventDefault();
+        zone.setAttribute('data-gate-stale', '1');
+    });
     /* the offer takes the focus when it opens, so Esc reaches it at once */
     document.addEventListener('htmx:afterSwap', function (ev) {
         var t = ev.target;
         if (!t || !t.classList || !t.classList.contains('gate-status-slot')) return;
+        if (!t.querySelector('.gate-delete-offer')) releaseRefresh(t.closest('.gate-status-list'));
         var first = t.querySelector('.gate-delete-cancel');
         if (first && first.focus) first.focus();
     });
 
-    window.GateStatus = { closeOffer: closeOffer };
+    window.GateStatus = { closeOffer: closeOffer, offerOpen: offerOpen };
 })();
