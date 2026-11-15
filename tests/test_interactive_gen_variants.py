@@ -496,6 +496,11 @@ _BS = "\\"
     ("x" * 500, "x" * 200 + "..."),
     (None, ""),
     (5, "5"),
+    ("KeyError: /qubits/qA.z.joint_offset", "KeyError: /qubits/qA.z.joint_offset"),
+    ("ratio /0.5 too low", "ratio /0.5 too low"),
+    ("KeyError: '#/qubits/x/y'", "KeyError: '#/qubits/x/y'"),
+    ("OSError: /srv/lab/node.py failed", "OSError: node.py failed"),
+    ("OSError: /srv/lab/st.json failed", "OSError: st.json failed"),
 ])
 def test_bounded_reason_shortens_only_file_paths(line, expected):
     from quam_state_manager.core.interactive_plots.replot import _bounded_reason
@@ -507,6 +512,9 @@ def test_bounded_reason_shortens_only_file_paths(line, expected):
     ("already ends.", "Not drawn: already ends."),
     ("a question?", "Not drawn: a question?"),
     ("loud!", "Not drawn: loud!"),
+    ("", "Figure not available."),
+    ("   ", "Figure not available."),
+    (None, "Figure not available."),
 ])
 def test_not_drawn_line_ends_with_exactly_one_period(reason, expected):
     from quam_state_manager.core.interactive_plots.replot import not_drawn_line
@@ -538,3 +546,10 @@ def test_unavailable_tile_template_renders_the_reason_through_the_one_helper():
     src = (Path(web.__file__).parent / "templates" / "_dataset_interactive.html").read_text(encoding="utf-8")
     assert "{{ fig.reason | not_drawn }}" in src
     assert "Not drawn: {{" not in src
+
+
+def test_template_empty_reason_shows_the_fallback_line():
+    from quam_state_manager.web.app import create_app
+    app = create_app()
+    html = app.jinja_env.from_string("{{ r | not_drawn }}").render(r="")
+    assert html == "Figure not available."

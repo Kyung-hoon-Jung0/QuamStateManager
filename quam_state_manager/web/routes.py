@@ -47518,7 +47518,7 @@ def dataset_interactive_plot(uid):
         from quam_state_manager.core.interactive_plots.registry import figure_unavailable_reason
         why = figure_unavailable_reason(run, fig_key)
         from quam_state_manager.core.interactive_plots.replot import not_drawn_line
-        return jsonify({"error": not_drawn_line(why) if why else "Figure not available."}), 404
+        return jsonify({"error": not_drawn_line(why)}), 404
     if fig.get("clickable"):
         # docs/296: the click contract names the RUN's qubits; a run saved
         # before a rename stages into today's names (or refuses)

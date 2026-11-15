@@ -574,6 +574,7 @@ _PATH_TOKEN_RE = re.compile(
     r"""(?P<q>["'])(?P<qi>(?:[A-Za-z]:[\\/]|\\|/)[^"'\r\n]*?)(?P=q)|(?P<t>[^\s"']+)""")
 _DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 _UNC_RE = re.compile(r"^\\\\[^\\/\s]+\\")
+_SUFFIX_RE = re.compile(r"\.[A-Za-z][A-Za-z0-9]{0,4}$")
 _LEAD = "([{<="
 _TRAIL = ",;:)]}>."
 
@@ -583,12 +584,21 @@ def _base_name(path: str) -> str:
     return parts[-1] if parts else path
 
 
+def _has_file_suffix(name: str) -> bool:
+    """``name`` ends in a file suffix: a dot, a letter, then at most four letters or digits."""
+    return _SUFFIX_RE.search(name) is not None
+
+
 def _is_file_path(tok: str) -> bool:
     """A real file path: a drive path, a UNC path (also with one leading backslash),
-    or a POSIX absolute path ending in a file name with an extension."""
+    or a POSIX absolute path of at least two parts ending in a file name with a suffix.
+
+    The suffix rule (``_has_file_suffix``) keeps a key path whose last part holds dots
+    (``/qubits/q1.z.joint_offset``) and a slash-led number (``/0.5``) unchanged.
+    """
     if _DRIVE_RE.match(tok) or _UNC_RE.match(tok):
         return True
-    has_ext = "." in _base_name(tok).strip(".")
+    has_ext = _has_file_suffix(_base_name(tok))
     if tok.startswith("\\") and tok.count("\\") >= 2:
         return has_ext
     return tok.startswith("/") and len(_base_name(tok)) < len(tok) and has_ext
@@ -635,7 +645,7 @@ def _shorten_paths(line: str) -> str:
                 if sep not in word or _DRIVE_RE.match(word) or "://" in word:
                     break
                 _, wcore, wtrail = _peel(word)
-                if "." in _base_name(wcore).strip("."):
+                if _has_file_suffix(_base_name(wcore)):
                     best = n
                 n += 1
             if best is not None:
@@ -658,7 +668,10 @@ def _bounded_reason(line) -> str:
 
 def not_drawn_line(reason: str) -> str:
     """The one place a reason becomes the user's line: "Not drawn: <reason>." with exactly
-    one final period (none added when the reason already ends in . ! or ?)."""
+    one final period (none added when the reason already ends in . ! or ?). An empty or
+    blank reason gives "Figure not available." so every caller shows the same fallback."""
+    if reason is None or not str(reason).strip():
+        return "Figure not available."
     return "Not drawn: " + end_sentence(reason)
 
 
