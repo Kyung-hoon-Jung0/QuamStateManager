@@ -684,15 +684,15 @@ def test_bad_body_and_unknown_pair(app):
 
 
 def test_a_refused_plan_reads_plainly_on_the_simulate_line(app):
-    """The planner's reason reaches the Simulate line without the name tag
-    and with one period at its end."""
+    """The planner's reason reaches the Simulate line in its own words, with
+    one period at its end."""
     from quam_state_manager.core import cz_gate_build as cgb
     r = app.c.post(START, json=dict(_body(), gate_name="bad"), headers={"X-SM-Window-ID": "w1"})
     j = r.get_json()
     assert r.status_code == 400 and j["state"] == "not_run", j
     plain = cgb.name_rule({}, "bad")
     assert plain and j["line"] == f"Not simulated: {plain.rstrip('.')}."
-    assert cgb.NAME_TAG not in j["line"] and ".." not in j["line"]
+    assert ".." not in j["line"]
     assert sim.line("not_run", reason="It is refused.") == "Not simulated: It is refused."
     assert not app.procs
 

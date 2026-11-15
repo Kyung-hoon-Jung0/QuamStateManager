@@ -54902,5 +54902,40 @@ from quam_state_manager.web import diagram_add_routes  # noqa: E402,F401
 from quam_state_manager.web import diagram_remove_routes  # noqa: E402,F401
 # The CZ gate dialog and its one write door.
 from quam_state_manager.web import cz_gate_routes  # noqa: E402,F401
+
+#: the person's plan and check doors of the CZ gate dialog: each row with
+#: refusals also carries ``name_refusals`` (the reasons a new gate name fixes),
+#: recorded by the planner itself while the door runs, so no text is read or
+#: changed (``cz_gate_build.collect_names`` / ``with_name_refusals``)
+_CZ_GATE_NAMED_DOORS = frozenset({"main.api_cz_gate_plan", "main.api_cz_gate_check"})
+
+
+@bp.before_request
+def _cz_gate_names_start():
+    if request.endpoint in _CZ_GATE_NAMED_DOORS:
+        from quam_state_manager.core import cz_gate_build
+        g.cz_gate_names = cz_gate_build.collect_names()
+
+
+@bp.after_request
+def _cz_gate_names_add(resp):
+    held = g.pop("cz_gate_names", None)
+    if held is None:
+        return resp
+    from quam_state_manager.core import cz_gate_build
+    seen, token = held
+    cz_gate_build.release_names(token)
+    body = resp.get_json(silent=True) if resp.is_json else None
+    if isinstance(body, dict):
+        resp.set_data(json.dumps(cz_gate_build.with_name_refusals(body, seen)))
+    return resp
+
+
+@bp.teardown_request
+def _cz_gate_names_end(_exc=None):
+    held = g.pop("cz_gate_names", None)
+    if held is not None:
+        from quam_state_manager.core import cz_gate_build
+        cz_gate_build.release_names(held[1])
 # A CZ gate's status line, Make active and the delete offer.
 from quam_state_manager.web import gate_status_routes  # noqa: E402,F401

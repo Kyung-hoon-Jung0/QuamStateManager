@@ -3149,26 +3149,31 @@ def _answer_of(resp):
     return out.get_json(silent=True) or {}, out.status_code
 
 
-def _plain_answer(resp):
-    """The answer with no name tag in its words, and ``name_refusals`` (the
-    reasons a new gate name fixes) on each row: ``cz_gate_build.plain_reasons``."""
+def _named_answer(door):
+    """*door*'s answer with ``name_refusals`` (the reasons a new gate name
+    fixes) on each row, as the planner recorded them while the door ran
+    (``cz_gate_build.collect_names``). The words are the person's, unchanged."""
     from quam_state_manager.core import cz_gate_build
-    payload, code = _answer_of(resp)
-    return jsonify(cz_gate_build.plain_reasons(payload)), code
+    seen, token = cz_gate_build.collect_names()
+    try:
+        payload, code = _answer_of(door())
+    finally:
+        cz_gate_build.release_names(token)
+    return jsonify(cz_gate_build.with_name_refusals(payload, seen)), code
 
 
 @agent_bp.route("/cz-gate/plan", methods=["POST"])
 def cz_gate_plan():
     """The gate dialog's plan, for an agent. Writes nothing."""
     from quam_state_manager.web import cz_gate_routes as czr
-    return _plain_answer(czr.plan_answer())
+    return _named_answer(czr.plan_answer)
 
 
 @agent_bp.route("/cz-gate/check", methods=["POST"])
 def cz_gate_check():
     """The gate dialog's check, for an agent: the same token as a person's."""
     from quam_state_manager.web import cz_gate_routes as czr
-    return _plain_answer(czr.check_answer())
+    return _named_answer(czr.check_answer)
 
 
 #: what the create card says about the way to the chip, by apply mode
@@ -3226,14 +3231,12 @@ def cz_gate_create():
     one change group under the agent's name; never writes the live chip.
     The answer is the person's, plus ``cards`` (one per created gate) and
     ``waits`` (how the gate reaches the chip in this chip's mode)."""
-    from quam_state_manager.core import cz_gate_build
     from quam_state_manager.web import cz_gate_routes as czr
     r = _r()
     data = json_object({})
     data = data if isinstance(data, dict) else {}
     tok = czr._token(data.get("check_token")) or {}
     payload, code = _answer_of(czr.create_answer())
-    payload = cz_gate_build.plain_reasons(payload)
     if code != 200 or not payload.get("ok"):
         return jsonify(payload), code
     ctx, store = r._active_ctx(), r._store()

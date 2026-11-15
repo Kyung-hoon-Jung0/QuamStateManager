@@ -26,4 +26,10 @@ Code: `quam_state_manager/web/static/cz-gate.js` (section "simulate"); server: `
 - Every request carries a client sequence number; an answer older than the latest start / stop or the latest
   applied answer is ignored, so the line is always the latest action's answer. Stop server side with an id that is
   no longer current is a no-op (`core/port_test_runs.py` `stop`, the id check).
+- A refused plan answers `not_run` with the planner's reason in its own words: `Not simulated: <reason>.`, one
+  period. No surface rewrites a refusal sentence. A reason a new gate name fixes is marked in the plan's and each
+  row's `name_refusals` (`core/cz_gate_build.py` `name_reason`, `collect_names`, `with_name_refusals`; the person's
+  plan and check doors get it from a hook in `web/routes.py`, the agent's from `agent_api._named_answer`), never in
+  its words; the dialog puts the reasons it lists under Name. Pins: `tests/test_cz_gate_name_refusals.py` and the
+  display vectors `tests/fixtures/refusal_display_vectors.json`, shared with the dialog selfcheck.
 - Pins: `tests/cz_gate_simulate_client_selfcheck.cjs` (run on the rendered dialog by `tests/test_cz_gate_routes.py`).

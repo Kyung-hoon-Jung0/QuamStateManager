@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from flask import Blueprint, current_app, jsonify, request
 
-from quam_state_manager.core import chip_copy, cz_gate_build, gate_check
+from quam_state_manager.core import chip_copy, gate_check
 from quam_state_manager.core import cz_gate_simulate as sim
 from quam_state_manager.core import port_test_runs as ptr
 from quam_state_manager.web import request_body
@@ -63,9 +63,7 @@ def cz_gate_simulate_start():
         plans = dict(cz._plan_all(store.merged, body))
     plan = plans.get(pair) or {}
     if "error" in plan:
-        # the dialog's Simulate line shows the planner's reason in the person's words
-        why = cz_gate_build.plain_reasons({"pair": pair, "error": plan["error"]})["error"]
-        return jsonify(ok=False, **sim.answer("not_run", reason=why)), 400
+        return jsonify(ok=False, **sim.answer("not_run", reason=plan["error"])), 400
     creates = [(str(p), v) for p, v in plan.get("creates") or []]
     try:
         ans, code = manager().start(

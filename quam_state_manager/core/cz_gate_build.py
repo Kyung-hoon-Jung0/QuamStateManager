@@ -22,6 +22,7 @@ from __future__ import annotations
 import copy
 import math
 import re
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
@@ -638,75 +639,67 @@ def _fields_for_model(model_pulse: dict, given: dict,
 
 
 def _refuse(reasons: list[str]) -> dict[str, Any]:
-    return {"error": reasons[0], "refusals": list(reasons)}
+    """``name_refusals`` is the machine field: the refusals a new gate name
+    fixes (``name_reason``), the same sentences, unchanged."""
+    return {"error": reasons[0], "refusals": list(reasons),
+            "name_refusals": name_refusals(reasons)}
 
 
-#: The routing tag on a reason a new gate name fixes: the dialog places such a
-#: reason under Name. No surface shows it: ``plain_reasons`` drops it, and
-#: ``plainAnswer`` in web/static/cz-gate.js is its cross-language twin (one
-#: shared vector file, tests/fixtures/name_tag_vectors.json, pins both).
-NAME_TAG = "name: "
-#: the answer keys whose text carries refusal sentences
-REASON_KEYS = frozenset({"refusals", "class_refusals", "reason", "error", "headline"})
+class NameReason(str):
+    """A refusal sentence a new gate name fixes. Its text is the plain
+    sentence people read, never changed; the type is the machine mark."""
+    __slots__ = ()
 
 
-def name_reason(text: str) -> str:
-    """*text* tagged as a reason a new gate name fixes."""
-    return NAME_TAG + text
+_NAMED: ContextVar["set[str] | None"] = ContextVar("cz_gate_named_reasons", default=None)
 
 
-def _tag_pattern(pairs) -> "re.Pattern[str]":
-    """Where the code itself puts the tag: at the start of a reason, at the
-    start of the next reason of a space join (after a sentence end), or right
-    after a ``<pair>: `` prefix (the pair at the start or after a space).
-    Nowhere else, so a sentence such as "gate setting name: ..." is kept."""
-    ids = "|".join(re.escape(p) for p in sorted({p for p in pairs if p}, key=len, reverse=True))
-    pair = rf"|(?:^|(?<=\s))(?:{ids}): " if ids else ""
-    return re.compile(rf"(^|(?<=\. ){pair}){re.escape(NAME_TAG)}(?=[A-Z])")
+def name_reason(text: str) -> NameReason:
+    """*text*, marked (not reworded) as a reason a new gate name fixes. Inside
+    ``collect_names`` the sentence is also recorded for the web doors, whose
+    rows copy only the words."""
+    r = NameReason(text)
+    seen = _NAMED.get()
+    if seen is not None:
+        seen.add(str(r))
+    return r
 
 
-def plain_reason(text: Any, pairs=()) -> Any:
-    """*text* without the name tag (see ``_tag_pattern``); *pairs* are the
-    pair ids a ``<pair>: `` prefix may name. A non-string is returned as is."""
-    return _untag(_tag_pattern(pairs), text) if isinstance(text, str) else text
+def name_refusals(reasons) -> list[str]:
+    """The reasons of *reasons* a new gate name fixes, in order."""
+    return [str(r) for r in reasons if isinstance(r, NameReason)]
 
 
-def _untag(pat: "re.Pattern[str]", text: str) -> str:
-    return pat.sub(lambda m: m.group(1), text)    # keep the lead, drop the tag
+def collect_names() -> tuple[set, Any]:
+    """Start recording the name reasons this context produces:
+    ``(the set, the token for release_names)``."""
+    seen: set = set()
+    return seen, _NAMED.set(seen)
 
 
-def _pairs_of(obj, out: set) -> set:
-    if isinstance(obj, dict):
-        for k, v in obj.items():
-            if k == "pair" and isinstance(v, str):
-                out.add(v)
-            else:
-                _pairs_of(v, out)
-    elif isinstance(obj, list):
-        for v in obj:
-            _pairs_of(v, out)
-    return out
+def release_names(token) -> None:
+    _NAMED.reset(token)
 
 
-def plain_reasons(answer: Any) -> Any:
-    """A copy of a plan / check / create / simulate *answer* with the name tag
-    dropped from every refusal sentence (under ``REASON_KEYS``, at any depth).
-    Every object with a ``refusals`` list also gets ``name_refusals``: its
-    tagged reasons, plainly worded, the ones a new gate name fixes."""
-    pat = _tag_pattern(_pairs_of(answer, set()))
+def with_name_refusals(answer: Any, named) -> Any:
+    """A copy of a plan / check *answer* in which every object with a
+    ``refusals`` list also has ``name_refusals``: those of its refusals the
+    planner produced as name reasons (*named*, from ``collect_names``). No
+    text is read or changed."""
+    named = set(named or ())
 
-    def walk(obj, under):
+    def walk(obj):
         if isinstance(obj, dict):
-            out = {k: walk(v, under or k in REASON_KEYS) for k, v in obj.items()}
+            out = {k: walk(v) for k, v in obj.items()}
             if isinstance(obj.get("refusals"), list):
-                out["name_refusals"] = [_untag(pat, r) for r in obj["refusals"]
-                                        if isinstance(r, str) and r.startswith(NAME_TAG)]
+                out["name_refusals"] = [r for r in obj["refusals"]
+                                        if isinstance(r, str) and r in named]
             return out
         if isinstance(obj, list):
-            return [walk(v, under) for v in obj]
-        return _untag(pat, obj) if under and isinstance(obj, str) else obj
+            return [walk(v) for v in obj]
+        return obj
 
-    return walk(answer, False)
+    return walk(answer)
 
 
 def _gate_or_alias(macros: dict, name: str, merged: dict, pair_id: str
@@ -798,7 +791,9 @@ def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
     Returns ``{"creates": [(path, value)], "direction", "pulse_directions",
     "model_gate", "fields": {slot: {field: given|copied|default}, "macro":
     {key: copied from the model gate}}, "sources": {...}}`` or ``{"error":
-    str, "refusals": [str]}``. Every created value is a fresh copy.
+    str, "refusals": [str], "name_refusals": [str]}`` (``name_refusals``: the
+    refusals a new gate name fixes, the same sentences). Every created value
+    is a fresh copy.
 
     ``spectators`` (official class only, see :func:`spectator_refusal`):
     ``[{"qubit", "length" (ns), "level" (V)}]``; each becomes a square pulse
@@ -813,7 +808,9 @@ def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
         if "refusals" in out:
             names = _echoed_names(pair_id, gate_name, gate_class, pulses, copy_from,
                                   model_gate, macro_fields) + _spectator_names(spectators)
-            out = _refuse([cap_names(r, names) for r in out["refusals"]])
+            # a capped name keeps the reason's mark (name_refusals)
+            out = _refuse([name_reason(cap_names(r, names)) if isinstance(r, NameReason)
+                           else cap_names(r, names) for r in out["refusals"]])
         return out
     except Exception as exc:  # noqa: BLE001 -- the last net: plan never raises
         return _refuse([f"SM could not plan this gate ({type(exc).__name__}). "

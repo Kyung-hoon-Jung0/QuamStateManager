@@ -1,0 +1,89 @@
+{
+ "_about": "Display vectors: each reason text must reach every surface byte-identical (the agent's answer, the person's dialog). name says whether the planner marked it as a reason a new gate name fixes; that mark travels in name_refusals, never in the words. Read by tests/test_cz_gate_name_refusals.py and tests/cz_gate_dialog_selfcheck.cjs.",
+ "reasons": [
+  {
+   "case": "a typed gate name holding a sentence end and a colon",
+   "pair": "q1-2",
+   "text": "The gate name 'x. name: Foo' must start with cz_. Pick a name like cz_square.",
+   "name": true
+  },
+  {
+   "case": "a typed gate name holding the same after a prefix",
+   "pair": "q1-2",
+   "text": "The gate name cz_a. name: B is not a valid name. Use letters, digits and _ only, at most 64 characters.",
+   "name": true
+  },
+  {
+   "case": "a pair id holding a colon and a space",
+   "pair": "a: b",
+   "text": "a: b: The pair already has a gate named cz_sq. Pick another name.",
+   "name": true
+  },
+  {
+   "case": "an empty reason",
+   "pair": "q1-2",
+   "text": "",
+   "name": false
+  },
+  {
+   "case": "non-ASCII text after a colon",
+   "pair": "q1-2",
+   "text": "name: \u00dcbung is taken. Pick another gate name.",
+   "name": true
+  },
+  {
+   "case": "a non-ASCII pair id",
+   "pair": "q\u00e91-2",
+   "text": "q\u00e91-2: name: The pair already has a gate named cz_sq. Pick another name.",
+   "name": true
+  },
+  {
+   "case": "a tag-like string at the very end",
+   "pair": "q1-2",
+   "text": "The operation a already exists on q1.z. Pick another gate name. name: ",
+   "name": true
+  },
+  {
+   "case": "a byte order mark before a pair id",
+   "pair": "q1",
+   "text": "x\ufeffq1: name: The x.",
+   "name": false
+  },
+  {
+   "case": "a separator control before a pair id",
+   "pair": "q1",
+   "text": "x\u001cq1: name: The x.",
+   "name": false
+  },
+  {
+   "case": "a tab before the colon words",
+   "pair": "q1-2",
+   "text": "x\tname: The x.",
+   "name": false
+  },
+  {
+   "case": "a no-break space before the colon words",
+   "pair": "q1-2",
+   "text": "x\u00a0name: The x.",
+   "name": true
+  },
+  {
+   "case": "a gate setting called name",
+   "pair": "q1-2",
+   "text": "gate setting name: Type a number.",
+   "name": false
+  },
+  {
+   "case": "a reason that starts with the colon words",
+   "pair": "q1-2",
+   "text": "name: The gate name must start with cz_.",
+   "name": false
+  },
+  {
+   "case": "two sentences joined by a space",
+   "pair": "q1-2",
+   "text": "Two pulses of the gate would both be written as p. Pick another model gate. name: The new gate would replace the pair's cz alias. Pick another gate name.",
+   "name": false
+  }
+ ]
+}

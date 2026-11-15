@@ -785,54 +785,9 @@
         return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(payload) })
             .then(function (r) {
-                return r.json().then(function (j) { return { r: r, j: plainAnswer(j || {}) }; },
+                return r.json().then(function (j) { return { r: r, j: j || {} }; },
                                      function () { return { r: r, j: {} }; });
             });
-    }
-    /* The server tags a reason a new gate name fixes with "name: ". The tag
-       routes, it is never shown: every plan, check, create and simulate answer
-       passes here once, so each refusal, verdict reason, skipped reason and
-       error reads plainly, and a row's tagged reasons are kept in name_refusals.
-       Twin of cz_gate_build.plain_reasons (core/cz_gate_build.py), the same
-       rule: the tag is dropped only at the start of a reason, at the start of
-       the next reason of a space join, or right after a "<pair>: " prefix of a
-       pair the answer names; tests/fixtures/name_tag_vectors.json pins both. */
-    var NAME_TAG = 'name: ';
-    var REASON_KEYS = { refusals: 1, class_refusals: 1, reason: 1, error: 1, headline: 1 };
-    function reEsc(t) { return String(t).replace(/[.*+?^${}()|[\]\\\-]/g, '\\$&'); }
-    function tagPattern(pairs) {
-        var ids = (pairs || []).filter(function (p, i, a) { return p && a.indexOf(p) === i; })
-            .sort(function (x, y) { return y.length - x.length; }).map(reEsc).join('|');
-        var pair = ids ? '|(?:^|(?<=\\s))(?:' + ids + '): ' : '';
-        return new RegExp('(^|(?<=\\. )' + pair + ')' + reEsc(NAME_TAG) + '(?=[A-Z])', 'g');
-    }
-    function pairsOf(x, acc) {
-        if (Array.isArray(x)) x.forEach(function (v) { pairsOf(v, acc); });
-        else if (x && typeof x === 'object') {
-            Object.keys(x).forEach(function (k) {
-                if (k === 'pair' && typeof x[k] === 'string') acc.push(x[k]); else pairsOf(x[k], acc);
-            });
-        }
-        return acc;
-    }
-    function untag(re, r) { return r.replace(re, '$1'); }
-    function plainReason(r, pairs) { return typeof r === 'string' ? untag(tagPattern(pairs), r) : r; }
-    function plainAnswer(j) {
-        var re = tagPattern(pairsOf(j, []));
-        function walk(x, under) {
-            if (Array.isArray(x)) return x.map(function (v) { return walk(v, under); });
-            if (x && typeof x === 'object') {
-                var out = {};
-                Object.keys(x).forEach(function (k) { out[k] = walk(x[k], under || REASON_KEYS[k] === 1); });
-                if (Array.isArray(x.refusals)) {
-                    out.name_refusals = x.refusals.filter(function (r) { return typeof r === 'string' && r.indexOf(NAME_TAG) === 0; })
-                        .map(function (r) { return untag(re, r); });
-                }
-                return out;
-            }
-            return under && typeof x === 'string' ? untag(re, x) : x;
-        }
-        return walk(j, false);
     }
     function plan() {
         var b = body();
@@ -915,8 +870,9 @@
     }
     /* The server names a refused value by "<slot>.<field>: <sentence>" or
        "gate setting <key>: <sentence>": those go on the field they name.
-       A reason the server tagged "name: " (plainAnswer keeps it in
-       name_refusals) belongs under Name, independent of its wording. */
+       A reason the server lists in the row's name_refusals (a reason a new
+       gate name fixes) belongs under Name, independent of its wording; its
+       text is shown as the server sent it. */
     function splitRefusals(list, named) {
         var fields = [], rest = [], names = [];
         list.forEach(function (r) {
@@ -1324,7 +1280,7 @@
         var init = payload === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' },
                                                   body: JSON.stringify(payload) };
         return fetch(url, init).then(function (r) {
-            return r.json().then(function (j) { return { r: r, j: (j && typeof j === 'object') ? plainAnswer(j) : null }; },
+            return r.json().then(function (j) { return { r: r, j: (j && typeof j === 'object') ? j : null }; },
                                  function () { return { r: r, j: null }; });
         }, function () { return { r: null, j: null }; });
     }
@@ -1916,6 +1872,5 @@
     });
 
     window.CzGate = { open: open, close: close, state: function () { return S; },
-                      _check: check, _create: create, _plan: plan, _simulate: simulate,
-                      _plainAnswer: plainAnswer, _plainReason: plainReason };
+                      _check: check, _create: create, _plan: plan, _simulate: simulate };
 })();
