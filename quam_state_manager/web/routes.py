@@ -36094,19 +36094,19 @@ def _unverified_write_held(ctx) -> bool:
 
 
 UNVERIFIED_KEPT_LEAD = ("These values from an approval that may not have reached the chip will be "
-                        "written too: ")
+                        "written too.")
 UNVERIFIED_KEPT_LEAD_WHOLE = ("These values from an earlier live write that may not have reached the chip "
-                              "will be written too: ")
+                              "will be written too.")
 
 
 def _unverified_kept_rows(ctx) -> tuple[list, bool]:
     """What a person's Apply would carry of the held mark's write (docs/254): ``([{"path",
-    "value"}], named)``. *named*: the mark lists its rows, and a row counts while the working
+    "old", "value"}], named)``. *named*: the mark lists its rows, and a row counts while the working
     copy still holds its kept value (a Ctrl+Z or a later edit took it out). A mark that names
     none (older meta, a whole-document write) counts every value the working copy holds that
     live does not, outside the tray's own edits. Live unreadable: no rows (the door's own
     missing/unreadable refusals speak then)."""
-    from quam_state_manager.core.sync_status import fmt_value
+    from quam_state_manager.core.value_delta import format_value
     wc, store = ctx.get("working_copy"), ctx.get("store")
     named = getattr(wc, "unverified_kept", None)
     rows: list = []
@@ -36115,7 +36115,10 @@ def _unverified_kept_rows(ctx) -> tuple[list, bool]:
             for k in named:
                 cur = _dot_get(store.merged, k["path"])
                 if cur is not _DOT_MISSING and _differ_mod.compare_equal(cur, k.get("kept"), tolerance=None):
-                    rows.append({"path": k["path"], "value": fmt_value(cur)})
+                    row = {"path": k["path"], "value": format_value(cur)}
+                    if "old" in k:
+                        row["old"] = format_value(k["old"])
+                    rows.append(row)
         return rows, True
     try:
         entries = _working_vs_live_entries(ctx, None, None, working_copy.read_live_shared(wc))
@@ -36128,7 +36131,7 @@ def _unverified_kept_rows(ctx) -> tuple[list, bool]:
         if e.dot_path in mine:
             continue
         rows.append({"path": e.dot_path,
-                     "value": "(removed)" if e.change_type == "added" else fmt_value(e.old_value)})
+                     "value": "(removed)" if e.change_type == "added" else format_value(e.old_value)})
     return rows, False
 
 
@@ -36145,12 +36148,10 @@ def _unverified_kept_refusal(ctx) -> dict | None:
     rows, named = _unverified_kept_rows(ctx)
     if not rows:
         return None
-    shown = "; ".join(f"{r_['path']} {r_['value']}" for r_ in rows[:6])
-    more = f"; and {len(rows) - 6} more" if len(rows) > 6 else ""
     lead = UNVERIFIED_KEPT_LEAD if named else UNVERIFIED_KEPT_LEAD_WHOLE
     return {"ok": False, "status": "unverified_kept", "conflict": "unverified_kept", "token": mark,
-            "paths": [r_["path"] for r_ in rows[:50]], "rows": rows[:50],
-            "message": lead + shown + more + ". Take live instead to see what the chip holds."}
+            "paths": [r_["path"] for r_ in rows], "rows": rows,
+            "message": lead + " Take live instead to see what the chip holds."}
 
 
 def _live_write_failure_text(ctx, exc, what: str = "Apply to live", outcome: str = "",

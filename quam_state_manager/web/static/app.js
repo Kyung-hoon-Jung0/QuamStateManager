@@ -6100,14 +6100,19 @@ document.addEventListener("htmx:beforeSwap", function (evt) {
 });
 /* docs/254: the values an approval's unverified live write kept are named before a person's
  * press carries them (the mark's id is the token, so a newer mark is named again). OK = write
- * them too; Cancel = write nothing, the tray shows them. Resolves true/false. */
+ * them too; Cancel = write nothing, the values stay in SM. Resolves true/false. */
 window._confirmUnverifiedKept = function (data) {
     var rows = (data && data.rows) || [];
     var text = (data && data.message) || "";
     if (rows.length) {
-        text += "\n\n  " + rows.slice(0, 12).map(function (r) { return r.path + "  " + r.value; }).join("\n  ");
+        text += "\n\n  " + rows.map(function (r) {
+            var kept = window.ValueDelta.formatValue(r.value);
+            return r.path + "  " + (Object.prototype.hasOwnProperty.call(r, "old")
+                ? window.ValueDelta.formatValue(r.old) + " -> " + kept : kept);
+        }).join("\n  ");
     }
-    text += "\n\nOK = write them too.\nCancel = write nothing; the tray shows them.";
+    text += "\n\nOK = write them too.\nCancel = write nothing; the values stay in SM."
+        + " In the top bar, open Apply not verified and choose Take live to check what the chip holds.";
     // no UI-kit confirm: write nothing (an unanswered question is never a yes)
     var ask = window.smConfirm ? window.smConfirm(text) : Promise.resolve(false);
     return ask.then(function (ok) {

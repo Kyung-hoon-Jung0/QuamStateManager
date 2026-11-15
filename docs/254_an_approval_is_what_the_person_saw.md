@@ -670,12 +670,16 @@ A person's own Apply press is the way out, but it never carries the kept values 
 `mark_unverified_write` records them in the meta file (`unverified_kept`, rows of path, old value and kept value), and
 `routes._unverified_kept_refusal` answers a press that does not acknowledge the mark with 409
 `{status: "unverified_kept", token: <the mark's id>, rows, message}`, the message "These values from an approval that
-may not have reached the chip will be written too: <path> <value>; ... Take live instead to see what the chip holds."
+may not have reached the chip will be written too. Take live instead to see what the chip holds."
 (`UNVERIFIED_KEPT_LEAD`). A row counts while the working copy still holds its kept value (a Ctrl+Z that took it out
-drops it; with no rows left the press is not asked). The window shows the rows in the UI-kit confirm (`smConfirm`):
+drops it; with no rows left the press is not asked). The UI-kit confirm (`smConfirm`) lists every row once as
+`path  old -> kept`, using contract 10's `core/value_delta.py` / `window.ValueDelta` value formatting. A legacy row
+without `old` shows `path  kept` alone; the sentence names no values.
 OK re-sends the same request with `ack_unverified=<token>`, which writes them and clears the mark on landed; Cancel
-writes nothing and the tray shows them. The token is the mark's id (microseconds), so a mark set after the confirm
-opened is named again. The gate sits on every door that writes live for a person: /state/apply-to-live (tray, Review,
+writes nothing; the values stay in SM. In the top bar, open Apply not verified and choose Take live to check what
+the chip holds. The tray has no pending edit rows for those saved values. The token is the mark's id (microseconds),
+so a mark set after the confirm opened is named again. The gate sits on every door that writes live for a person:
+/state/apply-to-live (tray, Review,
 Keep mine, an Auto-Sync flush) after its stale check, /state/sync mode=apply before its pull (the pull would clear the
 mark and the replay would carry the rows), and `_sync_pull_apply_to_live` (the walk); the dataset door passes
 `kept_gate=False` (it replaces the working content wholesale, so nothing kept rides on it), and a history restore

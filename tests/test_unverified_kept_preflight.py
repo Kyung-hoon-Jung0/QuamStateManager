@@ -5,6 +5,7 @@ the confirm opened is named again. Also: the persisted mark shows on the control
 the approval's stale check reads the flag and the mark outside its fail-open probe."""
 import ast
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -12,8 +13,8 @@ import pytest
 from tests.test_approval_now_anchor import (UNVERIFIED_HELD, _case, _ctx, _refused_first, _restarted,
                                             _second_approval, _sync_control_text, press)
 
-LEAD = "These values from an approval that may not have reached the chip will be written too: "
-LEAD_WHOLE = "These values from an earlier live write that may not have reached the chip will be written too: "
+LEAD = "These values from an approval that may not have reached the chip will be written too."
+LEAD_WHOLE = "These values from an earlier live write that may not have reached the chip will be written too."
 JSON = {"Accept": "application/json"}
 
 
@@ -37,8 +38,8 @@ def test_a_persons_apply_names_the_kept_values_and_writes_nothing(tmp_path, monk
     assert r.status_code == 409, r.get_data(as_text=True)
     body = r.get_json()
     assert body["status"] == "unverified_kept" and body["conflict"] == "unverified_kept"
-    assert body["paths"] == ["value"] and body["rows"] == [{"path": "value", "value": "30"}]
-    assert body["message"] == LEAD + "value 30. Take live instead to see what the chip holds."
+    assert body["paths"] == ["value"] and body["rows"] == [{"path": "value", "old": "10", "value": "30"}]
+    assert body["message"] == LEAD + " Take live instead to see what the chip holds."
     assert body["token"] == _mark(case)
     assert (case[2] / "state.json").read_bytes() == before
 
@@ -65,6 +66,7 @@ def test_a_mark_set_after_the_confirm_opened_is_named_again(tmp_path, monkeypatc
                                            kept=[{"path": "value", "old": 10, "kept": 30}])
     r = _apply(case[1], ack_unverified=token)
     assert r.status_code == 409, r.get_data(as_text=True)
+    assert r.get_json()["status"] == "unverified_kept"
     assert r.get_json()["token"] != token and r.get_json()["token"] == _mark(case)
     assert (case[2] / "state.json").read_bytes() == before
 
@@ -74,6 +76,7 @@ def test_a_reject_keeps_the_values_and_the_apply_still_names_them(tmp_path, monk
     before = (case[2] / "state.json").read_bytes()
     r = _apply(case[1])
     assert r.status_code == 409 and r.get_json()["paths"] == ["value"]
+    assert r.get_json()["status"] == "unverified_kept"
     assert (case[2] / "state.json").read_bytes() == before
 
 
@@ -100,7 +103,9 @@ def test_a_mark_without_rows_names_what_the_working_copy_holds_that_live_does_no
     before = (case[2] / "state.json").read_bytes()
     r = _apply(client)
     assert r.status_code == 409, r.get_data(as_text=True)
-    assert r.get_json()["message"] == LEAD_WHOLE + "value 30. Take live instead to see what the chip holds."
+    assert r.get_json()["status"] == "unverified_kept"
+    assert r.get_json()["rows"] == [{"path": "value", "value": "30"}]
+    assert r.get_json()["message"] == LEAD_WHOLE + " Take live instead to see what the chip holds."
     assert (case[2] / "state.json").read_bytes() == before
 
 
@@ -158,14 +163,33 @@ def test_a_mark_whose_values_were_taken_out_asks_nothing(tmp_path, monkeypatch):
     assert _chip(case) == {"value": 10, "third": 5}
 
 
+def _active_flush_session(case):
+    """Exercise an active flush at the gate, rather than the outer session-off refusal."""
+    from quam_state_manager.web import routes
+    with case[0].app_context():
+        _ctx(case)["auto_apply"] = routes._new_auto_session(pull=False, pull_replace=False, push=True)
+
+
+def test_an_unarmed_flush_is_stopped_before_the_kept_values_gate(tmp_path, monkeypatch):
+    case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False)
+    before = (case[2] / "state.json").read_bytes()
+    assert case[1].post("/auto-apply/arm").status_code == 409
+    r = _door_auto_flush(case[1])
+    assert r.status_code == 409
+    assert r.get_json() == {"status": "stopped", "message": "Auto-Sync is off"}
+    assert (case[2] / "state.json").read_bytes() == before
+    assert _mark(case)
+
+
 def test_auto_sync_after_an_unverified_write_writes_nothing(tmp_path, monkeypatch):
     case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False)
     before = (case[2] / "state.json").read_bytes()
     client = case[1]
-    client.post("/auto-apply/arm")
+    _active_flush_session(case)
     assert client.post("/field/edit", data={"dot_path": "third", "value": "7"}).status_code == 200
     r = client.post("/state/apply-to-live", data={"auto_flush": "1"}, headers=JSON)
     assert r.status_code == 409, r.get_data(as_text=True)
+    assert r.get_json()["status"] == "unverified_kept"
     assert (case[2] / "state.json").read_bytes() == before
 
 
@@ -252,7 +276,6 @@ def _door_review(client):
 
 
 def _door_auto_flush(client):
-    client.post("/auto-apply/arm")
     return client.post("/state/apply-to-live", data={"auto_flush": "1"}, headers=JSON)
 
 
@@ -270,8 +293,11 @@ def _door_sync_apply_forced(client):
 def test_no_persons_door_writes_kept_values_without_the_acknowledgement(tmp_path, monkeypatch, door):
     case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False)
     before = (case[2] / "state.json").read_bytes()
+    if door is _door_auto_flush:
+        _active_flush_session(case)
     r = door(case[1])
     assert r.status_code == 409, (r.status_code, r.get_data(as_text=True)[:300])
+    assert r.get_json()["status"] == "unverified_kept"
     assert (case[2] / "state.json").read_bytes() == before
     assert _mark(case)
 
@@ -285,3 +311,88 @@ def test_the_sync_door_writes_them_with_the_acknowledgement(tmp_path, monkeypatc
     assert r.status_code == 200 and r.get_json()["status"] == "ok", r.get_data(as_text=True)[:300]
     assert _chip(case) == {"value": 30, "third": 5}
     assert _mark(case) is None
+
+
+@pytest.fixture
+def two_kept_rows(tmp_path, monkeypatch):
+    from quam_state_manager.core import working_copy
+    from quam_state_manager.web import routes
+    case = _case(tmp_path, {"value": 10, "third": 5}, [
+        {"path": "value", "old": 10, "new": 30}, {"path": "third", "old": 5, "new": 7}])
+
+    def raises(*args, **kwargs):
+        raise OSError(5, "read-back failed")
+
+    with monkeypatch.context() as held:
+        held.setattr(working_copy, "apply_to_live", raises)
+        held.setattr(routes, "_write_outcome", lambda pending: "unknown")
+        r = press(case, [{"path": "value", "new": 30, "seen_now": 10},
+                         {"path": "third", "new": 7, "seen_now": 5}])
+        assert r.status_code == 409
+    return case
+
+
+def test_every_meta_row_is_named_with_its_old_and_kept_value(two_kept_rows):
+    case = two_kept_rows
+    with case[0].app_context():
+        wc = _ctx(case)["working_copy"]
+    meta = json.loads(Path(wc.meta_path()).read_text(encoding="utf-8"))
+    before = (case[2] / "state.json").read_bytes()
+    body = _apply(case[1]).get_json()
+    assert body["status"] == "unverified_kept"
+    assert len(body["rows"]) == len(meta["unverified_kept"]) == 2
+    assert body["paths"] == ["value", "third"]
+    assert body["rows"] == [{"path": "value", "old": "10", "value": "30"},
+                            {"path": "third", "old": "5", "value": "7"}]
+    assert body["message"] == LEAD + " Take live instead to see what the chip holds."
+    tray = case[1].get("/state/tray").get_data(as_text=True)
+    assert 'data-change-count="0"' in tray
+    assert "Apply not verified" in _sync_control_text(case[1])
+    assert (case[2] / "state.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_the_dialog_lists_values_once_and_explains_cancel(two_kept_rows, legacy):
+    body = _apply(two_kept_rows[1]).get_json()
+    if legacy:
+        for row in body["rows"]:
+            row.pop("old")
+    script = r"""
+const fs = require('fs'), vm = require('vm');
+const data = JSON.parse(fs.readFileSync(0, 'utf8'));
+const src = fs.readFileSync('quam_state_manager/web/static/app.js', 'utf8');
+let message = '';
+const window = { smConfirm: text => { message = text; return Promise.resolve(false); } };
+const ctx = vm.createContext({ window, Promise });
+const start = src.indexOf('window.ValueDelta = (function () {');
+vm.runInContext(src.slice(start, src.indexOf('})();', start) + 5), ctx);
+const ask = src.indexOf('window._confirmUnverifiedKept = function');
+vm.runInContext(src.slice(ask, src.indexOf('\n};', ask) + 3), ctx);
+window._confirmUnverifiedKept(data).then(ok => process.stdout.write(JSON.stringify({ ok, message })));
+"""
+    run = subprocess.run(["node", "-e", script], input=json.dumps(body), text=True,
+                         capture_output=True, check=True, timeout=30)
+    result = json.loads(run.stdout)
+    text = result["message"]
+    assert result["ok"] is False
+    assert text.count("value  " + ("" if legacy else "10 -> ") + "30") == 1
+    assert text.count("third  " + ("" if legacy else "5 -> ") + "7") == 1
+    assert text.count("30") == 1 and text.count("7") == 1
+    assert "Cancel = write nothing; the values stay in SM." in text
+    assert "In the top bar, open Apply not verified and choose Take live" in text
+    assert "the tray shows them" not in text
+
+
+
+def test_a_legacy_named_row_without_old_shows_only_the_kept_value(tmp_path, monkeypatch):
+    case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False)
+    with case[0].app_context():
+        mp = Path(_ctx(case)["working_copy"].meta_path())
+    meta = json.loads(mp.read_text(encoding="utf-8"))
+    meta["unverified_kept"][0].pop("old")
+    mp.write_text(json.dumps(meta), encoding="utf-8")
+    _, client = _restarted(case)
+    body = _apply(client).get_json()
+    assert body["status"] == "unverified_kept"
+    assert body["rows"] == [{"path": "value", "value": "30"}]
+    assert body["message"] == LEAD + " Take live instead to see what the chip holds."
