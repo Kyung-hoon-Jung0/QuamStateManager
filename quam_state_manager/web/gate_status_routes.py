@@ -126,7 +126,7 @@ def recheck_notice(store, ctx) -> dict | None:
     try:
         with store._lock:
             waiting = gate_status.gates_to_recheck(store.merged, _class_path(ctx))
-    except Exception:  # noqa: BLE001 -- the notice never breaks a page
+    except Exception:  # noqa: BLE001 (the notice never breaks a page)
         logger.warning("re-check notice failed", exc_info=True)
         return None
     if not waiting:

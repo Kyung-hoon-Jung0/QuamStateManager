@@ -319,7 +319,7 @@ def gates_to_recheck(merged: Any, where) -> list[dict]:
                 if not states or _class_files(states)["text"] != FILE_CHANGED:
                     continue
                 files = [str(f["file"]) for f, st in states if st == "changed"]
-            except Exception:  # noqa: BLE001 -- one unreadable gate never hides the rest
+            except Exception:  # noqa: BLE001 (one unreadable gate never hides the rest)
                 continue
             out.append({"pair": str(pair), "gate": str(gate), "files": files})
     return out
