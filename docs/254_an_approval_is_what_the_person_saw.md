@@ -667,7 +667,7 @@ live chip matches its last sync (an earlier live write could not be verified); t
 agent's own `apply_to_live` (X-SM-Agent, past its apply-mode hold, so in auto mode too) refuses the same way: 409
 `{conflict: "unverified_write", message: UNVERIFIED_HELD_MSG}`.
 A person's own Apply press is the way out, but it never carries the kept values unnamed:
-`mark_unverified_write` records them in the meta file (`unverified_kept`, rows of path, old value and kept value), and
+`mark_unverified_write` records them in the meta file (`unverified_kept`, rows of path, old value, kept value and source, plus `absent` or `removed` when the key had no live value or the write deleted it), and
 `routes._unverified_kept_refusal` answers a press that does not acknowledge the mark with 409
 `{status: "unverified_kept", token: <the mark's id>, rows, message}`, the message "These values from an approval that
 may not have reached the chip will be written too. Take live instead to see what the chip holds."

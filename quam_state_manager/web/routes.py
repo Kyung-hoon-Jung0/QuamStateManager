@@ -36086,7 +36086,8 @@ def _note_unverified_write(ctx, outcome: str, kept: list | None = None) -> None:
     (:func:`_build_quam_context`). An approval (``agent_api._stage_writes``) and an agent's own
     press (:func:`_unverified_write_held`) then refuse until a person takes live or applies; a
     person's own Apply press names the kept values first (:func:`_unverified_kept_refusal`).
-    *kept*: the rows the write kept (``{"path", "old", "kept"}``), None when it wrote a whole
+    *kept*: the rows the write kept (``{"path", "old", "kept", "src"}``, plus ``"absent": True``
+    for no live value or ``"removed": True`` for a deleted key), None when it wrote a whole
     document without readable live values (docs/254)."""
     if outcome == "unknown" and ctx is not None:
         ctx["live_diverged"] = True

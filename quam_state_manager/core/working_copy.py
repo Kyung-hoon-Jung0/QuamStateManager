@@ -302,7 +302,8 @@ class WorkingCopy:
     #: pull (:func:`sync_from_live`), a landed :func:`apply_to_live` and :func:`clear_unverified_write`.
     #: The time (to the microsecond) is also the mark's id: a person's Apply acknowledges this id.
     unverified_write: str | None = None
-    #: what that write kept: ``[{"path", "old", "kept"}]`` (merged-view dot paths), or None when
+    #: what that write kept: rows ``{"path", "old", "kept", "src"}`` (merged-view dot paths), plus
+    #: ``"absent": True`` (no live value) or ``"removed": True`` (the write deleted the key), or None when
     #: the writer did not name its rows (older meta, a wholesale write). Cleared with the mark.
     unverified_kept: list | None = None
 
