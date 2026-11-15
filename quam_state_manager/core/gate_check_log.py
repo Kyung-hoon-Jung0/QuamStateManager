@@ -217,11 +217,23 @@ def outcome(result: dict | None, entry: dict | None, *,
         if isinstance(c, dict) and c.get("status") == "fail":
             out["failed"].append({"check": name, "label": CHECK_LABELS.get(name, name),
                                   "reason": str(c.get("message") or "A check failed.")})
+    unchecked = _unrun(entry)
+    for name, c in checks.items():
+        c = c if isinstance(c, dict) else {}
+        if c.get("status") == "fail":
+            continue
+        if (name in unchecked or c.get("status") == "skipped" or c.get("not_run")
+                or c.get("partly")):
+            why = reasons.get(name) or (
+                "only some operations were compared"
+                if c.get("partly") and c.get("status") != "skipped" else _short(c.get("message")))
+            out["not_run"].append({"check": name, "label": CHECK_LABELS.get(name, name),
+                                   "reason": why})
+        elif _counts_as_passed(name, c, unchecked):
+            out["passed"] += 1
     if out["failed"]:
         # the checks that passed beside the failed ones are still counted:
         # "1 failed, 5 passed", never "1 failed, 0 passed"
-        unrun = _unrun(entry)
-        out["passed"] = sum(1 for name, c in checks.items() if _counts_as_passed(name, c, unrun))
         out["kind"] = KIND_FAILED
         out["reason"] = out["failed"][0]["reason"]
         out["summary"] = (f"{len(out['failed'])} of {out['total']} checks failed: "
@@ -235,18 +247,6 @@ def outcome(result: dict | None, entry: dict | None, *,
                          or "no check ran")
         out["summary"] = "Not checked with the lab's code: " + _short(out["reason"]) + "."
         return out
-    unchecked = _unrun(entry)
-    for name, c in checks.items():
-        c = c if isinstance(c, dict) else {}
-        if (name in unchecked or c.get("status") == "skipped" or c.get("not_run")
-                or c.get("partly")):
-            why = reasons.get(name) or (
-                "only some operations were compared"
-                if c.get("partly") and c.get("status") != "skipped" else _short(c.get("message")))
-            out["not_run"].append({"check": name, "label": CHECK_LABELS.get(name, name),
-                                   "reason": why})
-        elif _counts_as_passed(name, c, unchecked):
-            out["passed"] += 1
     if not out["not_run"]:
         out["kind"] = KIND_CHECKED
         out["summary"] = "every check passed."

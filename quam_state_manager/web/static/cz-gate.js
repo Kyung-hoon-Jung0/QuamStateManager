@@ -1497,10 +1497,14 @@
         var list = cs.map(function (c) { return { name: CHECK_WORDS[c.name] || c.name, state: CHECK_STATE[c.status] || 'skip', why: c.message }; });
         var w = U.checks(list, 'Checks');
         Array.prototype.slice.call(w.querySelectorAll('.ui-result')).forEach(function (li, k) { li.setAttribute('data-check', cs[k].name); });
-        // skipped checks are not failures: one quiet line per reason, naming them
+        var oc = p.outcome;
+        var notRun = (oc && oc.not_run) || [];
+        // checks that could not run: one quiet line per reason, naming them
         var byWhy = {}, order = [];
         list.forEach(function (c) {
-            if (c.state !== 'skip') return;
+            if (c.state !== 'skip' && !notRun.some(function (x) {
+                return (CHECK_WORDS[x.check] || x.check) === c.name;
+            })) return;
             var why = c.why || '';
             if (!byWhy[why]) { byWhy[why] = []; order.push(why); }
             byWhy[why].push(c.name);
@@ -1518,9 +1522,11 @@
         var nf = list.filter(function (c) { return c.state === 'fail'; }).length;
         var np = list.filter(function (c) { return c.state === 'pass'; }).length;
         var ns = list.length - nf - np;
-        var oc = p.outcome;
-        if (sum && oc && oc.kind !== 'none') sum.textContent = oc.failed.length ? oc.failed.length + ' failed, ' + oc.passed + ' passed'
-            : oc.passed + ' of ' + oc.total + ' passed' + (oc.not_run.length ? ', ' + oc.not_run.length + ' could not run' : '');
+        if (sum && oc && oc.kind !== 'none') {
+            sum.textContent = (oc.failed.length ? oc.failed.length + ' failed, ' + oc.passed + ' passed'
+                : oc.passed + ' of ' + oc.total + ' passed')
+                + (notRun.length ? ', ' + notRun.length + ' could not run' : '');
+        }
         else if (sum) sum.textContent = nf ? nf + ' failed, ' + np + ' passed' : np + ' of ' + list.length + ' passed' + (ns ? ', ' + ns + ' not checked' : '');
         var ranNot = cs.some(function (c) { return c.name === 'ops' && c.status === 'fail'; });
         var pv = p.previews_skipped || [];

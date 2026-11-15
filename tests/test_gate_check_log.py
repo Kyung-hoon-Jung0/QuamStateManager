@@ -76,12 +76,32 @@ def test_a_failed_check_still_counts_the_checks_that_passed():
 
 def test_a_failed_check_counts_a_note_but_not_a_check_that_did_not_run_in_full():
     """Beside the failure: length, load_config pass and timeline note count (3);
-    ops ``partly`` and preview ``not_run`` do not: "1 failed, 3 passed" of 6."""
+    ops ``partly`` and preview ``not_run`` do not: 2 could not run, of 6."""
     oc = _oc("failed_beside_note_and_unrun")
     assert (oc["kind"], len(oc["failed"]), oc["passed"], oc["total"]) == (log.KIND_FAILED, 1, 3, 6)
+    assert [x["check"] for x in oc["not_run"]] == ["ops", "preview"]
+    assert len(oc["not_run"]) == 2
     checks = CASES["failed_beside_note_and_unrun"]["result"]["gates"][0]["checks"]
     assert checks["timeline"]["status"] == "note"
     assert checks["ops"].get("partly") and checks["preview"].get("not_run")
+
+
+def test_every_shared_case_accounts_for_every_check():
+    for name, case in CASES.items():
+        oc = _oc(name)
+        assert len(oc["failed"]) + oc["passed"] + len(oc["not_run"]) == len(
+            case["result"]["gates"][0]["checks"]), name
+
+
+def test_a_check_named_only_in_partly_checked_did_not_run_in_full():
+    for name in ("checked", "failed"):
+        case = json.loads(json.dumps(CASES[name]))
+        gate = case["result"]["gates"][0]
+        gate["partly_checked"] = ["timeline"]
+        assert not gate["checks"]["timeline"].get("partly")
+        oc = log.outcome(case["result"], gate)
+        assert oc["passed"] == (5 if name == "checked" else 4)
+        assert oc["not_run"] == [{"check": "timeline", "label": "timeline", "reason": "passed"}]
 
 
 def test_one_rule_says_a_check_counts_as_passed():

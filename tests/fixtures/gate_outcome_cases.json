@@ -116,7 +116,7 @@
    }
   },
   "failed_beside_note_and_unrun": {
-   "_about": "A note counts as passed; partly and not_run checks do not: 1 failed, 3 passed.",
+   "_about": "A note counts as passed; partly and not_run checks do not: 1 failed, 3 passed. 2 could not run.",
    "outcome": {
     "failed": [
      {
@@ -126,7 +126,18 @@
      }
     ],
     "kind": "failed",
-    "not_run": [],
+    "not_run": [
+     {
+      "check": "ops",
+      "label": "running the gate",
+      "reason": "only some operations were compared"
+     },
+     {
+      "check": "preview",
+      "label": "preview comparison",
+      "reason": "no preview for this pulse class"
+     }
+    ],
     "passed": 3,
     "reason": "The pulse leaves the output range.",
     "summary": "1 of 6 checks failed: output range check.",
@@ -182,7 +193,38 @@
    "outcome": {
     "failed": [],
     "kind": "none",
-    "not_run": [],
+    "not_run": [
+     {
+      "check": "length",
+      "label": "length check",
+      "reason": "no environment is selected"
+     },
+     {
+      "check": "load_config",
+      "label": "loading the chip",
+      "reason": "no environment is selected"
+     },
+     {
+      "check": "ops",
+      "label": "running the gate",
+      "reason": "no environment is selected"
+     },
+     {
+      "check": "preview",
+      "label": "preview comparison",
+      "reason": "no environment is selected"
+     },
+     {
+      "check": "range",
+      "label": "output range check",
+      "reason": "no environment is selected"
+     },
+     {
+      "check": "timeline",
+      "label": "timeline",
+      "reason": "no environment is selected"
+     }
+    ],
     "passed": 0,
     "reason": "No Python environment is selected.",
     "summary": "Not checked with the lab's code: no Python environment is selected.",

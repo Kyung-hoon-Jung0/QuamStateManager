@@ -805,13 +805,26 @@ function tableWidths(el, sw, cw) {
             ok(/every check passed/.test(alertText()) && /^6 of 6 passed$/.test($('#czg-checks-sum').textContent),
                'shared case checked: every check passed, 6 of 6');
         } else if (name === 'failed_beside_note_and_unrun') {
-            ok(/^1 failed, 3 passed$/.test($('#czg-checks-sum').textContent),
-               'shared case failed beside a note, a partly and a not-run check: 1 failed, 3 passed (the note counts)');
+            ok(/^1 failed, 3 passed, 2 could not run$/.test($('#czg-checks-sum').textContent),
+               'shared failure: 1 failed, 3 passed, 2 could not run');
+            const lines = [...$('#czg-checks').querySelectorAll('p.ui-text-quiet')].map((p) => p.textContent);
+            ok(lines.includes('1 check was not run (The gate runs with the lab\'s code): '
+                + 'Only some operations were compared.')
+                && lines.includes('1 check was not run (Preview equals the config): '
+                + 'No preview for this pulse class.'), 'shared failure names both checks that could not run');
         } else {
             ok(/^1 failed, 5 passed$/.test($('#czg-checks-sum').textContent),
                'shared case failed: one failing of six reads 1 failed, 5 passed (the server count, never 0 passed)');
         }
     }
+    type($('#czg-name'), 'cz_old_outcome');
+    await settle();
+    queue.check.push((b) => { const j = checkOk(b); j.pairs.forEach((x) => {
+        x.outcome = { ...OUTCOME_CASES.failed.outcome }; delete x.outcome.not_run;
+    }); return j; });
+    prim().click();
+    await settle();
+    ok($('#czg-checks-sum').textContent === '1 failed, 5 passed', 'old failure without not_run still renders');
     // Length and general refusals keep Name reserved for name errors.
     queue.plan.push((b) => { const j = planOk(b); j.pairs[0].ok = false;
         j.pairs[0].refusals = ['flux_pulse_qubit.length: The pulse length 18 ns must be a multiple of 4 ns.',
