@@ -267,9 +267,10 @@ window.CoreRecommend = (function () {
     function refresh() {
         if (inFlight) { readAgain = true; return inFlight; }
         inFlight = fetch('/diagnostics/core-findings', { headers: { 'Accept': 'application/json' } })
-            .then(function (r) { return r.json(); })
+            .then(function (r) { if (!r.ok) throw new Error('status ' + r.status); return r.json(); })
             .then(function (d) {
-                var list = (d && Array.isArray(d.findings)) ? d.findings : [];
+                if (!d || !Array.isArray(d.findings)) throw new Error('bad body');
+                var list = d.findings;
                 refreshers.forEach(function (fn) { try { fn(list); } catch (e) { /* one surface only */ } });
                 return list;
             })
@@ -289,20 +290,30 @@ window.CoreRecommend = (function () {
        preview open at that moment is closed by the re-render and the slot says
        so in one line; the press path is exempt (its own refresh follows). */
     var REREAD_LINE = 'The chip changed while the preview was open; the recommendation was read again.';
+    var REREAD_NONE = 'The chip changed while the preview was open; no core layout finding remains.';
     function onChanged() {
         if (!mounted()) return;
-        var open = Array.prototype.some.call(document.querySelectorAll('[data-core-rec-preview]'), function (pv) {
-            return !pv.hidden && !pv.closest('[data-core-rec-pressing]');
+        /* Only the slots whose preview was open get the line, once each; a
+           failed read (null) changes nothing, so the open preview stays. */
+        var openSlots = [];
+        document.querySelectorAll('[data-core-rec-slot], [data-loadcheck-core]').forEach(function (slot) {
+            var hit = Array.prototype.some.call(slot.querySelectorAll('[data-core-rec-preview]'), function (pv) {
+                return !pv.hidden && !pv.closest('[data-core-rec-pressing]');
+            });
+            if (hit) openSlots.push(slot);
         });
         var p = refresh();
-        if (!open || !p || !p.then) return;
+        if (!openSlots.length || !p || !p.then) return;
         p.then(function (list) {
             if (list === null) return;
-            document.querySelectorAll('[data-core-rec-slot], [data-loadcheck-core]').forEach(function (slot) {
+            openSlots.forEach(function (slot) {
+                if (!slot.isConnected) return;
+                var old = slot.querySelectorAll('[data-core-rec-reread]');
+                Array.prototype.forEach.call(old, function (n) { n.remove(); });
                 var line = document.createElement('p');
                 line.className = 'ui-callout-text';
                 line.setAttribute('data-core-rec-reread', '');
-                line.textContent = REREAD_LINE;
+                line.textContent = slot.querySelector('[data-core-rec]') ? REREAD_LINE : REREAD_NONE;
                 slot.insertBefore(line, slot.firstChild);
             });
         });
@@ -363,6 +374,6 @@ window.CoreRecommend = (function () {
         document.querySelectorAll('[data-core-rec-slot]').forEach(function (slot) { slot.innerHTML = blocks(list); });
     });
     return { html: html, previewHtml: previewHtml, refresh: refresh, onApplied: onApplied,
-             mountAfter: mountAfter, blocks: blocks, REREAD_LINE: REREAD_LINE,
+             mountAfter: mountAfter, blocks: blocks, REREAD_LINE: REREAD_LINE, REREAD_NONE: REREAD_NONE,
              NOTE_FAILED: NOTE_FAILED };
 })();

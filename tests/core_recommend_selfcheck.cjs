@@ -46,6 +46,10 @@ window.eval(`
     }
     if (url.indexOf('/diagnostics/core-findings') === 0) {
       window.__reads = (window.__reads || 0) + 1;
+      if (window.__coreMode === 'reject') return Promise.reject(new Error('network'));
+      if (window.__coreMode === '500') return Promise.resolve({ ok: false, status: 500, json: function () { return Promise.resolve({ ok: true, findings: [] }); } });
+      if (window.__coreMode === 'nobody') return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ ok: false }); } });
+      if (window.__coreMode === 'badjson') return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.reject(new SyntaxError('bad json')); } });
       if (window.__defer) return new Promise(function (res) { window.__pending.push(function (f) {
         res({ ok: true, status: 200, json: function () { return Promise.resolve({ ok: true, findings: f }); } }); }); });
       return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ ok: true, findings: window.__findingsAfter }); } });
@@ -145,6 +149,83 @@ const CR = window.CoreRecommend;
   fire();
   await until(() => slotNow().querySelector('[data-core-rec-reread]') === null);
   ok(slotNow().querySelector('[data-core-rec-reread]') === null, 'no open preview: no re-read line');
+
+  // Per-slot line: two slots, only the one with an open preview gets the line.
+  const LC = Object.assign({ line: 'Cores on con1 FEM 1: 10 / 8' }, FINDING);
+  const host = window.document.getElementById('host');
+  const lcHtml = () => '<div data-loadcheck-core><div class="ui-callout">' + CR.html(LC) + '</div></div>';
+  const lcSlot = () => host.querySelector('[data-loadcheck-core]');
+  const allRR = () => window.document.querySelectorAll('[data-core-rec-reread]');
+  const openIn = async (slotEl) => {
+    const b = slotEl.querySelector('[data-core-rec]');
+    b.querySelector('[data-core-rec-open]').click();
+    await until(() => !b.querySelector('[data-core-rec-apply]').disabled);
+    return b;
+  };
+  host.innerHTML = lcHtml();
+  window.__findingsAfter = [LC];
+  await openIn(slotNow());
+  fire();
+  await until(() => allRR().length > 0);
+  await wait(20);
+  ok(allRR().length === 1 && slotNow().querySelector('[data-core-rec-reread]') !== null, 'two slots, one open: exactly one line, in the open slot');
+  ok(lcSlot().querySelector('[data-core-rec-reread]') === null, 'the slot that held no preview gets no line');
+
+  // Open in the Load check slot, the last finding removed: one plain line.
+  CR.mountAfter(tiles, [LC]); host.innerHTML = lcHtml();
+  await openIn(lcSlot());
+  window.__findingsAfter = [];
+  fire();
+  await until(() => allRR().length > 0);
+  await wait(20);
+  ok(allRR().length === 1 && lcSlot().querySelector('[data-core-rec-reread]') !== null, 'last finding removed: one line, in the open slot only');
+  ok(allRR()[0].textContent === CR.REREAD_NONE && CR.REREAD_NONE.indexOf('no core layout finding remains') >= 0, 'last finding removed: the line says no finding remains');
+  ok(lcSlot().querySelector('[data-core-rec]') === null, 'last finding removed: no recommendation left to point at');
+
+  // Both slots open at once (a harness case; the two slots live on different pages): one line each.
+  CR.mountAfter(tiles, [LC]); host.innerHTML = lcHtml();
+  window.__findingsAfter = [LC];
+  await openIn(slotNow()); await openIn(lcSlot());
+  fire();
+  await until(() => allRR().length === 2);
+  await wait(20);
+  ok(allRR().length === 2 && slotNow().querySelectorAll('[data-core-rec-reread]').length === 1
+    && lcSlot().querySelectorAll('[data-core-rec-reread]').length === 1, 'both open: one line per open slot');
+
+  // Failed re-reads: no line, the open preview untouched; the next good read shows it once.
+  host.innerHTML = '';
+  for (const mode of ['reject', '500', 'badjson', 'nobody']) {
+    CR.mountAfter(tiles, [FINDING]);
+    const b = await openIn(slotNow());
+    window.__coreMode = mode;
+    const r1 = window.__reads;
+    fire();
+    await until(() => window.__reads > r1);
+    await wait(30);
+    ok(allRR().length === 0, mode + ': a failed re-read shows no line');
+    ok(b.isConnected && !b.querySelector('[data-core-rec-preview]').hidden && !b.querySelector('[data-core-rec-apply]').disabled,
+      mode + ': the open preview is left untouched');
+  }
+  window.__coreMode = null;
+  window.__findingsAfter = [FINDING];
+  fire();
+  await until(() => allRR().length > 0);
+  await wait(20);
+  ok(allRR().length === 1 && allRR()[0].textContent === CR.REREAD_LINE, 'fail then success: the line appears then, once');
+
+  // Two events in a row with the preview open: still one line.
+  CR.mountAfter(tiles, [FINDING]);
+  await openIn(slotNow());
+  window.__pending = []; window.__defer = true;
+  fire(); fire();
+  await until(() => window.__pending.length === 1);
+  window.__pending.shift()([FINDING]);
+  await until(() => window.__pending.length === 1);
+  window.__pending.shift()([FINDING]);
+  await until(() => allRR().length > 0);
+  await wait(30);
+  ok(allRR().length === 1, 'two events in a row: one line, not two');
+  window.__defer = false;
 
   // Slot gone: the event sends nothing.
   slotNow().remove();

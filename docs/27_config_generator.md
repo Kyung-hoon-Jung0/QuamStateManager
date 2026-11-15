@@ -708,8 +708,9 @@ be read. Unreadable ports are named, not placed.
   the slot is shown, so a Ctrl+Z brings the finding, the button, the tile count and the banner back without a
   reload. One document listener (capture phase), inert when no slot is mounted; one read at a time, a call during
   a read asks for one more read after it, so answers never cross. A preview open at that moment is closed by the
-  re-render with one line saying the recommendation was read again; the event of the user's own Stage press is
-  exempt.
+  re-render with one line, once, in that slot only, saying the recommendation was read again (or that no core layout
+  finding remains); the event of the user's own Stage press is exempt. A failed read (rejected, non-200, bad JSON or
+  no findings list) shows no line and leaves the open preview as it was.
 - The Diagnostics page only points to the button: its fix line names Load check and Chip Status
   (`FIX_DIAGNOSTICS`), the finding carries no fix items there (`core_layout.page_findings`), no per-item button and
   no "Set all".
