@@ -114,13 +114,14 @@
     #wb-fallback p { color: #9aa4b2; max-width: 360px; font-size: 13px; line-height: 1.5; }
     #wb-fallback a.btn { background: #2d6cdf; color: #fff; padding: 8px 14px; border-radius: 6px; text-decoration: none; font-size: 13px; }
   </style>
+  <link rel="stylesheet" href="{{ asset_url('ui-kit.css') }}" />
   <script>
     // Default Qualibrate URL from the server (query ?qb=, env QUALIBRATE_URL, else 8001);
     // a user override is persisted in localStorage and wins.
     const QB_DEFAULT = {{ qb_url_default | tojson }};
   </script>
 </head>
-<body>
+<body class="ui-workbench">
   <div id="wb-bar">
     <span class="title">⌗ Sync-Qualibrate</span>
     <div id="wb-seg" role="group" aria-label="View">
@@ -404,6 +405,12 @@
       //    Qualibrate clips, but never blocks; chevrons/toolbar snap to a clean single app) ──
       function buildSplit(sizes) {
         if (splitInstance) { try { splitInstance.destroy(); } catch (e) {} splitInstance = null; }
+        document.body.toggleAttribute("data-narrow", window.innerWidth <= 700);
+        if (document.body.hasAttribute("data-narrow")) {
+          left.style.cssText = ""; right.style.cssText = "";
+          gutterEl = null;
+          return;
+        }
         splitInstance = Split(["#wb-left", "#wb-right"], {
           sizes: sizes,
           minSize: 0,          // free full-range drag, edge to edge (user manages clip)
@@ -460,6 +467,11 @@
         }
         view = v;
         lsSet(VIEW_KEY, v);
+        document.body.setAttribute("data-view", v);
+        if (document.body.hasAttribute("data-narrow")) {
+          updateSegmented();
+          return;
+        }
         panes.classList.add("wb-animating");
 
         if (v === "split") {
@@ -701,7 +713,14 @@
       });
 
       // ── boot ──
-      buildSplit(readSizes());
+      window.addEventListener("resize", function () {
+        if ((window.innerWidth <= 700) === document.body.hasAttribute("data-narrow")) return;
+        if (view === "split" && splitInstance) prevSizes = splitInstance.getSizes();
+        buildSplit(prevSizes);
+        setView(view);
+      });
+      prevSizes = readSizes();
+      buildSplit(prevSizes);
       var startView = ls(VIEW_KEY) || "split";
       if (startView !== "split" && startView !== "qb" && startView !== "sm") startView = "split";
       setView(startView);
