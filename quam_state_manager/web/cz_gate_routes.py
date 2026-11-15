@@ -51,9 +51,10 @@ import time
 from collections import OrderedDict
 from typing import Any
 
-from flask import jsonify, render_template, request
+from flask import current_app, jsonify, render_template, request
 
 from quam_state_manager.core import chip_copy, cz_gate_build as cgb, cz_gate_create
+from quam_state_manager.core.quam_config_save import class_refusal, lab_package
 from quam_state_manager.core import gate_check, gate_check_log, gate_intent, gate_timeline_view, pulse_catalog
 from quam_state_manager.web import request_body
 from quam_state_manager.web import routes as R
@@ -238,6 +239,8 @@ def _plan_all(merged: dict, body: dict) -> list[tuple[str, dict]]:
         return [(pid, {"error": bad[0], "refusals": bad}) for pid in body["pairs"]]
     out = []
     first = None
+    scope = R._ctx_chip_key(R._active_ctx()) or "no-chip"
+    lab_folder = lab_package(_env_python())
     for i, pid in enumerate(body["pairs"]):
         pulses = body["pulses"]
         copy_from = body["copy_from"] if i == 0 else None
@@ -254,10 +257,17 @@ def _plan_all(merged: dict, body: dict) -> list[tuple[str, dict]]:
                 if f not in pulses:
                     pp = gate_intent.planned_pulse(first, f) or {}
                     pulses[f] = {"class": pp.get("__class__"), "fields": _given_values(pp)}
-        res = cgb.plan(merged, pid, gate_name=body["gate_name"], gate_class=body["gate_class"],
-                       pulses=pulses, copy_from=copy_from, model_gate=body["model_gate"],
-                       macro_fields=body["macro_fields"] or None,
-                       **({"spectators": spect[pid]} if pid in spect else {}))
+        requested = [body["gate_class"]] + [s.get("class") for s in pulses.values() if isinstance(s, dict)]
+        why = class_refusal(current_app.instance_path, scope, classes=requested, lab_folder=lab_folder)
+        res = {} if why else cgb.plan(
+            merged, pid, gate_name=body["gate_name"], gate_class=body["gate_class"],
+            pulses=pulses, copy_from=copy_from, model_gate=body["model_gate"],
+            macro_fields=body["macro_fields"] or None,
+            **({"spectators": spect[pid]} if pid in spect else {}))
+        why = why or class_refusal(current_app.instance_path, scope, res.get("creates") or [],
+                                   lab_folder=lab_folder)
+        if why:
+            res = {"error": why, "refusals": [why]}
         if i == 0:
             first = res
         out.append((pid, res))

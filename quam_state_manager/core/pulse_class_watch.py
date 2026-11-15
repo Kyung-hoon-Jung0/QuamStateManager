@@ -31,6 +31,8 @@ from quam_state_manager.core import pulse_class_drafts as D
 from quam_state_manager.core import pulse_class_template as T
 
 TARGET_FILE = "target.json"
+# What Save to quam_config published; Save to file never writes it.
+PUBLISHED_FILE = "published.json"
 
 CONFLICT_QUESTION = ("The draft file changed outside SM while this editor has changes "
                      "that are not saved. Which one do you keep?")
@@ -289,6 +291,21 @@ def _target_record(instance, scope, class_name) -> dict:
     return v if isinstance(v, dict) else {}
 
 
+def published_record(instance, scope, class_name) -> dict:
+    """The file Save to quam_config published for this draft ({} when none).
+    Kept apart from the Save to file record, so a copy saved elsewhere does
+    not erase it."""
+    p = D.draft_path(instance, scope, class_name).parent / PUBLISHED_FILE
+    try:
+        v = json.loads(p.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        old = _target_record(instance, scope, class_name)
+        return old if old.get("qclass") else {}
+    except ValueError:
+        return {}
+    return v if isinstance(v, dict) else {}
+
+
 def get_target(instance, scope, class_name) -> str | None:
     """The remembered class file; a stored path that is not absolute (written
     before paths had to be absolute) is not trusted."""
@@ -339,6 +356,13 @@ def save_to_target(instance, scope, class_name, target: str, replace_sha: str | 
     result is otherwise ``{"ok": False, "confirm": {...}}`` and nothing is
     written. A replaced file is copied next to itself first (``backup``)."""
     t = check_target(target)
+    published = published_record(instance, scope, class_name)
+    if published.get("path") == str(t):
+        raise D.DraftError(f"{t} was saved with Save to quam_config; use Save to quam_config "
+                           "again, which checks the chip with the new code first.")
+    if t.parent.name == "quam_config":
+        raise D.DraftError(f"{t.parent} is a quam_config folder; use Save to quam_config, "
+                           "which checks the class before it writes the file.")
     data = D.load_draft(instance, scope, class_name)
     if data is None:
         raise D.DraftError("There is no draft for this class.")

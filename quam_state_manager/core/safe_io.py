@@ -666,6 +666,23 @@ def path_lock(path: Path | str) -> threading.Lock:
         return lk
 
 
+def atomic_write_bytes(path: Path | str, data: bytes, *, create_only: bool = False) -> None:
+    """Publish complete bytes, optionally refusing even a racing existing name."""
+    path = Path(path)
+    tmp = _tmp_for(path)
+    try:
+        with open(tmp, "xb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        if create_only:
+            os.link(tmp, path)
+        else:
+            _replace_into_place(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def atomic_write_json(path: Path | str, data, *, compact: bool = False) -> None:
     """Write *data* as pretty JSON to *path* atomically.
 

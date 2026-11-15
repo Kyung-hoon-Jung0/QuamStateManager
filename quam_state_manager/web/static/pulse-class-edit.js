@@ -35,6 +35,12 @@
         }, function () { return { ok: false, error: "SM did not answer." }; });
     }
     function show(node, text) { if (!node) return; node.textContent = text || ""; node.hidden = !text; }
+    function showLines(node, lines) {
+        if (!node) return;
+        node.textContent = "";
+        lines.filter(Boolean).forEach(function (line) { node.appendChild(el("li", null, line)); });
+        node.hidden = !node.firstChild;
+    }
     function isDark() { return (document.documentElement.getAttribute("data-theme") || "qm") !== "light"; }
 
     // The status line carries only the server's words (where the draft is
@@ -347,8 +353,49 @@
             S.statusLine = r.status;
             show(q(S.root, "[data-pce-file-note]"),
                 (r.backup === null ? "Saved; no earlier file to back up." : "Backup: " + r.backup) +
-                (dirty || S.dirty ? " The saved draft was written, not the unsaved pane." : ""));
+                (dirty || S.dirty ? " The saved draft was written, not the unsaved pane." : "") +
+                (r.record_error ? " " + r.record_error : ""));
             setStatus(S.statusLine);
+        });
+    }
+    function saveConfig(confirmedFolder) {
+        if (S.dirty) {
+            show(q(S.root, "[data-pce-error]"), "Save draft before saving to quam_config.");
+            return Promise.resolve();
+        }
+        var mine = S;
+        var body = { cls: S.cls, python: q(S.root, "[data-pce-env]").value,
+                     folder: q(S.root, "[data-pce-config-folder]").value.trim() };
+        if (confirmedFolder) body.confirmed_folder = confirmedFolder;
+        S.busy = true;
+        return api("POST", "/pulse-class/save-config", body).then(function (r) {
+            mine.busy = false;
+            if (S !== mine) return;
+            if (r.confirm) {
+                var c = r.confirm;
+                var gates = c.gates.map(function (g) {
+                    return g.pair + ": " + g.gate + (g.live_active ? " (live and active)" : "");
+                }).join("\n");
+                askChoice({ title: "Save to quam_config", question: "File: " + c.path +
+                    "\nThe environment imports quam_config from: " + c.env_folder + "\n" + c.notice +
+                    (c.warning ? "\n" + c.warning : "") + (gates ? "\nGates on this chip using this class:\n" + gates : ""),
+                    choices: [
+                        { label: "Confirm folder and save", primary: true,
+                          loses: "SM checks the draft in the lab environment, then writes " + c.path,
+                          act: function () { saveConfig(c.folder); } },
+                        { label: "Cancel", loses: "nothing is written", act: function () {} },
+                    ] });
+                return;
+            }
+            if (!r.ok) { show(q(S.root, "[data-pce-error]"), r.error); return; }
+            show(q(S.root, "[data-pce-error]"), "");
+            S.statusLine = r.status;
+            setStatus(r.status);
+            showLines(q(S.root, "[data-pce-config-result]"), ["Saved to " + r.target, r.dependency,
+                r.restart, r.warning, r.chip_warning, r.proportional_warning, r.record_error, r.backup ? "Backup of the replaced file: " + r.backup : ""]);
+        }).catch(function (err) {
+            mine.busy = false;
+            if (S === mine) show(q(S.root, "[data-pce-error]"), String(err));
         });
     }
     function poll() {
@@ -439,6 +486,7 @@
         q(root, "[data-pce-save-file]").addEventListener("click", function () {
             saveFile(q(root, "[data-pce-target]").value);
         });
+        q(root, "[data-pce-save-config]").addEventListener("click", function () { saveConfig(); });
         return api("GET", "/pulse-class/load?cls=" + encodeURIComponent(cls)).then(function (r) {
             if (!S) return;
             if (!r.ok) { setStatus(r.error); return; }

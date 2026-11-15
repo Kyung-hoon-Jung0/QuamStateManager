@@ -127,7 +127,7 @@ def test_three_phrases_by_state(inst, tmp_path):
     src = T.render(_spec())
     D.save_draft(inst, "c", "FlatPulse", src)
     assert W.status(inst, "c", "FlatPulse")["line"] == "Draft, not saved"
-    target = tmp_path / "quam_config" / "flat_pulse.py"
+    target = tmp_path / "lab_copy" / "flat_pulse.py"
     target.parent.mkdir()
     _previewed(inst)
     st = W.save_to_target(inst, "c", "FlatPulse", str(target))

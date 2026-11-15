@@ -51,9 +51,17 @@
     <p class="ui-note" data-pce-path></p>
     <div class="ui-field-grid">
       <label>Class file <input type="text" class="ui-input pce-target" data-pce-target autocomplete="off" aria-describedby="pce-target-hint"></label>
-      <p class="ui-field-hint" id="pce-target-hint">The full path of the .py file, for example in your quam_config folder.</p>
+      <p class="ui-field-hint" id="pce-target-hint">The full path of a .py copy outside quam_config. To add the class to the lab code, use Save to quam_config.</p>
     </div>
     <div class="ui-actions"><button type="button" class="btn-sm outline" data-pce-save-file>Save to file</button></div>
+    <p class="ui-note">This file is Python that runs without isolation in the lab environment.</p>
+    <div class="ui-field-grid">
+      <label>Other folder (optional)
+        <input type="text" class="ui-input" data-pce-config-folder autocomplete="off" aria-describedby="pce-config-hint"></label>
+      <p class="ui-field-hint" id="pce-config-hint">Empty: the quam_config folder the chosen environment imports. SM shows the full path before it writes.</p>
+    </div>
+    <div class="ui-actions"><button type="button" class="btn-sync" data-pce-save-config>Save to quam_config</button></div>
+    <ul class="pce-list" data-pce-config-result role="status" hidden></ul>
   </section>
   <section class="ui-item pce-preview" aria-label="Waveform preview">
     <p class="ui-note" data-pce-error role="alert" hidden></p>

@@ -17,6 +17,7 @@ from quam_state_manager.core import config_generator
 from quam_state_manager.core import pulse_class_drafts as D
 from quam_state_manager.core import pulse_class_template as T
 from quam_state_manager.core import pulse_class_watch as W
+from quam_state_manager.core import quam_config_save as Q
 from quam_state_manager.web.request_body import json_object
 
 pulse_class_page_bp = Blueprint("pulse_class_page", __name__)
@@ -179,5 +180,62 @@ def pulse_class_save_file():
         return _err(f"The class file could not be written: {exc}")
     if not st.get("ok"):
         return jsonify(st), 409
+    target = W.get_target(_inst(), _scope(), cls)
+    record_error = _record_class_write(target, (W._target_record(_inst(), _scope(), cls) or {}).get("sha"))
     return jsonify({"ok": True, "status": st["line"], "backup": st["backup"],
-                    "target": W.get_target(_inst(), _scope(), cls)})
+                    "target": target, "record_error": record_error})
+
+
+def _actor() -> str:
+    return "agent" if request.headers.get("X-SM-Agent") else "person"
+
+
+def _history_folder():
+    """The open chip's history folder, or None without a chip."""
+    r = _r()
+    ctx = r._active_ctx()
+    if not ctx or not ctx.get("path"):
+        return None
+    from quam_state_manager.core import gate_check_log
+    return gate_check_log.chip_dir(r._history(), ctx["path"])
+
+
+def _record_class_write(target, sha) -> str | None:
+    """One history line for a class file written by Save to file; the text
+    to show when it could not be written."""
+    folder = _history_folder()
+    if folder is None:
+        return "The class file was saved, but no chip is open to record it in."
+    try:
+        Q.record_write(folder, actor=_actor(), path=target, sha256=sha, gates=[])
+    except OSError as exc:
+        return f"The class file was saved, but its history line failed: {exc}"
+    return None
+
+
+@pulse_class_page_bp.route("/pulse-class/save-config", methods=["POST"])
+def pulse_class_save_config():
+    data = json_object()
+    r = _r()
+    ctx = r._active_ctx()
+    if not ctx or not r._store():
+        return _err("Open a chip so the class write can be recorded in its history.")
+    from quam_state_manager.core import working_copy
+    from quam_state_manager.core.loader import merge_state_wiring
+    from quam_state_manager.web.port_play_page import _chosen_env
+    python = str(data.get("python") or _chosen_env(ctx)[0] or "")
+    try:
+        live = None
+        if ctx.get("working_copy"):
+            pair = working_copy.read_live_shared(ctx["working_copy"])
+            live = merge_state_wiring(pair.state, pair.wiring)
+        result = Q.save_class(
+            python, _inst(), _scope(), str(data.get("cls") or ""),
+            confirmed_folder=data.get("confirmed_folder"), folder=data.get("folder") or None,
+            store=r._store(), live=live,
+            history_folder=_history_folder(), actor=_actor())
+        if result.get("registered"):
+            r._reprobe_if_new_classes(r._store())
+        return jsonify(result), 200 if result.get("ok") else 409
+    except (D.DraftError, OSError, ValueError) as exc:
+        return _err(str(exc))
