@@ -7,7 +7,8 @@
     if (window.GateStatus) return;
 
     /* The pair's gate zone re-fetches itself on a gate write from elsewhere on
-       the page (pulses-changed), an undo, a redo or a sync pull. While a delete offer is open in it that refresh waits (the offer would be
+       the page (pulses-changed), an undo, a redo or a sync pull. While a
+       delete offer is open in it that refresh waits (the offer would be
        wiped under the user's eyes); it runs once the last offer closes. */
     function offerOpen(zone) {
         return !!(zone && zone.querySelector('.gate-status-slot .gate-delete-offer'));
