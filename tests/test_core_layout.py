@@ -321,6 +321,7 @@ def test_mixed_fems_counted_separately():
 def test_opx_plus_costs_estimated():
     c = Chip()
     c.s["ports"] = {"analog_outputs": {"con1": {"1": {}, "2": {}}}}
+    c.s["controllers"] = {"con1": {"type": "opx1"}}
     c.el("q0", "xy", opx_output_I="#/ports/analog_outputs/con1/1", opx_output_Q="#/ports/analog_outputs/con1/2")
     f = cl.core_budget(c.s)["fems"][0]
     assert f["fem"] is None and f["fem_type"] == "OPX+"
@@ -532,6 +533,7 @@ def test_two_elements_same_name_same_fem_no_name_finding():
 def test_opx_plus_message_and_location():
     c = Chip()
     c.s["ports"] = {"analog_outputs": {"con1": {str(i): {} for i in range(1, 21)}}}
+    c.s["controllers"] = {"con1": {"type": "opx1"}}
     for i in range(1, 20):
         c.el(f"q{i}", "z", opx_output=f"#/ports/analog_outputs/con1/{i}")
     fs = core_findings(c.s)
@@ -541,9 +543,50 @@ def test_opx_plus_message_and_location():
     assert "FEM" not in fs[0].message and "FEM" not in fs[0].location
 
 
+def _controller_chip(n, con="con1"):
+    c = Chip()
+    c.s["ports"] = {"analog_outputs": {con: {str(i): {} for i in range(1, n + 1)}}}
+    for i in range(1, n + 1):
+        c.el(f"q{i}", "z", opx_output=f"#/ports/analog_outputs/{con}/{i}")
+    return c
+
+
+def test_controller_type_not_stated_assumes_opx_plus_and_says_so():
+    # 6 qubits with IQ xy on a controller-level chip: 12 cores, inside the OPX+ limit, no warning.
+    c = _controller_chip(12)
+    f = cl.core_budget(c.s)["fems"][0]
+    assert f["cores"]["limit"] == 18 and f["controller_type"] == "assumed"
+    assert f["cores"]["limit_estimated"] is True
+    assert core_findings(c.s) == []
+    assert core_findings(_controller_chip(18).s) == []
+    fs = core_findings(_controller_chip(19).s)
+    assert len(fs) == 1
+    assert fs[0].message == ("19 / 18 cores (estimated) on con1 (OPX+ assumed; an original OPX "
+                             "allows 10); routes 0 / 10 (estimated)")
+    assert fs[0].location == "con1 (OPX+ assumed)"
+    # a type field that is present but not the OPX+ value is not a statement either
+    c.s["controllers"] = {"con1": {"type": "opx1000"}}
+    assert cl.core_budget(c.s)["fems"][0]["cores"]["limit"] == 18
+    c.s["controllers"] = {"con1": {}}
+    assert cl.core_budget(c.s)["fems"][0]["controller_type"] == "assumed"
+
+
+def test_opx_plus_typed_and_untyped_side_by_side():
+    c = _controller_chip(19)
+    c.s["ports"]["analog_outputs"]["con2"] = {str(i): {} for i in range(1, 20)}
+    for i in range(1, 20):
+        c.el(f"p{i}", "z", opx_output=f"#/ports/analog_outputs/con2/{i}")
+    c.s["controllers"] = {"con2": {"type": "opx1"}}
+    by = {f["controller"]: f for f in cl.core_budget(c.s)["fems"]}
+    assert by["con1"]["cores"]["limit"] == 18 and by["con2"]["cores"]["limit"] == 18
+    assert by["con2"]["controller_type"] == "OPX+" and by["con1"]["controller_type"] == "assumed"
+    assert sorted(f.location for f in core_findings(c.s)) == ["con1 (OPX+ assumed)", "con2 (OPX+)"]
+
+
 def test_opx_plus_oscillator_message():
     c = Chip()
     c.s["ports"] = {"analog_outputs": {"con1": {str(i): {} for i in range(1, 8)}}}
+    c.s["controllers"] = {"con1": {"type": "opx1"}}
     for i in range(1, 8):
         c.el(f"q{i}", "z", "g", opx_output=f"#/ports/analog_outputs/con1/{i}")
     fs = [f for f in cl.core_budget_findings(c.s) if f.values["kind"] == "oscillators"]
@@ -602,3 +645,62 @@ def test_internal_error_returns_count_failed(monkeypatch):
     assert len(fs) == 1 and fs[0].values["kind"] == "count_failed"
     assert fs[0].message == "Core layout could not be counted (ValueError)" and fs[0].severity == "warning"
     assert cl.core_budget(c.s)["error"] == "ValueError"
+
+
+# --- untyped controller between the original OPX and the OPX+ limits --------
+def _info_lines(state, surface):
+    return [cl.finding_line(f) for f in cl.surface_findings(state, surface)
+            if f.values.get("kind") == "assumed_type"]
+
+
+def test_untyped_controller_in_the_opx_gap_gets_one_info_line():
+    expected = ("Core layout note: {n} cores on con1 fit an OPX+ (18) but would exceed an original OPX "
+                "(10); the chip does not state the controller type")
+    for n, want in ((10, False), (11, True), (14, True), (18, True), (19, False)):
+        s = _controller_chip(n).s
+        lc, rv = _info_lines(s, "load_check"), _info_lines(s, "review")
+        assert lc == rv, n
+        if want:
+            assert [x["line"] for x in lc] == [expected.format(n=n)], n
+            assert lc[0]["severity"] == "info"
+        else:
+            assert lc == [], n
+        assert _info_lines(s, "diagnostics") == []
+    # 19: the over-limit warning only
+    fs = cl.surface_findings(_controller_chip(19).s, "load_check")
+    assert [f.values["kind"] for f in fs] == ["fem_budget"]
+    # info is never a warning
+    f = cl.surface_findings(_controller_chip(14).s, "load_check")[0]
+    assert f.severity == "info" and not cl.finding_line(f)["line"].startswith("Core layout warning")
+
+
+def test_typed_or_fem_chip_in_the_gap_gets_no_info_line():
+    c = _controller_chip(14)
+    c.s["controllers"] = {"con1": {"type": "opx1"}}
+    assert cl.surface_findings(c.s, "load_check") == []
+    m = Chip()
+    for i in range(14):
+        m.el(f"q{i}", "xy", opx_output=m.port("mw_outputs", "con1", 1))
+    assert all(f.values.get("kind") != "assumed_type" for f in cl.surface_findings(m.s, "load_check"))
+
+
+def test_note_limits_come_from_the_constants(monkeypatch):
+    monkeypatch.setattr(cl, "OPX_CORE_LIMIT", 12)
+    assert cl.surface_findings(_controller_chip(12).s, "load_check") == []
+    assert "(12)" in cl.surface_findings(_controller_chip(13).s, "load_check")[0].message
+
+
+def test_controller_level_fix_says_this_controller():
+    s = _controller_chip(19).s
+    lc = [cl.finding_line(f) for f in cl.surface_findings(s, "load_check")][0]
+    rv = [cl.finding_line(f) for f in cl.surface_findings(s, "review")][0]
+    assert "Fix: move elements off this controller." in lc["detail"]
+    assert ("Fix: tick Share one core per qubit (xy + readout), or move elements off this controller."
+            in rv["detail"])
+    assert not any("this FEM" in d for d in lc["detail"] + rv["detail"])
+    m = Chip()
+    for i in range(10):
+        m.el(f"q{i}", "xy", opx_output=m.port("mw_outputs", "con1", 1))
+    d = [cl.finding_line(f) for f in cl.surface_findings(m.s, "load_check")
+         if f.values.get("kind") == "fem_budget"][0]["detail"]
+    assert "Fix: move elements off this FEM." in d

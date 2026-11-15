@@ -144,6 +144,9 @@ window.eval(appJs);
     ok(cw.length === 1 && /^Core layout warning: 10 \/ 8 cores on con1 FEM 1/.test(cw[0].textContent), 'one core warning callout under Loads OK');
     ok(cw.length === 1 && cw[0].querySelector('details.ui-disclosure') && /move elements off this FEM/.test(cw[0].querySelector('details').textContent), 'detail lines fold');
     ok(window.runLoadCheck._coreWarnHtml([]) === '' && window.runLoadCheck._coreWarnHtml(null) === '', 'no findings, no callout');
+    const infoHtml = window.runLoadCheck._coreWarnHtml([{ kind: 'assumed_type', severity: 'info',
+      line: 'Core layout note: 14 cores on con1 fit an OPX+ (18) but would exceed an original OPX (10); the chip does not state the controller type' }]);
+    ok(/ui-callout--note js-loadcheck-core/.test(infoHtml) && !/ui-callout--warn/.test(infoHtml) && /Core layout note: 14 cores/.test(infoHtml), 'an info finding is a note callout, never a warning');
   }
 
   if (fails) process.exit(1);

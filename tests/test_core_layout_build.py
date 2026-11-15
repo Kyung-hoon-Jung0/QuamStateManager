@@ -325,3 +325,78 @@ def test_checkbox_off_is_byte_identical_to_the_pre_layout_generator(tmp_path):
     _build(python, spec, tmp_path / "built")
     for name in ("state.json", "wiring.json"):
         assert (tmp_path / "built" / name).read_bytes() == (base_out / name).read_bytes(), name
+
+
+def test_pin_same_fem_agrees_with_the_counter_for_every_element_pair():
+    """On one state, the builder's same-FEM test and the counter's agree: two
+    elements the builder would pin together are one core in the counter, and
+    two it would not are reported as one name on two FEMs."""
+    import itertools
+    from quam_state_manager.core import core_layout as cl
+
+    # element -> its (output, input) ports as (controller, fem); None = no port
+    layout = {
+        "a": (("con1", 1), None), "b": (("con1", 1), ("con1", 1)),
+        "c": (("con1", 2), None), "d": (("con2", 1), None),
+        "e": (("con1", 1), ("con1", 2)),   # one element across two FEMs
+    }
+    for x, y in itertools.combinations(sorted(layout), 2):
+        state = {"qubits": {}, "ports": {}}
+        objs = {}
+        for name, (out, inp) in layout.items():
+            el = {"core": "shared" if name in (x, y) else None, "thread": None,
+                  "intermediate_frequency": 1e8}
+            for key, ptype, where in (("opx_output", "mw_outputs", out),
+                                      ("opx_input", "mw_inputs", inp)):
+                if where is None:
+                    continue
+                con, fem = where
+                slot = state["ports"].setdefault(ptype, {}).setdefault(con, {}).setdefault(str(fem), {})
+                pid = str(len(slot) + 1)
+                slot[pid] = {}
+                el[key] = f"#/ports/{ptype}/{con}/{fem}/{pid}"
+            state["qubits"][name] = {"xy": el}
+            objs[name] = _mw(_port(*out), _port(*inp) if inp else None)
+        pinned = rb._pin_same_fem(objs[x], objs[y]) is not None
+        rep = cl.core_budget(state)
+        split = any(n["core"] == "shared" for n in rep["names_on_two_fems"])
+        assert pinned is not split, (x, y)
+        if pinned:
+            con, fem = rb._pin_same_fem(objs[x], objs[y])
+            f = next(f for f in rep["fems"] if f["controller"] == con and f["fem"] == fem)
+            on_fem = sum(1 for n, (o, i) in layout.items() if (con, fem) in (o, i))
+            assert f["cores"]["count"] == on_fem - 1, (x, y, f["cores"])
+
+
+def test_pin_cores_null_or_absent_is_on_only_false_is_off():
+    assert rb._pin_cores_wanted({}) is True
+    assert rb._pin_cores_wanted({"populate": {"options": {}}}) is True
+    assert rb._pin_cores_wanted({"populate": {"options": {"pin_cores": None}}}) is True
+    assert rb._pin_cores_wanted({"populate": {"options": {"pin_cores": True}}}) is True
+    assert rb._pin_cores_wanted({"populate": {"options": {"pin_cores": False}}}) is False
+
+
+_NON_BOOL_ON = (0, "false", "off", None, "", 0.0)
+
+
+def test_pin_cores_non_bool_values_keep_pinning_on():
+    for v in _NON_BOOL_ON:
+        assert rb._pin_cores_wanted({"populate": {"options": {"pin_cores": v}}}) is True, repr(v)
+
+
+def test_emitted_script_keeps_pinning_on_for_non_bool_values():
+    """Run the emitted guard line itself on each value."""
+    import inspect
+    src = inspect.getsource(script_emitter)
+    line = next(ln for ln in src.splitlines() if '"pin_cores")' in ln and "if (POPULATE" in ln)
+    cond = line.split("w('if ", 1)[1].rsplit(":')", 1)[0]
+    for v, on in [(v, True) for v in _NON_BOOL_ON] + [("missing", True), (True, True), (False, False)]:
+        opts = {} if v == "missing" else {"pin_cores": v}
+        assert eval(cond, {"POPULATE": {"options": opts}}) is on, repr(v)
+
+
+def test_emitted_script_reads_pin_cores_by_the_same_rule():
+    import inspect
+    src = inspect.getsource(script_emitter)
+    assert 'get("pin_cores") is not False' in src
+    assert 'get("pin_cores", True)' not in src

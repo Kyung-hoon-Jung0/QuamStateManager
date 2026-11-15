@@ -617,7 +617,7 @@ def _emit_build(spec: dict, chip: str, stamp: str, allocation: dict | None = Non
         w("    for _w in _finalize_coupler_only(machine, _spec):")
         w('        print(f"WARNING: {_w}", file=sys.stderr)')
     w('_apply_coupler_models(machine, POPULATE)')
-    w('if (POPULATE.get("options") or {}).get("pin_cores", True):')
+    w('if (POPULATE.get("options") or {}).get("pin_cores") is not False:')
     w("    _pin_cores(machine)")
     # G1: the same coupled-band rule the wizard's build applies, so the
     # script writes the chip the wizard wrote

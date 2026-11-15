@@ -70,7 +70,8 @@ window.runLoadCheck = (function () {
             var f = list[i] || {};
             if (!f.line) continue;
             var det = Array.isArray(f.detail) ? f.detail : [];
-            html += '<div class="ui-callout ui-callout--warn js-loadcheck-core">'
+            var tone = f.severity === 'info' ? 'note' : 'warn';
+            html += '<div class="ui-callout ui-callout--' + tone + ' js-loadcheck-core">'
                 + '<p class="ui-callout-text"><span class="ui-callout-title">' + esc(f.line) + '</span></p>';
             if (det.length) {
                 html += '<details class="ui-disclosure"><summary class="ui-disclosure-summary">Details</summary>';
