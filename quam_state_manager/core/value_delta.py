@@ -22,13 +22,21 @@ a delta beside ``5,100,000,000`` reads ``+100,000,000``, not ``+1.000e+08``.
 Only genuinely extreme magnitudes fall back to exponential, by an explicit
 threshold here (NOT by inheriting ``repr``'s, which differs between Python and
 JavaScript and would break parity).
+
+**A second, separate concept lives at the bottom of this file: one agent-card
+row** (``format_card_row``, docs/272 / docs/254). Its canonical implementation
+is ``fmtRow`` in ``web/static/agent.js``, NOT ``window.ValueDelta``; the Python
+copy is a port, pinned against the real agent.js by the shared vectors in
+``tests/fixtures/card_row_vectors.json`` (read by tests/test_approval_now_anchor.py
+and tests/agent_panel_selfcheck.cjs). Whoever changes fmtRow changes that port
+and that fixture in the same commit.
 """
 
 from __future__ import annotations
 
 import math
 import re
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Context, Decimal, InvalidOperation, localcontext
 from typing import Any, Optional
 
 # A display-form number may carry thousands commas (that is how group_digits
@@ -333,6 +341,13 @@ def describe_moved(old: Any, new: Any, unit: str = "") -> str:
 
 CARD_MORE_DP = 6          # agent.js MORE_DP: at most this many extra decimals to tell values apart
 
+# The exact binary value of a double has at most 767 significant decimal digits and an
+# exponent between -1074 and 308; JS rounds that exact value once. A context this wide makes
+# every quantize / scaleb below exact before its one HALF_UP rounding (the default 28 digits
+# raised InvalidOperation for a row such as [0, 4.98e-241, 3.5e18] V at 10 decimals, and could
+# round twice), so neither function can raise for a finite double.
+_EXACT = Context(prec=1200, Emax=999_999, Emin=-999_999)
+
 
 def _js_num(v: Any) -> bool:
     """agent.js ``isNum``: a finite number, never a bool."""
@@ -377,7 +392,8 @@ def js_to_fixed(x: float, dp: int) -> str:
         return js_number_text(x)
     if x == 0:
         x = 0.0                                           # (-0).toFixed(2) is "0.00"
-    q = Decimal(x).quantize(Decimal(1).scaleb(-dp), rounding=ROUND_HALF_UP)
+    with localcontext(_EXACT):
+        q = Decimal(x).quantize(Decimal(1).scaleb(-dp), rounding=ROUND_HALF_UP)
     return f"{q:f}"
 
 
@@ -388,18 +404,36 @@ def js_to_exponential(x: float, dp: int) -> str:
         return js_number_text(x)
     if x == 0:
         return ("0." + "0" * dp if dp else "0") + "e+0"
-    d = Decimal(abs(x))
-    e = d.adjusted()
-    q = Decimal(1).scaleb(-dp)
-    m = d.scaleb(-e).quantize(q, rounding=ROUND_HALF_UP)
-    if m >= 10:
-        e += 1
+    with localcontext(_EXACT):
+        d = Decimal(abs(x))
+        e = d.adjusted()
+        q = Decimal(1).scaleb(-dp)
         m = d.scaleb(-e).quantize(q, rounding=ROUND_HALF_UP)
+        if m >= 10:                                       # 9.99995e7 at 4 decimals carries to 1.0000e+8
+            e += 1
+            m = d.scaleb(-e).quantize(q, rounding=ROUND_HALF_UP)
     return ("-" if x < 0 else "") + f"{m:f}" + ("e+" if e >= 0 else "e-") + str(abs(e))
 
 
+def _js_index_key(k: str) -> bool:
+    """A JS array-index property name: a canonical non-negative integer below 2**32 - 1."""
+    return k.isdigit() and k.isascii() and str(int(k)) == k and int(k) < 2 ** 32 - 1
+
+
+def js_key_order(d: dict) -> list:
+    """The (key, value) pairs of ``d`` in the order the browser holds them. The app's JSON
+    provider sorts keys (Flask ``sort_keys``), and a JS object then puts its array-index keys
+    first, in numeric order: ``{"b": 1, "10": 0, "2": 0}`` reaches agent.js as
+    ``{"2": 0, "10": 0, "b": 1}``. One rule for every dict a card row or a refusal line writes,
+    whatever order the store kept."""
+    items = sorted(((str(k), x) for k, x in d.items()), key=lambda kv: kv[0])
+    idx = sorted((kv for kv in items if _js_index_key(kv[0])), key=lambda kv: int(kv[0]))
+    return idx + [kv for kv in items if not _js_index_key(kv[0])]
+
+
 def js_json_text(v: Any) -> str:
-    """JavaScript ``JSON.stringify(v)`` for JSON-shaped data (no spaces, JS numbers)."""
+    """JavaScript ``JSON.stringify(v)`` for JSON-shaped data as the browser received it (no
+    spaces, JS numbers, dict keys in ``js_key_order``)."""
     import json as _json
     if v is None or isinstance(v, bool):
         return "null" if v is None else ("true" if v else "false")
@@ -408,8 +442,8 @@ def js_json_text(v: Any) -> str:
     if isinstance(v, str):
         return _json.dumps(v, ensure_ascii=False)
     if isinstance(v, dict):
-        return "{" + ",".join(_json.dumps(str(k), ensure_ascii=False) + ":" + js_json_text(x)
-                              for k, x in v.items()) + "}"
+        return "{" + ",".join(_json.dumps(k, ensure_ascii=False) + ":" + js_json_text(x)
+                              for k, x in js_key_order(v)) + "}"
     if isinstance(v, (list, tuple)):
         return "[" + ",".join(js_json_text(x) for x in v) + "]"
     return _json.dumps(str(v), ensure_ascii=False)

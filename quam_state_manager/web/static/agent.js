@@ -72,7 +72,10 @@ window.AgentPanel = (function () {
      With no known unit: integers exactly as stored (num_shots=100000, never
      "100 k"), otherwise 5 significant digits of the row's largest value --
      exponential outside [1e-3, 1e6), the bounds of units.py's plain rule --
-     with trailing zeros that every value of the row carries dropped. */
+     with trailing zeros that every value of the row carries dropped.
+     This function is canonical; core/value_delta.py format_card_row is its Python
+     port (the server's refusal line, the night summary's rows), pinned to it by
+     tests/fixtures/card_row_vectors.json: change all three together. */
   var MORE_DP = 6;                                   // at most this many extra decimals to tell values apart
   function isNum(v) { return typeof v === "number" && isFinite(v); }
   function fmtOther(v) {

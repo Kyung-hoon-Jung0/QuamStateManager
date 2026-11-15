@@ -199,12 +199,25 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
 
   // one formatter: the card's fmtRow and apRefusedText against the vectors core/value_delta.py also passes
   const cardVectors = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'card_row_vectors.json'), 'utf8'));
+  // The browser receives every dict through the app's JSON provider, which sorts keys as
+  // strings (Flask sort_keys; pinned in test_approval_now_anchor.py); JSON.parse then puts
+  // array-index keys first. Feed the vectors the way the page gets them.
+  const asServed = function (v) {
+    if (Array.isArray(v)) return v.map(asServed);
+    if (v && typeof v === 'object') return JSON.parse('{' + Object.keys(v).sort().map(function (k) {
+      return JSON.stringify(k) + ':' + JSON.stringify(asServed(v[k]));
+    }).join(',') + '}');
+    return v;
+  };
+  const asNumbers = function (c) {      // JSON has no NaN / Infinity: "numbers" names the strings that are numbers
+    return c.values.map(function (v, i) { return (c.numbers || []).indexOf(i) >= 0 ? Number(v) : asServed(v); });
+  };
   cardVectors.rows.forEach(function (c) {
-    const got = P.fmtRow(c.values, c.display);
+    const got = P.fmtRow(asNumbers(c), c.display);
     ok(JSON.stringify(got) === JSON.stringify(c.expect), 'card row vector: ' + c.case + ' ' + JSON.stringify(got));
   });
   cardVectors.refusals.forEach(function (c) {
-    const got = P.apRefusedText(c.path, c.row, c.sent);
+    const got = P.apRefusedText(c.path, asServed(c.row), asServed(c.sent));
     ok(got === c.expect, 'refusal vector: ' + c.case + ' ' + got);
   });
 

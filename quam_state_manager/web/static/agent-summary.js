@@ -69,7 +69,9 @@
     return fetch("/api/agent/approvals/" + encodeURIComponent(id) + "/" + verb, {
       method: "POST", credentials: "same-origin",
       headers: { "Content-Type": "application/json", "Accept": "application/json" },
-      body: JSON.stringify(seen.length ? { seen: seen } : {})
+      // a writes approval always says what it showed (an empty list too): the door then
+      // writes nothing the page did not list. A run request has no rows.
+      body: JSON.stringify(item && item.querySelector("tr[data-seen-path]") ? { seen: seen } : {})
     }).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (j) { return { status: res.status, body: j || {} }; });
     }).then(function (r) {

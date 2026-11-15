@@ -207,13 +207,24 @@ def _card_value(v: Any) -> Any:
     return _finite_or_none(_jsonable(v))
 
 
-def _refusal_line(path: str, row: dict, sent: dict) -> str:
+def _refusal_line(path: str, row: dict, sent: dict, where: str = "the card") -> str:
     """docs/254: the "changed since the card showed" line, written as the card writes its
     values: ``row`` is the refreshed card row (``now_known`` / ``now`` / ``old`` /
     ``display``), ``sent`` what the press sent (``seen_now`` or ``seen_unknown``, ``new``).
     The numbers come from core.value_delta.format_card_row, the port of agent.js fmtRow;
     agent.js apRefusedText writes the same line from the same two dicts. The stored values
-    are added in brackets only when the display scales them (Hz shown in GHz)."""
+    are added in brackets only when the display scales them (Hz shown in GHz). ``where``
+    names the page the person pressed on ("the card", or "the summary" for the night
+    summary, which writes its rows with the same formatter). Never raises: a refusal is
+    never turned into a 500 by the text that explains it."""
+    try:
+        return _refusal_text(path, row, sent, where)
+    except Exception:  # noqa: BLE001 -- the refusal stands; only its numbers are left out
+        logger.warning("refusal line for %s could not be formatted", path, exc_info=True)
+        return f"{path} changed since {where} showed it; press again"
+
+
+def _refusal_text(path: str, row: dict, sent: dict, where: str) -> str:
     from quam_state_manager.core.value_delta import format_card_row, js_json_text
     known, unknown = row.get("now_known") is True, sent.get("seen_unknown") is True
     vals = [row.get("now") if known else None, None if unknown else sent.get("seen_now"),
@@ -227,10 +238,10 @@ def _refusal_line(path: str, row: dict, sent: dict) -> str:
     scale = (spec or {}).get("scale")
     if spec and spec.get("unit") and isinstance(scale, (int, float)) and scale != 1:
         detail = ([f"now {js_json_text(vals[0])}"] if known else []) + (
-            [f"the card's {js_json_text(vals[1])}"] if not unknown else [])
+            [f"{where}'s {js_json_text(vals[1])}"] if not unknown else [])
         if detail:
             stored = f" (stored in {spec.get('stored') or 'its own unit'}: {', '.join(detail)})"
-    return f"{path} changed to {now_text} since the card showed {shown}; press again{stored}"
+    return f"{path} changed to {now_text} since {where} showed {shown}; press again{stored}"
 
 
 def _seen_equal(now: Any, seen: Any, equal) -> bool:
@@ -2052,7 +2063,7 @@ def _nonfinite_rows(writes: list[dict]) -> list[dict]:
 
 
 def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan_id: str | None,
-                  apply: bool, *, presser: str | None = None) -> dict:
+                  apply: bool, *, presser: str | None = None, shown_by: str = "the card") -> dict:
     """Stage ``writes`` onto the chip's working copy as ONE group with the
     agent's actor and, when ``apply``, push them through the ONE door
     (``/state/apply-to-live``) as the presser's own press -- the agent's
@@ -2064,11 +2075,13 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
         return {"group_id": gid, "staged": 0, "applied": False, "error": "the chip is no longer loaded",
                 "unstaged": [{"path": w["path"], "why": "chip not loaded"} for w in writes[:50]]}
     mod, store = ctx["modifier"], ctx["store"]
-    if presser and not str(presser).startswith("by_") and store.change_log:
+    person = bool(presser) and not str(presser).startswith("by_")
+
+    def _tray_busy(n_other: int, lead: str = "") -> dict:
         # review R1-M1: a person's approval press consents to THESE writes, never to whatever
         # else the tray holds (another window's edit would ride along under this name)
         return {"group_id": gid, "staged": 0, "applied": False, "unstaged": [],
-                "error": f"the tray holds {len(store.change_log)} staged edit(s); apply or discard them in the window "
+                "error": f"{lead}the tray holds {n_other} staged edit(s); apply or discard them in the window "
                          "first, then approve"}
     staged, unstaged = [], []
     # Q-4 (agents ver180): a path the person listed as never-touch is never staged for an agent
@@ -2105,6 +2118,11 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
     resized = resized_lists(writes)
     creations: dict[str, dict] = {}     # first missing path -> nested dict of the new leaves (or a scalar)
     with store._lock:
+        # the empty-tray check and the staging are one hold of the store lock (an RLock; the
+        # modifier calls below take it again): an edit from another window cannot land
+        # between them and be pushed under this person's name
+        if person and store.change_log:
+            return _tray_busy(len(store.change_log))
         # docs/254: compare every displayed value before staging any row.
         from quam_state_manager.core.differ import compare_equal
         for w in writes:
@@ -2128,7 +2146,7 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
                        "display": units.display_spec(w["path"])}
                 return {"group_id": gid, "staged": 0, "applied": False, "unstaged": [],
                         "seen_now_changed": True, "path": w["path"],
-                        "error": _refusal_line(w["path"], row, w)}
+                        "error": _refusal_line(w["path"], row, w, shown_by)}
         for w in writes:
             root = None
             if w.get("created") and not w.get("deleted") and not _existing_leaf(store, w["path"]):
@@ -2205,8 +2223,11 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
 
     def _take_back():
         with store._lock:                      # the group comes back out of the tray
-            while store.change_log and store.change_log[-1].group_id == gid:
-                mod.undo_group()
+            # only THIS group's rows, wherever they sit: an edit another window made after
+            # them stays in the tray (an undo_group of the last group would revert that one)
+            for i in range(len(store.change_log) - 1, -1, -1):
+                if store.change_log[i].group_id == gid:
+                    mod.discard(i)
     # The door SAVES the log into the working copy before it writes the chip and
     # only then notices a moved chip (docs/65's re-apply stash) -- a refusal there
     # would leave the agent's values half-way, in SM but not on the chip. Ask first.
@@ -2218,7 +2239,16 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
             return out
     except Exception:  # noqa: BLE001
         logger.debug("live_diverged_now failed", exc_info=True)
-    n = len(store.change_log)
+    with store._lock:
+        # the count the door is handed is read under the lock, and for a person's press it
+        # may count only this approval's own rows: an edit that reached the tray after the
+        # staging refuses here, and one after this point makes the door's count refuse
+        foreign = sum(1 for e in store.change_log if e.group_id != gid)
+        if person and foreign:
+            _take_back()
+            return _tray_busy(foreign, "another edit reached the tray while this approval was staged, so "
+                                       "nothing was written: ")
+        n = len(store.change_log)
     # verifier P0 (w7/agentsqa): what SM looked like before the door, so a push
     # refused AFTER the door's save can be taken back to exactly this
     before = _pre_door_state(r, ctx)
@@ -2921,6 +2951,11 @@ def _nonfinite_masked(proposed_new, sent_new) -> bool:
         return False
 
 
+def _shown(x) -> bool:
+    """docs/254: one ``seen`` entry of a press that names no values says what the page showed."""
+    return isinstance(x, dict) and ("seen_now" in x or x.get("seen_unknown") is True)
+
+
 @agent_bp.route("/approvals/<aid>/<verb>", methods=["POST"])
 def approvals_decide(aid: str, verb: str):
     """approve / reject, by a person. Approving ``writes`` stages them as the
@@ -2937,6 +2972,7 @@ def approvals_decide(aid: str, verb: str):
     data = json_object()
     inst, chip = current_app.instance_path, _chip_key()
     writes = data.get("writes") if isinstance(data.get("writes"), list) else None
+    shown_by = "the card"                        # the page the press came from, for the refusal line
     with _lock_for("approve"):                   # review R3-3: two presses are one decision
         cur = approvals.get(inst, chip, aid)
         if cur is None or cur.get("status") != "pending":
@@ -2995,6 +3031,17 @@ def approvals_decide(aid: str, verb: str):
                 return _err("every value on this card comes from a target the node marked failed; "
                             "tick the ones to write on the card, or Reject it", 409,
                             approval=approvals.summary(cur))
+            if isinstance(data.get("seen"), list):
+                # contract 7: a press that says what it showed writes only what it showed. A
+                # value the page did not list (the summary lists at most 12) is never written
+                # under it; the summary offers Review in panel instead of a write for those.
+                shown_by = "the summary"
+                unseen = [str(w.get("path")) for w in writes if not _shown(seen.get(str(w.get("path"))))]
+                if unseen:
+                    return _err(f"{len(unseen)} value(s) of this approval were not on the summary "
+                                f"({', '.join(unseen[:3])}{' and more' if len(unseen) > 3 else ''}); "
+                                "nothing was written. Review it in the agent panel", 409,
+                                approval=approvals.summary(cur), unseen=unseen[:50])
         if verb == "approve" and cur.get("kind") == "writes" and writes is not None and not writes:
             return _err("no value is ticked: tick the values to write, or Reject the card", 400)
         out = {"ok": True}
@@ -3009,7 +3056,8 @@ def approvals_decide(aid: str, verb: str):
                 writes = cur["writes"]
             res = _stage_writes(current_app._get_current_object(), str(r._active_path()),
                                 writes if writes is not None else (cur.get("writes") or []),
-                                f"approved:{aid}", cur.get("actor") or "by_agent", cur.get("plan_id"), True, presser=actor)
+                                f"approved:{aid}", cur.get("actor") or "by_agent", cur.get("plan_id"), True, presser=actor,
+                                shown_by=shown_by)
             out["stage"] = res
             if not res.get("applied"):
                 return jsonify(ok=False, error=res.get("error") or "not applied", stage=res,
@@ -4200,7 +4248,28 @@ def summary_data(plan_id: str | None) -> dict:
         for w in h.get("writes") or []:
             if w.get("now_known"):
                 w["seen_now"] = _card_value(w.get("now"))
+            w["cells"] = _summary_cells(w)
+    for a in out.get("applied") or []:
+        for w in a.get("writes") or []:
+            w["cells"] = _summary_cells(w)
     return out
+
+
+def _summary_cells(w: dict) -> dict | None:
+    """docs/254: one summary row's now / old / new written as the agent card writes them
+    (core.value_delta.format_card_row, the port of agent.js fmtRow; strings as JSON text),
+    so the summary shows the unit and the decimals a refusal line then names."""
+    from quam_state_manager.core import units
+    from quam_state_manager.core.value_delta import format_card_row, js_json_text
+    vals = [_card_value(w.get("now")) if w.get("now_known") else None,
+            _card_value(w.get("old")), _card_value(w.get("new"))]
+    try:
+        texts = format_card_row(vals, units.display_spec(str(w.get("path") or "")))
+    except Exception:  # noqa: BLE001 -- the page then shows the stored values, as before
+        logger.debug("summary cells for %s", w.get("path"), exc_info=True)
+        return None
+    texts = [js_json_text(v) if isinstance(v, str) else t for v, t in zip(vals, texts)]
+    return {"now": texts[0], "old": texts[1], "new": texts[2]}
 
 
 @agent_bp.route("/plans/<pid>/end", methods=["POST"])
