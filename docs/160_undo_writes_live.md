@@ -491,8 +491,6 @@ id and asks again, including for that document's earlier edits.
 Same-window steps need no window question. A person without a window header
 gets 409 with the question before any write; consent requires a window id.
 
-Key change on this branch: Ctrl+Y = redo (every OS); Cmd+Y is not bound (browser History on macOS).
-
 The age rule is kept for every person, the pressing window's own steps
 included: with "Ctrl+Z writes live" ON, an /undo whose step comes from an
 earlier SM session or is older than 8 h (`_unit_needs_ask`) asks before the
@@ -521,3 +519,6 @@ the agent ownership guard before any journal step. Agent undo-mine and robot
 policy are unchanged.
 The unseen-edit gate precedes the question; the live door and grouped
 rollback still run after consent, including the class-file-left notice.
+
+Keys: Ctrl+Z undoes and Ctrl+Shift+Z or Ctrl+Y redoes, on every OS; on macOS Cmd+Z and Cmd+Shift+Z
+work the same, and Cmd+Y is not bound (it stays the browser's History key).
