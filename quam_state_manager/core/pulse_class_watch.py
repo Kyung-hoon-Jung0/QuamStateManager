@@ -339,6 +339,13 @@ def save_to_target(instance, scope, class_name, target: str, replace_sha: str | 
     result is otherwise ``{"ok": False, "confirm": {...}}`` and nothing is
     written. A replaced file is copied next to itself first (``backup``)."""
     t = check_target(target)
+    published = _target_record(instance, scope, class_name)
+    if published.get("qclass") and published.get("path") == str(t):
+        raise D.DraftError(f"{t} was saved with Save to quam_config; use Save to quam_config "
+                           "again, which checks the chip with the new code first.")
+    if t.parent.name == "quam_config" and (t.parent / "__init__.py").is_file():
+        raise D.DraftError(f"{t.parent} is a quam_config package; use Save to quam_config, "
+                           "which checks the class before it writes the file.")
     data = D.load_draft(instance, scope, class_name)
     if data is None:
         raise D.DraftError("There is no draft for this class.")

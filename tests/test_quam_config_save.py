@@ -68,7 +68,7 @@ def test_one_new_file_header_bytes_hash_and_history(setup):
     rows = [json.loads(line) for line in (instance.parent / "history" / "class_files.jsonl").read_text().splitlines()]
     assert len(rows) == 1 and rows[0]["actor"] == "agent"
     assert rows[0]["path"] == str(target) and rows[0]["sha256"] == D.sha256_bytes(source)
-    assert "restart QUAlibrate" in result["restart"]
+    assert result["restart"] == Q.RESTART_NEW and "no restart" in result["restart"]
     assert "without isolation" in result["notice"]
 
 

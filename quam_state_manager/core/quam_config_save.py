@@ -15,10 +15,12 @@ from quam_state_manager.core import pulse_class_drafts as D
 from quam_state_manager.core import pulse_class_template as T
 from quam_state_manager.core import pulse_class_watch as W
 
+HISTORY_FILE = "class_files.jsonl"
 EXECUTION_NOTICE = "This file is Python that runs without isolation in the lab environment."
-RESTART_NEW = ("New modules can be imported without restarting QUAlibrate. "
-               "If QUAlibrate has already imported this module, restart QUAlibrate before using the saved code.")
-RESTART_EDIT = "Restart QUAlibrate before using the edited module; an already imported module keeps its old code."
+RESTART_NEW = ("A running QUAlibrate imports this new file the first time a state needs it; "
+               "no restart is needed.")
+RESTART_EDIT = ("Restart QUAlibrate before running nodes with this class: a running QUAlibrate "
+                "keeps the code it imported before this save.")
 
 
 def _run(python, request, timeout=120, *, natural=False):
@@ -107,7 +109,7 @@ def record_write(history_folder, *, actor, path, sha256, gates):
     """One JSON line per write in the chip's history folder."""
     folder = Path(history_folder)
     folder.mkdir(parents=True, exist_ok=True)
-    path_log = folder / "class_files.jsonl"
+    path_log = folder / HISTORY_FILE
     entry = {"time": datetime.now(timezone.utc).isoformat(), "actor": actor,
              "path": str(path), "sha256": sha256, "gates": gates}
     with safe_io.path_lock(path_log):
@@ -195,8 +197,7 @@ def save_class(python, instance, scope, class_name, *, confirmed_folder=None, fo
                     safe_io.atomic_write_bytes(target, data, create_only=old is None)
                 break
             finally:
-                if copies:
-                    shutil.rmtree(copies.root)
+                chip_copy.remove_chip_copies(copies)
         record_error = None
         try:
             record_write(history_folder, actor=actor, path=target, sha256=sha, gates=gates)
@@ -217,8 +218,11 @@ def save_class(python, instance, scope, class_name, *, confirmed_folder=None, fo
                 "proportional": check.get("proportional")}
 
 
-def class_refusal(instance, scope, creates):
-    """The creation seam, independent of the lab check's permissive fallback."""
+def class_refusal(instance, scope, creates=(), classes=()):
+    """Why a gate cannot be created yet: it uses (in *creates*, or by name in
+    *classes*) an SM class whose file is not saved to quam_config. None when
+    nothing stands in the way. Independent of the lab check's fallback."""
+    classes = {c for c in classes if isinstance(c, str)}
     root = Path(instance) / D.DRAFTS_DIR / D._scope_key(scope)
     if not root.is_dir():
         return None
@@ -226,7 +230,7 @@ def class_refusal(instance, scope, creates):
         if not folder.is_dir():
             continue
         qclass = f"quam_config.{folder.name}.{folder.name}"
-        if not any(_uses(value, qclass, {}) for _, value in creates):
+        if qclass not in classes and not any(_uses(value, qclass, {}) for _, value in creates):
             continue
         receipt = W._target_record(instance, scope, folder.name)
         target = receipt.get("path")
