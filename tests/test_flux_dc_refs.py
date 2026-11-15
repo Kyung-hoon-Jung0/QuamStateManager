@@ -20,7 +20,8 @@ def test_alias_qubit_entry_is_followed():
                     "alias": "#/qubits/real"}}
     levels, why = _levels(m, "alias.z")
     assert why is None
-    assert levels == [("channel offset", 0.0), ("joint flux-point offset", 0.3)]
+    assert levels == [("channel offset", 0.0), ("joint flux-point offset", 0.3),
+                      ("min flux-point offset (class default)", 0.0)]
     assert levels == _levels(m, "real.z")[0]
 
 
@@ -71,7 +72,8 @@ def test_none_flux_point_reads_the_class_default():
                                 "joint_offset": 0.4}}}}
     levels, why = _levels(m, "q.z")
     assert why is None
-    assert levels == [("channel offset", 0.0), ("independent flux-point offset", 0.2)]
+    assert levels == [("channel offset", 0.0), ("independent flux-point offset", 0.2),
+                      ("min flux-point offset (class default)", 0.0)]
 
 
 def test_absent_flux_point_is_refused_by_the_range_check():
@@ -250,14 +252,37 @@ def test_min_flux_point_lists_min_offset_once():
     assert _levels(m, "q.z") == ([("channel offset", 0.0), ("min flux-point offset", 0.3)], None)
 
 
-def test_no_min_offset_no_level():
-    for z in ({"flux_point": "joint", "joint_offset": 0.1},
-              {"flux_point": "joint", "joint_offset": 0.1, "min_offset": None}):
+def test_absent_min_offset_reads_the_class_default():
+    for fp in ("joint", "zero", "independent"):
+        z = {"flux_point": fp, "joint_offset": 0.1}
         levels, why = _levels({"qubits": {"q": {"z": z}}}, "q.z")
-        assert why is None and not any(lab.startswith("min") for lab, _ in levels)
+        assert why is None
+        assert [lv for lv in levels if lv[0].startswith("min")] == [
+            ("min flux-point offset (class default)", 0.0)]
 
 
-@pytest.mark.parametrize("bad", [float("nan"), True, "0.1", "#/nowhere"])
+def test_stored_zero_min_offset_keeps_the_plain_label():
+    z = {"flux_point": "joint", "joint_offset": 0.1, "min_offset": 0.0}
+    levels, why = _levels({"qubits": {"q": {"z": z}}}, "q.z")
+    assert why is None and [lv for lv in levels if lv[0].startswith("min")] == [
+        ("min flux-point offset", 0.0)]
+
+
+def test_none_min_offset_is_refused_like_decouple_offset():
+    z = {"flux_point": "joint", "joint_offset": 0.1, "min_offset": None}
+    levels, why = _levels({"qubits": {"q": {"z": z}}}, "q.z")
+    assert levels is None and "qubits.q.z.min_offset" in why
+
+
+def test_absent_min_offset_is_refused_by_the_range_check():
+    """port -0.3 V, independent -0.3 V, min absent (0 V): a 0.6 V pulse on a 0.5 V port clips."""
+    m = {"qubits": {"q": {"z": {"flux_point": "independent", "independent_offset": -0.3}}}}
+    levels, why = _levels(m, "q.z", -0.3)
+    assert why is None
+    assert max(abs(v + 0.6) for _, v in levels) > 0.5
+
+
+@pytest.mark.parametrize("bad", [float("nan"), True, "0.1", "#/nowhere", None])
 def test_bad_min_offset_is_refused_naming_the_leaf(bad):
     m = {"qubits": {"q": {"z": {"flux_point": "joint", "joint_offset": 0.1, "min_offset": bad}}}}
     levels, why = _levels(m, "q.z")
@@ -278,10 +303,63 @@ def test_plain_chip_output_is_unchanged():
     m = copy.deepcopy(PLAIN)
     out = [repr(_levels(m, e, 0.05)) for e in ("q1.z", "q2.z", "q3.z", "q1.xy", "q1-2.coupler")]
     assert out == [
-        "([('channel offset', 0.05), ('joint flux-point offset', 0.12)], None)",
-        "([('channel offset', 0.05), ('zero flux-point offset', 0.0)], None)",
+        "([('channel offset', 0.05), ('joint flux-point offset', 0.12), ('min flux-point offset (class default)', 0.0)], None)",
+        "([('channel offset', 0.05), ('zero flux-point offset', 0.0), ('min flux-point offset (class default)', 0.0)], None)",
         "([('channel offset', 0.05)], None)",
         "([('channel offset', 0.05)], None)",
         "([('channel offset', 0.05)], None)",
     ]
     assert m == PLAIN
+
+
+# ---- a dangling coupler or pair role refuses only what it could be -------
+
+DANGLING = {"qubits": {"q1": {"z": {"flux_point": "joint", "joint_offset": 0.1},
+                              "xy": {}, "resonator": {}},
+                       "q2": {"z": {"flux_point": "joint", "joint_offset": 0.2}}},
+            "qubit_pairs": {"q1-2": {"coupler": {"id": "c12", "decouple_offset": 0.05}},
+                            "q3-4": {"coupler": "#/nowhere"}}}
+
+
+@pytest.mark.parametrize("element", ["q1.resonator", "q1.xy", "q2.xy"])
+def test_dangling_coupler_keeps_a_qubit_component(element):
+    assert _levels(copy.deepcopy(DANGLING), element, 0.05) == ([("channel offset", 0.05)], None)
+
+
+@pytest.mark.parametrize("element", ["q3-4.coupler", "c34", "drive_line"])
+def test_dangling_coupler_refuses_what_it_could_be(element):
+    levels, why = _levels(copy.deepcopy(DANGLING), element)
+    assert levels is None and "qubit_pairs.q3-4.coupler" in why
+
+
+def test_dangling_coupler_still_finds_the_resolved_one():
+    levels, why = _levels(copy.deepcopy(DANGLING), "c12")
+    assert why is None and ("coupler decouple offset", 0.05) in levels
+
+
+def _pair(control, target):
+    return {"qubits": {"q2": {"z": {"flux_point": "joint", "joint_offset": 0.2}}},
+            "qubit_pairs": {"q3-4": {"qubit_control": control, "qubit_target": target,
+                                     "mutual_flux_bias": [0.1, 0.15]}}}
+
+
+def test_dangling_control_with_matching_target_is_known():
+    levels, why = _levels(_pair("#/nowhere", "#/qubits/q2"), "q2.z")
+    assert why is None and ("mutual flux bias of q3-4", 0.15) in levels
+
+
+def test_dangling_target_with_matching_control_is_known():
+    levels, why = _levels(_pair("#/qubits/q2", "#/nowhere"), "q2.z")
+    assert why is None and ("mutual flux bias of q3-4", 0.1) in levels
+
+
+def test_both_roles_dangling_still_refuses():
+    levels, why = _levels(_pair("#/nowhere", "#/gone"), "q2.z")
+    assert levels is None and "qubit_pairs.q3-4.qubit_control" in why
+
+
+def test_numpy_bool_min_offset_is_refused():
+    np = pytest.importorskip("numpy")
+    z = {"flux_point": "joint", "joint_offset": 0.1, "min_offset": np.bool_(True)}
+    levels, why = _levels({"qubits": {"q": {"z": z}}}, "q.z")
+    assert levels is None and "min_offset" in why

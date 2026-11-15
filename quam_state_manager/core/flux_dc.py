@@ -123,11 +123,10 @@ def line_dc_levels(merged: dict, z_segs: tuple, port_offset: float,
     field = FLUX_POINT_FIELDS[fp]
     if field is None:
         levels.append((f"{fp} flux-point offset", 0.0))
-        got, why = _min_level(merged, tuple(z_segs), line)
+        got, why = _min_level(merged, tuple(z_segs))
         if why:
             return None, why
-        if got is not None:
-            levels.append(("min flux-point offset", got))
+        levels.append(got)
         return levels, None
     v, why = read_leaf(merged, tuple(z_segs) + (field,))
     if why:
@@ -138,27 +137,20 @@ def line_dc_levels(merged: dict, z_segs: tuple, port_offset: float,
         return None, f"the value {v!r} at {line}.{field} is not a finite number of V"
     levels.append((f"{fp} flux-point offset", float(v)))
     if fp != "min":
-        got, why = _min_level(merged, tuple(z_segs), line)
+        got, why = _min_level(merged, tuple(z_segs))
         if why:
             return None, why
-        if got is not None:
-            levels.append(("min flux-point offset", got))
+        levels.append(got)
     return levels, None
 
 
-def _min_level(merged: dict, z_segs: tuple, line: str):
-    """The stored ``min_offset`` of a FluxLine: the lab programs park every
+def _min_level(merged: dict, z_segs: tuple):
+    """The ``min_offset`` level of a FluxLine: the lab programs park every
     qubit line there before most gates (``apply_all_flux_to_min``), so it is a
-    level whatever the stored flux point. Absent or None: no level (nothing
-    stored, nothing invented). A non-number is a refusal naming the leaf."""
-    v, why = read_leaf(merged, z_segs + ("min_offset",))
-    if why:
-        return None, why
-    if v is _SENTINEL or v is None:
-        return None, None
-    if not _number(v):
-        return None, f"the value {v!r} at {line}.min_offset is not a finite number of V"
-    return float(v), None
+    level whatever the stored flux point. Absent: the FluxLine class default
+    0.0, labelled as such (:func:`_offset_level`, the same rule as the
+    coupler decouple offset). None or a non-number is a refusal naming the leaf."""
+    return _offset_level(merged, z_segs + ("min_offset",), "min flux-point offset")
 
 
 #: TunableCoupler flux_point -> its offset field (None: 0 V)
@@ -186,6 +178,22 @@ def _stored_number(merged: dict, segs: tuple) -> tuple[float | None, str | None]
     return float(v), None
 
 
+def _offset_level(merged: dict, segs: tuple, label: str):
+    """``((label, volts), None)`` for an offset field whose class default is
+    0.0: an absent field reads as that default and is labelled
+    ``"(class default)"``; a stored value keeps the plain label. Stored None,
+    NaN, inf, bool or text is a refusal naming the leaf."""
+    raw, why = read_leaf(merged, segs)
+    if why:
+        return None, why
+    if raw is _SENTINEL:
+        return (label + " (class default)", 0.0), None
+    v, why = _stored_number(merged, segs)
+    if why:
+        return None, why
+    return (label, v), None
+
+
 def _coupler_levels(merged: dict, segs: tuple, levels: list):
     """The DC levels of the tunable coupler at *segs*: its decouple offset
     (the lab programs park every coupler there) and the offset of its
@@ -205,20 +213,32 @@ def _coupler_levels(merged: dict, segs: tuple, levels: list):
     for f in fields:
         label = f"coupler {f.replace('_', ' ')}"
         if f == "decouple_offset":
-            raw, why = read_leaf(merged, segs + (f,))
-            if why:
-                return None, why
-            if raw is _SENTINEL:
-                # the TunableCoupler class default, which the lab programs set
-                levels.append((label + " (class default)", 0.0))
-                continue
-        v, why = _stored_number(merged, segs + (f,))
+            # the TunableCoupler class default 0.0 when absent
+            got, why = _offset_level(merged, segs + (f,), label)
+        else:
+            v, why = _stored_number(merged, segs + (f,))
+            got = (label, v)
         if why:
             return None, why
-        levels.append((label, v))
+        levels.append(got)
     if COUPLER_POINT_FIELDS[fp] is None:
         levels.append((f"coupler {fp} flux point", 0.0))
     return levels, None
+
+
+def _coupler_names(merged: dict, key: str, node: Any) -> set:
+    """The config element names the coupler of pair *key* can have."""
+    if isinstance(node, dict) and isinstance(node.get("id"), str):
+        return {node["id"]}
+    pid = _get(merged, ["qubit_pairs", key, "id"])
+    return {f"{key}.coupler", f"{pid}.coupler" if isinstance(pid, str) else ""}
+
+
+def _is_qubit_component(merged: dict, element: str) -> bool:
+    """*element* is ``<qubit>.<component>`` for a qubit in ``qubits``."""
+    qubits = merged.get("qubits") if isinstance(merged, dict) else None
+    q, dot, rest = element.partition(".")
+    return bool(dot and rest) and isinstance(qubits, dict) and q in qubits
 
 
 def _find_coupler(merged: dict, element: str) -> tuple[tuple | None, str | None]:
@@ -234,17 +254,16 @@ def _find_coupler(merged: dict, element: str) -> tuple[tuple | None, str | None]
     for key in pairs:
         path, why = real_path(merged, ("qubit_pairs", key, "coupler"))
         if why:
-            dangling = dangling or why
+            # a dangling coupler can be *element* when the element is named like
+            # that pair's coupler, or when it names no qubit component at all
+            if (element in _coupler_names(merged, key, None)
+                    or not _is_qubit_component(merged, element)):
+                dangling = dangling or why
             continue
         node = _get(merged, list(path))
         if not isinstance(node, dict):
             continue
-        if isinstance(node.get("id"), str):
-            names = {node["id"]}
-        else:
-            pid = _get(merged, ["qubit_pairs", key, "id"])
-            names = {f"{key}.coupler", f"{pid}.coupler" if isinstance(pid, str) else ""}
-        if element in names:
+        if element in _coupler_names(merged, key, node):
             return path, None
     return None, dangling
 
@@ -263,12 +282,14 @@ def _mutual_levels(merged: dict, q_path: tuple, levels: list):
             return None, why
         if bias is _SENTINEL or bias is None:
             continue
-        for i, role in enumerate(("qubit_control", "qubit_target")):
-            qp, why = real_path(merged, base + (role,))
-            if why:
-                # SM cannot tell whether this pair's qubit is the one checked
-                return None, why
-            if qp != q_path:
+        roles = [real_path(merged, base + (r,)) for r in ("qubit_control", "qubit_target")]
+        if not any(qp == q_path for qp, _ in roles):
+            for _, why in roles:
+                if why:
+                    # SM cannot tell whether this pair's qubit is the one checked
+                    return None, why
+        for i, (qp, _) in enumerate(roles):
+            if qp is None or qp != q_path:
                 continue
             if not isinstance(bias, list) or len(bias) != 2:
                 return None, (f"the value {bias!r} at qubit_pairs.{key}.mutual_flux_bias "
