@@ -219,7 +219,7 @@ def apply_rows(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
             try:
                 for e in reversed(entries):
                     chip.modifier.set_value(e.dot_path, e.old_value,
-                                            coerce=False)
+                                            coerce=False, restore=True)
             except Exception:  # noqa: BLE001
                 logger.exception("rollback after failed save also failed")
             return WriteOutcome(ok=False, action="staged", group_id=gid,
@@ -431,7 +431,7 @@ def revert_patches(chip: ChipHandle, patches: list[dict], *, apply_live: bool,
                 for dotted, old, _ in revertible:
                     e = chip.modifier.set_value(dotted, old, coerce=False,
                                                 _defer_hooks=True,
-                                                group_id=gid)
+                                                group_id=gid, restore=True)
                     entries.append(e)
                 chip.store._clear_pointer_cache()
                 if chip.store.search_index is not None:
@@ -447,7 +447,8 @@ def revert_patches(chip: ChipHandle, patches: list[dict], *, apply_live: bool,
         except Exception as exc:  # noqa: BLE001
             try:
                 for e in reversed(entries):
-                    chip.modifier.set_value(e.dot_path, e.old_value, coerce=False)
+                    chip.modifier.set_value(e.dot_path, e.old_value, coerce=False,
+                                            restore=True)
             except Exception:  # noqa: BLE001
                 logger.exception("revert rollback failed")
             return WriteOutcome(ok=False, action="reverted",
@@ -475,7 +476,8 @@ def revert_patches(chip: ChipHandle, patches: list[dict], *, apply_live: bool,
                                     f"(current={cur!r})")
                     for dotted, old, _ in revertible:
                         restaged.append(chip.modifier.set_value(
-                            dotted, old, coerce=False, _defer_hooks=True, group_id=gid))
+                            dotted, old, coerce=False, _defer_hooks=True, group_id=gid,
+                            restore=True))
                     chip.store._clear_pointer_cache()
                 return None
 
@@ -551,7 +553,7 @@ def restore_values(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
             try:
                 for e in reversed(entries):
                     chip.modifier.set_value(e.dot_path, e.old_value,
-                                            coerce=False, enforce=False)
+                                            coerce=False, enforce=False, restore=True)
             except Exception:  # noqa: BLE001
                 logger.exception("restore rollback failed")
             return WriteOutcome(ok=False, action="restored",

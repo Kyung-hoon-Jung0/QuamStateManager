@@ -21,8 +21,32 @@ from typing import Any
 
 from quam_state_manager.core.loader import ChangeEntry, QuamStore
 from quam_state_manager.core.store_revs import note as _revs_note
+from quam_state_manager.core.type_policy import nonfinite_where as _nonfinite_where
 
 logger = logging.getLogger(__name__)
+
+
+_NO_OLD = object()
+
+
+def _refuse_new_nonfinite(dot_path: str, value: Any, old_value: Any = _NO_OLD) -> None:
+    """A user-facing write (``enforce=True``) never puts a NaN or Infinity
+    into state.json. Re-writing a value that already held the same
+    non-finite content (``repr`` equal) is not new and passes, so a field a
+    node once wrote as NaN can still be saved back unchanged. Replays of the
+    live file (``enforce=False``) are not judged here: SM never refuses what
+    the chip already holds."""
+    hit = _nonfinite_where(value)
+    if hit is None:
+        return
+    if old_value is not _NO_OLD:
+        try:
+            if repr(old_value) == repr(value):
+                return
+        except Exception:  # noqa: BLE001 - an unprintable old value is not proof of sameness
+            pass
+    raise TypeError(f"Non-finite value at {dot_path}{hit} (NaN or Infinity) "
+                    f"cannot be stored in state.json")
 
 
 class Modifier:
@@ -37,7 +61,7 @@ class Modifier:
 
     def set_value(self, dot_path: str, new_value: Any, *, _defer_hooks: bool = False,
                   coerce: bool = True, group_id: str | None = None,
-                  enforce: bool = True) -> ChangeEntry:
+                  enforce: bool = True, restore: bool = False) -> ChangeEntry:
         """Set a single value by dot-path in the merged (and source) dict.
 
         Steps:
@@ -69,6 +93,11 @@ class Modifier:
         mid-replay would be data loss) and the Pulses literal mode (the
         explicit, audited type-CHANGE surface). ``enforce`` is orthogonal to
         ``coerce``; one ack never collapses two gates.
+
+        ``restore=True`` marks a replay of a value the chip already held
+        (undo, redo, rollback, rename): it skips only the non-finite gate,
+        never the type gate, because the value comes from the change log or
+        the journal and not from typed input.
         """
         with self.store._lock:
             parent_merged, leaf_key = _navigate_to_parent(self.store.merged, dot_path)
@@ -77,6 +106,8 @@ class Modifier:
 
             coerced = self._checked_value(dot_path, old_value, new_value,
                                           coerce=coerce, enforce=enforce)
+            if enforce and not restore:
+                _refuse_new_nonfinite(dot_path, coerced, old_value)
 
             source_file = self.store.source_file_for(dot_path)
             source_dict = self.store.wiring if source_file == "wiring" else self.store.state
@@ -139,7 +170,8 @@ class Modifier:
     def create_subtree(self, dot_path: str, value: Any, *,
                        group_id: str | None = None,
                        enforce: bool = True,
-                       key_index: int | None = None) -> ChangeEntry:
+                       key_index: int | None = None,
+                       restore: bool = False) -> ChangeEntry:
         """Create a brand-new key (or subtree) at *dot_path*.
 
         The parent path must already exist; *dot_path* itself must NOT exist
@@ -151,6 +183,8 @@ class Modifier:
         new subtree is checked against its expected type (embedded
         ``__class__`` dicts anchor, so a created pulse's fields are
         env-checked immediately); ``enforce=False`` skips (pull-replay).
+        ``restore=True`` (undo, redo, rollback, rename) skips only the
+        non-finite gate, as in :meth:`set_value`.
 
         One :class:`ChangeEntry` is logged for the whole creation with
         ``created=True``; undoing it deletes the new key entirely (no orphan
@@ -165,6 +199,8 @@ class Modifier:
             policy = getattr(self.store, "type_policy", None)
             if policy is not None and enforce:
                 policy.check_subtree(self.store.merged, dot_path, value)
+            if enforce and not restore:
+                _refuse_new_nonfinite(dot_path, value)
 
             leaf_key = keys[-1]
             parent_keys = keys[:-1]
@@ -314,7 +350,10 @@ class Modifier:
             # One group id so a single Ctrl+Z undoes the whole rename (and any
             # pointer retargets the caller stamps with the same id) atomically.
             gid = group_id or f"grp{self.store.mutation_seq}"
-            create_entry = self.create_subtree(new_path, payload, group_id=gid)
+            # restore=True: a rename moves what the chip already holds; a NaN
+            # in the moved subtree is not new input.
+            create_entry = self.create_subtree(new_path, payload, group_id=gid,
+                                               restore=True)
             try:
                 delete_entry = self.delete_subtree(old_path, group_id=gid)
             except Exception:

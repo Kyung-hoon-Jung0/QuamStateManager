@@ -29,7 +29,11 @@ function feed() {
       plans: [], runs: [],
       approvals: [{ id: 'ap-1', kind: 'writes', node: '17_T1', targets: ['q2'], run_id: 9, why_held: 'mode ask-writes',
                     created: now - 5, reason: 'fit ok',
-                    writes: [{ path: 'qubits.q2.T1', old: 2.5e-5, new: 3.3e-5, now: T1, now_known: true }] }],
+                    writes: [{ path: 'qubits.q2.T1', old: 2.5e-5, new: 3.3e-5, now: T1, now_known: true },
+                             { path: 'qubits.q2.a', old: null, new: '1e-3', now: null, now_known: true, text_into_null: true },
+                             { path: 'qubits.q2.b', old: null, new: '#/qubits/q2/T1', now: null, now_known: true, becomes_ref: 'qubits.q2.T1', ref_resolves: true },
+                             { path: 'qubits.q2.c', old: null, new: '#../gone', now: null, now_known: true, becomes_ref: 'qubits.gone', ref_resolves: false },
+                             { path: 'qubits.q2.d', old: 1.5, new: null, now: 1.5, now_known: true, nonfinite: true }] }],
     },
     session: { alive: false, busy: false, backend: 'claude', ended: null },
     file: { owner: null, backend: 'claude', armed: false, stopped: false },
@@ -67,6 +71,16 @@ function moveTray(seq) {
   await tick(60);
   const c0 = nowCell();
   ok(c0 && c0.indexOf('2.5') >= 0 && c0.indexOf('proposed from') < 0, 'the card shows now = the proposal\'s old value (' + c0 + ')');
+  const rowText = (i) => {
+    const tr = document.querySelectorAll('#agent-home [data-card="approval:ap-1"] .ag-ap-rows tbody tr')[i];
+    return tr ? tr.children[0].textContent : '';
+  };
+  ok(rowText(1).indexOf('writes text, not a number, into a field that holds null') >= 0, 'text into a null field is said (' + rowText(1) + ')');
+  ok(rowText(2).indexOf('becomes a reference to qubits.q2.T1') >= 0 && rowText(2).indexOf('cannot find') < 0, 'a reference names its target');
+  ok(rowText(3).indexOf('becomes a reference to qubits.gone, which SM cannot find in the chip') >= 0, 'a dangling reference is said');
+  ok(rowText(0).indexOf('reference') < 0 && rowText(0).indexOf('text, not a number') < 0, 'a number row carries no such note');
+  ok(rowText(4).indexOf('the node gave no finite number here (NaN or Infinity, shown as null)') >= 0, 'a non-finite proposal is said (' + rowText(4) + ')');
+  ok(rowText(0).indexOf('no finite number') < 0, 'a finite row carries no non-finite note');
   // an event that does not move the working copy: no extra poll
   const p0 = polls();
   document.body.dispatchEvent(new window.CustomEvent('liveDriftChanged', { bubbles: true }));
