@@ -3878,10 +3878,14 @@ class TestGenerate:
             or {"ok": True, "status": "ok", "error": None, "merge": None,
                 "result": {"warnings": ["w0"]}})
         out = tmp_path_factory.mktemp("regen_live") / "out"
+        # No shared cores asked, so the kept-cores sentence stays out and the
+        # warnings here are the build's own plus the live-moved one.
+        spec = _gen_valid_spec()
+        spec.setdefault("populate", {}).setdefault("options", {})["pin_cores"] = False
 
         def build():
             resp = loaded_client.post("/regenerate/build", json={
-                "spec": _gen_valid_spec(), "source_folder": wc,
+                "spec": spec, "source_folder": wc,
                 "output_path": str(out)})
             assert resp.status_code == 200, resp.get_json()
             return resp.get_json()

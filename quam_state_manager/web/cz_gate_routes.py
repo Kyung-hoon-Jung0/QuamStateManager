@@ -44,12 +44,14 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import hashlib
 import json
 import logging
 import secrets
 import threading
 import time
+from pathlib import Path
 from collections import OrderedDict
 from typing import Any
 
@@ -58,7 +60,7 @@ from flask import current_app, jsonify, render_template, request
 from quam_state_manager.core import chip_copy, cz_gate_build as cgb, cz_gate_create
 from quam_state_manager.core.quam_config_save import (ClassFileError, class_files,
                                                       class_files_moved, class_refusal,
-                                                      lab_package)
+                                                      lab_package, published_path)
 from quam_state_manager.core import gate_check, gate_check_log, gate_intent, gate_timeline_view, pulse_catalog
 from quam_state_manager.core import slot_gate_plan as sgp, slot_gate_template as sgt
 from quam_state_manager.web import request_body
@@ -152,9 +154,10 @@ class SlotClass:
     """A slot gate class draft of the open scope: its spec and the ONE
     descriptor every door of a request plans and judges it with."""
 
-    def __init__(self, name: str, spec: sgt.SlotSpec):
+    def __init__(self, name: str, spec: sgt.SlotSpec, version: int = sgt.TEMPLATE_VERSION):
         self.name = name
         self.spec = spec
+        self.version = version
         self.qclass = sgp.qclass_of(spec)
         self.desc = sgp.slot_desc(spec)
 
@@ -165,9 +168,10 @@ def _scope() -> str:
 
 def _slot_classes() -> list[SlotClass]:
     """Every slot gate class draft of the open scope that the template
-    parser reads back (read only; an unreadable draft is left out)."""
+    parser reads back, at any version it reads (read only; an unreadable
+    draft is left out)."""
     try:
-        return [SlotClass(n, s) for n, s in sgp.slot_drafts(current_app.instance_path, _scope())]
+        return [SlotClass(n, s, v) for n, s, v in sgp.slot_drafts(current_app.instance_path, _scope(), True)]
     except OSError:
         return []
 
@@ -186,7 +190,7 @@ def _desc_of(slot: SlotClass | None) -> dict | None:
 def _slot_entry(sc: SlotClass, pcs: list) -> dict:
     slots = [s for s in sgt.SLOTS if s in sc.spec.slots]
     return {"class": sc.qclass, "label": f"{sc.name} (slot class SM made)", "layout": "slot",
-            "available": True, "why": "",
+            "available": True, "why": "", "older_render": sc.version != sgt.TEMPLATE_VERSION,
             "slots": [{"field": sgp.slot_field(s), "line": s,
                        "line_words": _LINE_WORDS.get(s, s), "required": True,
                        "pulse_classes": pcs} for s in slots],
@@ -399,6 +403,10 @@ def _plan_all(merged: dict, body: dict, slot: SlotClass | None = None) -> list[t
             res = {"error": why, "refusals": [why]}
         else:
             _record_class_files(res, pid, body["gate_name"], files)
+            if slot is not None:
+                note = older_render_note(slot, published_path(current_app.instance_path, scope, slot.qclass))
+                if note:
+                    res["notes"] = [note]
         if i == 0:
             first = res
         out.append((pid, res))
@@ -481,6 +489,33 @@ def _plan_slot_rows(merged: dict, pid: str, gate: str, slot: SlotClass, res: dic
 EXTRAS_SLOT_REFUSAL = ("A gate that uses a class SM made records its class files in the "
                        "gate's extras; this gate class has no extras slot, so it cannot be "
                        "combined with a class SM made.")
+
+
+OLDER_RENDER_NOTE = ("The class file quam_config/{file} is of an older render that refuses the stored control "
+                     "or target pulse. Make {name} again under its own name and save it to quam_config; "
+                     "saving the class again updates the file.")
+OLDER_RENDER_SAVE_NOTE = ("The class file quam_config/{file} is of an older render that refuses the stored control "
+                          "or target pulse. {name} is already made again in the current render; save it to "
+                          "quam_config to update the file.")
+
+
+def older_render_note(slot: SlotClass, path) -> str | None:
+    """The OLDER_RENDER_NOTE sentence when the lab file at *path* of the slot
+    class is a version-1 render with a control or target slot, else None
+    (also when the file is absent or unreadable: other doors name that).
+    When the slot's draft is already of the current render, the
+    OLDER_RENDER_SAVE_NOTE sentence instead: only the save is left."""
+    if not path:
+        return None
+    try:
+        with open(path, "rb") as fh:
+            parsed = sgt.parse(fh.read().decode("utf-8"))
+    except (OSError, UnicodeDecodeError):
+        return None
+    if parsed.ok and parsed.spec is not None and sgt.older_render_refuses_pulse(parsed.spec, parsed.version):
+        note = OLDER_RENDER_SAVE_NOTE if slot.version == sgt.TEMPLATE_VERSION else OLDER_RENDER_NOTE
+        return note.format(file=Path(path).name, name=slot.name)
+    return None
 
 
 def _record_class_files(plan: dict, pid: str, gate: str, files: list[dict]) -> None:
@@ -713,6 +748,7 @@ def _summary(pid: str, p: dict, merged: dict | None = None, gate_class: str = ""
             "operations": p.get("operations"), "fields": p.get("fields"),
             "pulses": pulses, "sources": p.get("sources"),
             "renamed": p.get("renamed") or {}, "reset": p.get("reset") or [],
+            "notes": list(p.get("notes") or []),
             **{k: p[k] for k in ("spectators", "spectator_ops") if k in p}}
 
 
@@ -1015,7 +1051,7 @@ def check_answer():
             if skips and all("pulse class" in t for t in skips) else {}))
         out_pairs.append({
             "pair": pid, "gate": body["gate_name"], "ok": True, "refusals": [],
-            "outcome": oc,
+            "notes": list(p.get("notes") or []), "outcome": oc,
             "checks": [{"name": k, "status": v.get("status"), "message": v.get("message")}
                        for k, v in ((entry or {}).get("checks") or {}).items()],
             "unchecked": (entry or {}).get("unchecked") or [],
@@ -1192,28 +1228,53 @@ def _gates_using(merged: dict, qclass: str) -> int:
     return n
 
 
-def _name_taken(name: str, merged: dict) -> str | None:
-    """Why *name* cannot be (re)made as a slot gate class here, or None."""
+def _older_match(spec: sgt.SlotSpec | None, mine: list) -> sgt.SlotSpec | None:
+    """The stored spec of an older-render draft that equals *spec* once its steps are left out, or None.
+
+    The make-class route carries no steps, so the stored steps are kept as they are."""
+    if spec is None:
+        return None
+    for s, v in mine:
+        if v != sgt.TEMPLATE_VERSION and dataclasses.replace(s, before=(), after=()) == spec:
+            return s
+    return None
+
+
+#: the "spec to write" of a make request whose text equals the stored draft: nothing is written
+UNCHANGED = object()
+
+
+def _name_check(name: str, merged: dict, spec: sgt.SlotSpec | None = None, steps_posted: bool = False):
+    """``(why *name* cannot be (re)made here or None, the spec to write or None for *spec*)``."""
     from quam_state_manager.core import pulse_class_drafts as drafts
     from quam_state_manager.core.quam_config_save import _lab_made
     if any(c.rsplit(".", 1)[-1] == name for c in cgb.GATE_CLASSES):
-        return NAME_TABLE.format(name=name)
+        return NAME_TABLE.format(name=name), None
     if any(spec.key == name or str(spec.qclass).rsplit(".", 1)[-1] == name
            for spec in pulse_catalog.PULSE_CATALOG.values()):
-        return NAME_PULSE.format(name=name)
+        return NAME_PULSE.format(name=name), None
     data = drafts.load_draft(current_app.instance_path, _scope(), name)
     if data is not None:
-        mine = any(n == name for n, _ in sgp.slot_drafts(current_app.instance_path, _scope()))
+        mine = [(s, v) for n, s, v in sgp.slot_drafts(current_app.instance_path, _scope(), True) if n == name]
         if not mine:
-            return NAME_DRAFT.format(name=name)
+            return NAME_DRAFT.format(name=name), None
         count = _gates_using(merged, f"quam_config.{name}.{name}")
-        if count:
-            return NAME_IN_USE.format(name=name, count=count)
-        return None
+        if not count:
+            return None, None
+        # an older render made again with the same spec only widens what its slots accept,
+        # so the gates that use it keep working: that remake is allowed while they use it,
+        # and the stored steps (which this route cannot carry) are written again unchanged
+        # a make that renders exactly the stored draft changes nothing, so it is answered ok
+        if not steps_posted and spec is not None and sgt.render(spec).encode("utf-8") == data:
+            return None, UNCHANGED
+        same_older = None if steps_posted else _older_match(spec, mine)
+        if same_older is None:
+            return NAME_IN_USE.format(name=name, count=count), None
+        return None, same_older
     lab = lab_package(_env_python())
     if lab is not None and _lab_made(lab / f"{name}.py"):
-        return NAME_LAB.format(name=name)
-    return None
+        return NAME_LAB.format(name=name), None
+    return None, None
 
 
 @bp.route("/api/pulse/cz-gate/slot-class", methods=["POST"])
@@ -1245,11 +1306,14 @@ def api_cz_gate_slot_class():
     if problems:
         return refuse(problems)
     with store._lock:
-        taken = _name_taken(name, store.merged)
+        steps_posted = any(data.get(k) not in (None, [], ()) for k in ("before", "after"))
+        taken, keep = _name_check(name, store.merged, spec, steps_posted)
     if taken:
         return jsonify(ok=False, error=taken, problems=[taken]), 409
+    if keep is UNCHANGED:
+        return jsonify(ok=True, cls=name, qclass=sgp.qclass_of(spec))
     try:
-        src = sgt.render(spec)
+        src = sgt.render(keep or spec)
         drafts.save_draft(current_app.instance_path, _scope(), name, src)
     except (drafts.DraftError, ValueError) as exc:
         return refuse([str(exc)])
