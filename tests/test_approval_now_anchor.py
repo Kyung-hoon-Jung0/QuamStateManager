@@ -505,7 +505,9 @@ def test_an_edit_landing_before_the_staging_is_never_pushed_under_the_approval(t
     before = (case[2] / "state.json").read_bytes()
     response = press(case, [{"path": "value", "new": 30, "seen_now": 10}])
     assert response.status_code == 409, response.get_json()
-    assert "the tray holds 1 staged edit(s)" in response.get_json()["error"]
+    # refused by the empty-tray check inside the staging lock, before a row of this approval
+    # was staged (not later by the count at the door, which names "another edit reached")
+    assert response.get_json()["error"].startswith("the tray holds 1 staged edit(s)"), response.get_json()
     assert (case[2] / "state.json").read_bytes() == before
     tray = case[1].get("/api/agent/tray").get_json()["entries"]
     assert [(x["path"], x["new"]) for x in tray] == [("third", 99)]      # the other window's edit stays its own
