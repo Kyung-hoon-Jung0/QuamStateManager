@@ -14,6 +14,10 @@ ROUNDED_34 = ("Time of flight 34 ns rounded up to 36 ns (" + REASON + "): acquis
 ROUNDED_46 = ("Time of flight 46 ns rounded up to 48 ns (" + REASON + "): acquisition starts "
               "2 ns after the return; measure time of flight again.")
 KEPT_46 = "Time of flight 46 ns is kept as you set it, but " + REASON + " (nearest allowed 48 ns)."
+UNPLACED_NEG = ("Time of flight of q2 is not moved: -50 + 20 ns gives -30 ns, and time of flight "
+                "must be a finite non-negative number; measure time of flight again.")
+UNPLACED_NAN = ("Time of flight of q2 is not moved: the stored value is nan, not a finite number; "
+                "measure time of flight again.")
 
 
 @pytest.mark.parametrize("value, nearest", [(24, 28), (26, 28), (30, 32), (46, 48),
@@ -178,10 +182,10 @@ def test_band_shift_offers_the_rest_when_one_stored_value_cannot_be_placed(tmp_p
     assert [t["qubit"] for t in plan["tof"]] == ["q1"] and plan["tof"][0]["new"] == 48
     (miss,) = plan["tof_unplaced"]
     assert miss["qubit"] == "q2"
-    assert "finite non-negative number" in miss["note"] and miss["note"].startswith(
-        "Time of flight of q2 is not moved")
+    assert miss["note"] == UNPLACED_NAN if bad != -50 else miss["note"] == UNPLACED_NEG
     assert miss["note"] in regenerate.mw_band_shift_offer_text(plan)
-    assert miss["note"] in regenerate.mw_band_shift_question(plan)["why"]
+    why = regenerate.mw_band_shift_question(plan)["why"]
+    assert why.endswith(" Time of flight of q2 is not moved.") and miss["note"] not in why
     _write(tmp_path, state, wiring)
     applied = regenerate.apply_mw_band_shift(tmp_path)
     assert applied and applied["tof_unplaced"]
@@ -225,3 +229,62 @@ def test_build_result_carries_the_moves_into_the_review():
     rows = outcome["result"]["output_timing"]["tof"]
     assert rows and all(r["sum"] == 34 and r["from"] == 28 and r["grid_note"] == ROUNDED_34
                         for r in rows)
+
+
+@pytest.mark.parametrize("bad, clause", [
+    (float("inf"), "the stored value is inf, not a finite number"),
+    ("#/qubits/nobody/resonator/time_of_flight",
+     "the stored value '#/qubits/nobody/resonator/time_of_flight' is not a number SM can place"),
+    ("abc", "the stored value 'abc' is not a number SM can place"),
+    (None, "the stored value None is not a number SM can place"),
+    ("missing", "no time of flight is stored"),
+])
+def test_a_stored_value_that_is_not_a_number_is_named(tmp_path, bad, clause):
+    state, wiring = _chip(ro_band=3, tof=28)
+    rr = state["qubits"]["q2"]["resonator"]
+    if bad == "missing":
+        del rr["time_of_flight"]
+    else:
+        rr["time_of_flight"] = bad
+    plan = regenerate.mw_band_shift_plan(state, wiring)
+    assert [t["qubit"] for t in plan["tof"]] == ["q1"]
+    (miss,) = plan["tof_unplaced"]
+    note = "Time of flight of q2 is not moved: " + clause + "; measure time of flight again."
+    assert miss["qubit"] == "q2" and miss["note"] == note
+    assert note in regenerate.mw_band_shift_offer_text(plan)
+    _write(tmp_path, state, wiring)
+    regenerate.apply_mw_band_shift(tmp_path)
+    written = json.loads((tmp_path / "state.json").read_text())["qubits"]["q2"]["resonator"]
+    assert ("time_of_flight" in written) == (bad != "missing")
+    if isinstance(bad, str) and bad != "missing":
+        assert written["time_of_flight"] == bad
+
+
+def test_a_stored_pointer_to_a_number_is_resolved_and_moved():
+    state, wiring = _chip(ro_band=3, tof=28)
+    state["qubits"]["q1"]["resonator"]["time_of_flight"] = 26
+    state["qubits"]["q2"]["resonator"]["time_of_flight"] = "#/qubits/q1/resonator/time_of_flight"
+    plan = regenerate.mw_band_shift_plan(state, wiring)
+    assert plan["tof_unplaced"] == []
+    q2 = next(t for t in plan["tof"] if t["qubit"] == "q2")
+    assert q2["old"] == 26 and q2["sum"] == 46 and q2["new"] == 48 and q2["grid_note"] == ROUNDED_46
+
+
+def test_the_unplaced_sentence_appears_once_in_the_question():
+    state, wiring = _chip(ro_band=3, tof=28)
+    state["qubits"]["q2"]["resonator"]["time_of_flight"] = -50
+    q = regenerate.mw_band_shift_question(regenerate.mw_band_shift_plan(state, wiring))
+    assert q["why"] == ("Band 1/3 MW outputs leave 20 ns before band 2 ones. Re-check the time of "
+                        "flight of q1. Time of flight of q2 is not moved.")
+
+
+def test_the_applied_note_names_the_unplaced_value(tmp_path, monkeypatch):
+    from tests.test_regen_mw_band_shift import _route
+    state, wiring = _chip(ro_band=3, tof=28)
+    state["qubits"]["q2"]["resonator"]["time_of_flight"] = -50
+    client, body = _route(tmp_path, monkeypatch, (state, wiring))
+    body["mw_shift_ack"] = "shift"
+    res = client.post("/regenerate/build", json=body).get_json()
+    assert res.get("ok") is True
+    note = next(w for w in res["result"]["warnings"] if w.startswith("MW outputs shifted: "))
+    assert note.endswith(". " + UNPLACED_NEG), note

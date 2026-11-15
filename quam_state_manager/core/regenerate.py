@@ -20,8 +20,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from . import (additions, config_generator, output_timing, path_match, regen_merge, regen_script, regen_spec,
-               rename_lineage, safe_io)
+from . import (additions, config_generator, output_timing, path_match, pointer_resolver, regen_merge,
+               regen_script, regen_spec, rename_lineage, safe_io)
 
 
 def reconstruct_from_folder(
@@ -483,6 +483,26 @@ def _num(v) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
+def _stored_tof(doc: dict, rr: dict, path: str):
+    """A resonator's stored time of flight as ``(value, None)``, or
+    ``(stored, why_not)`` with the clause naming why no number can be placed.
+    A QUAM pointer is resolved first (the store's resolver); only a value that
+    is still not a finite number is named."""
+    import math
+
+    if "time_of_flight" not in rr:
+        return None, "no time of flight is stored"
+    stored = rr["time_of_flight"]
+    value = stored
+    if pointer_resolver.is_pointer(value):
+        value = pointer_resolver.resolve_pointer(doc, value, tuple(path.split("/")))
+    if not _num(value):
+        return stored, f"the stored value {stored!r} is not a number SM can place"
+    if not math.isfinite(value):
+        return stored, f"the stored value is {value:g}, not a finite number"
+    return value, None
+
+
 def _node(doc: dict, path: str):
     node = doc
     for part in path.split("/"):
@@ -514,9 +534,10 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
     pair in chip order); a resonator gets ``time_of_flight += s`` of its
     readout output port. Items: ``ports``, ``flux``, ``tof`` and ``spacing``
     (qubits whose xy and readout shifts differ). A stored time of flight the
-    grid rule cannot place (not a number, or negative after the shift) is
-    not written; it goes to ``tof_unplaced`` with the reason, and the rest
-    of the shift is still offered."""
+    grid rule cannot place (missing, not a number after its pointer is
+    resolved, not finite, or negative after the shift) is not written; it
+    goes to ``tof_unplaced`` with the reason, and the rest of the shift is
+    still offered."""
     try:
         mw = output_timing.mw_outputs_in_use(state, wiring)
         bands = {p.get("band") for _, p in mw}
@@ -554,22 +575,24 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
             rr = q.get("resonator") if isinstance(q.get("resonator"), dict) else {}
             ro_path, _ = _resolve_ref(doc, rr.get("opx_output"))
             r = shift.get(ro_path, 0)
-            if r and _num(rr.get("time_of_flight")):
-                raw = rr["time_of_flight"] + r
+            if r:
                 path = f"qubits/{qid}/resonator/time_of_flight"
-                try:
-                    ok, nearest, reason = output_timing.tof_on_grid(raw)
-                except ValueError as exc:
+                old, why_not = _stored_tof(doc, rr, path)
+                raw = old + r if why_not is None else None
+                if why_not is None:
+                    try:
+                        ok, nearest, reason = output_timing.tof_on_grid(raw)
+                    except ValueError as exc:
+                        why_not = (f"{old:g} + {r:g} ns gives {raw:g} ns, and {exc}")
+                if why_not is not None:
                     # one stored value the rule cannot place: the other lines
                     # are still offered, this one is named and not written
                     plan["tof_unplaced"].append({
-                        "qubit": qid, "path": path, "old": rr["time_of_flight"], "sum": raw,
-                        "note": (f"Time of flight of {qid} is not moved: {rr['time_of_flight']:g}"
-                                 f" + {r:g} ns gives {raw:g} ns, and {exc}; measure time of "
-                                 "flight again.")})
+                        "qubit": qid, "path": path, "old": old, "sum": raw,
+                        "note": (f"Time of flight of {qid} is not moved: {why_not}; measure "
+                                 "time of flight again.")})
                 else:
-                    item = {"qubit": qid, "path": path,
-                            "old": rr["time_of_flight"], "new": nearest, "sum": raw}
+                    item = {"qubit": qid, "path": path, "old": old, "new": nearest, "sum": raw}
                     if not ok:
                         item["grid_note"] = output_timing.tof_rounded_note(raw, nearest, reason)
                     plan["tof"].append(item)
@@ -600,8 +623,10 @@ def mw_band_shift_question(plan: dict) -> dict:
     if plan.get("tof"):
         why += (" Re-check the time of flight of " +
                 ", ".join(t["qubit"] for t in plan["tof"]) + ".")
-    for t in plan.get("tof_unplaced") or ():
-        why += " " + t["note"]
+    if plan.get("tof_unplaced"):
+        # the full sentence is the question's own line under it; one clause here
+        why += (" Time of flight of " +
+                ", ".join(t["qubit"] for t in plan["tof_unplaced"]) + " is not moved.")
     return {"kind": "mw_shift", "question": "Shift the band 1/3 MW outputs by 20 ns?",
             "why": why}
 

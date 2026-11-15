@@ -695,10 +695,16 @@ same rule applies to every readout, provisionally untested on LF-FEM and OPX+.
 - MW readout port delays keep their requested delta and the time of flight rounds; LF readout ports
   keep the `_readout_delay` alignment (the time of flight stays exact and the output offset is named).
 - A rounded move names the sum, the written value and its consequence (`tof_rounded_note`): the
-  acquisition starts up to 2 ns after (or before) the return, so the time of flight is measured again.
+  acquisition starts `nearest - sum` ns after (or before) the return, named in the note. That is at
+  most 2 ns from rounding to the grid, and more when the sum is below the 28 ns floor (a sum of 10
+  is written as 28: 18 ns after). Either way the time of flight is measured again.
 - The Re-generate band shift plan writes `new` = the nearest allowed value and keeps `sum` = the raw
-  sum. A stored value the rule cannot place (not a number, or negative after the shift) is not written:
-  it is listed in `tof_unplaced` with the reason, and the rest of the shift is still offered.
+  sum. A stored value that is a QUAM pointer is resolved first; one that resolves to a number is
+  moved and written as that number on the resonator. A stored value the rule cannot place is not
+  written: it is listed in `tof_unplaced` with a sentence naming why (no time of flight stored, a
+  value that is still not a number, a value that is not finite, or a sum that is negative), and the
+  rest of the shift is still offered. The Re-generate question names those qubits in one clause; the
+  full sentence is its own line under it, in the offer text and in the applied note.
 - A value the user set stays as entered, with the reason and nearest allowed value (`tof_kept_note`);
   on an undelayed readout output the review names only the grid. A default SM pre-filled, or a
   builder value nobody set, is written on the grid. Stored values SM does not move stay unchanged.

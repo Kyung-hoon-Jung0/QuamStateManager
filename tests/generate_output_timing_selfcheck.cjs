@@ -197,6 +197,15 @@ function spec(qubits, fluxFem) {
   const gon = Array.from(gridOnly.querySelectorAll('p.ui-note')).map(function (p) { return p.textContent; });
   ok(gon.length === 1 && gon[0] === 'q1, q2: ' + keptNote && !/delayed by 0 ns/.test(gridOnly.textContent),
      '[grid] an undelayed typed value names only the grid: ' + JSON.stringify(gon));
+  // two typed values with different grid sentences: one line each, never the first one's value
+  const kept50 = 'Time of flight 50 ns is kept as you set it, but the controller takes multiples ' +
+    'of 4 ns, at least 28 ns (nearest allowed 52 ns).';
+  const twoKept = T.outputTimingResultTable({ mw: [{ label: 'p8', band: 2, delay: 0 }],
+    tof: [{ qubit: 'q1', shift: 0, value: 46, moved: false, grid_only: true, grid_note: keptNote },
+          { qubit: 'q2', shift: 0, value: 50, moved: false, grid_only: true, grid_note: kept50 }] });
+  const two = Array.from(twoKept.querySelectorAll('p.ui-note')).map(function (p) { return p.textContent; });
+  ok(two.length === 2 && two[0] === 'q1: ' + keptNote && two[1] === 'q2: ' + kept50,
+     '[grid] two typed values keep their own grid sentences: ' + JSON.stringify(two));
   // one stored value the rule cannot place: the offer still lists the rest and names that one
   const unplaced = 'Time of flight of q2 is not moved: -50 + 20 ns gives -30 ns, and time of flight ' +
     'must be a finite non-negative number; measure time of flight again.';
