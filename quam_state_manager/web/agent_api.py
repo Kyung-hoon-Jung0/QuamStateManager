@@ -259,6 +259,14 @@ def _count_of(n: int, noun: str) -> str:
     return f"{n} {noun}{'' if n == 1 else 's'}"
 
 
+def _then(lead: str, tail: str) -> str:
+    """``lead`` and a "; ..." ``tail`` as one sentence: the lead's own closing period goes."""
+    if not tail:
+        return lead
+    lead = lead.rstrip()
+    return (lead[:-1] if lead.endswith(".") and not lead.endswith("..") else lead) + tail
+
+
 def _err(msg: str, code: int = 400, **extra):
     return jsonify(ok=False, error=msg, **extra), code
 
@@ -1915,8 +1923,8 @@ def _take_back_own(store, mod, gid) -> list[str]:
     """Take this approval's own rows (``gid``) back out of the tray; never undo another window.
 
     Each own row is taken back whole or left whole, newest first:
-    - no later row of another group touches its path (the same path, under it or above it):
-      it is discarded (its old value restored), as before;
+    - no later row of any group (another window's or this approval's own) touches its path
+      (the same path, under it or above it): it is discarded (its old value restored), as before;
     - a plain set whose only later rows are plain sets of exactly the same path: the value
       stays what the other window set, the first of those rows takes this row's old value as
       its own "before" (the tray then reads old -> theirs, and its Ctrl+Z restores old, never
@@ -2096,7 +2104,7 @@ def _unstaged_message(unstaged: list[dict], total: int) -> str:
     tail = ""
     if any(str(u.get("why", "")).startswith(("new key", "removed key")) for u in unstaged):
         tail = "; " + STRUCTURAL_WHAT_TO_DO
-    return (f"{len(unstaged)} of {total} value(s) cannot be staged: {lines}{more}; "
+    return (f"{len(unstaged)} of {_count_of(total, 'value')} cannot be staged: {lines}{more}; "
             f"nothing was written{tail}")
 
 
@@ -2348,7 +2356,8 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
         out["error"] = ((js or {}).get("message") or (js or {}).get("conflict") or (js or {}).get("error")
                         or _status_text(body) or f"HTTP {status}")
         if store.change_log:
-            out["error"] += _take_back()       # refused BEFORE the save: the group comes back out
+            # refused BEFORE the save: the group comes back out
+            out["error"] = _then(out["error"], _take_back())
         else:
             # refused AFTER the save (the live write itself failed -- a reader
             # holding state.json open on Windows). The values used to stay in
@@ -2358,11 +2367,12 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
             # press leaves SM exactly where it found it.
             why = _take_back_saved(r, ctx, staged, before)
             if why is None:
-                out["error"] += "; nothing was written, and the approval's values were taken back out of SM"
+                out["error"] = _then(out["error"],
+                                     "; nothing was written, and the approval's values were taken back out of SM")
             else:
                 out["saved_in_working_copy"] = True
-                out["error"] += ("; the values are saved in SM's working copy (unapplied) and could not be "
-                                 f"taken back ({why}); a human decides in the window")
+                out["error"] = _then(out["error"], "; the values are saved in SM's working copy (unapplied) and "
+                                     f"could not be taken back ({why}); a human decides in the window")
         return out
     if r._change_count() == 0 and not ctx.get("live_diverged"):
         out["applied"] = True

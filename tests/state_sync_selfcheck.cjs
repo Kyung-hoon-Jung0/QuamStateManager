@@ -350,7 +350,7 @@ window.SyncPanel.config.armMinMs = 0;   // the double-press guard has its own pi
         const det = { xhr: { status: 409, responseText: JSON.stringify({
                           status: 'unseen_changes', have: 2, seen: 1,
                           paths: ['qubits.q3.T1'],
-                          message: '1 edit(s) were made in another State Manager window' }) },
+                          message: '1 edit was made in another State Manager window' }) },
                       target: _tray, requestConfig: { path: url },
                       shouldSwap: true, isError: true };
         document.dispatchEvent(new window.CustomEvent('htmx:beforeSwap', { detail: det }));

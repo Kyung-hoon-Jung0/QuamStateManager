@@ -373,6 +373,7 @@ def test_a_forged_seen_that_lacks_a_row_writes_nothing(approval_case):
         assert _summary_press(approval_case, {"seen": seen}).status_code == 409
     body = _summary_press(approval_case, {"seen": []}).get_json()
     assert body["error"].startswith("2 values of this approval were not on the summary (value, other); "), body
+    _assert_plain(body["error"])
     assert (folder / "state.json").read_bytes() == before
 
 
@@ -512,7 +513,9 @@ def test_an_edit_landing_before_the_staging_is_never_pushed_under_the_approval(t
     # refused by the empty-tray check, which runs after the never-touch read and before a row of
     # this approval was staged (not later by the count at the door, which names "another edit
     # reached"); that the check shares the staging's lock hold is pinned by the next test
-    assert response.get_json()["error"].startswith("the tray holds 1 staged edit;"), response.get_json()
+    error = response.get_json()["error"]
+    assert error == "the tray holds 1 staged edit; apply or discard it in the window first, then approve", error
+    _assert_plain(error)
     assert (case[2] / "state.json").read_bytes() == before
     tray = case[1].get("/api/agent/tray").get_json()["entries"]
     assert [(x["path"], x["new"]) for x in tray] == [("third", 99)]      # the other window's edit stays its own
@@ -652,11 +655,11 @@ def test_a_created_key_another_window_changed_since_stays_whole(tmp_path, monkey
     error = response.get_json()["error"]
     _assert_kept_text(error, 1)
     # the count is the tray after the take-back: the created row that stayed + the other window's
-    assert "the tray holds 2 staged edits;" in error, error
+    assert "the tray holds 2 staged edits; apply or discard them in the window first" in error, error
     assert (case[2] / "state.json").read_bytes() == before
     with case[0].app_context():
         store = _ctx(case)["store"]
-        assert store.get_value("value") == 10                  # the untouched row came back out
+        assert store.get_value("value") == 10                 # the untouched row came back out
         log = [(e.dot_path, e.created, e.deleted) for e in store.change_log]
         # the created key and the other window's edit of it stay whole, as the tray says
         if edit == "delete":
@@ -730,14 +733,22 @@ def _created_press(case, count=1):
     return press(case, [{"path": f"{k}.x", "new": 1, "seen_unknown": True} for k in _CREATED[:count]])
 
 
-def _assert_kept_text(error, count):
+def _kept_text(count):
     if count == 1:
-        want = ("; 1 value of this approval could not be taken back because another window changed it since "
+        return ("; 1 value of this approval could not be taken back because another window changed it since "
                 "(fresh); a human decides in the window")
-    else:
-        want = ("; 2 values of this approval could not be taken back because another window changed them since "
-                "(fresh, spare); a human decides in the window")
-    assert want in error, error
+    return ("; 2 values of this approval could not be taken back because another window changed them since "
+            "(fresh, spare); a human decides in the window")
+
+
+def _assert_kept_text(error, count):
+    assert _kept_text(count) in error, error
+    _assert_plain(error)
+
+
+def _assert_plain(error):
+    # one plural style ("1 value" / "N values") and one sentence: no "(s)", no ".;" join
+    assert "(s)" not in error and ".;" not in error, error
 
 
 @pytest.mark.parametrize("count", [1, 2])
@@ -780,6 +791,13 @@ def test_a_door_refusal_names_the_rows_that_stayed(tmp_path, monkeypatch, count)
     error = response.get_json()["stage"]["error"] if response.status_code == 200 else response.get_json()["error"]
     assert not error.startswith("another edit reached the tray"), error      # the door refused, not the check
     _assert_kept_text(error, count)
+    if count == 1:
+        door = ("1 edit was made in another State Manager window and is not shown on this screen. "
+                "Applying now would write it to the live chip too")
+    else:
+        door = ("2 edits were made in another State Manager window and are not shown on this screen. "
+                "Applying now would write them to the live chip too")
+    assert error == door + _kept_text(count), error
     assert (case[2] / "state.json").read_bytes() == before
 
 
@@ -802,15 +820,66 @@ def _literal_text(node):
     return "".join(v.value for v in node.values if isinstance(v, ast.Constant) and isinstance(v.value, str))
 
 
-def test_no_approval_refusal_text_says_s_in_brackets():
-    # the refusal texts count "1 value" / "N values", like the tray count; never "value(s)"
+def test_a_full_tray_refusal_counts_two_edits(tmp_path, monkeypatch):
+    case = _case(tmp_path, {"value": 10, "third": 5, "fourth": 6}, [{"path": "value", "old": 10, "new": 30}])
+    from quam_state_manager.core import agent_setup
+    real = agent_setup.never_touch_in_force
+
+    def lands(*a, **k):                         # two edits of another window, before the staging
+        _foreign_edit(case)
+        _foreign_edit(case, "fourth", 98)
+        return real(*a, **k)
+    monkeypatch.setattr(agent_setup, "never_touch_in_force", lands)
+    response = press(case, [{"path": "value", "new": 30, "seen_now": 10}])
+    assert response.status_code == 409, response.get_json()
+    error = response.get_json()["error"]
+    assert error == "the tray holds 2 staged edits; apply or discard them in the window first, then approve", error
+    _assert_plain(error)
+
+
+@pytest.mark.parametrize("count", [1, 2])
+def test_an_unstageable_refusal_counts_values_like_the_others(tmp_path, count):
+    gone = [{"path": f"gone{i}", "old": i, "new": None, "deleted": True} for i in range(count)]
+    case = _case(tmp_path, {"value": 10, "gone0": 0, "gone1": 1}, [{"path": "value", "old": 10, "new": 30}] + gone)
+    before = (case[2] / "state.json").read_bytes()
+    response = press(case, [{"path": "value", "new": 30, "seen_now": 10}]
+                     + [{"path": w["path"], "new": None, "seen_now": w["old"]} for w in gone])
+    body = response.get_json()
+    error = body["stage"]["error"] if response.status_code == 200 else body["error"]
+    want = "1 of 2 values cannot be staged: gone0 (" if count == 1 else "2 of 3 values cannot be staged: gone0 ("
+    assert error.startswith(want), body
+    _assert_plain(error)
+    assert (case[2] / "state.json").read_bytes() == before
+
+
+def _refusal_functions():
     import ast
     from pathlib import Path
-    from quam_state_manager.web import agent_api
-    tree = ast.parse(Path(agent_api.__file__).read_text(encoding="utf-8"))
-    marks = ("of this approval", "the tray holds")
-    texts = [_literal_text(n) for n in ast.walk(tree)
+    from quam_state_manager.web import agent_api, routes
+    # every function that builds a text an approval press can answer with: the approve door
+    # (approvals_decide), the staging and its take-backs, the unstaged list, the tray count,
+    # and the apply door it calls (routes: the unseen-edit refusal and the door itself)
+    names = {agent_api: {"approvals_decide", "_stage_writes", "_unstaged_message", "_take_back_own",
+                         "_take_back_saved", "_refusal_line", "_structural_why", "_count_of", "_then"},
+             routes: {"_unseen_edit_refusal", "state_apply_to_live"}}
+    found = {}
+    for mod, want in names.items():
+        tree = ast.parse(Path(mod.__file__).read_text(encoding="utf-8"))
+        for fn in ast.walk(tree):
+            if isinstance(fn, ast.FunctionDef) and fn.name in want:
+                found[fn.name] = fn
+    assert set(found) == set().union(*names.values()), sorted(found)
+    return found
+
+
+def test_no_approval_refusal_text_says_s_in_brackets():
+    # every text these functions can return counts "1 value" / "N values" through `_count_of`;
+    # never "value(s)" or "edit(s)". The one "(s)" left is the human's journal line of an
+    # approval that went through (approvals_decide), not a refusal: main's wording, kept.
+    import ast
+    journal = " write(s) from "                  # "{actor} approved {n} write(s) from {card}"
+    texts = [(name, _literal_text(n)) for name, fn in _refusal_functions().items() for n in ast.walk(fn)
              if isinstance(n, ast.JoinedStr) or (isinstance(n, ast.Constant) and isinstance(n.value, str))]
-    hits = [t for t in texts if any(m in t for m in marks)]
-    assert len(hits) >= 3, hits                 # the tray count, the kept-row suffix, the summary refusal
-    assert not [t for t in hits if "(s)" in t], hits
+    marks = ("of this approval", "the tray holds", "cannot be staged", "made in another")
+    assert all(any(m in t for _, t in texts) for m in marks), marks
+    assert not [(n, t) for n, t in texts if "(s)" in t.replace(journal, "")], texts

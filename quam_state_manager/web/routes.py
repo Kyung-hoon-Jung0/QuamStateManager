@@ -34644,12 +34644,14 @@ def _unseen_edit_refusal(ctx) -> dict | None:
 
     if have <= seen:
         return None
+    from quam_state_manager.web.agent_api import _count_of     # the one plural style ("1 edit" / "N edits")
+    one = have - seen == 1
     return {"status": "unseen_changes", "have": have, "seen": seen,
             "paths": all_paths[seen:][:8],
             "message": (
-                f"{have - seen} edit(s) were made in another State Manager "
-                f"window and are not shown on this screen. Applying now would "
-                f"write them to the live chip too.")}
+                f"{_count_of(have - seen, 'edit')} {'was' if one else 'were'} made in another "
+                f"State Manager window and {'is' if one else 'are'} not shown on this screen. "
+                f"Applying now would write {'it' if one else 'them'} to the live chip too.")}
 
 
 def _staged_version_words(ctx) -> str:
