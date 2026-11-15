@@ -607,6 +607,35 @@ def test_steps_round_trip_and_order(slots, spectators, before, after):
     assert not re.search(r"\bchip\b", source)
 
 
+#: The exact timing lines of a class with steps; true for a wait as well as for an xy play.
+TIMING_WORDS = [
+    "Steps are statements in this order. An xy play starts when its own channel is free.",
+    "A wait holds each gate channel for that time from the moment that channel is free; it does not",
+    "wait for other channels. Steps on different channels overlap unless an align step is between them.",
+]
+#: An xy play, then a wait, then an xy play on the other qubit, all after the gate. The wait is one
+#: statement over every gate channel and no align follows it, so the second play is not held until
+#: the first play ends; the class docstring says so and the statements show no align between them.
+PLAY_WAIT_PLAY = ([], [{"kind": "xy", "qubit": "control", "operation": "x180"}, {"kind": "wait", "length": 16},
+                       {"kind": "xy", "qubit": "target", "operation": "y90"}],
+                  ["align", "play coupler coupler_op", "align", "align",
+                   "play control_xy x180", "wait 4", "play target_xy y90"])
+
+
+def test_class_docstring_is_true_for_a_wait_between_plays():
+    source = T.render(T.SlotSpec("ExampleGate", {"coupler"}, False, *PLAY_WAIT_PLAY[:2]))
+    doc = ast.get_docstring(ast.parse(source).body[-1]).splitlines()
+    steps = ("After the gate pulses: play x180 on the control xy channel, wait 16 ns,"
+             " play y90 on the target xy channel.")
+    assert doc[-4:] == [steps] + TIMING_WORDS
+    lines = source.splitlines()
+    first = lines.index("        pair.qubit_control.xy.play('x180')")
+    assert lines[first - 1:first + 3] == ["        align(*channels)", "        pair.qubit_control.xy.play('x180')",
+                                          "        wait(int(16) // 4, *channels)",
+                                          "        pair.qubit_target.xy.play('y90')"]
+    assert T.render(T.parse(source).spec) == source
+
+
 def test_class_docstring_names_the_steps():
     source = T.render(T.SlotSpec("ExampleGate", {"coupler"}, False, [WAIT, XY], [ALIGN]))
     doc = ast.get_docstring(ast.parse(source).body[-1]).splitlines()
@@ -614,7 +643,7 @@ def test_class_docstring_names_the_steps():
     assert "After the gate pulses: align." in doc
     assert " then " not in " ".join(doc)
     assert [line.strip() for line in T.STEP_TIMING_NOTE] == doc[doc.index("After the gate pulses: align.") + 1:]
-    assert "overlap unless an align step is between them" in doc[-1]
+    assert doc[doc.index("After the gate pulses: align.") + 1:] == TIMING_WORDS
     source = T.render(T.SlotSpec("ExampleGate", {"coupler"}, False, [], [ALIGN]))
     assert "Before the gate pulses: nothing." in ast.get_docstring(ast.parse(source).body[-1]).splitlines()
 
@@ -765,6 +794,7 @@ TOGETHER = ([XY, {"kind": "xy", "qubit": "target", "operation": "y90"}],
      ["play control_xy x180", "wait 5", "align", "play coupler coupler_op", "align", "align",
       "play target_xy y90", "wait 4"]),
     TOGETHER,
+    PLAY_WAIT_PLAY,
 ])
 def test_lab_statement_order(tmp_path, before, after, expected):
     source = T.render(T.SlotSpec("ExampleGate", {"coupler"}, False, before, after))
@@ -828,7 +858,8 @@ def test_only_plain_values_reach_the_source(monkeypatch, length):
 
 
 #: Text that would close a docstring, start a comment or add a line if it were pasted into the source.
-BREAKERS = ['""" ; BOOM = 1 ; """', "a\n        BOOM = 1\n", "x\\", "# BOOM", "'" * 3, "x\r    BOOM = 1", "\u2028BOOM = 1"]
+BREAKERS = ['""" ; BOOM = 1 ; """', "a\n        BOOM = 1\n", "x\\", "# BOOM", "'" * 3, "x\r    BOOM = 1", "\u2028BOOM = 1",
+            "x\u00e9", "\uac00"]
 FORCED_LENGTHS = BREAKERS + [float("nan"), float("inf"), 10 ** 400, 10 ** 5000, T.MAX_WAIT_NS + T.LENGTH_STEP_NS,
                              18, 52.5, 16.0, True, None, EvilInt(16), FloatSub(16.0), StrSub("16")]
 
@@ -961,6 +992,7 @@ def _standin_apply(monkeypatch, source, xy_operations=None):
     ([{"kind": "wait", "length": T.MAX_WAIT_NS}], [],
      [f"wait {T.MAX_WAIT_NS // T.LENGTH_STEP_NS}", "align", "play coupler coupler_op", "align", "align"]),
     TOGETHER,
+    PLAY_WAIT_PLAY,
 ])
 def test_standin_statement_order(monkeypatch, before, after, expected):
     source = T.render(T.SlotSpec("ExampleGate", {"coupler"}, False, before, after))
@@ -1021,3 +1053,146 @@ def test_lab_wait_at_the_upper_limit_builds(tmp_path):
     result = run_check(tmp_path, source)
     assert result["status"] == "ok" and result["ok"], json.dumps(result)
     assert result["statements"][0] == f"wait {T.MAX_WAIT_NS // T.LENGTH_STEP_NS}"
+
+
+# The value text of a message, the exact step list type, and what the checker counts as a slot play.
+
+class ListSub(list):
+    pass
+
+
+class TupleSub(tuple):
+    pass
+
+
+E_ACUTE, HANGUL = chr(233), chr(0xAC00)
+
+
+class NoText:
+    def __repr__(self):
+        raise RuntimeError("no text")
+
+    __str__ = __repr__
+
+
+def test_shown_value_is_short_ascii():
+    long_name = "bad name " * 20
+    assert T._shown(long_name) == ascii(long_name)[:57] + "..." and len(T._shown(long_name)) == 60
+    assert T._shown("a" * 58) == "'" + "a" * 58 + "'" and len(T._shown("a" * 58)) == 60
+    assert len(T._shown("a" * 59)) == 60 and T._shown("a" * 59).endswith("a...")
+    assert len(T._shown("x" * 1_000_000)) == 60
+    assert T._shown(10 ** 5000) == "a whole number too large to show"
+    assert T._shown(2 ** 64 - 1) == str(2 ** 64 - 1)
+    assert T._shown(NoText()) == "a value that cannot be shown"
+    assert T._shown("x" + E_ACUTE) == "'x\\xe9'" and T._shown(HANGUL) == "'\\uac00'"
+    for value in ("x" + E_ACUTE, HANGUL * 100, [E_ACUTE], {E_ACUTE: HANGUL}, StrSub(E_ACUTE), chr(0x2028), NASTY):
+        assert T._shown(value).isascii() and T._shown(value).isprintable() and len(T._shown(value)) <= 60
+
+
+@pytest.mark.parametrize("where", ["before", "after"])
+def test_messages_show_values_short_and_ascii(where):
+    problem = T.sequence_steps_problem([{"kind": "xy", "qubit": "control", "operation": "bad name " * 20}], where)
+    shown = ascii("bad name " * 20)[:57] + "..."
+    assert problem == T.XY_OP_PROBLEM.format(number=1, where=where, value=shown)
+    assert len(problem) == len(T.XY_OP_PROBLEM.format(number=1, where=where, value="")) + 60
+    for steps in ([{"kind": "xy", "qubit": "control", "operation": "x" + E_ACUTE}],
+                  [{"kind": "xy", "qubit": HANGUL, "operation": "x180"}],
+                  [{"kind": "wait", "length": E_ACUTE * 500}], [{"kind": E_ACUTE}], [HANGUL * 500],
+                  [{"kind": "align", E_ACUTE: 1}], E_ACUTE * 500):
+        problem = T.sequence_steps_problem(steps, where)
+        assert problem and problem.isascii() and len(problem) < 200, problem
+
+
+@pytest.mark.parametrize("where", ["before", "after"])
+def test_step_list_must_be_an_exact_list_or_tuple(where):
+    sentence = f"The sequence steps {where} the gate must be a list; received "
+    for steps in (ListSub([ALIGN]), TupleSub([ALIGN]), ListSub(), TupleSub(), (step for step in [ALIGN]),
+                  iter([ALIGN]), {"kind": "align"}.values()):
+        problem = T.sequence_steps_problem(steps, where)
+        assert problem == T.STEPS_PROBLEM.format(where=where, value=T._shown(steps)) and problem.startswith(sentence)
+    assert T.sequence_steps_problem(ListSub([ALIGN]), where) == sentence + "[{'kind': 'align'}]."
+    assert T.sequence_steps_problem(TupleSub([ALIGN]), where) == sentence + "({'kind': 'align'},)."
+    for steps in (TupleSub([ALIGN]), (step for step in [ALIGN])):
+        spec = T.SlotSpec("ExampleGate", {"coupler"}, False, **{where: steps})
+        assert [p for p in T.validate(spec) if p.startswith(sentence)]
+        with pytest.raises(ValueError, match="must be a list; received"):
+            T.render(spec)
+    assert T.sequence_steps_problem([ALIGN], where) is None and T.sequence_steps_problem((ALIGN,), where) is None
+
+
+def _standin_check(monkeypatch, tmp_path, source, **request):
+    """Run the checker script's check() in this process on stand-in QM modules; return its result."""
+    import contextlib
+    import dataclasses
+    import importlib.util
+    import sys
+    import types
+    from quam_state_manager.core.config_generator import _script_path
+    qua = types.ModuleType("qm.qua")
+    qua.align = lambda *channels: None
+    qua.wait = lambda duration, *channels: None
+    qua.amp = lambda scale: scale
+    qua.play = lambda pulse, element, **kwargs: None
+    qua.program = contextlib.nullcontext
+    core, macro, pulses, channels = (types.ModuleType(n) for n in (
+        "quam.core", "quam.components.macro", "quam.components.pulses", "quam.components.channels"))
+    core.quam_dataclass = dataclasses.dataclass
+    macro.QubitPairMacro = type("QubitPairMacro", (), {})
+    pulses.Pulse = type("Pulse", (), {})
+
+    class SquarePulse(pulses.Pulse):
+        def __init__(self, length, amplitude):
+            self.length, self.amplitude, self.id = length, amplitude, None
+
+    class Channel:
+        def __init__(self, id, operations):
+            self.name, self.operations = id, operations
+            for name, pulse in operations.items():
+                pulse.id = name
+
+        def play(self, label, **kwargs):
+            return None
+
+        def frame_rotation_2pi(self, phase):
+            return None
+
+    pulses.SquarePulse, channels.Channel = SquarePulse, Channel
+    for module in (types.ModuleType("qm"), qua, types.ModuleType("quam"), core,
+                   types.ModuleType("quam.components"), macro, pulses, channels):
+        monkeypatch.setitem(sys.modules, module.__name__, module)
+    file = tmp_path / "gate.py"
+    file.write_text(source, encoding="utf-8")
+    script = importlib.util.spec_from_file_location("standin_slot_gate_check", _script_path("run_slot_gate_check.py"))
+    checker = importlib.util.module_from_spec(script)
+    script.loader.exec_module(checker)
+    loaded = set(sys.modules)
+    try:
+        return checker.check(dict(file=str(file.resolve()), class_name="ExampleGate", **request))
+    finally:
+        for name in set(sys.modules) - loaded:
+            del sys.modules[name]
+
+
+#: Steps with an xy play on each qubit, and the statements of a class with the coupler slot only.
+XY_BOTH = ([XY], [{"kind": "xy", "qubit": "target", "operation": "y90"}],
+           ["play control_xy x180", "align", "play coupler coupler_op", "align", "align", "play target_xy y90"])
+
+
+def _xy_play_is_a_statement_only(result):
+    assert result["status"] == "ok" and result["ok"], json.dumps(result)
+    assert result["statements"] == XY_BOTH[2]
+    assert result["slots_declared"] == result["slots_played"] == ["coupler"]
+    assert [play["slot"] for play in result["slot_plays"]] == ["coupler"]
+    assert [play["label"] for play in result["slot_plays"]] == ["coupler_op"]
+
+
+def test_standin_xy_play_is_a_statement_and_not_a_slot_play(monkeypatch, tmp_path):
+    source = T.render(T.SlotSpec("ExampleGate", {"coupler"}, False, *XY_BOTH[:2]))
+    _xy_play_is_a_statement_only(_standin_check(monkeypatch, tmp_path, source,
+                                                xy_operations={"control": ["x180"], "target": ["y90"]}))
+
+
+@lab
+def test_lab_xy_play_is_a_statement_and_not_a_slot_play(tmp_path):
+    source = T.render(T.SlotSpec("ExampleGate", {"coupler"}, False, *XY_BOTH[:2]))
+    _xy_play_is_a_statement_only(run_check(tmp_path, source, xy_operations={"control": ["x180"], "target": ["y90"]}))
