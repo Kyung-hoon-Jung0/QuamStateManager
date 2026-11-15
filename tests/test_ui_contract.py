@@ -1199,6 +1199,15 @@ _STAGE6_SELECTORS = {
     '.ui-menu-list > .ui-option[aria-disabled="true"] > .ui-option-title',
     '.ui-input-unit > .ui-input.ui-input[aria-invalid="true"]',
     '.ui-input-unit > .ui-input.ui-input[aria-invalid="true"]:focus',
+    # the top bar below its two-row floor: the tray cluster wraps so the page never
+    # scrolls sideways at a phone width (tests/test_topbar_narrow_no_side_scroll.py)
+    '.topbar.tb-fit-11 #topbar-tray-slot',
+    '.topbar.tb-fit-11 #pending-tray',
+    '.topbar.tb-fit-11 #pending-tray > *',
+    '.topbar.tb-fit-11 .sync-control',
+    '.topbar.tb-fit-11 .sync-control .state-status-badge.sync-control-main',
+    '.topbar.tb-fit-11 .sync-control-text',
+    '.topbar.tb-fit-11 #pending-tray .sync-control-act',
 }
 
 
