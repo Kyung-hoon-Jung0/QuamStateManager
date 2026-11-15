@@ -15,6 +15,8 @@ cannot count differently: a port no element plays does not count.
 
 from __future__ import annotations
 
+from quam_state_manager.generator._script_common import tof_on_grid
+
 # MW-FEM output latency per band relative to an LF-FEM output; the same
 # table as ``generator/run_build.py`` ``_BAND_TO_DELAY_NS``. Where these
 # numbers come from is not recorded in this repository; the docs
@@ -185,10 +187,21 @@ def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=(),
             if not (_num(s) and s >= 0 and _num(rr.get("time_of_flight"))):
                 continue
             same = qid in before and same_number(before[qid][0], s)
-            if s == 0 and not (tof_moved is not None and (
+            typed_off_grid = qid in typed and not tof_on_grid(rr["time_of_flight"])[0]
+            if s == 0 and not typed_off_grid and not (tof_moved is not None and (
                     qid in moved_set or (qid in before and not same))):
                 continue   # no delay, and none moved away: nothing to measure again
             entry = {"qubit": qid, "shift": s, "value": rr["time_of_flight"]}
+            if typed_off_grid:
+                _, nearest, reason = tof_on_grid(entry["value"])
+                entry["grid_note"] = (f"time of flight {entry['value']:g} ns -> {nearest:g} ns: "
+                                      f"{reason}. Kept as you set it.")
+            if qid in moved_set and _num(old_tof.get(qid)) and qid in before:
+                raw = old_tof[qid] + s - before[qid][0]
+                ok, nearest, reason = tof_on_grid(raw)
+                entry["sum"] = raw
+                if not ok and nearest == entry["value"]:
+                    entry["grid_note"] = f"time of flight {raw:g} ns -> {nearest:g} ns: {reason}"
             if tof_moved is not None:
                 if qid in moved_set:
                     entry["moved"] = True
@@ -247,4 +260,9 @@ def annotate(outcome: dict, state: dict, wiring: dict, tof_moved=None, spec=None
         summ = summary(state, wiring, tof_moved=tof_moved, tof_typed=typed,
                        tof_unrecorded=unrec, source=source)
         if summ is not None:
+            if tof_moved is None:
+                for item in summ["tof"]:
+                    move = (res.get("tof_moves") or {}).get(item["qubit"])
+                    if move and item["moved"]:
+                        item.update(move)
             res["output_timing"] = summ

@@ -552,8 +552,13 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
             ro_path, _ = _resolve_ref(doc, rr.get("opx_output"))
             r = shift.get(ro_path, 0)
             if r and _num(rr.get("time_of_flight")):
-                plan["tof"].append({"qubit": qid, "path": f"qubits/{qid}/resonator/time_of_flight",
-                                    "old": rr["time_of_flight"], "new": rr["time_of_flight"] + r})
+                raw = rr["time_of_flight"] + r
+                ok, nearest, reason = output_timing.tof_on_grid(raw)
+                item = {"qubit": qid, "path": f"qubits/{qid}/resonator/time_of_flight",
+                        "old": rr["time_of_flight"], "new": nearest, "sum": raw}
+                if not ok:
+                    item["grid_note"] = (f"time of flight {raw:g} ns -> {nearest:g} ns: {reason}")
+                plan["tof"].append(item)
             if rr and s != r:
                 plan["spacing"].append({"qubit": qid, "xy_shift": s, "readout_shift": r})
         for pid, pair in ((state or {}).get("qubit_pairs") or {}).items():

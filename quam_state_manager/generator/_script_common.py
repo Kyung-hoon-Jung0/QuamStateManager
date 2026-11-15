@@ -2,8 +2,9 @@
 
 Imported ONLY by the sibling scripts (``run_build.py``,
 ``run_generate_config.py``) that run under an *external* user-selected
-interpreter — it is NEVER imported by ``quam_state_manager`` and may use
-only the Python standard library. The scripts add this directory to
+interpreter — it may use only the Python standard library. The one
+exception to "never imported by ``quam_state_manager``" is ``tof_on_grid``,
+which ``core.output_timing`` re-exports so the build and SM share one rule. The scripts add this directory to
 ``sys.path`` defensively before importing (CPython normally prepends the
 script's own directory, but ``PYTHONSAFEPATH`` / ``-P`` suppress that).
 
@@ -104,3 +105,24 @@ def out_of_env_sources() -> dict:
             continue
         out[af] = [st.st_mtime_ns, st.st_size]
     return dict(sorted(out.items()))
+
+
+def tof_on_grid(value):
+    """Return validity, nearest allowed ns (ties upward), and the QOP reason.
+
+    Invalid numeric inputs have no nearest value and raise ValueError.
+    Kept here so standalone generated scripts need only the standard library.
+    """
+    import math
+
+    if isinstance(value, bool):
+        raise ValueError("time of flight must be a finite non-negative number")
+    try:
+        v = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("time of flight must be a finite non-negative number") from exc
+    if not math.isfinite(v) or v < 0:
+        raise ValueError("time of flight must be a finite non-negative number")
+    nearest = max(28, 4 * math.floor(v / 4 + 0.5))
+    ok = v == nearest
+    return ok, nearest, "" if ok else "the controller takes multiples of 4 ns, at least 28 ns"

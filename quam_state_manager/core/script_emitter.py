@@ -136,7 +136,7 @@ def _runtime_block(extra_consts: tuple = (), extra_funcs: tuple = ()) -> str:
     for name in tuple(_RUNTIME_CONSTS) + tuple(extra_consts):
         parts.append(f"{name} = {getattr(mod, name)!r}")
     parts.append("")
-    for name in tuple(_RUNTIME_FUNCS) + tuple(extra_funcs):
+    for name in ("tof_on_grid",) + tuple(_RUNTIME_FUNCS) + tuple(extra_funcs):
         parts.append(inspect.getsource(getattr(mod, name)).rstrip("\n"))
         parts.append("")
     return "\n".join(parts)

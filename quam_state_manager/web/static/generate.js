@@ -5064,7 +5064,7 @@
     var groups = [], byKey = {};
     (t.tof || []).forEach(function (x) {
       var k = (x.moved ? "m|" + x.value + "|" + (typeof x.from === "number" ? x.from : "") : "k") +
-        "|" + x.shift;
+        "|" + x.shift + "|" + (x.grid_note || "");
       if (!byKey[k]) { byKey[k] = { x: x, q: [] }; groups.push(byKey[k]); }
       byKey[k].q.push(x.qubit);
     });
@@ -5079,6 +5079,7 @@
         : "Time of flight left as you set it on " + g.q.join(", ") + "; " +
           (one ? "its" : "their") + " readout output is delayed by " + x.shift +
           " ns: measure time of flight again.";
+      if (x.grid_note) p.textContent += " " + x.grid_note;
       wrap.appendChild(p);
     });
     if ((t.tof_unrecorded || []).length) {
@@ -12600,7 +12601,7 @@
         });
         (res.mw_shift.tof || []).forEach(function (d) {
           shiftLines.push("Time of flight of " + d.qubit + ": " + d.old + " to " + d.new +
-            " ns; re-check it on the chip.");
+            " ns; re-check it on the chip." + (d.grid_note ? " " + d.grid_note : ""));
         });
         (res.mw_shift.spacing || []).forEach(function (d) {
           shiftLines.push("xy-readout spacing of " + d.qubit + " changes by " +

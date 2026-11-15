@@ -179,6 +179,14 @@ function spec(qubits, fluxFem) {
   const cap = T.outputTimingResultTable({ mw: [{ port: 'b', label: 'p8', band: 3, delay: 0 }], flux: [],
     tof: [{ qubit: 'q1', shift: 0, value: 52, moved: true, from: 32 }] });
   ok(/^Time of flight/.test(cap.querySelector('p.ui-note').textContent), '[F8] note starts with a capital');
+  const gridNote = 'time of flight 34 ns -> 36 ns: the controller takes multiples of 4 ns, at least 28 ns';
+  const roundedTable = T.outputTimingResultTable({ mw: [{ label: 'p8', band: 3, delay: 20 }],
+    tof: [{ qubit: 'q1', shift: 6, value: 36, from: 28, moved: true, grid_note: gridNote }] });
+  ok(roundedTable.textContent.includes(gridNote), '[grid] result states original sum and reason');
+  T.showBuildConfirm({ error: 'q', confirm_kind: 'mw_shift',
+    mw_shift: { ports: [], flux: [], spacing: [],
+      tof: [{ qubit: 'q1', old: 26, new: 48, grid_note: gridNote }] } }, '/o');
+  ok(box.textContent.includes(gridNote), '[grid] offer states original sum and reason');
   console.log(fails ? fails + ' failure(s)' : 'OK (' + asserts + ' assertions)');
   process.exit(fails ? 1 : 0);
 })();

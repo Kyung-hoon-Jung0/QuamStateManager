@@ -718,3 +718,13 @@ be read. Unreadable ports are named, not placed.
 - On a run archive (read-only), no fixes are offered and apply-fix answers 409.
 - Tests: `tests/test_core_layout_recommend.py`, `tests/core_recommend_selfcheck.cjs` and
   `tests/chip_status_core_refresh_selfcheck.cjs`.
+
+
+When SM computes or moves a time of flight, it writes the nearest multiple of 4 ns,
+with ties upward and a minimum of 28 ns, and names the original sum and the allowed
+value in the review when rounding is needed. The source is the QOP job submit error:
+"Time of flight must be a multiple of 4 and greater or equal than 28". This was checked
+for MW-FEM readout; the same rule applies to every readout, provisionally untested on
+LF-FEM and OPX+. Typed values stay as entered, with the reason and nearest allowed
+value shown; stored values that SM does not move stay unchanged. MW readout port
+delays keep their requested delta; the existing LF readout delay alignment still applies.
