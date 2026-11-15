@@ -20,6 +20,7 @@
     --ui-rule-tick-width: 1.6rem;
     --ui-cz-minimap-width: 16rem;
     --ui-cz-minimap-max: 25%;
+    --ui-czp-map-min-w: 24rem;
     --ui-cz-card-columns: minmax(0, 1fr) minmax(0, 1fr);
     --ui-coupler-field-flex: 1fr;
     --ui-coupler-field-min: 15rem;
@@ -1063,11 +1064,14 @@
 .ui-menu-trigger.ui-menu-trigger { display: inline-flex; align-items: center; }
 .ui-menu--block > .ui-menu-trigger.ui-menu-trigger { display: flex; width: 100%; }
 .ui-menu-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-menu-trigger > .ui-menu-note { flex: 1 1 100%; min-width: 0; font-size: var(--ui-fs-xs); overflow-wrap: anywhere; }
+/* A block picker's list is as wide as the picker, so a long reason wraps instead of running past the column. */
+.ui-menu--block > .ui-menu-list { max-width: 100%; }
 .ui-menu-placeholder { color: var(--ui-text-3); }
 .ui-menu-list {
     position: absolute; z-index: var(--ui-menu-z); top: calc(100% + var(--ui-gap-1)); left: 0;
     box-sizing: border-box; min-width: 100%; width: max-content; max-width: var(--ui-menu-max-w); max-height: var(--ui-menu-max-h);
-    overflow-y: auto; margin: 0; padding: var(--ui-gap-1);
+    overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--ui-scroll-thumb) transparent; margin: 0; padding: var(--ui-gap-1);
     border: var(--ui-bw) solid var(--ui-border-strong); border-radius: var(--ui-r-md);
     background: var(--ui-surface-1); box-shadow: var(--ui-shadow);
     font-size: var(--ui-fs-sm); line-height: var(--ui-lh-dense); text-align: left;
@@ -1102,7 +1106,7 @@
    neighbours overlapped by -1px, buttons padded 2rem). A kit row is as
    wide as its content. Doubled classes out-rank Pico's 0,2,1 child rules. */
 .ui-segmented.ui-segmented, .ui-actions.ui-actions { width: auto; margin-bottom: 0; box-shadow: none; }
-.ui-segmented.ui-segmented { box-sizing: border-box; min-height: var(--ui-ctl-h); max-width: 100%; flex-wrap: wrap; vertical-align: middle; }
+.ui-segmented.ui-segmented { box-sizing: border-box; min-height: var(--ui-ctl-h); max-width: 100%; flex-wrap: wrap; row-gap: var(--ui-gap-1); vertical-align: middle; }
 .ui-segmented.ui-segmented > .ui-segmented-opt { flex: 0 0 auto; display: inline-flex; align-items: center; margin: 0; padding-top: 0; padding-bottom: 0; line-height: var(--ui-lh-tight); }
 .ui-actions.ui-actions > button { flex: 0 0 auto; margin: 0; border-radius: var(--ui-r-btn); }
 .ui-actions.ui-actions > .ui-btn-icon { border-radius: var(--ui-r-sm); }
@@ -1632,9 +1636,11 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 .cm-lit-ring[data-role="xy"] { stroke: var(--ui-feature-role-xy-color); }
 .cm-lit-ring[data-role="z"] { stroke: var(--ui-feature-role-z-color); }
 .cm-lit-ring[data-role="coupler"] { stroke: var(--ui-feature-role-coupler-color); }
-.czp-map-view { display: flex; align-items: flex-start; gap: var(--ui-gap-3); }
-.czp-map-view > .cmap { flex: 0 0 auto; width: var(--ui-cz-minimap-width); max-width: var(--ui-cz-minimap-max); }
-.czp-map-view > .czp-map { flex: 1; min-width: 0; }
+/* The chip layout card sits beside the map while the row holds both (the map keeps
+   --ui-czp-map-min-w); otherwise the card takes the full row above the map instead of being squeezed. */
+.czp-map-view { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--ui-gap-3); }
+.czp-map-view > .cmap { flex: 1 0 min(var(--ui-cz-minimap-width), var(--ui-cz-minimap-max)); }
+.czp-map-view > .czp-map { flex: 9999 1 var(--ui-czp-map-min-w); min-width: 0; }
 .czp-map-view .cm-svg { max-width: var(--ui-opxmon-full-width); height: auto; }
 .czp-map-view [role="button"]:focus-visible { outline: var(--ui-focus-w) solid var(--ui-accent); }
 .czp-root .czp-lede { font-size: var(--ui-fs-sm); line-height: var(--ui-lh-dense); }
@@ -1809,16 +1815,18 @@ dialog.ui-dialog:not(.gen-rule-dlg)::backdrop { background: var(--ui-backdrop); 
 .gate-status-list .gate-status { padding: 0 var(--ui-gap-3); }
 .gate-status-list > .ui-zone-body { padding: 0; gap: 0; }
 .gate-status-list .gate-status + .gate-status { border-top: var(--ui-bw) solid var(--ui-border); }
-.gate-status-row { display: flex; flex-wrap: nowrap; align-items: center; gap: var(--ui-gap-1); min-height: var(--ui-icon-btn); }
+.gate-status-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-gap-1); min-height: var(--ui-icon-btn); }
 .gate-status-row:has(> .gate-status-details[open]) { flex-wrap: wrap; }
 .gate-status-items { display: flex; flex-wrap: nowrap; align-items: center; gap: var(--ui-gap-1); min-width: 0; overflow: hidden; }
 .gate-status-row > .ui-chip, .gate-status-details { flex: 0 0 auto; }
+/* a long gate name wraps inside the row instead of running past it */
+.gate-status-row > .ui-chip { flex-shrink: 1; min-width: 0; max-width: 100%; }
 .gate-status-details { margin: 0; }
 .gate-status-details[open] { flex-basis: 100%; order: 10; }
 .gate-status-details .ui-disclosure-summary { font-weight: var(--ui-fw-normal); font-size: var(--ui-fs-xs); color: var(--ui-text-2); }
 .gate-status-details-list { margin: var(--ui-gap-1) 0; overflow-wrap: anywhere; }
 .gate-status-details-list dd { margin: 0 0 var(--ui-gap-1) var(--ui-gap-3); }
-.gate-status-actions { display: flex; flex-wrap: nowrap; flex: 0 0 auto; align-items: center; gap: var(--ui-gap-1); margin-left: auto; }
+.gate-status-actions { display: flex; flex-wrap: wrap; flex: 0 1 auto; max-width: 100%; align-items: center; gap: var(--ui-gap-1); margin-left: auto; }
 .gate-status-edit, .gate-status-activate, .gate-status-recheck, .gate-status-delete, .gate-delete-confirm, .gate-delete-cancel { width: auto; margin: 0; }
 .gate-status-delete:hover { color: var(--ui-danger-text); border-color: var(--ui-danger-border); }
 .gate-status-slot:empty { display: none; }
@@ -1827,6 +1835,7 @@ dialog.ui-dialog:not(.gen-rule-dlg)::backdrop { background: var(--ui-backdrop); 
 .gate-status-list.ui-zone--quiet > .ui-zone-body { min-height: 0; align-items: flex-start; padding: var(--ui-gap-2) var(--ui-gap-3); }
 .gate-delete-offer { display: flex; flex-direction: column; gap: var(--ui-gap-1); padding-bottom: var(--ui-gap-1); }
 .gate-delete-list { margin: 0; padding-left: var(--ui-gap-4); font-size: var(--ui-fs-sm); }
+.gate-delete-list code { overflow-wrap: anywhere; }
 .gate-delete-actions { justify-content: flex-start; margin-left: 0; }
 /* the pulse class edit screen (pulse-class-edit.js, pulse_class_edit.html): three columns that wrap to a stack */
 .pce { display: flex; flex-direction: column; gap: var(--ui-gap-2); }
@@ -1852,6 +1861,9 @@ dialog.ui-dialog:not(.gen-rule-dlg)::backdrop { background: var(--ui-backdrop); 
 .topbar.tb-fit-11 .sync-control { flex-wrap: wrap; border-radius: var(--ui-r-sm); }
 .topbar.tb-fit-11 .sync-control .state-status-badge.sync-control-main { flex: 1 1 auto; text-align: left; }
 .topbar.tb-fit-11 .sync-control-text { min-width: 0; white-space: normal; }
+/* the Auto-Sync pill wraps its words inside the window instead of widening the page */
+.topbar.tb-fit-11 .auto-sync-wrap { min-width: 0; max-width: 100%; }
+.topbar.tb-fit-11 .auto-apply-pill { flex-wrap: wrap; row-gap: 0; max-width: 100%; white-space: normal; text-align: left; border-radius: var(--ui-r-sm); }
 .topbar.tb-fit-11 #pending-tray .sync-control-act { flex: 1 1 auto; }
 
 /* Page bodies use intrinsic wrapping; wide rows keep their existing alignment. */
@@ -1867,3 +1879,7 @@ table.ui-pair-props { table-layout: fixed; width: 100%; }
 .ui-pair-props .col-val { width: auto; white-space: normal; overflow-wrap: anywhere; }
 .ui-pair-props code { white-space: normal; overflow-wrap: anywhere; }
 .ui-pair-props .pointer-badge { white-space: normal; overflow-wrap: anywhere; word-break: normal; max-width: 100%; }
+/* A closed picker that carries a note (ui-menu-note) wraps: the name keeps the first line, the
+   note the line under it. An open list is never cut by the zone it sits in. */
+.ui-select.ui-select.ui-menu-trigger:has(> .ui-menu-note) { flex-wrap: wrap; height: auto; padding-top: var(--ui-gap-1); padding-bottom: var(--ui-gap-1); white-space: normal; }
+.ui-zone:has(.ui-menu-trigger[aria-expanded="true"]) { overflow: visible; }

@@ -186,6 +186,7 @@ def test_pulse_detail_of_a_gate_pulse_shows_its_line(rig):
 
 def test_delete_offer_lists_the_set(rig):
     body = rig.get("/pulse/cz-gate/delete-offer?pair=q1-q2&gate=cz_two").get_data(as_text=True)
+    body = body.replace("<wbr>", "")  # pointer lines may break after each dot; the text is unchanged
     assert "qubits.q1.z.operations.cz_two_pulse_q1_q2" in body
     assert "has no active CZ gate" in body and "Delete the active gate" in body
 

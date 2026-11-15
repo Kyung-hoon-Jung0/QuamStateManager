@@ -236,7 +236,7 @@
         var sel = (S.data.classes || []).filter(function (c) { return c['class'] === S.klass; })[0];
         var lab = (t.getAttribute('aria-labelledby') || '').split(/\s+/).filter(function (x) { return x && x !== 'czg-class-older'; });
         if (sel && sel.older_render && v) {
-            var m = el('span', 'ui-text-quiet', OLDER_WORDS);
+            var m = el('span', 'ui-text-quiet ui-menu-note', OLDER_WORDS);
             m.id = 'czg-class-older';
             m.setAttribute('data-czg-older-render-trigger', '');
             t.appendChild(m);

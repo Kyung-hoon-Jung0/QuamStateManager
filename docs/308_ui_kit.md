@@ -329,3 +329,13 @@ Navigation options in `ui_segmented` / `UI.segmented` accept `href` and `attrs`;
 `ui-menu.js` supplies arrow keys, Home, End and selection; a key with Alt, Ctrl or Meta is left to the
 browser. A link option is never underlined and carries `aria-current` when selected; a button option
 carries `aria-pressed`. The group wraps onto further lines at a narrow width instead of clipping.
+Wrapped lines of a segmented control keep `row-gap: var(--ui-gap-1)` between them; a one-line control is unchanged.
+A pick menu's trigger may carry a `ui-menu-note` span after the value: the trigger then wraps, the picked name keeps
+the first line and the note takes the line under it (never the name or the note alone). An open list is never cut by
+its `ui-zone` (the zone shows overflow while a trigger is expanded), and a block menu's list is as wide as its trigger,
+so a long reason wraps; a list past `--ui-menu-max-h` scrolls with a visible thin scrollbar.
+The CZ plan chip layout card sits beside the frequency map while the row holds the card plus `--ui-czp-map-min-w`;
+otherwise it takes the full row above the map. At the top bar fit floor (`tb-fit-11`) the Auto-Sync pill wraps its words
+inside the window instead of widening the page.
+A gate row's name chip (`.gate-status-row > .ui-chip`) may shrink and wraps a long name inside the row; the delete
+offer's pointer lines (`.gate-delete-list code`) break after each path dot (`<wbr>`) and, as a last resort, anywhere.
