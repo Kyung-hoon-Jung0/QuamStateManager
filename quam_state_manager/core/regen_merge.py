@@ -3356,7 +3356,8 @@ def _kept_core_value(merged_state: dict, control_ref: Any, kept_xy: dict) -> Any
     if path is None:
         return None
     got = _get(merged_state, path)
-    if got is _SENTINEL or not isinstance(got, str) or not got or got.startswith("#"):
+    # _landing follows pointer chains, so the landed value is never itself a reference
+    if got is _SENTINEL or not isinstance(got, str) or not got:
         return None
     return got
 

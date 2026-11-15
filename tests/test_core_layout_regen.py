@@ -44,8 +44,11 @@ def test_new_cr_with_a_null_core_control_gets_its_own_core():
     old = _pair_chip(None, with_cr=False)
     new = _pair_chip("q1_core", cr_core="q1_core")
     merged = _merged(old, new)
-    regen_merge.realign_new_pair_cores(old, new, merged)
+    notes = []
+    regen_merge.realign_new_pair_cores(old, new, merged, notes)
     assert merged["qubit_pairs"]["q1-2"]["cross_resonance"]["core"] is None
+    # a kept xy with no core at all is not an unresolved reference: no note
+    assert notes == []
 
 
 def test_new_cr_follows_a_thread_only_control():

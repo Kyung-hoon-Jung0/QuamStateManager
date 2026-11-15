@@ -682,8 +682,10 @@ def surface_fix_line(fem_finding_values: dict, surface: str) -> str:
 def assumed_type_note(fem: dict) -> str | None:
     """The one information sentence for an untyped controller whose count is above the
     original OPX limit and within the OPX+ limit; None otherwise (typed, FEM, or outside
-    that range, where the over-limit warning already speaks)."""
-    if fem.get("fem") is not None or fem.get("controller_type") != CONTROLLER_TYPE_ASSUMED:
+    that range, where the over-limit warning already speaks). A FEM row never carries
+    a controller_type (core_budget sets it only on a controller row), so the type
+    check alone excludes FEMs."""
+    if fem.get("controller_type") != CONTROLLER_TYPE_ASSUMED:
         return None
     count = fem["cores"]["count"]
     if not (OPX_CORE_LIMIT < count <= OPX_PLUS_CORE_LIMIT):
