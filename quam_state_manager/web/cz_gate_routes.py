@@ -1216,6 +1216,8 @@ NAME_LAB = "{name} is already a class file of the lab's quam_config folder. Pick
 NAME_DRAFT = "A class draft named {name} already exists and is not a slot gate class. Pick another class name."
 NAME_IN_USE = ("The slot gate class {name} is used by {count} gate(s) of this chip, so SM does not "
                "replace it. Pick another class name.")
+STEPS_NOT_TAKEN = ("This door makes a slot gate class without steps and cannot take before or after "
+                   "steps. Post the class without them.")
 
 
 def _gates_using(merged: dict, qclass: str) -> int:
@@ -1231,7 +1233,7 @@ def _gates_using(merged: dict, qclass: str) -> int:
 def _older_match(spec: sgt.SlotSpec | None, mine: list) -> sgt.SlotSpec | None:
     """The stored spec of an older-render draft that equals *spec* once its steps are left out, or None.
 
-    The make-class route carries no steps, so the stored steps are kept as they are."""
+    The make-class route refuses posted steps, so the stored steps are kept as they are."""
     if spec is None:
         return None
     for s, v in mine:
@@ -1244,7 +1246,7 @@ def _older_match(spec: sgt.SlotSpec | None, mine: list) -> sgt.SlotSpec | None:
 UNCHANGED = object()
 
 
-def _name_check(name: str, merged: dict, spec: sgt.SlotSpec | None = None, steps_posted: bool = False):
+def _name_check(name: str, merged: dict, spec: sgt.SlotSpec | None = None):
     """``(why *name* cannot be (re)made here or None, the spec to write or None for *spec*)``."""
     from quam_state_manager.core import pulse_class_drafts as drafts
     from quam_state_manager.core.quam_config_save import _lab_made
@@ -1263,11 +1265,11 @@ def _name_check(name: str, merged: dict, spec: sgt.SlotSpec | None = None, steps
             return None, None
         # an older render made again with the same spec only widens what its slots accept,
         # so the gates that use it keep working: that remake is allowed while they use it,
-        # and the stored steps (which this route cannot carry) are written again unchanged
+        # and the stored steps (which this route refuses to take) are written again unchanged
         # a make that renders exactly the stored draft changes nothing, so it is answered ok
-        if not steps_posted and spec is not None and sgt.render(spec).encode("utf-8") == data:
+        if spec is not None and sgt.render(spec).encode("utf-8") == data:
             return None, UNCHANGED
-        same_older = None if steps_posted else _older_match(spec, mine)
+        same_older = _older_match(spec, mine)
         if same_older is None:
             return NAME_IN_USE.format(name=name, count=count), None
         return None, same_older
@@ -1305,9 +1307,10 @@ def api_cz_gate_slot_class():
     problems = sgt.validate(spec)
     if problems:
         return refuse(problems)
+    if any(data.get(k) not in (None, [], ()) for k in ("before", "after")):
+        return refuse([STEPS_NOT_TAKEN])
     with store._lock:
-        steps_posted = any(data.get(k) not in (None, [], ()) for k in ("before", "after"))
-        taken, keep = _name_check(name, store.merged, spec, steps_posted)
+        taken, keep = _name_check(name, store.merged, spec)
     if taken:
         return jsonify(ok=False, error=taken, problems=[taken]), 409
     if keep is UNCHANGED:
