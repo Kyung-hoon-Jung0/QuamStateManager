@@ -491,6 +491,8 @@ id and asks again, including for that document's earlier edits.
 Same-window steps need no window question. A person without a window header
 gets 409 with the question before any write; consent requires a window id.
 
+Key change on this branch: Ctrl+Y = redo (every OS); Cmd+Y is not bound (browser History on macOS).
+
 The age rule is kept for every person, the pressing window's own steps
 included: with "Ctrl+Z writes live" ON, an /undo whose step comes from an
 earlier SM session or is older than 8 h (`_unit_needs_ask`) asks before the

@@ -164,8 +164,9 @@ The capture-phase Ctrl+Z guard forked on `shiftKey`: undo chain unchanged
 mounted swallows (the wizard has no redo; falling through would act on the
 chip behind the user's back), `LiveEditUndo.tryRedo()` (new second stack;
 `record()` and `clear()` both empty it; a cell that moved since is never
-clobbered), else `POST /redo`. Ctrl+Y deliberately unbound (native in-field
-redo). Same input-focus guards as undo.
+clobbered), else `POST /redo`. Ctrl+Y redoes on every OS (app.js keydown,
+`yKey`); Cmd+Y is not bound (History on macOS, left to the browser); Ctrl/Cmd+Shift+Z redo as before.
+Same input-focus guards as undo.
 
 ### Tray UX
 
