@@ -789,16 +789,78 @@ def test_the_kit_example_lanes_match_its_table_form_and_words():
             a, b = spans[line]
             assert (_cell_number(length, "ns"), _cell_number(start, "ns")) == (b - a, a), line
             assert _cell_number(peak, "V") == level[line], line
-    specs = json.dumps(kit.specs())
+    # the port limit is the check's own range, and the example's levels sit on the right side of it
+    from quam_state_manager.core import gate_timeline_view as gtv
+    lim = kit.example_limit_v()
+    assert all(abs(v) <= lim for v in kit.EXAMPLE_PEAKS.values())
+    assert all(abs(v) > lim for v in kit.EXAMPLE_OVER.values())
+    assert kit.range_check()["status"] == "pass" and kit.range_check(over=True)["status"] == "fail"
     danger = kit.reading_evidence("danger")[0]["body"]
+    table = next(p for p in danger if p.get("title") == "Entered and actual")["body"][0]
+    notes = [c["note"] for row in table["rows"] for c in row if isinstance(c, dict) and c.get("tone") == "danger"]
+    assert notes == ["limit %s V" % gtv.fmt_num(lim)] * len(kit.EXAMPLE_OVER)
+
+
+def test_the_kit_banners_and_checks_are_the_dialogs_own_sentences():
+    """Every kit banner and failed-check sentence is one the gate dialog can
+    show: the server's rules (range check, headline, may_create) on the
+    example's lines, inside the dialog's own words, which cz-gate.js holds."""
+    from quam_state_manager.core import cz_gate_create, gate_timeline_view as gtv
+    from quam_state_manager.web import ui_kit_fixtures as kit
+    js = (Path(__file__).resolve().parents[1] / "quam_state_manager/web/static/cz-gate.js").read_text(encoding="utf-8")
+    for piece in ("' Change the inputs and check again.'", "'Cannot be created yet'", "'Ready to create'",
+                  "'Not checked with the lab\\'s code'", "' You can still create '", "'; the record says '",
+                  "'it was'", "' not checked.'", "'The lab\\'s code built '", "'this gate'",
+                  "' on a copy of the chip and every check passed.'", "v.headline || v.reason"):
+        assert piece in js, piece
+    assert kit.DANGER_TAIL == " Change the inputs and check again."
+    assert kit.WARN_TAIL == " You can still create it; the record says it was not checked."
+    assert kit.OK_WHY == "The lab's code built this gate on a copy of the chip and every check passed."
+    lim = kit.example_limit_v()
+    check = kit.range_check(over=True)
+    said = []
     for k, v in kit.EXAMPLE_OVER.items():
-        said = "%s would play %g V;" % (k, v)
-        assert said in next(b for b in danger if b.get("part") == "verdict")["why"]
-        assert said in specs
-        assert "%g V on %s is above" % (v, k) in specs
-        assert "on %s: %g V is above" % (k, v) in json.dumps(danger)
-    (qa, _qb), (_ca, cb) = spans["q1.z"], spans["coupler_q1_q2"]
-    assert "The qubit pulse starts %d ns after the coupler pulse ends." % (qa - cb) in specs
+        lane = next(ln for ln in kit.example_lanes(over=True) if ln["key"] == k)
+        said.append(czr.range_sentence(lane, v))
+        assert "%s V" % gtv.fmt_num(lim) in said[-1] and "%s V" % gtv.fmt_num(v) in said[-1]
+        assert "%s: %s V is above this port's limit of %s V" % (
+            "/".join(str(x) for x in kit.EXAMPLE_PORTS[k]), gtv.fmt_num(v), gtv.fmt_num(lim)) \
+            in check["message"]
+    danger_why = " ".join(said) + kit.DANGER_TAIL
+    _ok, _st, busy = cz_gate_create.may_create({"status": "busy"}, None, gate_class=next(iter(cgb.GATE_CLASSES)),
+                                               layout="known")
+    want = {"ok": ("Ready to create", kit.OK_WHY),
+            "warn": ("Not checked with the lab's code", busy + kit.WARN_TAIL),
+            "danger": ("Cannot be created yet", danger_why)}
+
+    def verdicts(o):
+        if isinstance(o, dict):
+            if o.get("part") == "verdict" and o.get("tone") in want and o.get("key") != "FREE":
+                yield o
+            for v in o.values():
+                yield from verdicts(v)
+        elif isinstance(o, (list, tuple)):
+            for v in o:
+                yield from verdicts(v)
+
+    def fails(o):
+        if isinstance(o, dict):
+            if o.get("name") == "Output range" and o.get("state") == "fail":
+                yield o["why"]
+            for v in o.values():
+                yield from fails(v)
+        elif isinstance(o, (list, tuple)):
+            for v in o:
+                yield from fails(v)
+
+    sec = [spec for spec in kit.specs() if spec[0] == "Reading order"]
+    every = [sec, kit.reading_evidence("ok"), kit.reading_evidence("danger")]
+    seen = [(b["tone"], b["key"], b["why"]) for b in verdicts(every)]
+    assert sorted({t for t, _k, _w in seen}) == ["danger", "ok", "warn"]
+    for tone, key, why in seen:
+        assert (key, why) == want[tone], (tone, key, why)
+    out = list(fails(every))
+    assert len(out) == 2 and set(out) == {check["message"]}
 
 
 def _rule(css, sel):

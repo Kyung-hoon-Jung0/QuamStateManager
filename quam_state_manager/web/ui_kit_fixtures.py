@@ -203,16 +203,74 @@ EXAMPLE_SPANS = (("q1.z", 161, 261), ("coupler_q1_q2", 0, 60))
 #: the example's largest level per line, V, as its table shows them (state "ok"; "danger" plays 3 V on q1.z)
 EXAMPLE_PEAKS = {"q1.z": 0.1, "coupler_q1_q2": 0.05}
 EXAMPLE_OVER = {"q1.z": 3.0}
+#: the operation each line plays, as the example's table names them
+EXAMPLE_OPS = {"q1.z": "cz_fast_pulse_q1_q2", "coupler_q1_q2": "cz_fast_coupler_pulse_q1_q2"}
+#: the example's output ports: amplified LF ports, so their range is the one ``gate_check.port_range`` gives
+EXAMPLE_PORTS = {"q1.z": ("con1", 1, 5), "coupler_q1_q2": ("con1", 1, 6)}
+EXAMPLE_PORT_KIND = {"port_kind": "lf", "output_mode": "amplified"}
+#: the dialog's own words around the server's sentences (cz-gate.js ``renderCheck``, one pair);
+#: the kit test finds each of them in cz-gate.js
+OK_WHY = "The lab's code built this gate on a copy of the chip and every check passed."
+WARN_TAIL = " You can still create it; the record says it was not checked."
+DANGER_TAIL = " Change the inputs and check again."
+
+
+def example_limit_v():
+    """The example ports' output range, V, from the check's own rule (never typed here)."""
+    from quam_state_manager.core.gate_check import port_range
+    return port_range(EXAMPLE_PORT_KIND)
+
+
+def _levels(over):
+    return dict(EXAMPLE_PEAKS, **(EXAMPLE_OVER if over else {}))
 
 
 def example_lanes(over=False):
     """The example gate's lines in the shape ``gate_timeline_view.tiles`` reads:
-    its spans and largest levels; with *over*, q1.z plays over its port's range."""
-    peaks = dict(EXAMPLE_PEAKS, **(EXAMPLE_OVER if over else {}))
-    return [{"key": k, "group": "gate",
+    its spans, largest levels and port range; with *over*, q1.z plays over it."""
+    peaks, lim = _levels(over), example_limit_v()
+    return [{"key": k, "group": "gate", "limit_v": [-lim, lim], "offset_v": 0.0,
              "segments": [{"start_ns": a, "end_ns": b, "peak_v": peaks[k], "min_v": 0.0,
                            "flags": ["over_range"] if over and k in EXAMPLE_OVER else []}]}
             for k, a, b in EXAMPLE_SPANS]
+
+
+def range_check(over=False):
+    """The example's Output range check, ``{"status", "message"}``, from the
+    check's own rule (``gate_check._range_check``) on the example's lines."""
+    from quam_state_manager.core import gate_check
+    from quam_state_manager.core.static_timeline import TimelineRow
+    peaks = _levels(over)
+    found = [{"element": k, "operation": EXAMPLE_OPS[k], "port": EXAMPLE_PORTS[k], **EXAMPLE_PORT_KIND,
+              "offset": 0.0, "length": b - a, "waveform": {"type": "constant", "sample": peaks[k]}}
+             for k, a, b in EXAMPLE_SPANS]
+    rows = [TimelineRow(k, EXAMPLE_PORTS[k], EXAMPLE_OPS[k], a, b, peaks[k], 1.0) for k, a, b in EXAMPLE_SPANS]
+    return gate_check._range_check(found, {"rows": rows}, False)
+
+
+def danger_why():
+    """The danger banner's sentence for the example over its range: the
+    server's headline (``cz_gate_routes.headline``) plus the dialog's tail."""
+    from quam_state_manager.web.cz_gate_routes import headline
+    check = range_check(over=True)
+    return headline({"checks": {"range": check}}, {"lanes": example_lanes(over=True)},
+                    check["message"]) + DANGER_TAIL
+
+
+def warn_why():
+    """The warn banner's sentence for a gate the lab's code could not check
+    (the lab environment was busy): the server's reason plus the dialog's tail."""
+    from quam_state_manager.core.cz_gate_build import GATE_CLASSES
+    from quam_state_manager.core.cz_gate_create import may_create
+    _ok, _state, reason = may_create({"status": "busy"}, None, gate_class=next(iter(GATE_CLASSES)),
+                                     layout="known")
+    return reason + WARN_TAIL
+
+
+def limit_note():
+    """The note beside a table cell over the limit, as cz-gate.js writes it."""
+    from quam_state_manager.core.gate_timeline_view import fmt_num
+    return "limit %s V" % fmt_num(example_limit_v())
 
 
 def dialog_tiles(lanes):
@@ -270,14 +328,14 @@ def reading_evidence(state):
     if state == "before":
         return [{"part": "zone", "step": 3, "title": "Result", "fill": True, "quiet": READING_EMPTY}]
     ok = state == "ok"
-    banner = ({"part": "verdict", "strong": True, "tone": "ok", "key": "Ready to create",
-               "why": "Checked on a copy of the chip: it loads, and the gate runs."} if ok else
+    banner = ({"part": "verdict", "strong": True, "tone": "ok", "key": "Ready to create", "why": OK_WHY} if ok else
               {"part": "verdict", "strong": True, "tone": "danger", "key": "Cannot be created yet",
-               "why": "q1.z would play 3 V; the port limit is 2.5 V. Lower the amplitude and check again."})
+               "why": danger_why()})
     lanes = example_lanes(over=not ok)
     gap = gap_note(timing_tile(lanes))
     stats = {"part": "stats", "label": "Key numbers", "tiles": dialog_tiles(lanes)}
-    rows = [[{"text": "cz_fast_pulse_q1_q2", "line": 1}, "100 ns", "0.1 V" if ok else {"text": "3 V", "tone": "danger", "note": "limit 2.5 V"},
+    rows = [[{"text": "cz_fast_pulse_q1_q2", "line": 1}, "100 ns",
+             "0.1 V" if ok else {"text": "3 V", "tone": "danger", "note": limit_note()},
              {"text": "161 ns", "tone": "warn", "note": "port delay"}],
             [{"text": "cz_fast_coupler_pulse_q1_q2", "line": 2}, "60 ns", "0.05 V", "0 ns"]]
     table = {"part": "panel", "title": "Entered and actual", "flush": True,
@@ -286,7 +344,7 @@ def reading_evidence(state):
     names = ["Chip loads", "Operations exist", "Pulse lengths", "Preview equals config", "Timeline"]
     checks = [{"name": n, "state": "pass"} for n in names]
     checks.append({"name": "Output range", "state": "pass"} if ok else
-                  {"name": "Output range", "state": "fail", "why": "cz_fast_pulse_q1_q2 on q1.z: 3 V is above the 2.5 V limit."})
+                  {"name": "Output range", "state": "fail", "why": range_check(over=True)["message"]})
     checks.append({"name": "Hardware timing", "state": "skip"})
     chk = {"part": "panel", "title": "Checks",
            "summary": [{"text": "6 of 6 passed", "level": "ok"}] if ok else [{"text": "1 failed", "level": "danger"}, "5 passed"],
@@ -306,10 +364,9 @@ def _reading():
     """K19: each reading-order part alone, in every tone (docs/308 section 4c)."""
     sec = "Reading order"
     out = []
-    for tone, key, why in (("ok", "Ready to create", "Checked on a copy of the chip: it loads, and the gate runs."),
-                           ("warn", "Created with a warning",
-                            "The qubit pulse starts 101 ns after the coupler pulse ends."),
-                           ("danger", "Cannot be created yet", "q1.z would play 3 V; the limit is 2.5 V. Lower the amplitude."),
+    for tone, key, why in (("ok", "Ready to create", OK_WHY),
+                           ("warn", "Not checked with the lab's code", warn_why()),
+                           ("danger", "Cannot be created yet", danger_why()),
                            ("note", "Not checked on hardware", "Only the samples written to the config are compared.")):
         out.append((sec, "Banner " + tone, {"part": "verdict", "strong": True, "tone": tone, "key": key, "why": why}))
     out += [
@@ -317,7 +374,7 @@ def _reading():
                                                   "tiles": dialog_tiles(example_lanes(over=True))}),
         (sec, "Checks, one failed and one skipped", {"part": "checks", "checks": [
             {"name": "Chip loads", "state": "pass"}, {"name": "Pulse lengths", "state": "pass"},
-            {"name": "Output range", "state": "fail", "why": "3 V on q1.z is above the 2.5 V limit."},
+            {"name": "Output range", "state": "fail", "why": range_check(over=True)["message"]},
             {"name": "Hardware timing", "state": "skip"}]}),
         (sec, "Panel with step, hint and summary", {"part": "panel", "step": 2, "title": "Pulses", "hint": "program time",
                                                     "summary": [line_count_words(2)],

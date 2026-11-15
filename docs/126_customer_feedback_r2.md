@@ -374,7 +374,8 @@ per-side class switch is an easy follow-up if wanted). docs/98-grade proof:
 create on a real-chip copy for a macro-less pair → /save → `Quam.load()` in
 the customer env succeeds and the macro's amplitude resolves to cz_flattop's.
 Real Chrome: form lists 30 eligible pairs, creation stages a 6-change Review
-bundle, console clean. **Pinned by** `tests/test_gaussian_cz.py` (12).
+bundle, console clean. It was pinned by 12 tests in test_gaussian_cz.py, removed with the builder on
+2026-11-15 (commit 193e0547).
 
 ## Follow-up: the CQT XEB run #2560 compatibility check + bare `Pulse`
 
@@ -404,8 +405,9 @@ creatable) and a synth answer that says the truth — `digital_only: True`,
 "digital marker only — this pulse has no analog waveform" — instead of
 inventing a flat line or crying unrecognized. (The Pulses table deliberately
 still lists waveform pulses only — 524 rows; the trigger markers are wiring
-plumbing. Listing them is an easy follow-up if wanted.) Pinned by
-`tests/test_gaussian_cz.py::TestBarePulseRecognized` + the catalog-shape pin.
+plumbing. Listing them is an easy follow-up if wanted.) It was pinned by the
+TestBarePulseRecognized class of test_gaussian_cz.py, removed with the builder on 2026-11-15
+(commit 193e0547); the catalog-shape pin remains.
 
 ## Round 3 — Auto-Sync polish, Versions, topology markers, chrome, honest outliers
 

@@ -99,8 +99,14 @@ Pins (failed attempt, init, busy answer):
 `tests/test_lab_worker.py::test_machine_lock_never_reads_a_locked_byte_and_cleans_failed_init`,
 `tests/test_lab_worker.py::test_machine_lock_holder_checker_recovers_and_does_not_hold_thread_lock`,
 `tests/test_lab_worker.py::test_waveform_jobs_answer_busy_within_deadline`,
-`tests/test_lab_worker.py::test_idle_expiry_and_global_machine_lock`.
+`tests/test_lab_worker.py::test_idle_expiry_and_global_machine_lock`,
+`tests/test_gate_check.py::test_busy_lock_is_a_typed_result`.
+Pins (the 30 s default wait, and no caller passes another):
+`tests/test_gate_check.py::test_lab_jobs_wait_for_the_lock_as_long_as_the_docs_say`.
 Pins (gate check waits for a slow replay): `tests/test_machine_lock_wait.py`.
+Pins (a waiting foreground draw, a result another process made while this one waited):
+`tests/test_lab_prewarm.py::test_a_background_batch_waits_while_a_check_waits`,
+`tests/test_interactive_job.py::test_a_second_process_result_is_picked_up_after_the_lab_lock`.
 
 ## 4. Found by the independent verification and fixed
 

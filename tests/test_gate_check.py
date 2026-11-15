@@ -1,6 +1,7 @@
 """Gate check caller: every status of every check, typed runner failures, one real env."""
 import json
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -524,6 +525,25 @@ def test_busy_lock_is_a_typed_result(tmp_path, monkeypatch):
     res = lab_waveform.run_gate_check(str(py), "B", "A", [PATH], lock_wait=0.2)
     assert res["status"] == "busy" and "busy" in res["error"]
     assert gate_check.evaluate([GATE], res)["status"] == "busy"
+
+
+def test_lab_jobs_wait_for_the_lock_as_long_as_the_docs_say():
+    """Draw, warm-config and gate checks wait for the machine lock for the
+    number of seconds docs/218 states, by default, and no caller in the
+    package passes another wait, so the default is the wait people get."""
+    import inspect
+    root = Path(__file__).resolve().parents[1]
+    doc = (root / "docs" / "218_lab_pulse_classes_and_new_pulse.md").read_text(encoding="utf-8")
+    said = re.search(r"wait\s+at most (\d+) seconds by default", doc)
+    assert said, "docs/218 no longer states the lab lock wait"
+    want = float(said.group(1))
+    assert lab_waveform.GATE_CHECK_LOCK_WAIT_S == want
+    for fn in (lab_waveform.draw, lab_waveform.warm_config, lab_waveform.run_gate_check):
+        assert inspect.signature(fn).parameters["lock_wait"].default == want, fn.__name__
+    pkg = root / "quam_state_manager"
+    passed = [p.relative_to(root).as_posix() for p in pkg.rglob("*.py")
+              if p.name != "lab_waveform.py" and re.search(r"\block_wait\s*=", p.read_text(encoding="utf-8"))]
+    assert passed == []
 
 
 def test_store_identity_travels_in_the_result(tmp_path):
