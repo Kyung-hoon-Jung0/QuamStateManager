@@ -28269,6 +28269,8 @@ document.addEventListener("pulses-rows-changed", function (evt) {
                 tpl.innerHTML = html.trim();
                 var fresh = tpl.content.querySelector("tr");
                 if (!fresh) { structural(); return; }
+                // a row inside a spectator fold keeps the fold's open or closed state
+                if (fresh.hasAttribute("data-pulse-fold-member")) fresh.hidden = cur.hidden;
                 cur.parentNode.replaceChild(fresh, cur);
                 if (window.htmx) window.htmx.process(fresh);
                 if (wasChecked) { var c2 = fresh.querySelector(".pulse-sel-chk"); if (c2) c2.checked = true; }

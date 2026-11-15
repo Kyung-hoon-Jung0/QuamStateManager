@@ -79,10 +79,15 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from quam_state_manager.core import chip_copy, static_timeline
+from quam_state_manager.core.flux_dc import element_dc_levels
 # the one source of the output-port sample ranges (direct and amplified LF
 # ports are in volts, MW ports are normalised)
 from quam_state_manager.core.diagnostics import (
     _LF_AMPLIFIED_BOUND, _LF_DIRECT_BOUND, _MW_SAMPLE_BOUND, _SAMPLE_EPS)
+
+#: the key of a gate's preview dict that lists the operations the gate must
+#: play (its spectators): ``{REQUIRED: [(element, operation)]}``
+REQUIRED = "required"
 
 CHECKS = ("load_config", "ops", "length", "preview", "timeline", "range")
 
@@ -265,12 +270,15 @@ def _finalize(out: dict, *, write_broke: bool = False) -> dict:
     return out
 
 
-def evaluate(gates: Iterable, ran: dict, previews: dict | None = None) -> dict:
+def evaluate(gates: Iterable, ran: dict, previews: dict | None = None,
+             merged: dict | None = None) -> dict:
     """The per-gate checks from :func:`lab_waveform.run_gate_check`'s answer.
 
     *gates*: gate keys (see :func:`gate_key`). *previews*: ``{gate key:
     {(element, operation): samples list or constant}}``, keyed through the
-    same :func:`gate_key`."""
+    same :func:`gate_key`. *merged*: the chip, to read each flux line's
+    run-time DC level (:func:`flux_dc.element_dc_levels`); None keeps the
+    config's channel offset alone."""
     keys = [gate_key(g) for g in gates]
     if not keys:
         return _no_gates()
@@ -293,7 +301,7 @@ def evaluate(gates: Iterable, ran: dict, previews: dict | None = None) -> dict:
     out = _base("ok", checked=True, quam_config=data.get("quam_config"))
     after_err = after.get("load_error") or after.get("config_error")
     for k in keys:
-        checks, tl = _one_gate(k, data, after, after_err, previews.get(k) or {})
+        checks, tl = _one_gate(k, data, after, after_err, previews.get(k) or {}, merged)
         out["gates"].append(_entry(k, checks, tl))
     out["ok"] = bool(out["gates"]) and all(
         c["status"] != "fail" for g in out["gates"] for c in g["checks"].values()) and all(
@@ -310,7 +318,7 @@ def _guard(fn, *args) -> dict:
                              "does not read.")
 
 
-def _one_gate(key, data, after, after_err, preview):
+def _one_gate(key, data, after, after_err, preview, merged=None):
     name = key[1]
     try:
         checks: dict[str, dict] = {}
@@ -348,7 +356,16 @@ def _one_gate(key, data, after, after_err, preview):
                                    no_cfg)
         found = [o for o in ops if isinstance(o, dict) and o.get("found")]
         checks["length"] = _guard(_length_check, found, no_cfg, g.get("script"))
+        required = [tuple(x) for x in (preview.get(REQUIRED) or ())]
+        preview = {k: v for k, v in preview.items() if k != REQUIRED}
         checks["preview"] = _guard(_preview_check, found, preview, no_cfg)
+        if required and not no_cfg:
+            played = {(o.get("element"), o.get("operation")) for o in ops if isinstance(o, dict)}
+            lost = [f"{op} on {el}" for el, op in required if (el, op) not in played]
+            if lost:
+                checks["preview"] = _r("fail", "The gate does not play the spectator pulse"
+                                       + ("s " if len(lost) > 1 else " ") + ", ".join(lost)
+                                       + " with the lab's code. " + checks["preview"]["message"])
         tl = None
         if g.get("script") and not no_cfg:
             tl = static_timeline.static_timeline(g["script"], found)
@@ -363,7 +380,7 @@ def _one_gate(key, data, after, after_err, preview):
         else:
             checks["timeline"] = _r("note", "The timeline could not be drawn: the gate's "
                                             "program or the config is missing.", not_run=True)
-        checks["range"] = _guard(_range_check, found, tl, no_cfg)
+        checks["range"] = _guard(_range_check, found, tl, no_cfg, merged)
         return checks, with_samples(tl, found)
     except Exception:  # noqa: BLE001 -- one gate never takes the others down
         return _all("skipped", f"Not checked: the lab's data for the gate {name} has a form "
@@ -590,6 +607,12 @@ def port_range(info: dict) -> float | None:
     return None
 
 
+def range_unknown_words(port) -> str:
+    """Why an output range was not compared: the same words for the gate's
+    own lines (the check) and for a spectator's level (the plan)."""
+    return f"the output range of port {_port_text(port)} is not known"
+
+
 def _v(x: float) -> str:
     """A voltage in plain units: ``3 V``, ``0.55 V`` (4 significant digits)."""
     return f"{float(x):.4g} V".replace("-0 V", "0 V")
@@ -601,7 +624,7 @@ def _port_text(port) -> str:
     return str(port)
 
 
-def _range_check(found: list, tl, no_config: bool) -> dict:
+def _range_check(found: list, tl, no_config: bool, merged: dict | None = None) -> dict:
     if no_config:
         return _r("skipped", "Not checked: the config was not built.")
     if not found:
@@ -625,7 +648,7 @@ def _range_check(found: list, tl, no_config: bool) -> dict:
         port = _port_text(info.get("port"))
         rng = port_range(info)
         if rng is None:
-            not_checked.append(f"{name} (the output range of port {port} is not known)")
+            not_checked.append(f"{name} ({range_unknown_words(info.get('port'))})")
             continue
         if (info.get("waveform") or {}).get("truncated"):
             not_checked.append(f"{name} (the waveform was too long to check fully)")
@@ -636,18 +659,25 @@ def _range_check(found: list, tl, no_config: bool) -> dict:
             continue
         samples = _samples(info)
         offset = 0.0 if info.get("port_kind") == "mw" else float(info.get("offset") or 0.0)
+        levels: list = [("channel offset", offset)]
+        if merged is not None and info.get("port_kind") != "mw":
+            levels, why = element_dc_levels(merged, key[0], offset)
+            if why:
+                not_checked.append(f"{name} (SM cannot tell the DC level of the line: {why})")
+                continue
         one_bad = False
         for k in sorted(scales.get(key) or ()):
             vals = [s * k for s in samples]
-            hi, lo = max(vals) + offset, min(vals) + offset
-            if hi > rng + _SAMPLE_EPS:
-                one_bad = True
-                bad.append(f"For {name}, port {port}: {_v(hi)} is above this port's limit of "
-                           f"{_v(rng)} (channel offset {_v(offset)}, play scale {k:g})")
-            if lo < -rng - _SAMPLE_EPS:
-                one_bad = True
-                bad.append(f"For {name}, port {port}: {_v(lo)} is below this port's limit of "
-                           f"{_v(-rng)} (channel offset {_v(offset)}, play scale {k:g})")
+            for label, dc in levels:
+                hi, lo = max(vals) + dc, min(vals) + dc
+                if hi > rng + _SAMPLE_EPS:
+                    one_bad = True
+                    bad.append(f"For {name}, port {port}: {_v(hi)} is above this port's limit "
+                               f"of {_v(rng)} ({label} {_v(dc)}, play scale {k:g})")
+                if lo < -rng - _SAMPLE_EPS:
+                    one_bad = True
+                    bad.append(f"For {name}, port {port}: {_v(lo)} is below this port's limit "
+                               f"of {_v(-rng)} ({label} {_v(dc)}, play scale {k:g})")
         if not one_bad:
             ok_names.append(name)
     if bad:
@@ -777,7 +807,7 @@ def check_gates(store, python_path: str | None, gates: Iterable,
                          [macro_path(*k) for k in keys], root_class=copies.root_class)
         except Exception as exc:  # noqa: BLE001 -- a typed result, never a raise
             ran = {"status": "crash", "error": f"{type(exc).__name__}: {exc}", "data": None}
-        res = _scrub(evaluate(keys, ran, previews), copies)
+        res = _scrub(evaluate(keys, ran, previews, getattr(store, "merged", None)), copies)
         res["seq"] = copies.seq
         res["store_id"] = copies.store_id
     except Exception as exc:  # noqa: BLE001 -- never a temp path in a message

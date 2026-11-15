@@ -51,6 +51,8 @@ __all__ = [
     "used_by",
     "rewrite_subtree_pointers",
     "rewrite_referrer_pointer",
+    "spectator_marks",
+    "fold_spectators",
 ]
 
 # Qubit-level channels holding an ``operations`` dict. ``xy_detuned`` exists on
@@ -1382,3 +1384,74 @@ def copy_pulse_to(merged: dict, src_path: str, dst_path: str, *,
         if dropped_out is not None:
             dropped_out.append(f"id {pid!r}")
     return out, notes
+
+
+# ---------------------------------------------------------------------------
+# Spectator pulses of gates (folded on the Pulses page)
+# ---------------------------------------------------------------------------
+
+#: The gate field that holds a gate's spectator pulses, one per spectator qubit.
+SPECTATOR_FIELD = "spectator_qubits_control"
+
+
+def spectator_marks(merged: dict) -> dict[str, dict]:
+    """Every pulse path that is a spectator pulse of a pair's gate, mapped to
+    ``{"gate", "pair", "qubit"}``.
+
+    Read from the gates themselves, never from an operation's name: a gate's
+    ``spectator_qubits_control`` maps a qubit to its pulse, either a reference
+    (``#/qubits/q3/z/operations/<key>``: that operation is marked) or the
+    pulse itself (marked at its own place, and the qubit's z operation of the
+    same ``id`` is marked too)."""
+    out: dict[str, dict] = {}
+    for pair, pv in ((merged or {}).get("qubit_pairs") or {}).items():
+        if not isinstance(pv, dict):
+            continue
+        for gate, macro in (pv.get("macros") or {}).items():
+            if not isinstance(macro, dict):
+                continue
+            ctl = macro.get(SPECTATOR_FIELD)
+            if not isinstance(ctl, dict):
+                continue
+            for q, v in ctl.items():
+                mark = {"gate": str(gate), "pair": str(pair), "qubit": str(q)}
+                if isinstance(v, str) and v.startswith("#/"):
+                    out[".".join(v[2:].split("/"))] = mark
+                elif isinstance(v, dict):
+                    out[f"qubit_pairs.{pair}.macros.{gate}.{SPECTATOR_FIELD}.{q}"] = mark
+                    key = v.get("id")
+                    if isinstance(key, str) and key:
+                        out[f"qubits.{q}.z.operations.{key}"] = mark
+    return out
+
+
+def fold_spectators(rows: list[dict], marks: dict[str, dict]) -> list[dict]:
+    """*rows* (table order) with the spectator pulses of each owner's channel
+    moved together behind one fold row, placed after that channel's last row.
+
+    A fold row is ``{"fold": True, "fold_key", "fold_n", "owner", "channel"}``;
+    each spectator row comes back as a copy carrying ``spectator_of`` (its
+    mark) and ``fold_key``. Rows that are not spectators keep their order and
+    identity. Without a marked row the list is returned as is."""
+    if not marks or not any(r.get("path") in marks for r in rows):
+        return rows
+
+    def key(r):
+        return f"{r.get('owner')}.{r.get('channel')}"
+    last: dict[str, int] = {}
+    groups: dict[str, list[dict]] = {}
+    for i, r in enumerate(rows):
+        last[key(r)] = i
+        if r.get("path") in marks:
+            groups.setdefault(key(r), []).append(
+                {**r, "spectator_of": marks[r["path"]], "fold_key": key(r)})
+    out: list[dict] = []
+    for i, r in enumerate(rows):
+        k = key(r)
+        if r.get("path") not in marks:
+            out.append(r)
+        if i == last[k] and k in groups:
+            out.append({"fold": True, "fold_key": k, "fold_n": len(groups[k]),
+                        "owner": r.get("owner"), "channel": r.get("channel")})
+            out.extend(groups[k])
+    return out

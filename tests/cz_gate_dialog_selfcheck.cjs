@@ -60,6 +60,7 @@ const queue = { plan: [], check: [], create: [] };
 const OUTCOME_CASES = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, 'fixtures', 'gate_outcome_cases.json'), 'utf8')).cases;
 let hold = null;                    // a pending check the test resolves itself
 let holdCreate = null;
+let holdPlan = null;                // a pending plan the test resolves itself
 let failDialog = false;
 const toasts = [];
 window.showToast = (m, k) => { toasts.push([m, k]); };              // a pending create the test resolves itself
@@ -118,6 +119,41 @@ function checkOk(body, opts) {
                  verdict: (opts.refuse === p) ? { allowed: false, state: 'not checked', reason: 'A gate named so exists.' }
                      : { allowed: true, state: opts.unchecked ? 'not checked' : 'verified', reason: opts.unchecked ? 'No environment.' : '' } })) };
 }
+
+/* Spectators in the answers, only when the body asks for them (the contract's shapes). */
+const NOT_CAL = 'The phase shift of this spectator starts at 0 and is not calibrated. Calibrate it before relying on the gate.';
+const SPECT_OPS = { q3: 1, q4: 2, q1: 1 };
+const RANGE_NOTE = "The level on q4.z was not compared with its port's output range: the output range of port con1/1/4 is not known.";
+function spectPlan(body, j) {
+    if (!body.spectators) return j;
+    (j.pairs || []).forEach((p) => {
+        const sp = body.spectators[p.pair] || [];
+        if (!sp.length) return;
+        const bad = sp.filter((x) => x.level === undefined).map((x) => 'For the spectator ' + x.qubit + ': the level is required. Type a level in V.');
+        if (bad.length) { p.ok = false; p.refusals = (p.refusals || []).concat(bad); return; }
+        const op = body.gate_name + '_spectator_pulse';
+        p.spectators = sp.map((x) => ({ qubit: x.qubit, line: x.qubit + '.z', operation: op, path: 'qubits.' + x.qubit + '.z.operations.' + op,
+                                        length: x.length, level: x.level, phase_shift: 0.0, not_calibrated: NOT_CAL,
+                                        ...(x.qubit === 'q4' ? { range_not_compared: RANGE_NOTE } : {}) }));
+        p.spectator_ops = {};
+        sp.forEach((x) => { p.spectator_ops[x.qubit] = SPECT_OPS[x.qubit]; });
+        p.paths = (p.paths || []).concat(p.spectators.map((x) => x.path));
+    });
+    return j;
+}
+function spectCheck(body, j) {
+    if (!body.spectators) return j;
+    (j.pairs || []).forEach((p) => {
+        const sp = body.spectators[p.pair] || [];
+        sp.forEach((x, k) => {
+            p.timeline.lanes.push({ key: x.qubit + '.z', group: 'spectator', label: x.qubit + '.z', color_index: k + 1, segments: [] });
+            p.intent.push({ field: 'spectator_qubits_control.' + x.qubit, group: 'spectator', lane_key: x.qubit + '.z', operation: body.gate_name + '_spectator_pulse',
+                            intended: { length: x.length, length_source: 'given', amplitude: x.level, amplitude_source: 'given' },
+                            actual: { length_ns: x.length, max_v: x.level, min_v: 0 }, tones: {}, why: [] });
+        });
+    });
+    return j;
+}
 function respond(status, j) { return Promise.resolve({ ok: status < 400, status, json: () => Promise.resolve(j), text: () => Promise.resolve('') }); }
 window.fetch = (url, opt) => {
     if (String(url).indexOf('/pulse/cz-gate/status') === 0) {
@@ -138,10 +174,11 @@ window.fetch = (url, opt) => {
     sent.push({ kind, body });
     const q = queue[kind].shift();
     if (kind === 'create' && holdCreate) { const h = holdCreate; holdCreate = null; return h.then(() => respond(200, { ok: true, created: lastAllowed.map((pp) => ({ pair: pp, gate: 'cz_x', state: 'verified', paths: ['a'] })), skipped: [], count: lastAllowed.length, tray_html: '', sync: createSync })); }
-    if (kind === 'check' && hold) { const h = hold; hold = null; return h.then(() => respond(200, q ? q(body) : checkOk(body))); }
+    if (kind === 'plan' && holdPlan) { const h = holdPlan; holdPlan = null; const ans = q ? q(body) : spectPlan(body, planOk(body)); return h.then(() => respond(200, ans)); }
+    if (kind === 'check' && hold) { const h = hold; hold = null; return h.then(() => respond(200, q ? q(body) : spectCheck(body, checkOk(body)))); }
     if (q) { const r = q(body); return Array.isArray(r) ? respond(r[0], r[1]) : respond(200, r); }
-    if (kind === 'plan') return respond(200, planOk(body));
-    if (kind === 'check') return respond(200, checkOk(body));
+    if (kind === 'plan') return respond(200, spectPlan(body, planOk(body)));
+    if (kind === 'check') return respond(200, spectCheck(body, checkOk(body)));
     return respond(200, { ok: true, created: lastAllowed.map((p) => ({ pair: p, gate: 'cz_x', state: 'verified', paths: ['a'] })), skipped: [], count: lastAllowed.length, tray_html: '', sync: createSync });
 };
 let driftState = 'mine';
@@ -780,6 +817,141 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
         ok(classWhy().querySelectorAll('.czg-why-line').length === 1 && /No gate class can run on q1-2/.test(classWhy().textContent) && /no flux line/.test(classWhy().textContent), 'no class can run: said once under Class with the first class\'s reason');
         ok(nameWhy().hidden && !$('#czg-name').hasAttribute('aria-invalid'), 'no class can run: Name stays clean');
         ok(prim().disabled, 'no class can run: Check stays disabled');
+        window.CzGate.close();
+        dataOverride = null;
+    }
+
+    // ---- spectators: other lines that play while the gate plays
+    {
+        const SQ = DATA.classes[0].slots[0].pulse_classes;
+        const WHY_CO = 'The coupler-only gate class plays only the coupler, so SM adds no spectator pulses to it. Pick the CZ gate (quam-builder) class to add spectators.';
+        const CZ = { 'class': 'G.CZGate', label: 'CZ gate', layout: 'known', available: true, why: '', models: [], spectators: { offered: true, why: '' },
+                     slots: [{ field: 'flux_pulse_qubit', line: 'moving', line_words: 'x', required: true, pulse_classes: SQ }] };
+        const CO = { 'class': 'G.CouplerCZ', label: 'Coupler-only CZ gate', layout: 'known', available: true, why: '', models: [], spectators: { offered: false, why: WHY_CO },
+                     slots: [{ field: 'coupler_flux_pulse', line: 'coupler', line_words: 'x', required: true, pulse_classes: SQ }] };
+        const cand = (q, k) => ({ qubit: q, line: q + '.z', port: '#/ports/analog_outputs/con1/1/' + k, range: 0.5 });
+        dataOverride = { pairs: [Object.assign({}, DATA.pairs[0], { spectator_candidates: [cand('q3', 3), cand('q4', 4)] }),
+                                 Object.assign({}, DATA.pairs[1], { spectator_candidates: [cand('q1', 1), cand('q4', 4)] })],
+                         selected: 'q1-2', env: 'lab', classes: [CZ, CO] };
+        const st = () => window.CzGate.state();
+        const last = () => sent.filter((s) => s.kind === 'plan').slice(-1)[0].body;
+        const box = (q, pair) => [...doc.querySelectorAll('#czg-spect-body [data-czg-spect-pair="' + (pair || 'q1-2') + '"] input[data-czg-spect-qubit]')].filter((i) => i.getAttribute('data-czg-spect-qubit') === q)[0];
+        const tickBox = (q, on, pair) => { const i = box(q, pair); i.checked = on; i.dispatchEvent(new window.Event('change', { bubbles: true })); };
+        const fld = (q, n, pair) => [...doc.querySelectorAll('#czg-spect-body input[data-czg-field]')].filter((i) => i.getAttribute('data-czg-field') === '@sp:' + (pair || 'q1-2') + ':' + q && i.getAttribute('data-czg-name') === n)[0];
+        const errOf = (i) => { const e = i && i.closest('.ui-field').querySelector('.ui-field-error'); return e ? e.textContent : ''; };
+        await window.CzGate.open({ pair: 'q1-2' });
+        await settle();
+        const panel = $('#czg-spect');
+        ok(panel && !panel.hidden && !panel.open && $('#czg-zone-pulses').contains(panel) && panel.classList.contains('ui-panel--fold'),
+           'spectators: a folded kit panel inside the Pulses zone');
+        ok($('#czg-spect-sum').textContent === 'none' && !$('#czg-spect-body input[data-czg-field]') && box('q3') && !box('q3').checked && !box('q4').checked,
+           'spectators: none ticked by default, no inputs, summary none');
+        ok(!('spectators' in last()), 'spectators: none ticked sends no spectators field');
+        ok(/port con1\/1\/3, range ±0\.5 V/.test($('#czg-spect-body [data-czg-spect-row="q3"]').textContent), 'spectators: the port and its range, quietly');
+        tickBox('q3', true);
+        await settle();
+        ok(fld('q3', 'length') && fld('q3', 'length').value === '100' && fld('q3', 'level').value === '',
+           'tick: Length starts at the gate length, Level starts empty');
+        ok(/SM computes no level/.test(errOf(fld('q3', 'level'))) && prim().disabled, 'tick: an empty level says why under the field and blocks Check');
+        ok($('#czg-spect-body [data-czg-spect-row="q3"] .ui-slot-chip.ui-line-2') && $('#czg-spect-sum').textContent.indexOf('1 line') === 0,
+           'tick: the line chip wears the next identity colour; summary counts the line');
+        type(fld('q3', 'level'), 'x');
+        await settle();
+        ok(/Type a number/.test(errOf(fld('q3', 'level'))) && prim().disabled, 'an invalid level is said and blocks Check');
+        type(fld('q3', 'level'), '0.05');
+        type(fld('q3', 'length'), '48');
+        tickBox('q4', true);
+        await settle();
+        type(fld('q4', 'length'), '32');
+        type(fld('q4', 'level'), '-0.03');
+        await settle();
+        ok(!errOf(fld('q3', 'level')) && !prim().disabled, 'valid levels: no error, Check enabled');
+        ok(JSON.stringify(last().spectators) === JSON.stringify({ 'q1-2': [{ qubit: 'q3', length: 48, level: 0.05 }, { qubit: 'q4', length: 32, level: -0.03 }] }),
+           'one pair: the spectators field equals the server contract\'s example');
+        ok(/q3\.z will hold 1 spectator operation, q4\.z will hold 2 spectator operations/.test($('[data-czg-spect-ops="q1-2"]').textContent)
+           && $('#czg-spect-sum').textContent === '2 lines ticked',
+           'before creating: per line, the spectator operations it will hold; the header only counts ticked lines');
+        ok($('[data-czg-spect-range-note="q4"]') && $('[data-czg-spect-range-note="q4"]').textContent === RANGE_NOTE
+           && $('[data-czg-spect-row="q4"]').contains($('[data-czg-spect-range-note="q4"]')) && !$('[data-czg-spect-range-note="q3"]'),
+           'an unreadable range is said on that line only, in plain words');
+        ok(/qubits\.q3\.z\.operations\.cz_\w*spectator_pulse/.test($('#czg-writes').textContent) && /qubits\.q4\.z\.operations/.test($('#czg-writes').textContent),
+           'What will be written lists every spectator operation');
+        // check: lanes, rows, the not-calibrated note
+        prim().click();
+        await settle();
+        const tl = charts[charts.length - 1];
+        ok(tl.lanes.filter((l) => l.group === 'spectator').map((l) => l.key + ':' + l.color).join() === 'q3.z:1,q4.z:2',
+           'check: each spectator is its own lane in the spectator group, in its identity colour');
+        ok([...doc.querySelectorAll('#czg-intent tbody tr')].map((tr) => tr.children[0].textContent).join('|') === 'op_q1-2|spectator on q3.z|spectator on q4.z'
+           && $('#czg-intent tbody tr:nth-child(3) .ui-line-dot.ui-line-3'),
+           'check: Entered and actual has one row per spectator, named by its line, with its dot');
+        ok(doc.querySelectorAll('[data-czg-spect-uncal]').length === 1 && /not calibrated/.test($('[data-czg-spect-uncal]').textContent)
+           && $('[data-czg-spect-uncal]').classList.contains('ui-text-quiet') && !/not calibrated/.test(alertText()),
+           'check: the phase shift is not calibrated, said once in the panel, quiet, not in the banner');
+        ok($('#czg-spect-body [data-czg-spect-row="q4"] .ui-slot-chip.ui-line-3'), 'check: the form chip takes the lane colour');
+        // stale on change; inert while busy
+        type(fld('q4', 'level'), '-0.04');
+        await tick(5);
+        ok($('#czg-evidence').classList.contains('czg-stale') && prim().textContent === 'Check', 'a spectator change marks the result stale');
+        await settle();
+        let rel;
+        hold = new Promise((r) => { rel = r; });
+        prim().click();
+        await tick(5);
+        ok($('#czg-form').inert && box('q3').disabled && fld('q3', 'level').disabled, 'busy: the spectator inputs are inert');
+        rel();
+        await settle();
+        // two pairs: each pair its own choices
+        const more = [...doc.querySelectorAll('#czg-more-list input[data-czg-more]')].filter((i) => i.value === 'q2-3')[0];
+        more.checked = true;
+        more.dispatchEvent(new window.Event('change', { bubbles: true }));
+        await settle();
+        ok(box('q4', 'q2-3') && !box('q4', 'q2-3').checked && box('q1', 'q2-3'), 'two pairs: the second pair lists its own candidates, none ticked');
+        tickBox('q4', true, 'q2-3');
+        await settle();
+        type(fld('q4', 'level', 'q2-3'), '0.02');
+        await settle();
+        ok(JSON.stringify(last().spectators) === JSON.stringify({ 'q1-2': [{ qubit: 'q3', length: 48, level: 0.05 }, { qubit: 'q4', length: 32, level: -0.04 }],
+                                                              'q2-3': [{ qubit: 'q4', length: 100, level: 0.02 }] }),
+           'two pairs: the spectators are given per pair');
+        prim().click();
+        await settle();
+        $('#czg-pairs [data-czg-pair-idx="1"]').click();
+        await settle();
+        ok(charts[charts.length - 1].lanes.filter((l) => l.group === 'spectator').map((l) => l.key).join() === 'q4.z'
+           && /spectator on q4\.z/.test($('#czg-intent').textContent) && !/spectator on q3\.z/.test($('#czg-intent').textContent),
+           'the pair switch shows that pair\'s own spectators');
+        // pair change in the Gate zone resets the choices and says so
+        change($('#czg-pair'), 'q2-3');
+        await settle();
+        ok(!('spectators' in last()) && !doc.querySelector('#czg-spect-body input[data-czg-spect-qubit]:checked')
+           && /spectator choices were cleared/.test($('#czg-spect-body').textContent) && $('#czg-spect-sum').textContent === 'none',
+           'pair change: the choices reset, and the panel says so');
+        change($('#czg-pair'), 'q1-2');
+        await settle();
+        ok(!/were cleared/.test($('#czg-spect-body').textContent), 'pair change with nothing ticked: no note');
+        // class switched twice with ticks on, a late plan answer arriving after the switch
+        tickBox('q3', true);
+        await settle();
+        type(fld('q3', 'level'), '0.05');
+        let relP;
+        holdPlan = new Promise((r) => { relP = r; });
+        await settle();
+        const heldSent = sent.length;
+        $('#czg-class-host .ui-menu').dispatchEvent(new window.CustomEvent('ui-menu-pick', { bubbles: true, detail: { value: 'G.CouplerCZ', kind: 'pick' } }));
+        ok(/spectator choices were cleared/.test($('#czg-spect-body').textContent) && $('#czg-spect-sum').textContent === 'not offered',
+           'class switch to one without spectators: the ticks are cleared and the panel says so');
+        $('#czg-class-host .ui-menu').dispatchEvent(new window.CustomEvent('ui-menu-pick', { bubbles: true, detail: { value: 'G.CZGate', kind: 'pick' } }));
+        relP();
+        await settle();
+        ok(heldSent > 0 && !doc.querySelector('#czg-spect-body input[data-czg-spect-qubit]:checked') && !('spectators' in last())
+           && !$('[data-czg-spect-ops]') && $('#czg-spect-sum').textContent === 'none' && !Object.keys(st().spectOn || {}).length,
+           'class switched twice: a late plan answer brings no ticks or counts back, and the request carries none');
+        // a class that takes no spectators
+        $('#czg-class-host .ui-menu').dispatchEvent(new window.CustomEvent('ui-menu-pick', { bubbles: true, detail: { value: 'G.CouplerCZ', kind: 'pick' } }));
+        await settle();
+        ok(!panel.hidden && $('#czg-spect-body').textContent === WHY_CO && !$('#czg-spect-body input') && $('#czg-spect-sum').textContent === 'not offered',
+           'not offered: the panel stays, quiet, with the server\'s why, no inputs');
         window.CzGate.close();
         dataOverride = null;
     }

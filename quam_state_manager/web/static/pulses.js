@@ -2472,3 +2472,22 @@ window.PulsesPage = (function () {
         if (map && map.open && document.getElementById("pulses-owner-pick")) map.open = false;
     });
 })();
+
+/* The spectator pulses of gates on one channel sit behind one fold row (the
+   server marks them from the gates, never from a name): its button opens and
+   closes them. Each row inside behaves as any pulse row. */
+(function () {
+    document.addEventListener("click", function (e) {
+        var b = e.target && e.target.closest ? e.target.closest("[data-pulse-fold-toggle]") : null;
+        if (!b) return;
+        e.preventDefault();
+        e.stopPropagation();
+        var key = b.getAttribute("data-pulse-fold-toggle");
+        var open = b.getAttribute("aria-expanded") !== "true";
+        b.setAttribute("aria-expanded", open ? "true" : "false");
+        var tb = b.closest("tbody");
+        Array.prototype.slice.call((tb || document).querySelectorAll("tr[data-pulse-fold-member]")).forEach(function (tr) {
+            if (tr.getAttribute("data-pulse-fold-member") === key) tr.hidden = !open;
+        });
+    });
+})();

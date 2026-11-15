@@ -5,7 +5,7 @@
             hx-get="/pulse/detail?path={{ r.path | urlencode }}"
             hx-target="#inspector-pane" hx-swap="innerHTML"
             hx-indicator="#inspector-pane"
-            title="{{ r.summary }}">
+            title="{{ r.summary }}"{% if r.fold_key %} data-pulse-fold-member="{{ r.fold_key }}" hidden{% endif %}>
             <td class="pulse-sel-col" onclick="event.stopPropagation()">
                 {%- if not r.is_alias and r.known -%}
                 <input type="checkbox" class="pulse-sel-chk" data-path="{{ r.path }}"
@@ -23,6 +23,7 @@
                 {%- if r.is_alias %} <span class="pointer-badge" title="Alias — resolves to {{ r.alias_target }}">alias</span>{% endif %}
                 {%- if r.iq %} <span class="pulse-flag-iq" title="I and Q components">IQ</span>{% endif %}
                 {%- if r.readout %} <span class="pulse-flag-readout" title="Readout pulse">RO</span>{% endif %}
+                {%- if r.spectator_of %}<br><span class="muted" data-pulse-spectator-of>spectator of {{ r.spectator_of.gate }} on {{ r.spectator_of.pair }}</span>{% endif %}
                 {%- if r.found %}<br><span class="pulse-found-at muted"
                     title="Not one of the places SM enumerates by name &mdash; found by its shape (an operations entry or a pulse class)">found at <code>{{ r.location }}</code></span>{% endif %}</td>
             <td><span class="pulse-class-chip

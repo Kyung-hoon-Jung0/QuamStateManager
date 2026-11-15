@@ -152,6 +152,16 @@ def test_spectators_and_empty_data_give_no_tiles():
     assert tiles({"lanes": [], "cannot_draw": "cannot draw: x"}) == []
 
 
+def test_spectators_count_as_lines_and_reach_the_peak_but_not_the_gate_length():
+    ts = tiles({"lanes": [_lane("q1.z", 0, 48, peak=0.3), _lane("q3.z", 0, 48, peak=0.05, group="spectator"),
+                          _lane("q4.z", 0, 96, peak=-0.45, group="spectator")]})
+    ln = _tile(ts, "lines")
+    assert ln["value"] == "3" and ln["note"] == "q1.z; spectators q3.z, q4.z"
+    p = _tile(ts, "peak")
+    assert p["value"] == "-0.45" and p["note"] == "on q4.z"
+    assert _tile(ts, "length")["value"] == "48" and _tile(ts, "timing") is None
+
+
 def test_lanes_carry_their_identity_colour_index():
     data = timeline_data(_entry(script=TWO, cfg=_multi_cfg()), control="q1", target="q2",
                          coupler_elements=["c12"])

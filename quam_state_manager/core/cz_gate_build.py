@@ -20,6 +20,7 @@ Pure: no file I/O, no subprocess, no QM-stack import, no store mutation.
 from __future__ import annotations
 
 import copy
+import math
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -704,7 +705,8 @@ def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
          pulses: dict[str, dict] | None = None,
          copy_from: str | None = None,
          model_gate: tuple[str, str] | None = None,
-         macro_fields: dict[str, Any] | None = None) -> dict[str, Any]:
+         macro_fields: dict[str, Any] | None = None,
+         spectators: list | None = None) -> dict[str, Any]:
     """Plan one new CZ gate. Never raises on chip shape; never changes *merged*.
 
     ``pulses`` maps a gate pulse field (``flux_pulse_qubit``,
@@ -729,13 +731,20 @@ def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
     "model_gate", "fields": {slot: {field: given|copied|default}, "macro":
     {key: copied from the model gate}}, "sources": {...}}`` or ``{"error":
     str, "refusals": [str]}``. Every created value is a fresh copy.
+
+    ``spectators`` (official class only, see :func:`spectator_refusal`):
+    ``[{"qubit", "length" (ns), "level" (V)}]``; each becomes a square pulse
+    operation on that qubit's flux line, filled into the macro's three
+    spectator fields. With spectators the answer also carries
+    ``"spectators": [...]`` and ``"spectator_ops": {qubit: count}``; without
+    them the answer is exactly what it is for a gate with no spectators.
     """
     try:
         out = _plan_body(merged, pair_id, gate_name, gate_class, pulses,
-                         copy_from, model_gate, macro_fields)
+                         copy_from, model_gate, macro_fields, spectators)
         if "refusals" in out:
             names = _echoed_names(pair_id, gate_name, gate_class, pulses, copy_from,
-                                  model_gate, macro_fields)
+                                  model_gate, macro_fields) + _spectator_names(spectators)
             out = _refuse([cap_names(r, names) for r in out["refusals"]])
         return out
     except Exception as exc:  # noqa: BLE001 -- the last net: plan never raises
@@ -782,11 +791,18 @@ def _echoed_names(pair_id, gate_name, gate_class, pulses, copy_from, model_gate,
 
 
 def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
-               model_gate, macro_fields=None) -> dict[str, Any]:
+               model_gate, macro_fields=None, spectators=None) -> dict[str, Any]:
     bad = _argument_problem(pair_id, gate_name, gate_class, pulses, model_gate,
                             copy_from)
     if bad:
         return _refuse([bad])
+    if spectators is not None and not isinstance(spectators, list):
+        return _refuse([f"The spectators of pair {pair_id} must be a list of qubits, "
+                        "each with a length and a level. Pick the spectators again."])
+    if spectators:
+        why = spectator_refusal(gate_class)
+        if why:
+            return _refuse([why])
     if not isinstance(merged, dict) or not isinstance(merged.get("qubit_pairs"), dict):
         return _refuse(["This chip has no qubit_pairs section SM can read. "
                         "Open a chip that has qubit pairs."])
@@ -851,7 +867,7 @@ def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
                 f"This gate class has no gate settings to change ({', '.join(sorted(macro_fields))}). "
                 "Remove them."])
         out = _plan_known(merged, pair_id, p, gate_name, gate_class, pulses,
-                          lines, copy_source, reasons)
+                          lines, copy_source, reasons, spectators or [])
     else:
         out = _plan_copied(merged, pair_id, gate_name, gate_class, pulses,
                            lines, copy_source, reasons, model_gate, macro_fields)
@@ -894,7 +910,7 @@ def _name_problem(key: str, ids: tuple) -> str:
 
 
 def _plan_known(merged, pair_id, p, gate_name, gate_class, pulses, lines,
-                copy_source, reasons) -> dict[str, Any]:
+                copy_source, reasons, spectators=()) -> dict[str, Any]:
     desc = GATE_CLASSES[gate_class]
     slots = {s.field: s for s in desc["slots"]}
     have = ", ".join(slots)
@@ -987,9 +1003,14 @@ def _plan_known(merged, pair_id, p, gate_name, gate_class, pulses, lines,
                 macro[s.field] = _ref(*segs, key)
                 operations[s.field]["macro_holds"] = "reference"
             op_creates.append((_dot(segs, key), {"id": key, **pulse}))
+    extra: dict[str, Any] = {}
+    if spectators:
+        extra = _plan_spectators(merged, pair_id, gate_name, spectators, macro,
+                                 macro_segs, direction, op_creates, operations,
+                                 provenance, reasons)
     if reasons:
         return _refuse(reasons)
-    return {"creates": [(_dot(macro_segs), macro)] + op_creates,
+    return {**extra, "creates": [(_dot(macro_segs), macro)] + op_creates,
             "direction": direction,
             "pulse_directions": {f: direction for f in provenance},
             "model_gate": None, "layout": "known", "reset": [],
@@ -1000,6 +1021,291 @@ def _plan_known(merged, pair_id, p, gate_name, gate_class, pulses, lines,
                 if k != "__class__" and k not in slots}},
             "sources": {"control": control, "target": target,
                         "moving_qubit": p.get("moving_qubit")}}
+
+
+# ---------------------------------------------------------------------------
+# Spectators (official class only)
+# ---------------------------------------------------------------------------
+
+#: the macro fields the official class reads its spectators from
+SPECTATOR_QUBITS = "spectator_qubits"
+SPECTATOR_CONTROL = "spectator_qubits_control"
+SPECTATOR_PHASE = "spectator_qubits_phase_shift"
+SPECTATOR_ROLE = "spectator_pulse"
+SPECTATOR_CLASS = "quam.components.pulses.SquarePulse"
+
+#: the note every new spectator carries about its phase shift
+NOT_CALIBRATED = ("The phase shift of this spectator starts at 0 and is not calibrated. "
+                  "Calibrate it before relying on the gate.")
+
+NO_SPECTATORS_COUPLER = (
+    "The coupler-only gate class plays only the coupler, so SM adds no spectator "
+    "pulses to it. Pick the CZ gate (quam-builder) class to add spectators.")
+NO_SPECTATORS_COPIED = (
+    "This gate copies the layout of a gate on this chip, and SM does not know where "
+    "that class keeps spectator pulses, so it offers none. Pick the CZ gate "
+    "(quam-builder) class to add spectators.")
+
+
+def spectator_refusal(gate_class: Any) -> str | None:
+    """None when the window offers spectators for *gate_class* (the official
+    class), else the sentence saying why it does not."""
+    if gate_class == CZ_GATE:
+        return None
+    if gate_class == COUPLER_CZ_GATE:
+        return NO_SPECTATORS_COUPLER
+    return NO_SPECTATORS_COPIED
+
+
+def _spectator_names(spectators: Any) -> list[str]:
+    if not isinstance(spectators, list):
+        return []
+    return [s["qubit"] for s in spectators
+            if isinstance(s, dict) and isinstance(s.get("qubit"), str)]
+
+
+def _port_node(merged: dict, ports_ref: str) -> Any:
+    node: Any = merged
+    for seg in ports_ref[2:].split("/"):
+        node = node.get(seg) if isinstance(node, dict) else None
+    return node
+
+
+def spectator_line(merged: dict, qubit: str) -> dict[str, Any] | str:
+    """The flux line *qubit* would play a spectator pulse on, or a plain
+    reason it has none: ``{"qubit", "line", "segs", "ops", "port", "range",
+    "offset"}``. ``port`` is the port reference (None when SM cannot follow
+    it), ``range`` the port's output range in V (None when not known) and
+    ``offset`` the port's DC offset in V (0 when not stated). ``dc_levels``
+    lists every DC level the line may hold while the gate plays
+    (:func:`flux_dc.line_dc_levels`: port offset and flux-point offset, in V
+    at the port); a level is checked against the range on top of each."""
+    from quam_state_manager.core.diagnostics import _follow_to_ports_ref, _sample_bound
+    from quam_state_manager.core.flux_dc import landed_path, line_dc_levels
+    qubits = merged.get("qubits") if isinstance(merged, dict) else None
+    entry = qubits.get(qubit) if isinstance(qubits, dict) else None
+    qpath: tuple = ("qubits", qubit)
+    if isinstance(entry, str) and entry.startswith("#"):
+        real = landed_path(merged, qpath)
+        entry = _get(merged, list(real)) if real is not None else None
+        qpath = real or qpath
+        if not isinstance(entry, dict):
+            return (f"The spectator {qubit} is a reference ({qubits[qubit]}) that SM "
+                    "could not follow to a qubit. Pick another qubit, or fix the reference.")
+    if not isinstance(entry, dict):
+        return (f"The spectator {qubit} is not a qubit of this chip. Pick a qubit "
+                "from the list.")
+    z = entry.get("z")
+    if not isinstance(z, dict) or not isinstance(z.get("operations"), dict):
+        return (f"The spectator {qubit} has no pulsed flux line with operations, so it "
+                "cannot play a spectator pulse. Pick another qubit.")
+    port, rng, off = None, None, 0.0
+    out_ref = z.get("opx_output")
+    if isinstance(out_ref, str):
+        try:
+            port = _follow_to_ports_ref(merged, out_ref)
+        except Exception:  # noqa: BLE001 -- an unreadable port is an unknown port
+            port = None
+    if port:
+        rng = _sample_bound(merged, port)[0]
+        node = _port_node(merged, port)
+        o = node.get("offset") if isinstance(node, dict) else None
+        if isinstance(o, (int, float)) and not isinstance(o, bool) and math.isfinite(o):
+            off = float(o)
+    levels, why = line_dc_levels(merged, tuple(qpath) + ("z",), off)
+    if why:
+        return (f"The spectator {qubit}: SM cannot tell the DC level of its flux line "
+                f"while the gate plays ({why}). Fix that value, or pick another qubit.")
+    return {"qubit": qubit, "line": f"{qubit}.z", "segs": tuple(qpath) + ("z", "operations"),
+            "ops": z["operations"], "port": port, "range": rng, "offset": off,
+            "dc_levels": levels}
+
+
+def spectator_candidates(merged: dict, pair_id: str) -> list[dict[str, Any]]:
+    """The qubits that may be chosen as spectators of a gate on *pair_id*:
+    every qubit other than the pair's control and target with a pulsed flux
+    line, each ``{"qubit", "line", "port", "range"}`` (port and range None
+    when SM cannot tell)."""
+    control = pair_qubit(merged, pair_id, "qubit_control")
+    target = pair_qubit(merged, pair_id, "qubit_target")
+    out = []
+    for q in sorted((merged.get("qubits") or {}) if isinstance(merged, dict) else {}):
+        if q in (control, target):
+            continue
+        ln = spectator_line(merged, str(q))
+        if isinstance(ln, dict):
+            out.append({"qubit": ln["qubit"], "line": ln["line"], "port": ln["port"],
+                        "range": ln["range"]})
+    return out
+
+
+def _qubit_of_ref(ref: Any) -> str | None:
+    if isinstance(ref, str) and ref.startswith("#/qubits/"):
+        rest = ref[len("#/qubits/"):].split("/")
+        return rest[0] if len(rest) == 1 and rest[0] else None
+    return None
+
+
+def spectator_ops_on_lines(merged: dict) -> dict[str, set]:
+    """``{qubit: {operation key}}``: the operations on each qubit's flux line
+    that existing gates play as spectators, read from the gates' own
+    spectator lists (never from an operation's name). A reference names its
+    line and key; a macro-owned pulse sits on its qubit's line under its id.
+    Only operations the line actually holds are counted."""
+    out: dict[str, set] = {}
+    qubits = (merged or {}).get("qubits") or {}
+    for pv in ((merged or {}).get("qubit_pairs") or {}).values():
+        if not isinstance(pv, dict):
+            continue
+        for macro in (pv.get("macros") or {}).values():
+            if not isinstance(macro, dict) or not isinstance(macro.get(SPECTATOR_CONTROL), dict):
+                continue
+            who = macro.get(SPECTATOR_QUBITS)
+            for q, v in macro[SPECTATOR_CONTROL].items():
+                owner = _qubit_of_ref(who.get(q) if isinstance(who, dict) else None) or str(q)
+                if isinstance(v, str) and v.startswith("#/qubits/"):
+                    segs = v[2:].split("/")
+                    if len(segs) != 5 or segs[2:4] != ["z", "operations"]:
+                        continue
+                    owner, key = segs[1], segs[4]
+                elif isinstance(v, dict) and isinstance(v.get("id"), str) and v["id"]:
+                    key = v["id"]
+                else:
+                    continue
+                entry = qubits.get(owner)
+                z = entry.get("z") if isinstance(entry, dict) else None
+                ops = z.get("operations") if isinstance(z, dict) else None
+                if isinstance(ops, dict) and key in ops:
+                    out.setdefault(owner, set()).add(key)
+    return out
+
+
+def count_request_spectators(merged: dict, plans: list) -> None:
+    """Set every planned pair's ``spectator_ops`` to what each line holds
+    after the WHOLE request: the existing gates' spectator operations plus
+    the new ones of every pair that is not refused. *plans* is
+    ``[(pair, plan)]`` in request order; changed in place."""
+    held = spectator_ops_on_lines(merged)
+    for _pid, p in plans:
+        if "error" not in p:
+            for row in p.get("spectators") or []:
+                held.setdefault(row["qubit"], set()).add(row["operation"])
+    for _pid, p in plans:
+        if "error" not in p and "spectator_ops" in p:
+            p["spectator_ops"] = {q: len(held.get(q, ())) for q in p["spectator_ops"]}
+
+
+def range_not_compared(line: str, port: Any) -> str:
+    """The sentence a spectator row carries when its level could not be
+    compared with its port's output range (the lab check's words)."""
+    from quam_state_manager.core.gate_check import range_unknown_words
+    why = range_unknown_words(port) if port else f"SM cannot follow the port of {line}"
+    return f"The level on {line} was not compared with its port's output range: {why}."
+
+
+def _spectator_problem(merged, pair_id, spec, control, target, seen) -> tuple[Any, str | None]:
+    """``(line info with "length" and "level", None)`` or ``(None, reason)``."""
+    if not isinstance(spec, dict) or not isinstance(spec.get("qubit"), str) or not spec["qubit"]:
+        return None, "Each spectator needs a qubit, a length and a level. Pick the spectators again."
+    q = spec["qubit"]
+    if q in seen:
+        return None, f"The spectator {q} is listed twice. Keep one entry for it."
+    seen.add(q)
+    for role, who in (("control", control), ("target", target)):
+        if q == who:
+            return None, (f"The spectator {q} is the {role} of pair {pair_id}. A spectator "
+                          "must be another qubit.")
+    ln = spectator_line(merged, q)
+    if isinstance(ln, str):
+        return None, ln
+    length = spec.get("length")
+    if length is None:
+        return None, (f"For the spectator {q}: the length is required. Type a whole "
+                      "number of ns such as 48.")
+    if isinstance(length, str):
+        return None, (f"For the spectator {q}: the length {length!r} must be a number "
+                      "of ns. Type a whole number such as 48.")
+    probe = {"length": length}
+    r = length_rule(probe)
+    if r:
+        return None, f"For the spectator {q}: {r[0].lower()}{r[1:]}"
+    level = spec.get("level")
+    if level is None:
+        return None, (f"For the spectator {q}: the level is required. Type a level in V.")
+    if isinstance(level, bool) or not isinstance(level, (int, float)) or not math.isfinite(level):
+        return None, (f"For the spectator {q}: the level {level!r} must be a number of V. "
+                      "Type a level such as 0.05.")
+    if level == 0:
+        return None, (f"For the spectator {q}: a level of 0 V plays nothing. Type a level, "
+                      "or remove the spectator.")
+    rng = ln["range"]
+    # An absolute 1e-12 V margin: it only absorbs float rounding of the sum,
+    # far below any DAC step, so it is the same for every range.
+    for label, dc in ln["dc_levels"]:
+        total = float(level) + dc
+        if rng is not None and abs(total) > rng + 1e-12:
+            off = f" on top of its {dc:g} V {label} ({total:g} V)" if dc else ""
+            return None, (f"For the spectator {q}: {ln['line']} would play {float(level):g} V"
+                          f"{off}, outside its port's range of ±{rng:g} V. Lower the level.")
+    return {**ln, "length": probe["length"], "level": float(level)}, None
+
+
+def _plan_spectators(merged, pair_id, gate_name, spectators, macro, macro_segs,
+                     direction, op_creates, operations, provenance, reasons) -> dict[str, Any]:
+    """Fill the macro's spectator fields and add one square pulse operation
+    per spectator (the way the macro's own pulse is held: a macro-owned pulse
+    with a linked operation, or an operation the macro refers to). Returns
+    the answer's spectator keys; problems go to *reasons*."""
+    control = pair_qubit(merged, pair_id, "qubit_control")
+    target = pair_qubit(merged, pair_id, "qubit_target")
+    seen: set = set()
+    rows, counts = [], {}
+    for spec in spectators:
+        info, why = _spectator_problem(merged, pair_id, spec, control, target, seen)
+        if why:
+            reasons.append(why)
+            continue
+        q = info["qubit"]
+        try:
+            key = operation_name(gate_name, SPECTATOR_ROLE, control, target)
+        except ValueError:
+            reasons.append(_name_problem(f"{gate_name}_{SPECTATOR_ROLE}_{control}_{target}",
+                                         (control, target)))
+            continue
+        line = (info["segs"], info["ops"], info["line"])
+        _check_op(line, key, reasons)
+        built = _fields_for(SPECTATOR_CLASS, {"length": info["length"],
+                                              "amplitude": info["level"]}, None)
+        if isinstance(built, str):
+            reasons.append(built)
+            continue
+        pulse, prov = built
+        field = f"{SPECTATOR_CONTROL}.{q}"
+        provenance[field] = prov
+        op_path = _dot(info["segs"], key)
+        operations[field] = {"path": op_path, "key": key, "channel": info["line"],
+                             "created": True, "group": "spectator", "qubit": q}
+        macro[SPECTATOR_QUBITS][q] = _ref("qubits", q)
+        macro[SPECTATOR_PHASE][q] = 0.0
+        if direction == MACRO_OWNS:
+            owned = {"id": key, **pulse}
+            macro[SPECTATOR_CONTROL][q] = owned
+            operations[field]["macro_holds"] = "pulse"
+            op_creates.append((op_path, linked_operation(
+                owned, _ref(*macro_segs, SPECTATOR_CONTROL, q))))
+        else:
+            macro[SPECTATOR_CONTROL][q] = _ref(*info["segs"], key)
+            operations[field]["macro_holds"] = "reference"
+            op_creates.append((op_path, {"id": key, **pulse}))
+        counts[q] = len(spectator_ops_on_lines(merged).get(q, set()) | {key})
+        row = {"qubit": q, "line": info["line"], "operation": key, "path": op_path,
+               "length": info["length"], "level": info["level"],
+               "port": info["port"], "range": info["range"],
+               "phase_shift": 0.0, "not_calibrated": NOT_CALIBRATED}
+        if info["range"] is None:
+            row["range_not_compared"] = range_not_compared(info["line"], info["port"])
+        rows.append(row)
+    return {"spectators": rows, "spectator_ops": counts}
 
 
 # ---------------------------------------------------------------------------
