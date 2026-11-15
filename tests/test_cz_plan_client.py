@@ -54,7 +54,7 @@ def test_cz_chip_map_client():
     # v1.5.1: 114 -> 123, pin the compact map footer and its redraw lifecycle.
     # 2026-10-30: 123 -> 130, the dark-theme readability section (loss hue, diamonds on top, label avoidance).
     # 179 -> 184, the map legend line from the server pair count (five checks).
-    assert "184 assertions passed" in result.stdout
+    assert "191 assertions passed" in result.stdout
 
 
 def test_the_page_reads_title_status_figures_card_then_the_collapsed_notes(tmp_path):

@@ -1343,6 +1343,7 @@ window.enhanceColumnResize = function(tableId, storageKey) {
     function fitTableToColumns() {
         var sum = 0, unmeasured = false;
         ths.forEach(function(th) {
+            if (getComputedStyle(th).display === 'none') return;
             if (!th.style.width) {
                 var w = th.offsetWidth;
                 // docs/141 4ac: a table with no layout box (display:none, a
@@ -1365,10 +1366,13 @@ window.enhanceColumnResize = function(tableId, storageKey) {
        window it first rendered in: widening the browser left the rest of the
        pane empty for the life of the page. */
     function refitToBox() {
-        if (!Object.keys(saved).some(function(k) { return saved[k]; })) return;
+        var priority = table.querySelector('th.ui-col-secondary');
+        if (!priority && !Object.keys(saved).some(function(k) { return saved[k]; })) return;
+        if (priority) table.style.tableLayout = '';
         ths.forEach(function(th, i) { if (!saved[i]) th.style.width = ''; });
         table.style.width = '';
         fitTableToColumns();
+        if (priority) table.style.tableLayout = 'fixed';
     }
     if (typeof ResizeObserver === 'function' && !table._fitRO) {
         var host = table.parentElement || table;
@@ -8662,6 +8666,7 @@ window.PaneState = (function () {
             if (want && !want.classList.contains('active')) {
                 nav.querySelectorAll('a').forEach(function (a) { a.classList.remove('active'); });
                 want.classList.add('active');
+                if (window.UIMenu) window.UIMenu.selectSegment(want);
                 changed = true;
             }
         }
@@ -28193,6 +28198,7 @@ window.pulseTabActive = function (a) {
     if (!nav) return;
     nav.querySelectorAll("a").forEach(function (el) { el.classList.remove("active"); });
     a.classList.add("active");
+    if (window.UIMenu) window.UIMenu.selectSegment(a);
     // docs/190 F37: a channel tab is a deliberate, discrete act, and it was the
     // one filter change with nothing for Back to step into -- every sync used
     // replaceState, so two tab presses left ONE history entry and Back left the
@@ -28417,6 +28423,7 @@ function _pulsesRestoreFromUrl() {
             var m = (el.getAttribute("hx-get") || "").match(/channel=([^&]*)/);
             var ch = (m ? m[1] : "").toLowerCase();
             el.classList.toggle("active", ch === want);
+            if (ch === want && window.UIMenu) window.UIMenu.selectSegment(el);
         });
     }
     var parts = ["rows=1"];

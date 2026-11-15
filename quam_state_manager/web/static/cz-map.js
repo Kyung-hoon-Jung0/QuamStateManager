@@ -574,7 +574,9 @@
         qs.forEach(function (q, i) { col[q.path] = i; byPath[q.path] = q; });
         var n = Math.max(1, qs.length);
         var H = mapHeight(el);
-        var plotW = Math.max(240, (el.clientWidth || 1200) - MARGIN.l - MARGIN.r);
+        // Keep stored names visible; the kit scroll region holds wider columns.
+        var nameWidth = Math.max.apply(null, qs.map(function (q) { return partnerWidth(q.name); }).concat([0]));
+        var plotW = Math.max(240, (el.clientWidth || 1200) - MARGIN.l - MARGIN.r, n * (nameWidth + 8) / 0.76);
         var plotH = H - MARGIN.t - MARGIN.b;
         // fix3 P1-3: the drawing grows with the chip's rows, capped to a share of the plot
         var drawPx = drawing ? Math.round(Math.min(Math.max(DRAW_PX, ROW_PX * (lay.ymax + 1)), DRAW_MAX_FRAC * plotH)) : 0;
@@ -721,9 +723,12 @@
                 var top = Math.max.apply(null, gk.map(function (k) { return m.segments[k].frequency_hz / 1e9; }));
                 // a list wider than the column wraps onto lines inside it (never into the next column)
                 // '↔ q3' names the CZ partner, never the bar's own qubit (that is the column header)
-                var shown = names.map(function (name) { return colPx < 40 ? name.replace(/^q(?=[A-Z0-9])/i, '') : name; });
-                // one arrow leads the row's list; a too-narrow column drops it and the legend says it
+                var shown = names;
+                // one arrow leads the row's list; every column is grown to hold the longest stored name
                 var pl = partnerLines(['↔'].concat(shown), 0.76 * colPx);   // the arrow wraps like a name, never vanishes
+                // A partner named by a segment but absent from the qubit list has no column, so the
+                // width growth above never sized for it: drop the arrow, then drop the label to hover
+                // when even the bare name overruns the column (never draw over a neighbour).
                 if (pl.w > 0.76 * colPx) pl = partnerLines(shown, 0.76 * colPx);
                 if (pl.w > 0.76 * colPx) return;
                 wanted.push({ i: i, y: top, ypx: (top - (yr ? yr[0] : 0)) * pxPerGHz, w: pl.w, h: pl.h, n: pl.lines.length,
@@ -1073,7 +1078,7 @@
         renderDetail(root, loss, detail);
 
         var L = layout({
-            margin: MARGIN, height: H, showlegend: false, hovermode: 'closest',
+            margin: MARGIN, width: plotW + MARGIN.l + MARGIN.r, height: H, showlegend: false, hovermode: 'closest',
             xaxis: { tickmode: 'array', tickvals: qs.map(function (q, i) { return i + 0.5; }),
                      // fix3 P2-7: tick text is pseudo-HTML like every hover
                      ticktext: qs.map(function (q) { return esc(q.name); }),

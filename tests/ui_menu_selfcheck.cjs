@@ -192,6 +192,81 @@ const ev = new window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: tru
 r1.dispatchEvent(ev);
 ok(!ev.defaultPrevented && act_() === r1, "toolbar: a radio keeps its own arrow keys (the toolbar does not take ArrowRight)");
 
+// modifier keys: Alt+ArrowDown opens, Ctrl+Enter picks (as before); Alt/Meta + Left/Right stay the browser's
+function keyMod(k, mods, target) {
+    const ev = new window.KeyboardEvent("keydown", Object.assign({ key: k, bubbles: true, cancelable: true }, mods));
+    (target || act_()).dispatchEvent(ev);
+    return ev;
+}
+T(pick).focus();
+keyMod("ArrowDown", { altKey: true });
+ok(isOpen(pick), "Alt+ArrowDown on the trigger opens the menu");
+const nPicks = events.length;
+keyMod("Enter", { ctrlKey: true });
+ok(events.length === nPicks + 1 && !isOpen(pick), "Ctrl+Enter picks the focused option");
+T(pick).focus();
+for (const mods of [{ altKey: true }, { metaKey: true }]) {
+    for (const k of ["ArrowLeft", "ArrowRight"]) {
+        const nm = Object.keys(mods)[0] + k;
+        ok(!keyMod(k, mods, T(pick)).defaultPrevented, "menu trigger leaves " + nm + " to the browser");
+        keyMod("ArrowDown", {}); const row0 = act_();
+        ok(!keyMod(k, mods, row0).defaultPrevented && isOpen(pick), "menu option leaves " + nm + " to the browser");
+        key("Escape"); T(pick).focus();
+        T(pick).focus();
+    }
+}
+tbb[0].focus();
+for (const mods of [{ altKey: true }, { metaKey: true }, { ctrlKey: true }]) {
+    for (const k of ["ArrowLeft", "ArrowRight", "ArrowDown"]) {
+        ok(!keyMod(k, mods).defaultPrevented && act_() === tbb[0], "toolbar leaves " + Object.keys(mods)[0] + k + " to the browser");
+    }
+}
+{
+    const seg = window.UI.segmented([{ label: "A", href: "#a", selected: true }, { label: "B", href: "#b" }], "Mods");
+    host.appendChild(seg);
+    const so = [...seg.querySelectorAll(".ui-segmented-opt")];
+    so[0].focus();
+    for (const mods of [{ altKey: true }, { metaKey: true }, { ctrlKey: true }]) {
+        for (const k of ["ArrowLeft", "ArrowRight"]) {
+            ok(!keyMod(k, mods).defaultPrevented && act_() === so[0], "segmented leaves " + Object.keys(mods)[0] + k + " to the browser");
+        }
+    }
+    ok(!keyMod("ArrowDown", { altKey: true }).defaultPrevented && act_() === so[0], "segmented leaves Alt+ArrowDown to the browser");
+    tbb[0].focus(); tbb[0].dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowRight", shiftKey: true, bubbles: true, cancelable: true }));
+    ok(act_() === tbb[1], "toolbar: Shift+ArrowRight still moves focus, as before");
+    // only Alt/Ctrl/Meta with an ARROW key is left to the browser; Home / End keep working with any modifier, as before
+    for (const mods of [{ ctrlKey: true }, { altKey: true }, { metaKey: true }, { shiftKey: true }]) {
+        const nm = Object.keys(mods)[0];
+        tbb[0].focus();
+        const e1 = keyMod("End", mods);
+        ok(e1.defaultPrevented && act_() === tbb[3], "toolbar: " + nm + "+End still goes to the last control");
+        const e2 = keyMod("Home", mods);
+        ok(e2.defaultPrevented && act_() === tbb[0], "toolbar: " + nm + "+Home still goes to the first control");
+    }
+    tbb[0].focus(); keyMod("ArrowRight", { ctrlKey: true });
+    ok(act_() === tbb[0], "toolbar: Ctrl+ArrowRight does not move focus");
+}
+
+// two visible, enabled segmented groups in one container: arrows, Home and End stay inside the group they started in
+{
+    const box = doc.createElement("div");
+    host.appendChild(box);
+    const mk = (tag) => window.UI.segmented([{ label: tag + "1", href: "#" + tag + "1", selected: true }, { label: tag + "2", href: "#" + tag + "2" }, { label: tag + "3", href: "#" + tag + "3" }], "Group " + tag);
+    const g1 = mk("g"), g2 = mk("h");
+    box.appendChild(g1); box.appendChild(g2);
+    const a = [...g1.querySelectorAll(".ui-segmented-opt")], b = [...g2.querySelectorAll(".ui-segmented-opt")];
+    a[2].focus(); keyMod("ArrowRight", {});
+    ok(act_() === a[0], "two groups: ArrowRight on the last option wraps inside its own group");
+    b[0].focus(); keyMod("ArrowLeft", {});
+    ok(act_() === b[2], "two groups: ArrowLeft on the first option of the second group wraps inside it");
+    a[1].focus(); keyMod("End", {});
+    ok(act_() === a[2], "two groups: End goes to the last option of the same group");
+    b[1].focus(); keyMod("Home", {});
+    ok(act_() === b[0], "two groups: Home goes to the first option of the same group");
+    ok(g1.querySelector(".ui-segmented-on") === a[2] && g2.querySelector(".ui-segmented-on") === b[0], "two groups: a key in one group never selects an option of the other");
+    box.remove();
+}
+
 // a field without a control id: generated id, label for, described by hint + error
 const f1 = window.UI.field({ label: "Amplitude", hint: "Volts at the port", error: "Too high", control: { part: "input", num: true, value: "3" } });
 host.appendChild(f1);

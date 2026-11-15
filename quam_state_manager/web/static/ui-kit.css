@@ -512,9 +512,15 @@
 .ui-disclosure-summary::after { display: none; }
 .ui-disclosure-summary::before { content: var(--ui-disclosure-marker); color: var(--ui-text-2); }
 .ui-disclosure-body { padding: var(--ui-gap-2) 0 0 var(--ui-gap-4); }
+/* Secondary evidence columns yield to names on narrow screens. */
+@media (max-width: 900px) {
+    .ui-col-secondary { display: none; }
+}
 .ui-segmented { display: inline-flex; border: var(--ui-bw) solid var(--ui-border-strong); border-radius: var(--ui-r-md); overflow: hidden; }
 .ui-segmented-opt { margin: 0; padding: var(--ui-gap-1) var(--ui-gap-3); border: 0; border-radius: 0; background: transparent; color: var(--ui-text-2); font-size: var(--ui-fs-sm); font-weight: var(--ui-fw-normal); width: auto; cursor: pointer; }
 .ui-segmented-opt + .ui-segmented-opt { border-left: var(--ui-bw) solid var(--ui-border-strong); }
+.ui-segmented-opt, .ui-segmented-opt:hover, .ui-segmented-opt:focus, .ui-segmented-opt:visited { text-decoration: none; }
+.ui-segmented-opt:visited { color: var(--ui-text-2); }
 .ui-segmented-on { background: var(--ui-surface-2); color: var(--ui-accent); font-weight: var(--ui-fw); }
 
 /* K11 state (stage 4, D-46): icon + one sentence + at most one button, left aligned */
@@ -1096,11 +1102,14 @@
    neighbours overlapped by -1px, buttons padded 2rem). A kit row is as
    wide as its content. Doubled classes out-rank Pico's 0,2,1 child rules. */
 .ui-segmented.ui-segmented, .ui-actions.ui-actions { width: auto; margin-bottom: 0; box-shadow: none; }
-.ui-segmented.ui-segmented { box-sizing: border-box; height: var(--ui-ctl-h); vertical-align: middle; }
+.ui-segmented.ui-segmented { box-sizing: border-box; min-height: var(--ui-ctl-h); max-width: 100%; flex-wrap: wrap; vertical-align: middle; }
 .ui-segmented.ui-segmented > .ui-segmented-opt { flex: 0 0 auto; display: inline-flex; align-items: center; margin: 0; padding-top: 0; padding-bottom: 0; line-height: var(--ui-lh-tight); }
 .ui-actions.ui-actions > button { flex: 0 0 auto; margin: 0; border-radius: var(--ui-r-btn); }
 .ui-actions.ui-actions > .ui-btn-icon { border-radius: var(--ui-r-sm); }
+.ui-segmented.ui-segmented > .ui-segmented-on:visited { color: var(--ui-accent); }
 .ui-segmented.ui-segmented > .ui-segmented-opt:focus-visible { outline-offset: var(--ui-focus-inset); }
+/* A row of channel tabs that sits above a list keeps the space the older tabs had below them. */
+.ui-segmented-bar { margin: 0 0 var(--ui-gap-3); }
 
 /* K19 reading order (docs/308 section 4c): conclusion, key numbers, panels,
    three text levels, colour only with a meaning. ---------------------- */

@@ -26,13 +26,13 @@
                 {%- if r.spectator_of %}<br><span class="muted" data-pulse-spectator-of>spectator of {{ r.spectator_of.gate }} on {{ r.spectator_of.pair }}</span>{% endif %}
                 {%- if r.found %}<br><span class="pulse-found-at muted"
                     title="Not one of the places SM enumerates by name &mdash; found by its shape (an operations entry or a pulse class)">found at <code>{{ r.location }}</code></span>{% endif %}</td>
-            <td><span class="pulse-class-chip
+            <td class="ui-col-secondary"><span class="pulse-class-chip
                 {%- if not r.known and not r.is_alias %} pulse-class-unknown
                 {%- elif not r.is_alias and (r.class_match == 'leaf' or r.unmodeled) %} pulse-class-soft{% endif %}"
                 {%- if not r.is_alias and r.class_match == 'leaf' %} title="Matched by class name only — this chip stores {{ r.qclass }}"
                 {%- elif not r.is_alias and r.unmodeled %} title="Field(s) the catalog spec does not model: {{ r.unmodeled | join(', ') }}"{% endif %}>{{
                 '→' if r.is_alias else r.class_short }}</span></td>
-            <td class="pulse-spark-cell"{% if lazy_spark and not r.is_alias %} data-spark-lazy="1"{% endif %}>
+            <td class="pulse-spark-cell ui-col-secondary"{% if lazy_spark and not r.is_alias %} data-spark-lazy="1"{% endif %}>
                 {%- if r.is_alias -%}
                 <span class="muted pulse-alias-target">&rarr; {{ r.alias_target.rsplit('.', 1)[-1] if r.alias_target else '?' }}</span>
                 {%- elif lazy_spark -%}
