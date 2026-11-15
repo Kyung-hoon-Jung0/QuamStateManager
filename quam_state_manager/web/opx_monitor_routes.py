@@ -497,7 +497,8 @@ def _save_pc_names_locked():
             else:
                 said.append(f"{head} already have names; remove them first or pick other tags.")
         if conflicts:
-            said.append(f"Another window changed the name of {_tags_text(conflicts)}; "
+            noun = "name" if len(conflicts) == 1 else "names"
+            said.append(f"Another window changed the {noun} of {_tags_text(conflicts)}; "
                         "the current names are shown above. Type your change again.")
         return refuse(" ".join(said + ["Nothing was saved."]), status=409, current=conflicts)
     count = None

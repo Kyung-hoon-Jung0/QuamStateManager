@@ -162,6 +162,15 @@ def test_names_reject_same_row_from_same_base(names_file):
     assert json.loads(path.read_text()) == {'abc': 'First'}
 
 
+def test_names_different_rows_from_same_base_both_save(names_file):
+    app, path = names_file
+    path.write_text(json.dumps({'abc': 'Original', 'def': 'Second'}), encoding='utf-8')
+    base = _names_base(app)
+    assert _names_post(app, base, label__abc='First edit', label__def='Second').status_code == 200
+    assert _names_post(app, base, label__abc='Original', label__def='Second edit').status_code == 200
+    assert json.loads(path.read_text()) == {'abc': 'First edit', 'def': 'Second edit'}
+
+
 @pytest.mark.parametrize('data', [
     {'label__abc': 'Original'},
     {'label__abc': 'Edited'},
@@ -197,7 +206,8 @@ def test_names_multiple_conflicts_refuse_whole_post(names_file):
                            new_tag='ghi', new_label='Added')
     assert response.status_code == 409
     text = response.get_data(as_text=True)
-    assert 'abc' in text and 'def' in text
+    assert ('Another window changed the names of tags abc, def; the current names are shown above. '
+            'Type your change again. Nothing was saved.') in text
     assert path.read_bytes() == before and not path.with_suffix('.json.bak').exists()
 
 
@@ -2641,3 +2651,51 @@ def test_names_a_removal_without_its_row_does_not_free_the_tag(names_file):
                                                       'badkey__' + ref: '1', 'rename__' + ref: 'abc'})
     assert response.status_code == 409
     assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize('action', ['rename', 'new', 'remove'])
+@pytest.mark.parametrize('other_action', ['rename', 'remove'])
+def test_names_removal_checks_the_row_changed_by_another_window(names_file, action, other_action):
+    from quam_state_manager.web.opx_monitor_routes import _key_ref
+    app, path = names_file
+    path.write_text(json.dumps({'abc': 'Orig', 'My PC': 'A'}), encoding='utf-8')
+    base = _names_base(app)
+    other = {'label__abc': 'Other window'} if other_action == 'rename' else {
+        'label__abc': base['was__abc'], 'remove__abc': '1'}
+    assert _names_post(app, base, **other).status_code == 200
+    before, backup = path.read_bytes(), path.with_suffix('.json.bak').read_bytes()
+    data = {'label__abc': base['was__abc'], 'remove__abc': '1'}
+    if action == 'rename':
+        ref = _key_ref('My PC')
+        data.update({'badkey__' + ref: '1', 'rename__' + ref: 'abc'})
+    elif action == 'new':
+        data.update({'new_tag': 'abc', 'new_label': 'Fresh'})
+    response = _names_post(app, base, **data)
+    assert response.status_code == 409
+    assert ('Another window changed the name of tag abc; the current names are shown above. '
+            'Type your change again. Nothing was saved.') in response.get_data(as_text=True)
+    assert path.read_bytes() == before
+    assert path.with_suffix('.json.bak').read_bytes() == backup
+
+
+@pytest.mark.parametrize('labels', [('Lab', 'Lab'), ('Lab', 'Other')])
+def test_names_invalid_keys_merge_only_when_the_names_match(names_file, labels):
+    from quam_state_manager.web.opx_monitor_routes import _key_ref
+    app, path = names_file
+    stored = dict(zip(('My PC', 'my pc'), labels))
+    path.write_text(json.dumps(stored), encoding='utf-8')
+    before = path.read_bytes()
+    data = {}
+    for key in stored:
+        data['badkey__' + _key_ref(key)] = '1'
+        data['rename__' + _key_ref(key)] = 'lab1'
+    response = _names_post(app, _names_base(app), **data)
+    if labels[0] == labels[1]:
+        assert response.status_code == 200, response.get_data(as_text=True)
+        assert json.loads(path.read_text()) == {'lab1': 'Lab'}
+        assert path.with_suffix('.json.bak').read_bytes() == before
+    else:
+        assert response.status_code == 409
+        assert ('This save gives more than one name to tag lab1; keep one of them. '
+                'Nothing was saved.') in response.get_data(as_text=True)
+        assert path.read_bytes() == before and not path.with_suffix('.json.bak').exists()
