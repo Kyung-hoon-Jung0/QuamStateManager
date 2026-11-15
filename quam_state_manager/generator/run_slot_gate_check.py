@@ -2,10 +2,12 @@
 
 Standard library only at import time. --in and --out name JSON files.
 Input: file (absolute path), class_name, spectators (name: [V, ns, unit V]).
+Optional probes: inline_slots, probe_slot_values, spectator_keys (dict name:
+key list), spectator_own (spectator name: control or target), apply_kwargs.
 Output: status describes the script; ok describes the class. imports holds
 ok/error, slots_declared and slots_played are lists, spectator_plays holds
 name/scale/duration records. Errors include the line in the user's file.
-No chip file is loaded. Recorder channels and a property-override subclass
+No chip file is loaded. Real QUAM channels and a property-override subclass
 exercise apply inside a real QUA program; QUA spectator calls are delegated.
 """
 from __future__ import annotations
@@ -54,28 +56,31 @@ def check(request):
         result["imports"]["ok"] = True
         from qm.qua import program
 
-        class Channel:
-            def __init__(self, name, slot=None, unit=0.1):
-                self.name, self.slot = name, slot
-                self.operations = {"spectator_unit": SimpleNamespace(amplitude=unit)}
+        from quam.components.channels import Channel
+        from quam.components.pulses import SquarePulse
 
-            def get_pulse(self, name):
-                return SimpleNamespace(id=name, parent=None)
-
+        class RecordingChannel(Channel):
             def play(self, label, **kwargs):
-                result["slots_played"].append(self.slot)
-                result["slot_plays"].append(dict(slot=self.slot, label=label, **kwargs))
+                slot = self.name.removesuffix("_z")
+                result["slots_played"].append(slot)
+                result["slot_plays"].append(dict(slot=slot, label=label, **kwargs))
+                return super().play(label, **kwargs)
 
             def frame_rotation_2pi(self, phase):
                 result["rotations"].append([self.name, phase])
+                return super().frame_rotation_2pi(phase)
 
-        def qubit(name, slot=None, unit=0.1):
-            z, xy = Channel(name + "_z", slot, unit), Channel(name + "_xy")
+        def qubit(name, unit=0.1):
+            z = RecordingChannel(id=name + "_z", operations={
+                "spectator_unit": SquarePulse(length=16, amplitude=unit),
+                name + "_op": SquarePulse(length=16, amplitude=0.1)})
+            xy = RecordingChannel(id=name + "_xy")
             return SimpleNamespace(z=z, xy=xy, channels={"z": z, "xy": xy})
 
-        pair = SimpleNamespace(qubit_control=qubit("control", "control"),
-                               qubit_target=qubit("target", "target"),
-                               coupler=Channel("coupler", "coupler"))
+        pair = SimpleNamespace(qubit_control=qubit("control"),
+                               qubit_target=qubit("target"),
+                               coupler=RecordingChannel(id="coupler", operations={
+                                   "coupler_op": SquarePulse(length=16, amplitude=0.1)}))
 
         class Recorder(cls):
             @property
@@ -86,12 +91,41 @@ def check(request):
                     if s + "_flux_pulse" in {f.name for f in dataclasses.fields(cls)}]
         result["slots_declared"] = declared
         params = {s + "_flux_pulse": s + "_op" for s in declared}
+        if request.get("inline_slots"):
+            params.update({s + "_flux_pulse": SquarePulse(length=16, amplitude=0.1)
+                           for s in request["inline_slots"]})
         rows = request.get("spectators", {})
         if rows:
             params.update(spectator_qubits={n: qubit(n, unit=row[2]) for n, row in rows.items()},
                           spectator_levels={n: row[0] for n, row in rows.items()},
                           spectator_lengths={n: row[1] for n, row in rows.items()})
+        if "spectator_keys" in request:
+            for key, names in request["spectator_keys"].items():
+                params["spectator_" + key] = {n: params["spectator_" + key].get(n, 20) for n in names}
+        for name, role in request.get("spectator_own", {}).items():
+            params["spectator_qubits"][name] = getattr(pair, "qubit_" + role)
         gate = Recorder(**params)
+        if request.get("probe_slot_values"):
+            result["slot_value_probes"] = []
+            for slot in declared:
+                channel = pair.coupler if slot == "coupler" else getattr(pair, "qubit_" + slot).z
+                for kind in ("string", "inline"):
+                    probe_params = {s + "_flux_pulse": s + "_op" for s in declared}
+                    if kind == "inline":
+                        probe_params[slot + "_flux_pulse"] = SquarePulse(length=16, amplitude=0.1)
+                    probe = Recorder(**probe_params)
+                    record = dict(slot=slot, kind=kind, ok=False, channel_play_called=False)
+                    try:
+                        with program():
+                            label = getattr(probe, slot + "_flux_pulse_label")
+                            record["channel_play_called"] = True
+                            channel.play(label, validate=slot != "coupler")
+                        record["ok"] = True
+                    except Exception as exc:
+                        record["error"] = f"{type(exc).__name__}: {exc}"
+                    result["slot_value_probes"].append(record)
+            result["slots_played"].clear()
+            result["slot_plays"].clear()
         # Keep real QUA emission, recording the evaluated numeric amp argument.
         real_amp, real_play, real_align = module.amp, module.play, module.align
         scales = []
@@ -112,6 +146,7 @@ def check(request):
 
         module.amp, module.play, module.align = record_amp, record_play, record_align
         with program():
+            result["program_build_started"] = True
             gate.apply(**request.get("apply_kwargs", {}))
         result["ok"] = True
     except Exception as exc:

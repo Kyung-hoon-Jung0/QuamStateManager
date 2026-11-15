@@ -26,10 +26,15 @@ PRESETS = {
 
 #: amp() scale limit for a spectator level: |level / unit| must stay strictly below this.
 #: Source: the open range (-2, 2) for amp() was confirmed by the user (2026-11-14);
-#: the QM docs state only the fixed-point overflow: "Indicates an overflow error in
+#: a commented-out line in the docs source quotes the fixed-point overflow: "Indicates an overflow error in
 #: `* amp()`, for values outside -8 to 8 - 2^-28" (documentation-website
-#: docs/docs/docs/Guides/error.md line 174).
+#: docs/docs/docs/Guides/error.md line 174, starting with %, not published).
 AMP_SCALE_LIMIT = 2.0
+
+KEYS_PROBLEM = "Spectator keys differ: qubits={qubits}, levels={levels}, lengths={lengths}."
+OWN_PROBLEM = "Spectator {name!r} is the pair control or target qubit."
+LENGTH_PROBLEM = "Spectator {name!r} length {value!r} must be a finite whole multiple of 4 ns."
+SLOT_PROBLEM = "The {slot} slot accepts {kinds}; received {value!r}."
 
 
 @dataclass
@@ -39,7 +44,7 @@ class SlotSpec:
     spectators: bool = False
 
     def __post_init__(self):
-        if isinstance(self.slots, (set, frozenset, tuple, list)) and all(s in SLOTS for s in self.slots):
+        if isinstance(self.slots, (set, frozenset, tuple, list)) and all(s in SLOTS for s in self.slots) and len(set(self.slots)) == len(self.slots):
             self.slots = frozenset(self.slots)
 
 
@@ -107,13 +112,36 @@ def spectator_length_problem(length_ns) -> str | None:
     return length_rule({"length": length_ns})
 
 
+def spectator_rows_problem(qubits, levels, lengths, control=None, target=None):
+    """Return the first invalid spectator row, without changing its values."""
+    if set(qubits) != set(levels) or set(qubits) != set(lengths):
+        return KEYS_PROBLEM.format(qubits=sorted(qubits), levels=sorted(levels), lengths=sorted(lengths))
+    for name, qubit in qubits.items():
+        if qubit is control or qubit is target:
+            return OWN_PROBLEM.format(name=name)
+        value = lengths[name]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value % 4:
+            return LENGTH_PROBLEM.format(name=name, value=value)
+        problem = spectator_length_problem(value)
+        if problem:
+            return f"Spectator {name!r}: {problem.split('. ')[0].rstrip('.')}."
+        unit = qubit.z.operations["spectator_unit"].amplitude
+        problem = level_scale_problem(levels[name], unit)
+        if problem:
+            return f"Spectator {name!r} level {levels[name]!r}: {problem}"
+    return None
+
+
 def _channel(slot):
     return "pair.coupler" if slot == "coupler" else f"pair.qubit_{slot}.z"
 
 
 def _region(spec):
     slots = tuple(s for s in SLOTS if s in spec.slots)
-    lines = [f"    # slots = {slots!r}", f"    # spectators = {spec.spectators!r}"]
+    lines = [f"    # slots = {slots!r}", f"    # spectators = {spec.spectators!r}",
+             '    """Control and target slots accept operation-name strings.',
+             '    The coupler slot accepts operation-name strings or inline Pulse objects.',
+             '    """']
     lines += [f"    {s}_flux_pulse: Union[Pulse, str]" for s in slots]
     lines += ["    phase_shift_control: float = 0.0", "    phase_shift_target: float = 0.0",
               "    duration: int = None", "    extras: dict = field(default_factory=dict)",
@@ -125,7 +153,7 @@ def _region(spec):
         lines += ["", "    @property", f"    def {s}_flux_pulse_label(self):",
                   "        pair = self.qubit_pair", f"        pulse = self.{s}_flux_pulse",
                   "        if isinstance(pulse, str):",
-                  f"            pulse = {_channel(s)}.get_pulse(pulse)",
+                  f"            pulse = {_channel(s)}.operations[pulse]",
                   "        if pulse.id is not None:", "            return pulse.id",
                   "        return pulse.parent.get_attr_name(pulse)"]
     args = "".join(f"amplitude_scale_{s}=None, " for s in slots)
@@ -139,6 +167,21 @@ def _region(spec):
         lines += ["        channels.append(pair.coupler.name)"]
     if spec.spectators:
         lines += ["        channels.extend(q.z.name for q in self.spectator_qubits.values())"]
+    for s in slots:
+        kinds = "operation-name strings or inline Pulse objects" if s == "coupler" else "operation-name strings"
+        types = "(str, Pulse)" if s == "coupler" else "str"
+        lines += [f"        if not isinstance(self.{s}_flux_pulse, {types}):",
+                  f"            raise ValueError({SLOT_PROBLEM!r}.format(slot={s!r}, kinds={kinds!r}, value=self.{s}_flux_pulse))"]
+    if spec.spectators:
+        lines += ["        qubits, levels, lengths = self.spectator_qubits, self.spectator_levels, self.spectator_lengths",
+                  "        if set(qubits) != set(levels) or set(qubits) != set(lengths):",
+                  f"            raise ValueError({KEYS_PROBLEM!r}.format(qubits=sorted(qubits), levels=sorted(levels), lengths=sorted(lengths)))",
+                  "        for name, qubit in qubits.items():",
+                  "            if qubit is pair.qubit_control or qubit is pair.qubit_target:",
+                  f"                raise ValueError({OWN_PROBLEM!r}.format(name=name))",
+                  "            value = lengths[name]",
+                  "            if isinstance(value, bool) or not isinstance(value, (int, float)) or value % 4:",
+                  f"                raise ValueError({LENGTH_PROBLEM!r}.format(name=name, value=value))"]
     lines += ["        align(*channels)"]
     for s in slots:
         flag = ", validate=False" if s == "coupler" else ""

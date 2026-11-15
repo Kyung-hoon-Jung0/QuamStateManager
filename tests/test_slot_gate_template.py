@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -33,6 +34,11 @@ def test_round_trip_and_source(slots, spectators):
         assert (f"    {slot}_flux_pulse:" in source) == (slot in slots)
         assert (f"self.{slot}_flux_pulse_label," in source) == (slot in slots)
     assert ("spectator_qubits: dict" in source) == spectators
+    if not spectators:
+        assert "SPECTATOR_UNIT_OP" not in source
+        assert "self.spectator_" not in source
+        assert "Spectator keys differ" not in source
+    assert "slots accept operation-name strings" in ast.get_docstring(tree.body[-1])
 
 
 def test_presets():
@@ -120,6 +126,10 @@ def test_limit_has_one_owner_and_no_bare_ratio_limit():
     assert owners == ["slot_gate_template.py"]
     source = (package / "core" / owners[0]).read_text(encoding="utf-8")
     assert "open range (-2, 2)" in source and "error.md line 174" in source
+    assert "commented-out line in the docs source" in source
+    assert "starting with %, not published" in source
+    assert "confirmed by the user (2026-11-14)" in source
+    assert "the QM docs state" not in source
 
 
 def run_check(tmp_path, source, **kwargs):
@@ -142,7 +152,7 @@ def test_lab_plays(tmp_path, slots, spectators):
     result = run_check(tmp_path, T.render(T.SlotSpec("ExampleGate", slots, spectators)), spectators=rows,
                        apply_kwargs={**{f"amplitude_scale_{s}": 0.75 for s in slots},
                                      "duration": 12, "phase_shift_control": 0.125, "phase_shift_target": -0.25})
-    assert result["status"] == "ok" and result["ok"], result
+    assert result["status"] == "ok" and result["ok"], json.dumps(result)
     assert result["imports"] == {"ok": True, "error": None}
     assert result["slots_declared"] == result["slots_played"] == [s for s in T.SLOTS if s in slots]
     for play in result["slot_plays"]:
@@ -173,3 +183,124 @@ def test_lab_error_line(tmp_path, failure):
     assert result["status"] == "ok" and not result["ok"]
     assert result["line"] in [i for i, line in enumerate(source.splitlines(), 1) if line == bad]
     assert result["imports"]["ok"] == (failure == "runtime")
+
+
+def test_duplicate_slots_before_normalizing():
+    spec = T.SlotSpec("ExampleGate", ["control", "control"])
+    assert any("duplicates" in problem for problem in T.validate(spec))
+    with pytest.raises(ValueError, match="duplicates"):
+        T.render(spec)
+
+
+def spectator():
+    return SimpleNamespace(z=SimpleNamespace(operations={
+        "spectator_unit": SimpleNamespace(amplitude=0.1)}))
+
+
+@pytest.mark.parametrize("length", [16, 52, 52.0])
+def test_valid_spectator_rows(length):
+    qubit = spectator()
+    lengths = {"spectator": length}
+    assert T.spectator_rows_problem({"spectator": qubit}, {"spectator": 0.15}, lengths,
+                                    control=spectator(), target=spectator()) is None
+    assert lengths["spectator"] is length
+    assert T.spectator_rows_problem({}, {}, {}) is None
+    # A different pair's control is allowed.
+    assert T.spectator_rows_problem({"other_control": qubit}, {"other_control": 0},
+                                    {"other_control": length}) is None
+
+
+@pytest.mark.parametrize("length", [18, 52.9, "20", True, float("nan"), float("inf"), 12])
+def test_invalid_spectator_row_length(length):
+    problem = T.spectator_rows_problem({"spectator": spectator()}, {"spectator": 0}, {"spectator": length})
+    assert "spectator" in problem and str(length) in problem
+    if length == 12:
+        assert "16" in problem
+
+
+@pytest.mark.parametrize("key", ["qubits", "levels", "lengths"])
+def test_spectator_row_key_sets(key):
+    rows = dict(qubits={"spectator": spectator()}, levels={"spectator": 0}, lengths={"spectator": 16})
+    rows[key] = {"extra": next(iter(rows[key].values()))}
+    problem = T.spectator_rows_problem(**rows)
+    assert "keys differ" in problem and "extra" in problem and "spectator" in problem
+
+
+@pytest.mark.parametrize("role", ["control", "target"])
+def test_spectator_row_own_qubit(role):
+    qubit = spectator()
+    assert "spectator" in T.spectator_rows_problem({"spectator": qubit}, {"spectator": 0},
+                                                   {"spectator": 16}, **{role: qubit})
+
+
+@pytest.mark.parametrize("level", [0.2, True, float("nan")])
+def test_spectator_row_level(level):
+    problem = T.spectator_rows_problem({"spectator": spectator()}, {"spectator": level}, {"spectator": 16})
+    assert "spectator" in problem and "level" in problem
+
+
+@lab
+def test_lab_real_slot_value_probes(tmp_path):
+    result = run_check(tmp_path, T.render(T.SlotSpec("ExampleGate", T.SLOTS)), probe_slot_values=True)
+    assert result["ok"], result
+    assert len(result["slot_value_probes"]) == 6
+    for probe in result["slot_value_probes"]:
+        assert probe["channel_play_called"], probe
+        assert probe["ok"] == (probe["kind"] == "string" or probe["slot"] == "coupler"), probe
+        if not probe["ok"]:
+            assert "not found in channel" in probe["error"]
+
+
+@lab
+@pytest.mark.parametrize("slot", T.SLOTS)
+def test_lab_inline_slot_policy(tmp_path, slot):
+    result = run_check(tmp_path, T.render(T.SlotSpec("ExampleGate", {slot})), inline_slots=[slot])
+    assert result["ok"] == (slot == "coupler"), result
+    if slot != "coupler":
+        assert slot in result["error"] and "operation-name strings" in result["error"]
+        assert result["slots_played"] == []
+
+
+@lab
+@pytest.mark.parametrize("length", [16, 52, 18, 52.9, "20", True, float("nan")])
+def test_lab_spectator_length_guard(tmp_path, length):
+    result = run_check(tmp_path, T.render(T.SlotSpec("ExampleGate", T.SLOTS, True)),
+                       spectators={"spectator": [0.05, length, 0.1]})
+    assert result["program_build_started"]
+    assert result["ok"] == (type(length) is int and length in (16, 52)), result
+    if not result["ok"]:
+        assert "spectator" in result["error"] and repr(length) in result["error"]
+        assert result["slots_played"] == result["spectator_plays"] == result["alignments"] == []
+    else:
+        assert result["spectator_plays"][0]["duration"] == length // 4
+
+
+@lab
+@pytest.mark.parametrize("key", ["qubits", "levels", "lengths"])
+def test_lab_spectator_key_guard(tmp_path, key):
+    result = run_check(tmp_path, T.render(T.SlotSpec("ExampleGate", T.SLOTS, True)),
+                       spectators={"spectator": [0, 16, 0.1]}, spectator_keys={key: []})
+    assert not result["ok"] and "keys differ" in result["error"] and "spectator" in result["error"], result
+    assert result["program_build_started"]
+    assert result["slots_played"] == result["spectator_plays"] == result["alignments"] == []
+
+
+@lab
+@pytest.mark.parametrize("role", ["control", "target"])
+def test_lab_spectator_own_guard(tmp_path, role):
+    result = run_check(tmp_path, T.render(T.SlotSpec("ExampleGate", T.SLOTS, True)),
+                       spectators={"spectator": [0, 16, 0.1]}, spectator_own={"spectator": role})
+    assert not result["ok"] and "spectator" in result["error"] and "control or target" in result["error"], result
+    assert result["program_build_started"]
+    assert result["slots_played"] == result["spectator_plays"] == result["alignments"] == []
+
+
+@lab
+@pytest.mark.parametrize("key", ["levels", "lengths"])
+def test_lab_spectator_extra_key_guard(tmp_path, key):
+    result = run_check(tmp_path, T.render(T.SlotSpec("ExampleGate", T.SLOTS, True)),
+                       spectators={"spectator": [0, 16, 0.1]},
+                       spectator_keys={key: ["spectator", "extra"]})
+    assert not result["ok"] and "keys differ" in result["error"] and "extra" in result["error"], result
+    assert result["program_build_started"]
+    assert result["slots_played"] == result["spectator_plays"] == result["alignments"] == []
