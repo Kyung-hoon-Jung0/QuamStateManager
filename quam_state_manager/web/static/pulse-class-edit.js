@@ -351,6 +351,43 @@
             setStatus(S.statusLine);
         });
     }
+    function saveConfig(confirmedFolder) {
+        if (S.dirty) {
+            show(q(S.root, "[data-pce-error]"), "Save draft before saving to quam_config.");
+            return Promise.resolve();
+        }
+        var mine = S;
+        var body = { cls: S.cls, python: q(S.root, "[data-pce-env]").value,
+                     folder: q(S.root, "[data-pce-config-folder]").value.trim() };
+        if (confirmedFolder) body.confirmed_folder = confirmedFolder;
+        S.busy = true;
+        return api("POST", "/pulse-class/save-config", body).then(function (r) {
+            mine.busy = false;
+            if (S !== mine) return;
+            if (r.confirm) {
+                var c = r.confirm;
+                var gates = c.gates.map(function (g) {
+                    return g.pair + ": " + g.gate + (g.live_active ? " (live and active)" : "");
+                }).join("\n");
+                askChoice({ title: "Save to quam_config", question: c.path + "\n" + c.notice +
+                    (c.warning ? "\n" + c.warning : "") + (gates ? "\nGates using this class:\n" + gates : ""),
+                    choices: [
+                        { label: "Confirm folder and save", primary: true, act: function () { saveConfig(c.folder); } },
+                        { label: "Cancel", act: function () {} },
+                    ] });
+                return;
+            }
+            if (!r.ok) { show(q(S.root, "[data-pce-error]"), r.error); return; }
+            show(q(S.root, "[data-pce-error]"), "");
+            S.statusLine = r.status;
+            setStatus(r.status);
+            show(q(S.root, "[data-pce-config-result]"), [r.dependency, r.restart, r.warning,
+                r.record_error, r.backup ? "Backup: " + r.backup : ""].filter(Boolean).join("\n"));
+        }).catch(function (err) {
+            mine.busy = false;
+            if (S === mine) show(q(S.root, "[data-pce-error]"), String(err));
+        });
+    }
     function poll() {
         if (!S || !document.body.contains(S.root)) { stop(); return; }
         if (S.busy || S.conflictOpen || S.polling) return;
@@ -439,6 +476,7 @@
         q(root, "[data-pce-save-file]").addEventListener("click", function () {
             saveFile(q(root, "[data-pce-target]").value);
         });
+        q(root, "[data-pce-save-config]").addEventListener("click", function () { saveConfig(); });
         return api("GET", "/pulse-class/load?cls=" + encodeURIComponent(cls)).then(function (r) {
             if (!S) return;
             if (!r.ok) { setStatus(r.error); return; }

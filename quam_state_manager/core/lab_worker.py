@@ -167,7 +167,8 @@ def _lab_env(argv, kwargs):
 
 def _spawn(argv, **kwargs):
     import subprocess
-    _lab_env(argv, kwargs)
+    if kwargs.pop("prepend_lab", True):
+        _lab_env(argv, kwargs)
     if os.name != "nt":
         return subprocess.Popen(argv, **kwargs)
     from .process_owner import Job

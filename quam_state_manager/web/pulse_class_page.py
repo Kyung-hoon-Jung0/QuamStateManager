@@ -17,6 +17,7 @@ from quam_state_manager.core import config_generator
 from quam_state_manager.core import pulse_class_drafts as D
 from quam_state_manager.core import pulse_class_template as T
 from quam_state_manager.core import pulse_class_watch as W
+from quam_state_manager.core import quam_config_save as Q
 from quam_state_manager.web.request_body import json_object
 
 pulse_class_page_bp = Blueprint("pulse_class_page", __name__)
@@ -181,3 +182,36 @@ def pulse_class_save_file():
         return jsonify(st), 409
     return jsonify({"ok": True, "status": st["line"], "backup": st["backup"],
                     "target": W.get_target(_inst(), _scope(), cls)})
+
+
+@pulse_class_page_bp.route("/pulse-class/save-config", methods=["POST"])
+def pulse_class_save_config():
+    data = json_object()
+    r = _r()
+    ctx = r._active_ctx()
+    if not ctx or not r._store():
+        return _err("Open a chip so the class write can be recorded in its history.")
+    from quam_state_manager.core import gate_check_log, working_copy
+    from quam_state_manager.core.loader import merge_state_wiring
+    from quam_state_manager.web.port_play_page import _chosen_env
+    python = str(data.get("python") or _chosen_env(ctx)[0] or "")
+    try:
+        live = None
+        if ctx.get("working_copy"):
+            pair = working_copy.read_live_shared(ctx["working_copy"])
+            live = merge_state_wiring(pair.state, pair.wiring)
+        result = Q.save_class(
+            python, _inst(), _scope(), str(data.get("cls") or ""),
+            confirmed_folder=data.get("confirmed_folder"), folder=data.get("folder") or None,
+            store=r._store(), live=live,
+            history_folder=gate_check_log.chip_dir(r._history(), ctx["path"]),
+            actor="agent" if request.headers.get("X-SM-Agent") else "person")
+        if result.get("ok"):
+            from quam_state_manager.core import state_env_schema
+            modules = state_env_schema.load_pulse_modules(_inst())
+            module = "quam_config." + str(data["cls"])
+            state_env_schema.save_pulse_modules(_inst(), list(dict.fromkeys([*modules, module])))
+            r._reprobe_if_new_classes(r._store())
+        return jsonify(result), 200 if result.get("ok") else 409
+    except (D.DraftError, OSError, ValueError) as exc:
+        return _err(str(exc))
