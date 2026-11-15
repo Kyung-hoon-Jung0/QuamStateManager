@@ -1813,8 +1813,6 @@ dialog.ui-dialog:not(.gen-rule-dlg)::backdrop { background: var(--ui-backdrop); 
 
 /* Page bodies use intrinsic wrapping; wide rows keep their existing alignment. */
 .ui-pulses-head.ui-head--data { flex-wrap: wrap; }
-.ui-pulses-head .table-filter { flex: 0 0 auto; width: auto; max-width: 100%; }
-.ui-pulses-head .table-filter .ui-search { flex: none; width: 12rem; min-width: 12rem; }
 .inspector-header-pair { flex-wrap: wrap; gap: var(--ui-gap-2); }
 .ui-pair-title { flex: 1 1 auto; flex-wrap: wrap; max-width: 100%; }
 .ui-pair-title strong { min-width: 0; max-width: 100%; white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
@@ -1826,16 +1824,3 @@ table.ui-pair-props { table-layout: fixed; width: 100%; }
 .ui-pair-props .col-val { width: auto; white-space: normal; overflow-wrap: anywhere; }
 .ui-pair-props code { white-space: normal; overflow-wrap: anywhere; }
 .ui-pair-props .pointer-badge { white-space: normal; overflow-wrap: anywhere; word-break: normal; max-width: 100%; }
-/* Split.js owns desktop widths. At the narrow breakpoint it is destroyed and
-   both frames take the full pane width, with a visible vertical scroll. */
-.ui-workbench #wb-bar { flex-wrap: wrap; }
-.ui-workbench #wb-link { flex-wrap: wrap; }
-.ui-workbench #wb-bar > *, .ui-workbench #wb-link > * { min-width: 0; max-width: 100%; }
-.ui-workbench #wb-link .wb-link-chip { white-space: normal; overflow-wrap: anywhere; }
-.ui-workbench #wb-link-load { white-space: normal; }
-.ui-workbench #wb-nudge { flex-wrap: wrap; white-space: normal; }
-.ui-workbench #wb-watch { white-space: normal; overflow-wrap: anywhere; }
-.ui-workbench #wb-fallback { overflow-wrap: anywhere; overflow-y: auto; }
-.ui-workbench[data-narrow] #panes { flex-direction: column; overflow-y: auto; }
-.ui-workbench[data-narrow] #wb-left, .ui-workbench[data-narrow] #wb-right { flex: 0 0 100%; width: 100%; min-height: 20rem; }
-.ui-workbench[data-narrow][data-view="qb"] #wb-right, .ui-workbench[data-narrow][data-view="sm"] #wb-left { display: none; }

@@ -113,8 +113,20 @@
     #wb-fallback.show { display: flex; }
     #wb-fallback p { color: #9aa4b2; max-width: 360px; font-size: 13px; line-height: 1.5; }
     #wb-fallback a.btn { background: #2d6cdf; color: #fff; padding: 8px 14px; border-radius: 6px; text-decoration: none; font-size: 13px; }
+    /* Layout only: keep the standalone page's existing control and focus styles.
+       Split.js owns desktop widths; narrow frames use a vertical scroll. */
+    .ui-workbench #wb-bar { flex-wrap: wrap; }
+    .ui-workbench #wb-link { flex-wrap: wrap; }
+    .ui-workbench #wb-bar > *, .ui-workbench #wb-link > * { min-width: 0; max-width: 100%; }
+    .ui-workbench #wb-link .wb-link-chip { white-space: normal; overflow-wrap: anywhere; }
+    .ui-workbench #wb-link-load { white-space: normal; }
+    .ui-workbench #wb-nudge { flex-wrap: wrap; white-space: normal; }
+    .ui-workbench #wb-watch { white-space: normal; overflow-wrap: anywhere; }
+    .ui-workbench #wb-fallback { overflow-wrap: anywhere; overflow-y: auto; }
+    .ui-workbench[data-narrow] #panes { flex-direction: column; overflow-y: auto; }
+    .ui-workbench[data-narrow] #wb-left, .ui-workbench[data-narrow] #wb-right { flex: 0 0 100%; width: 100%; min-height: 20rem; }
+    .ui-workbench[data-narrow][data-view="qb"] #wb-right, .ui-workbench[data-narrow][data-view="sm"] #wb-left { display: none; }
   </style>
-  <link rel="stylesheet" href="{{ asset_url('ui-kit.css') }}" />
   <script>
     // Default Qualibrate URL from the server (query ?qb=, env QUALIBRATE_URL, else 8001);
     // a user override is persisted in localStorage and wins.
