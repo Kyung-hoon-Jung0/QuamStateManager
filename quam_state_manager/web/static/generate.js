@@ -5073,10 +5073,10 @@
       p.className = "ui-note";
       var x = g.x, one = g.q.length === 1;
       p.textContent = x.moved
-        ? "time of flight moved from " + (typeof x.from === "number" ? x.from : x.value - x.shift) +
+        ? "Time of flight moved from " + (typeof x.from === "number" ? x.from : x.value - x.shift) +
           " to " + x.value + " ns with " +
           (one ? "its" : "their") + " readout output: " + g.q.join(", ") + "."
-        : "time of flight left as you set it on " + g.q.join(", ") + "; " +
+        : "Time of flight left as you set it on " + g.q.join(", ") + "; " +
           (one ? "its" : "their") + " readout output is delayed by " + x.shift +
           " ns: measure time of flight again.";
       wrap.appendChild(p);
@@ -5135,11 +5135,24 @@
     var head = document.createElement("p");
     head.textContent = "Core layout (static count):";
     wrap.appendChild(head);
+    // A Re-generate keeps the source cores: the one sentence saying why a
+    // ticked share option is not in this table (server: regenerate.kept_cores_note).
+    if (cl.kept_note) {
+      var kn = document.createElement("p");
+      kn.className = "ui-note";
+      kn.setAttribute("data-core-layout", "kept");
+      kn.textContent = cl.kept_note;
+      wrap.appendChild(kn);
+    }
     t.fems.forEach(function (f) {
       var table = document.createElement("table");
       table.className = "ui-table";
+      // The source key column shows only when some row of this FEM has one.
+      var withSrc = (f.rows || []).some(function (r) { return r && r.source != null && r.source !== ""; });
+      var cols = withSrc ? 5 : 4;
       var tr = document.createElement("tr");
-      ["Element", "Core", "Source key", "Controller / FEM", "Cost"].forEach(function (h, i) {
+      ["Element", "Core", "Source key", "Controller / FEM", "Cost (cores)"].forEach(function (h, i) {
+        if (i === 2 && !withSrc) return;
         var th = document.createElement("th");
         th.className = "ui-table-head" + (i === 4 ? " ui-table-num" : "");
         th.textContent = h;
@@ -5149,6 +5162,7 @@
       (f.rows || []).forEach(function (r) {
         var row = document.createElement("tr");
         [r.element, r.core, r.source, r.place, r.cost].forEach(function (v, i) {
+          if (i === 2 && !withSrc) return;
           var td = document.createElement("td");
           td.className = "ui-table-cell" + (i === 4 ? " ui-table-num" : "") +
             (i === 1 && !r.shared && /^own core/.test(r.core) ? " ui-table-muted" : "");
@@ -5160,7 +5174,7 @@
       var tot = document.createElement("tr");
       var td = document.createElement("td");
       td.className = "ui-table-cell";
-      td.colSpan = 5;
+      td.colSpan = cols;
       var strong = document.createElement("strong");
       strong.textContent = f.place + ": " + f.total;
       td.appendChild(strong);
@@ -10725,6 +10739,13 @@
   function syncPinCoresUi() {
     var chk = document.getElementById("gen-pin-cores-chk");
     if (!chk) return;
+    // A Re-generate keeps the source chip's cores (server: regenerate
+    // _keep_source_cores and the merge): the option is off and locked there.
+    var regen = state.mode === "regenerate";
+    if (regen) { ensurePinCores(state.spec); state.spec.populate.options.pin_cores = false; }
+    chk.disabled = regen;
+    var rn = document.getElementById("gen-pin-cores-regen");
+    if (rn) rn.hidden = !regen;
     chk.checked = ensurePinCores(state.spec);
     if (!chk.dataset.bound) {
       chk.dataset.bound = "1";
@@ -11357,7 +11378,12 @@
       var o = document.createElement("option");
       o.value = r.path;
       var q = _holdsLabel(r.qubits_type);
-      o.textContent = r.path + (q ? "   (holds " + q + ")" : "");
+      // The class name first, its module after: a long dotted path no
+      // longer hides the name behind the select's right edge.
+      var dot = String(r.path).lastIndexOf(".");
+      o.textContent = (dot > 0 ? r.path.slice(dot + 1) + "  (" + r.path.slice(0, dot) + ")"
+                               : r.path) + (q ? "   (holds " + q + ")" : "");
+      o.title = r.path;
       sel.appendChild(o);
     });
     sel.value = (state.spec && state.spec.quam_class) || "";
@@ -12490,7 +12516,7 @@
         if ((!asked.coupler || state.regenCouplerDelayAck) &&
             (!asked.shift || state.regenMwShiftAck)) runBuild();
       };
-      var answerButtons = function (choices, set) {
+      var answerButtons = function (choices, set, parent) {
         choices.forEach(function (b) {
           var btn = document.createElement("button");
           btn.type = "button";
@@ -12501,50 +12527,78 @@
             el.querySelectorAll("." + b[4]).forEach(function (o) { o.disabled = o !== btn; });
             answered();
           });
-          el.appendChild(btn);
+          parent.appendChild(btn);
         });
       };
+      // One block per question asked: the question, one short line saying
+      // why, its consequence lines, then its own answer buttons.
+      var qByKind = {};
+      (res.questions || []).forEach(function (q) { if (q && q.kind) qByKind[q.kind] = q; });
+      var nAsked = (asked.coupler ? 1 : 0) + (asked.shift ? 1 : 0);
+      head.textContent = "⚠ " + (nAsked === 2 ? "Two questions" : "One question") +
+        " before the build:";
+      var questionBlock = function (kind) {
+        var box = document.createElement("div");
+        box.className = "ui-callout ui-callout--note";
+        box.setAttribute("data-regen-question", kind);
+        var q = qByKind[kind] || {};
+        var qp = document.createElement("p");
+        qp.className = "ui-callout-text ui-callout-title";
+        qp.textContent = q.question || "";
+        box.appendChild(qp);
+        if (q.why) {
+          var wp = document.createElement("p");
+          wp.className = "ui-callout-text";
+          wp.textContent = q.why;
+          box.appendChild(wp);
+        }
+        el.appendChild(box);
+        return box;
+      };
+      var bulletLines = function (box, lines) {
+        lines.forEach(function (t) {
+          var line = document.createElement("p");
+          line.className = "gen-build-warn-line";
+          line.textContent = "• " + t;
+          box.appendChild(line);
+        });
+      };
+      if (asked.coupler) {
+        var cbox = questionBlock("coupler_delay");
+        bulletLines(cbox, (res.coupler_delay || []).map(function (d) {
+          var pairs = d.pairs && d.pairs.length ? d.pairs : [d.pair];
+          return "Coupler port " + (d.port_label || d.port) + " (pair" +
+            (pairs.length > 1 ? "s " : " ") + pairs.join(" and ") + ") has delay 0; the moving " +
+            "qubit's flux port has " + d.z_delay + " ns.";
+        }));
+        answerButtons([["set", "Set the couplers to the z delay", "btn-sm", "gen-coupler-delay-set", "gen-coupler-delay"],
+                       ["keep", "Keep 0", "btn-sm outline", "gen-coupler-delay-keep", "gen-coupler-delay"]],
+                      function (v) { state.regenCouplerDelayAck = v; }, cbox);
+      }
       if (asked.shift) {
+        var sbox = questionBlock("mw_shift");
         var shiftLines = [];
         (res.mw_shift.ports || []).forEach(function (d) {
           shiftLines.push("MW output " + (d.port_label || d.port) + " (band " + d.band +
-            "): delay " + d.old + " to " + d.new + " ns");
+            "): delay " + d.old + " to " + d.new + " ns.");
         });
         (res.mw_shift.flux || []).forEach(function (d) {
           shiftLines.push((d.qubit ? "Flux port of " + d.qubit : "Coupler port of " + d.pair) +
-            " (" + (d.port_label || d.port) + "): " + d.old + " to " + d.new + " ns");
+            " (" + (d.port_label || d.port) + "): " + d.old + " to " + d.new + " ns.");
         });
         (res.mw_shift.tof || []).forEach(function (d) {
           shiftLines.push("Time of flight of " + d.qubit + ": " + d.old + " to " + d.new +
-            " ns; re-check it on the chip");
+            " ns; re-check it on the chip.");
         });
         (res.mw_shift.spacing || []).forEach(function (d) {
           shiftLines.push("xy-readout spacing of " + d.qubit + " changes by " +
-            Math.abs(d.xy_shift - d.readout_shift) + " ns");
+            Math.abs(d.xy_shift - d.readout_shift) + " ns.");
         });
-        shiftLines.forEach(function (t) {
-          var line = document.createElement("p");
-          line.className = "gen-build-warn-line";
-          line.textContent = "\u2022 " + t + ".";
-          el.appendChild(line);
-        });
+        bulletLines(sbox, shiftLines);
         answerButtons([["shift", "Shift them by 20 ns", "btn-sm", "gen-mw-shift-shift", "gen-mw-shift"],
                        ["keep", "Keep as stored", "btn-sm outline", "gen-mw-shift-keep", "gen-mw-shift"]],
-                      function (v) { state.regenMwShiftAck = v; });
+                      function (v) { state.regenMwShiftAck = v; }, sbox);
       }
-      if (!asked.coupler) return;
-      (res.coupler_delay || []).forEach(function (d) {
-        var line = document.createElement("p");
-        line.className = "gen-build-warn-line";
-        var pairs = d.pairs && d.pairs.length ? d.pairs : [d.pair];
-        line.textContent = "• Coupler port " + (d.port_label || d.port) + " (pair" +
-          (pairs.length > 1 ? "s " : " ") + pairs.join(" and ") + ") has delay 0; the moving " +
-          "qubit's flux port has " + d.z_delay + " ns.";
-        el.appendChild(line);
-      });
-      answerButtons([["set", "Set the couplers to the z delay", "btn-sm", "gen-coupler-delay-set", "gen-coupler-delay"],
-                     ["keep", "Keep 0", "btn-sm outline", "gen-coupler-delay-keep", "gen-coupler-delay"]],
-                    function (v) { state.regenCouplerDelayAck = v; });
       return;
     }
 

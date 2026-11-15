@@ -94,7 +94,7 @@ function spec(qubits, fluxFem) {
   const rows = tbl.querySelectorAll('tr');
   ok(tbl.querySelector('table.ui-table') && rows.length === 4, '[result] header + 3 port rows');
   ok(/MW band 1con1 \/ slot 1 \/ port 520/.test(rows[2].textContent), '[result] CR port 20: ' + rows[2].textContent);
-  ok(/time of flight left as you set it on q1; its readout output is delayed by 20 ns: measure time of flight again\./
+  ok(/Time of flight left as you set it on q1; its readout output is delayed by 20 ns: measure time of flight again\./
      .test(tbl.textContent), '[result] a time of flight the user set is named');
   // grouped: one line for the moved defaults, one for the values the user set
   const grp = T.outputTimingResultTable({ mw: [{ port: 'b', label: 'p8', band: 3, delay: 20 }], flux: [],
@@ -103,16 +103,16 @@ function spec(qubits, fluxFem) {
           { qubit: 'q5', shift: 20, value: 48, moved: true }] });
   const notes = Array.from(grp.querySelectorAll('p.ui-note')).map(function (p) { return p.textContent; });
   ok(notes.length === 2 &&
-     notes[0] === 'time of flight moved from 28 to 48 ns with their readout output: q1, q4, q5.' &&
-     notes[1] === 'time of flight left as you set it on q2, q3; their readout output is delayed by 20 ns: ' +
+     notes[0] === 'Time of flight moved from 28 to 48 ns with their readout output: q1, q4, q5.' &&
+     notes[1] === 'Time of flight left as you set it on q2, q3; their readout output is delayed by 20 ns: ' +
        'measure time of flight again.', '[result] grouped lines: ' + JSON.stringify(notes));
   // a Re-generate names the stored time of flight; two different old values never share a line
   const fr = T.outputTimingResultTable({ mw: [{ port: 'b', label: 'p8', band: 3, delay: 0 }], flux: [],
     tof: [{ qubit: 'q1', shift: 0, value: 32, moved: true, from: 52 },
           { qubit: 'q2', shift: 0, value: 32, moved: true, from: 12 }] });
   const frn = Array.from(fr.querySelectorAll('p.ui-note')).map(function (p) { return p.textContent; });
-  ok(frn.length === 2 && frn[0] === 'time of flight moved from 52 to 32 ns with its readout output: q1.' &&
-     frn[1] === 'time of flight moved from 12 to 32 ns with its readout output: q2.',
+  ok(frn.length === 2 && frn[0] === 'Time of flight moved from 52 to 32 ns with its readout output: q1.' &&
+     frn[1] === 'Time of flight moved from 12 to 32 ns with its readout output: q2.',
      '[result] moved from the stored value: ' + JSON.stringify(frn));
   ok(T.outputTimingResultTable(null) === null, '[result] nothing to list');
   T.showBuildResult({ ok: true, result: { qubits: ['q1'], qubit_pairs: [],
@@ -144,6 +144,41 @@ function spec(qubits, fluxFem) {
      w.state.regenCouplerDelayAck == null && !box.querySelector('.gen-coupler-delay-set').disabled,
      '[regenerate offer] one answer waits for the other');
   ok(/• MW output/.test(box.textContent), '[regenerate offer] bulleted lines');
+  // [regenerate offer] each question is its own block: question, why, its own buttons
+  T.showBuildConfirm({
+    error: 'run-on', confirm_kind: 'coupler_delay',
+    questions: [{ kind: 'coupler_delay', question: 'QC?', why: 'WC.' },
+                { kind: 'mw_shift', question: 'QS?', why: 'WS.' }],
+    coupler_delay: [{ pair: 'q1-2', pairs: ['q1-2'], port: 'p', port_label: 'c9', z_delay: 61 }],
+    mw_shift: { ports: [{ port: 'x', port_label: 'c2', band: 1, old: 0, new: 20 }],
+                flux: [], tof: [], spacing: [] } }, '/o');
+  const blocks = box.querySelectorAll('[data-regen-question]');
+  ok(blocks.length === 2, '[F4] two question blocks: ' + blocks.length);
+  const cb = box.querySelector('[data-regen-question="coupler_delay"]');
+  const sb = box.querySelector('[data-regen-question="mw_shift"]');
+  ok(cb && sb && cb.querySelector('.ui-callout-title').textContent === 'QC?' &&
+     sb.querySelector('.ui-callout-title').textContent === 'QS?',
+     '[F4] each block carries its own question');
+  ok(cb && sb && /WC\./.test(cb.textContent) && !/WS\./.test(cb.textContent) && /WS\./.test(sb.textContent),
+     '[F4] each block carries its own explanation line');
+  ok(cb && sb && cb.querySelector('.gen-coupler-delay-set') && !cb.querySelector('.gen-mw-shift-shift') &&
+     sb.querySelector('.gen-mw-shift-shift') && !sb.querySelector('.gen-coupler-delay-set'),
+     '[F4] each block holds only its own answer buttons');
+  ok(!/run-on/.test(box.textContent) && /Two questions before the build/.test(box.textContent),
+     '[F4] the run-on paragraph is replaced by a short header: ' + box.firstChild.textContent);
+  T.showBuildConfirm({
+    error: 'run-on', confirm_kind: 'mw_shift',
+    questions: [{ kind: 'mw_shift', question: 'QS?', why: 'WS.' }],
+    mw_shift: { ports: [{ port: 'x', port_label: 'c2', band: 1, old: 0, new: 20 }],
+                flux: [], tof: [], spacing: [] } }, '/o');
+  ok(box.querySelectorAll('[data-regen-question]').length === 1 &&
+     box.querySelector('[data-regen-question="mw_shift"]') &&
+     /One question before the build/.test(box.textContent),
+     '[F4] one question asked: one block, no empty second');
+  // [F8] the moved line starts with a capital
+  const cap = T.outputTimingResultTable({ mw: [{ port: 'b', label: 'p8', band: 3, delay: 0 }], flux: [],
+    tof: [{ qubit: 'q1', shift: 0, value: 52, moved: true, from: 32 }] });
+  ok(/^Time of flight/.test(cap.querySelector('p.ui-note').textContent), '[F8] note starts with a capital');
   console.log(fails ? fails + ' failure(s)' : 'OK (' + asserts + ' assertions)');
   process.exit(fails ? 1 : 0);
 })();

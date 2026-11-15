@@ -134,6 +134,40 @@ const RISK = 'Known risk: on QOP 3.8.1 (another device), with xy and resonator o
   T.syncPinCoresUi();
   ok(chk.checked === true, '[draft no key] checkbox shows the default');
 
+  // [F3] Re-generate: the option is off and locked with its reason; a new chip keeps it free
+  const rnote = w.doc.getElementById('gen-pin-cores-regen');
+  const mode0 = S.mode;
+  S.mode = 'regenerate';
+  S.spec.populate.options.pin_cores = true;
+  chk.checked = true;
+  T.syncPinCoresUi();
+  ok(chk.disabled && !chk.checked && optsOf(S.spec).pin_cores === false,
+     '[F3 regen] option unticked, locked and off in the spec');
+  ok(rnote && !rnote.hidden && /keeps each element's core from the source chip/.test(rnote.textContent),
+     '[F3 regen] the reason is shown beside the option');
+  S.mode = mode0;
+  T.syncPinCoresUi();
+  ok(!chk.disabled && rnote.hidden, '[F3 new chip] option free, no reason line');
+  // [F3] the result's kept-cores sentence: shown when the server sent it, absent otherwise
+  const KEPT = 'Cores are as on the source chip: a Re-generate keeps each element\'s core from the source, so Share one core per qubit was not applied.';
+  const kt = T.coreLayoutTable({ kept_note: KEPT, table: { fems: [{ place: place, over: false, total: 'Total 2 / 8 cores', rows: rows(2, null, place) }] } });
+  ok(kt.querySelector('[data-core-layout="kept"]') && kt.querySelector('[data-core-layout="kept"]').textContent === KEPT,
+     '[F3 result] kept-cores sentence shown');
+  ok(!small.querySelector('[data-core-layout="kept"]'), '[F3 result] no sentence without kept_note');
+  // [F8] source key column only when some row has a value; cost names its unit
+  const heads = function (el) { return Array.prototype.map.call(el.querySelectorAll('th'), function (h) { return h.textContent; }); };
+  ok(heads(small).indexOf('Source key') < 0 && small.querySelector('tr').children.length === 4,
+     '[F8] no row has a source key: column dropped ' + JSON.stringify(heads(small)));
+  ok(small.querySelector('tr:last-child td').colSpan === 4, '[F8] total row spans the shown columns');
+  const withS = T.coreLayoutTable({ table: { fems: [{ place: place, over: false, total: 'Total 1 / 8 cores', rows: rows(2, 'q1_core', place) }] } });
+  ok(heads(withS).indexOf('Source key') === 2 && withS.querySelectorAll('tr')[1].children.length === 5,
+     '[F8] every row has a source key: column shown');
+  const mixedRows = rows(1, 'q1_core', place).concat(rows(1, null, place));
+  const mixed = T.coreLayoutTable({ table: { fems: [{ place: place, over: false, total: 'Total 2 / 8 cores', rows: mixedRows }] } });
+  ok(heads(mixed).indexOf('Source key') === 2 && mixed.querySelectorAll('tr')[2].children.length === 5,
+     '[F8] some rows have a source key: column shown, empty cell kept');
+  ok(heads(small).indexOf('Cost (cores)') >= 0, '[F8] cost header names its unit');
+
   if (fails) { console.error(fails + ' failed'); process.exit(1); }
   console.log('generate_core_layout_selfcheck ok (' + asserts + ' assertions)');
 })().catch(function (e) { console.error(e && e.stack || e); process.exit(1); });

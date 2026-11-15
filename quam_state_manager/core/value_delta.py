@@ -300,3 +300,21 @@ def describe(old: Any, new: Any) -> str:
         tail = f"  (Δ {info['text']}"
         tail += f", {info['pct_text']})" if info["pct_text"] else ")"
     return f"{left} → {right}{tail}"
+
+
+def describe_moved(old: Any, new: Any, unit: str = "") -> str:
+    """``old → new unit (Δ …)`` for a value a run moved, in result sentences.
+
+    The same arrow and delta text as :func:`describe`, with a unit. An old
+    value that is missing or not a number gives only the new value (no arrow
+    to nothing, no invented delta); an unchanged value says so. Never raises."""
+    u = f" {unit}" if unit else ""
+    right = format_value(new)
+    if as_decimal(old) is None or isinstance(old, bool):
+        return f"now {right}{u}"
+    info = compute(old, new)
+    if info is None:
+        return f"{format_value(old)} → {right}{u}"
+    if info["dir"] == "same":
+        return f"{right}{u}, unchanged"
+    return f"{format_value(old)} → {right}{u} (Δ {info['text']})"

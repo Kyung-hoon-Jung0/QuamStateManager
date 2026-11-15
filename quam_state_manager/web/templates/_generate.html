@@ -433,6 +433,7 @@
         <label>
           <input type="checkbox" id="gen-pin-cores-chk" checked>
           Share one core per qubit (xy + readout)</label>
+        <p class="muted" id="gen-pin-cores-regen" hidden>A Re-generate keeps each element's core from the source chip, so this option applies to a new chip only.</p>
         <p class="muted" id="gen-pin-cores-note">Known risk: on QOP 3.8.1 (another device), with xy and resonator on one core, a resonator update_frequency inside a program made later x180 pulses have no effect; the simulator did not show it; it depended on the program layout. Not tested on QOP 3.7.3; a hardware test is planned.</p>
       </div>
 
