@@ -42,14 +42,70 @@ const note = 'recipe formula, not verified on this run (the node wrote no state)
 let t = honest(chips({ clickable: { verification_note: note, targets: [{ path: 'qubits.q0.f' }] }}), 'unchecked recipe');
 assert.deepStrictEqual(t, ['not verified on this run'], 'an unchecked recipe says not verified, once'); n++;
 assert.strictEqual(tile.querySelector('.map-tools-chip').title, note, 'the full reason is on hover'); n++;
+const hints = () => Array.from(tile.querySelectorAll('[data-verify-hint]')).map(h => h.textContent);
+assert.deepStrictEqual(hints(), [w.MapTools.VERIFY_HINT], 'a not-verified chip says, once and in words, what would verify it'); n++;
+assert.ok(/node of this run saved a value for each parameter the click sets/.test(hints()[0]), 'the hint states the rule: ' + hints()[0]); n++;
+chips({ clickable: { verification_note: note, targets: [{ path: 'qubits.q0.f' }] }});
+assert.strictEqual(hints().length, 1, 'a remount leaves one hint, not two'); n++;
 t = honest(chips({ clickable: { n_verified: 1, targets: [{ evidence_tier: 'applied' }] } }), 'verified recipe');
 assert.deepStrictEqual(t, ['verified on this run'], 'a verified recipe says verified, once'); n++;
+assert.strictEqual(hints().length, 0, 'a verified chip carries no what-would-verify hint'); n++;
 t = honest(chips({ clickable: { n_verified: 1, verified_against: 'proposals', targets: [{evidence_tier: 'proposed'}] } }), 'proposal-checked recipe');
 assert.deepStrictEqual(t, ['proposed, not applied'], 'a recipe checked against a proposal says so'); n++;
 t = honest(chips({ status_chip: 'Reproduced with the current analysis code', clickable: { n_verified: 1, evidence_tier: 'proposed', targets: [{evidence_tier: 'proposed'}] } }), 'replot');
 assert.deepStrictEqual(t, ['Reproduced with the current analysis code', 'proposed, not applied'], 'a replot keeps its reproduction status'); n++;
 t = honest(chips({ status_chip: 'raw data', clickable: null, display_only_reason: 'this run wrote no state: click-to-apply off' }), 'display only');
 assert.deepStrictEqual(t, ['raw data', 'not verified on this run'], 'a display-only figure is not verified, reason on hover'); n++;
+assert.deepStrictEqual(hints(), ['this run wrote no state: click-to-apply off'], 'no click contract: the hint is the payload own display-only reason, never the verify rule'); n++;
+// a raw map mounted with no contract and its own reason (the raw data viewer)
+const rawReason = 'no node fit to compare; the map shows the stored data';
+chips({ status_chip: 'raw data', display_only_reason: rawReason });
+assert.deepStrictEqual(hints(), [rawReason], 'raw map without a contract shows its reason'); n++;
+assert.ok(!hints().includes(w.MapTools.VERIFY_HINT), 'raw map never promises a verification'); n++;
+t = honest(chips({ status_chip: 'raw data' }), 'no contract, no reason');
+assert.deepStrictEqual(hints(), [], 'no contract and no reason: no hint line at all'); n++;
+chips({ clickable: { n_verified: 0, targets: [{ path: 'qubits.q0.f', evidence_tier: 'applied' }] } });
+assert.deepStrictEqual(hints(), [w.MapTools.VERIFY_HINT], 'a contract with zero writes states the verify rule'); n++;
+chips({ clickable: { n_verified: 1, targets: [{ path: 'qubits.q0.f', evidence_tier: 'applied' }, { path: 'qubits.q0.g', evidence_tier: 'applied' }] } });
+assert.deepStrictEqual(hints(), [w.MapTools.PARTIAL_HINT], 'writes that miss a parameter say only some were saved'); n++;
+chips({ clickable: { n_verified: 1, targets: [{ path: 'qubits.q0.f', evidence_tier: 'applied' }] } });
+assert.deepStrictEqual(hints(), [], 'a remount onto a verified map leaves no hint behind'); n++;
+tile._mapTools.destroy(); delete tile._mapTools;
+chips({ clickable: { verification_note: note } });
+tile._mapTools.destroy(); delete tile._mapTools;
+assert.deepStrictEqual(hints(), [], 'destroy removes the hint'); n++;
+
+// the full grid: n_verified x number of targets x evidence tier -> chip text + hint. "Only some
+// values were saved" appears only when 0 < n_verified < targets; anything else not verified gets
+// the general verify rule, never a specific false sentence.
+const NV = [['missing', undefined], ['null', null], ['"2"', '2'], ['-1', -1], ['0', 0], ['1', 1], ['2', 2], ['3', 3]];
+const TIERS = ['none', 'proposed', 'applied', 'missing'];
+const grid = [];
+for (const [nvName, nv] of NV) for (const nt of [0, 1, 2]) for (const tier of TIERS) {
+    const targets = [];
+    for (let i = 0; i < nt; i++) {
+        const tg = { path: 'qubits.q0.p' + i };
+        if (tier === 'proposed' || tier === 'applied') tg.evidence_tier = tier;
+        else if (tier === 'missing') tg.evidence_tier = null;
+        targets.push(tg);
+    }
+    const clickable = { targets };
+    if (nvName !== 'missing') clickable.n_verified = nv;
+    const label = 'grid n_verified=' + nvName + ' targets=' + nt + ' tier=' + tier;
+    const got = honest(chips({ clickable }), label);
+    const valid = Number.isInteger(nv) && nv > 0 && nt > 0;
+    let chip = 'not verified on this run', hint = [w.MapTools.VERIFY_HINT];
+    if (valid && nv < nt) hint = [w.MapTools.PARTIAL_HINT];
+    else if (valid && nv === nt && tier === 'applied') { chip = 'verified on this run'; hint = []; }
+    else if (valid && nv === nt && tier === 'proposed') { chip = 'proposed, not applied'; hint = []; }
+    assert.deepStrictEqual(got, [chip], label + ': chip ' + JSON.stringify(got)); n++;
+    assert.deepStrictEqual(hints(), hint, label + ': hint ' + JSON.stringify(hints())); n++;
+    grid.push(nvName + ' | ' + nt + ' | ' + tier + ' | ' + chip + ' | ' + (hint.length ? (hint[0] === w.MapTools.PARTIAL_HINT ? 'partial' : 'verify rule') : 'none'));
+}
+// the over-count boundary named by the review: two writes for one applied target
+chips({ clickable: { n_verified: 2, targets: [{ path: 'qubits.q0.f', evidence_tier: 'applied' }] } });
+assert.deepStrictEqual(hints(), [w.MapTools.VERIFY_HINT], 'more writes than targets states the verify rule, not only some'); n++;
+if (process.env.VERIFY_GRID_OUT) fs.writeFileSync(process.env.VERIFY_GRID_OUT, grid.join('\n') + '\n');
 
 // real gated recipe payloads from the server (the Python driver passes them in)
 if (process.argv[2]) {

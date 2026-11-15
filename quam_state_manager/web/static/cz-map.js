@@ -445,6 +445,15 @@
 
     var CLEAR = 'rgba(0,0,0,0)';  // transparent hit targets
 
+    /** The map legend from the server's one pair count (cz_gate_plan.pair_counts):
+     *  "<shown> of <total> pairs shown", plus how many pairs hold no operation. */
+    function mapCountLine(shown, total, counts) {
+        var none = counts && Number.isInteger(counts.without_op) ? counts.without_op : 0;
+        var line = shown + ' of ' + total + (total === 1 ? ' pair' : ' pairs') + ' shown';
+        if (none > 0) line += ' (' + none + (none === 1 ? ' has' : ' have') + ' no operation)';
+        return line;
+    }
+
     function pairVisibility(root, m, pairs) {
         var key = 'quam_czmap_hidden_v1:' + (window.__chipToken || '') + ':' + (m.op || '');
         var ids = Object.keys(pairs).sort(natCmp);
@@ -471,7 +480,7 @@
             if (button) button.onclick = function () { ids.forEach(function (id) { change(id, action === 'show'); }); save(); };
         });
         var count = root.querySelector('#czp-map-count');
-        if (count) count.textContent = (ids.length - state.hidden.size) + ' of ' + ids.length + ' pairs shown';
+        if (count) count.textContent = mapCountLine(ids.length - state.hidden.size, ids.length, m.counts);
         root._czPairIds = ids;
         bindMiniMap(root);
         syncMiniMap(root);
@@ -1345,7 +1354,7 @@
     window.CzMap = {
         mount: mount, draw: draw, paint: paint, loadLoss: loadLoss, highlight: highlight, select: select,
         scale: scaleOf, loss: function (root) { return (root && root._czLoss) || null; },
-        edgeColours: edgeColours, chipLayout: chipLayout, natCmp: natCmp, pairOf: pairOf, pairColors: pairColors,
+        mapCountLine: mapCountLine, edgeColours: edgeColours, chipLayout: chipLayout, natCmp: natCmp, pairOf: pairOf, pairColors: pairColors,
         placeLabels: placeLabels, labelSize: labelSize, partnerWidth: partnerWidth, partnerLines: partnerLines, partnerBox: partnerBox, partnerGap: partnerGap, PARTNER_CLEAR: PARTNER_CLEAR, followName: followName, drawnOp: drawnOp,
         DRAW_PX: DRAW_PX, ROW_PX: ROW_PX, DRAW_MAX_FRAC: DRAW_MAX_FRAC, LOSS_W: LOSS_W,
         SHORT_BAR_PX: SHORT_BAR_PX, ROW_LABEL_MIN_PX: ROW_LABEL_MIN_PX, NODE_R: NODE_R, BAR_HALF: BAR_HALF,

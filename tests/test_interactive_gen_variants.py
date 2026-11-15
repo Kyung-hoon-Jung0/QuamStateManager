@@ -34,8 +34,11 @@ def _write_h5(path: Path, arrays: dict, coords: dict):
             d = f.create_dataset(cname, data=np.asarray(values))
             d.attrs["CLASS"] = np.bytes_("DIMENSION_SCALE")
             scales[cname] = d
-        for vname, (dims, data) in arrays.items():
+        for vname, spec in arrays.items():
+            dims, data = spec[0], spec[1]
             ds = f.create_dataset(vname, data=np.asarray(data))
+            for key, value in (spec[2] if len(spec) > 2 else {}).items():
+                ds.attrs[key] = value
             for ax, dim in enumerate(dims):
                 if dim in scales:
                     ds.dims[ax].attach_scale(scales[dim])
@@ -257,6 +260,33 @@ def test_compensation_figure_has_a_legend_and_marks_the_fitted_phase_shift(tmp_p
     assert texts == ["control fit phase shift 0.000", "target fit phase shift 0.250"]
 
 
+def _state_axis_title(fig):
+    title = fig["layout"]["yaxis"]["title"]
+    return title["text"] if isinstance(title, dict) else title
+
+
+@pytest.mark.parametrize("units, integer, expected", [
+    (None, False, "Measured state (no unit recorded)"),     # averaged state, no unit
+    (None, True, "Measured state (no unit recorded)"),      # 0/1 shots, no unit: never guessed
+    ("V", False, "Measured state [V]"),                      # the unit the file carries
+])
+def test_measured_state_axis_names_the_files_unit_or_says_none_was_recorded(tmp_path, units, integer, expected):
+    n = 17
+    frame = np.linspace(0, 1, n, endpoint=False)
+    fc = 1e-4 * np.cos(2 * np.pi * frame)
+    ft = 1e-4 * np.sin(2 * np.pi * frame) - 5e-4
+    sc, st = (np.round(fc * 1e4 + 1) / 2, np.round(ft * 1e4 + 6) / 2) if integer else (fc, ft)
+    fc, ft = (sc, st) if integer else (fc, ft)
+    attrs = {"units": units} if units else {}
+    fit = {"state_control": (("qubit_pair", "frame"), sc[None], attrs),
+           "state_target": (("qubit_pair", "frame"), st[None], attrs),
+           "fitted_control": (("qubit_pair", "frame"), fc[None]),
+           "fitted_target": (("qubit_pair", "frame"), ft[None])}
+    coords = {"qubit_pair": [PAIR.encode()], "frame": frame}
+    run = _run(tmp_path, "34a_cz_phase_compensation", fit, coords, {"success": True}, ["raw_and_fit"])
+    assert _state_axis_title(_build(run, f"raw_and_fit::{PAIR}")) == expected
+
+
 def test_a_phase_that_does_not_match_its_own_fit_is_not_marked(tmp_path):
     run = _comp_run_with_phases(tmp_path, control_phase=0.5, target_phase=0.75)
     fig = _build(run, f"raw_and_fit::{PAIR}")
@@ -419,13 +449,31 @@ def _client(tmp_path, monkeypatch, run):
     return app.test_client()
 
 
-def test_interactive_route_404_names_why_the_figure_is_not_drawn(tmp_path, monkeypatch):
+def test_interactive_route_answers_200_naming_why_the_figure_is_not_drawn(tmp_path, monkeypatch):
+    # a figure the recipe knows but cannot draw is an answer (200, not_drawn), so the
+    # page logs no failed request; an unknown key or run stays a 404
     run, *_ = _chevron_run(tmp_path, nan=True)
-    resp = _client(tmp_path, monkeypatch, run).get(
-        f"/dataset/x/interactive/plot?fig=moving_qubit::{PAIR}")
+    client = _client(tmp_path, monkeypatch, run)
+    resp = client.get(f"/dataset/x/interactive/plot?fig=moving_qubit::{PAIR}")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["not_drawn"] is True and body["error"].startswith("Not drawn: ")
+    assert "no finite values" in body["error"]
+    # the drawable figure of the same run is still drawn
+    ok = client.get(f"/dataset/x/interactive/plot?fig=stationary_qubit::{PAIR}")
+    assert ok.status_code == 200 and "data" in ok.get_json() and "not_drawn" not in ok.get_json()
+    unknown = client.get("/dataset/x/interactive/plot?fig=no_such_fig")
+    assert unknown.status_code == 404 and "not_drawn" not in unknown.get_json()
+
+
+def test_interactive_route_unknown_run_is_404(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from quam_state_manager.web import routes
+    from quam_state_manager.web.app import create_app
+    monkeypatch.setattr(routes, "_resolve_run", lambda uid: (SimpleNamespace(runs={}), 1, ""))
+    app = create_app(testing=True, instance_path=str(tmp_path / "instance"))
+    resp = app.test_client().get(f"/dataset/x/interactive/plot?fig=moving_qubit::{PAIR}")
     assert resp.status_code == 404
-    assert resp.get_json()["error"].startswith("Not drawn: ")
-    assert "no finite values" in resp.get_json()["error"]
 
 
 def test_replot_route_404_reason_comes_from_the_replot_result(tmp_path, monkeypatch):
@@ -581,3 +629,13 @@ def test_template_empty_reason_shows_the_fallback_line():
     app = create_app()
     html = app.jinja_env.from_string("{{ r | not_drawn }}").render(r="")
     assert html == "Figure not available."
+
+
+def test_tile_client_shows_a_not_drawn_answer_as_a_muted_line_without_retry():
+    # the 200 not_drawn answer: a muted honest line, and the tile stays rendered
+    # (a retry on scroll would ask again for an answer that cannot change)
+    js = (Path(__file__).resolve().parents[1] / "quam_state_manager" / "web" / "static" / "app.js").read_text(encoding="utf-8")
+    i = js.index("if (d.not_drawn) {")
+    branch = js[i:js.index("if (d.error) {", i)]
+    assert 'class="muted" data-not-drawn' in branch and "return;" in branch
+    assert "data-rendered" not in branch

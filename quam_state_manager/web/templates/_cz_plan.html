@@ -11,7 +11,7 @@
 <p class="czp-unknown-pair" role="status">Unknown pair: <code>{{ unknown_pair }}</code>. No operation selected.</p>
 {% endif %}
 <div class="table-header-row ui-head ui-head--data ui-head--page">
-    <h2 class="ui-head-title">CZ gate plan {% set n_alias = rows | selectattr('alias_of') | list | length %}{% set n_pairs = rows | map(attribute='pair') | unique | list | length %}<small class="muted ui-count">({{ rows | length - n_alias }} operation{{ '' if (rows|length - n_alias) == 1 else 's' }} on {{ n_pairs }} pair{{ '' if n_pairs == 1 else 's' }}{% if n_alias %}, plus {{ n_alias }} alias{{ '' if n_alias == 1 else 'es' }}{% endif %})</small></h2>
+    <h2 class="ui-head-title">CZ gate plan <small class="muted ui-count" data-plan-counts>({{ plan_counts.header }})</small></h2>
     <div class="ui-actions" role="group" aria-label="Gate actions"><button type="button" class="btn-sm outline" data-czg-open="czplan" title="Create a new CZ gate on the selected pair">+ Gate</button></div>
 </div>
 <div class="muted czp-lede">

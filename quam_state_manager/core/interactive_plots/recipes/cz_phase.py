@@ -156,6 +156,15 @@ def _raw_and_fit_missing(have) -> list[str]:
 _MEAN_RTOL = 1e-3
 
 
+def measured_state_label(fit, role) -> str:
+    """The y label of ``state_<role>``: the unit the run's file carries, read from the
+    variable's ``units`` attribute, or "no unit recorded" when the run gives none (a unit
+    is read, never guessed)."""
+    meta = (fit.get("attrs") or {}).get(f"state_{role}") or {}
+    unit = str(meta.get("units") or "").strip()
+    return f"Measured state [{unit}]" if unit else "Measured state (no unit recorded)"
+
+
 def _measured(fit, role, pidx):
     """(points, y-label) the node fitted ``fitted_<role>`` to.
 
@@ -173,7 +182,7 @@ def _measured(fit, role, pidx):
     """
     if f"state_{role}" in fit["vars"]:
         return np.asarray(pslice(fit, f"state_{role}", pidx)[0], dtype=float), \
-            "Measured state"
+            measured_state_label(fit, role)
     arr, dims = pslice(fit, f"I_{role}", pidx)
     arr = np.asarray(arr, dtype=float)
     if "control_target" in dims and arr.ndim > 1:

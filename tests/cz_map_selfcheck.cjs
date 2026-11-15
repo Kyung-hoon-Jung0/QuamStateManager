@@ -948,5 +948,13 @@ async function footerPins(only) {
     SThm.close(); SNoL.close();
     }
     [S5, S13, S21, SV].forEach(S => S.close());
+    {   // the map legend reads the server's one pair count; a pair with no operation is named
+        const line = S5.w.CzMap.mapCountLine;
+        check(line(3, 3, {without_op: 1}) === '3 of 3 pairs shown (1 has no operation)', 'legend: one pair without an operation is named');
+        check(line(2, 3, {without_op: 2}) === '2 of 3 pairs shown (2 have no operation)', 'legend: plural "have" for two pairs');
+        check(line(3, 3, {without_op: 0}) === '3 of 3 pairs shown', 'legend: every pair has an operation, no clause');
+        check(line(1, 1, {without_op: 0}) === '1 of 1 pair shown' && line(0, 1, {without_op: 1}) === '0 of 1 pair shown (1 has no operation)', 'legend: singular "pair" for one pair');
+        check(line(2, 2, undefined) === '2 of 2 pairs shown', 'legend: no counts from the server, no invented clause');
+    }
     console.log(checks + ' assertions passed');
 })().catch(e => { console.error(e); process.exitCode = 1; });

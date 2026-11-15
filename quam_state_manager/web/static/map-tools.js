@@ -34,27 +34,48 @@
         }
         return pass(pass(z, sx, false), sy, true);
     }
-    /** The one verification status of a figure's click contract. A recipe the node never
-     *  checked (it wrote no state) keeps its formula clickable but is NOT verified. */
-    function verification(payload) {
-        var c = payload.clickable;
-        if (!c) return 'not verified on this run';
-        if (c.verification_note) return 'not verified on this run';
-        // v1.5.1 (R5 P2-10): verified only with positive, consistent proof -- a count of verified
-        // writes between the distinct target paths (a learned contract counts paths, one target
-        // per panel) and the number of targets (a recipe counts targets)
+    /** What would verify a click contract, in the words of verification() below: this run's
+     *  node saved a value (applied or proposed) for each parameter a click sets, and SM's
+     *  reading of the figure lands on that saved value. */
+    var VERIFY_HINT = 'A click is verified once the node of this run saved a value for each parameter the click sets and the reading SM takes from the figure matches that value.';
+    /** What the node saved does not cover every parameter a click sets. */
+    var PARTIAL_HINT = 'The node of this run saved a value for only some of the parameters the click sets, so the click is not verified.';
+    /** The one verification status of a figure's click contract, with the reason behind it:
+     *  'none' (no click contract on this map), 'evidence' (a contract with no usable evidence),
+     *  'partial' (writes that do not cover every target), or '' when verified or proposed.
+     *  A recipe the node never checked (it wrote no state) keeps its formula clickable but is
+     *  NOT verified. */
+    function judge(payload) {
+        var c = payload.clickable, no = 'not verified on this run';
+        if (!c) return {chip: no, reason: 'none'};
+        if (c.verification_note) return {chip: no, reason: 'evidence'};
+        // verified only with positive, consistent proof: a count of verified writes between the
+        // distinct target paths (a learned contract counts paths, one target per panel) and the
+        // number of targets (a recipe counts targets)
         var targets = c.targets;
-        if (!Number.isInteger(c.n_verified) || c.n_verified <= 0 || !Array.isArray(targets) || !targets.length ||
-            c.n_verified > targets.length) return 'not verified on this run';
+        if (!Number.isInteger(c.n_verified) || c.n_verified <= 0 || !Array.isArray(targets) || !targets.length) return {chip: no, reason: 'evidence'};
+        // more verified writes than targets is inconsistent proof, not a partial cover
+        if (c.n_verified > targets.length) return {chip: no, reason: 'evidence'};
         if (targets.every(function (t) { return t && t.path; }) &&
-            new Set(targets.map(function (t) { return t.path; })).size > c.n_verified) return 'not verified on this run';
-        if (c.verified_against && c.verified_against !== 'patches' && c.verified_against !== 'proposals') return 'not verified on this run';
+            new Set(targets.map(function (t) { return t.path; })).size > c.n_verified) return {chip: no, reason: 'partial'};
+        if (c.verified_against && c.verified_against !== 'patches' && c.verified_against !== 'proposals') return {chip: no, reason: 'evidence'};
         var tier = c.verified_against === 'proposals' ? 'proposed' : c.verified_against === 'patches' ? 'applied' : c.evidence_tier;
         if (!tier) tier = targets[0] && targets[0].evidence_tier;
         if (!/^(applied|proposed)$/.test(tier) || (c.evidence_tier && c.evidence_tier !== tier) ||
-            targets.some(function (t) { return !t || t.evidence_tier !== tier; })) return 'not verified on this run';
-        if (c.evidence_tier === 'proposed' || c.verified_against === 'proposals') return 'proposed, not applied';
-        return 'verified on this run';
+            targets.some(function (t) { return !t || t.evidence_tier !== tier; })) return {chip: no, reason: 'evidence'};
+        if (tier === 'proposed') return {chip: 'proposed, not applied', reason: ''};
+        return {chip: 'verified on this run', reason: ''};
+    }
+    function verification(payload) { return judge(payload).chip; }
+    /** The sentence beside a "not verified" chip, from the same reason judge() returns: a map
+     *  with no click contract shows its own display-only reason (or nothing), never a promise
+     *  of a verification it cannot reach. */
+    function verifyHint(payload) {
+        var reason = judge(payload).reason;
+        if (reason === 'none') return payload.display_only_reason ? String(payload.display_only_reason) : '';
+        if (reason === 'partial') return PARTIAL_HINT;
+        if (reason === 'evidence') return VERIFY_HINT;
+        return '';
     }
     function mount(host, plot, payload, options) {
         options = options || {};
@@ -94,7 +115,14 @@
         var contractChip = document.createElement('span'); contractChip.className = 'map-tools-chip';
         contractChip.textContent = verification(payload);
         contractChip.title = (payload.clickable && payload.clickable.verification_note) || payload.display_only_reason || '';
+        var hint = null, hintText = verifyHint(payload);
+        if (hintText) {
+            // say why it is not verified, from the same reason verification() uses
+            hint = document.createElement('span'); hint.className = 'muted'; hint.setAttribute('data-verify-hint', '');
+            hint.textContent = hintText;
+        }
         header.appendChild(contractChip);
+        if (hint) header.appendChild(hint);
         maps.forEach(function (_, index) { var opt = document.createElement('option'); opt.value = index; opt.textContent = 'Map ' + (index + 1); control('panel').appendChild(opt); });
         control('panel').parentElement.hidden = maps.length === 1;
         ['x', 'y'].forEach(function (axis) {
@@ -358,8 +386,8 @@
                     control('apply').disabled = false;
                 }).catch(function (error) { if (alive && seq === generation) control('status').textContent = error.message; });
         };
-        host._mapTools = {destroy: function () { alive = false; invalidate(); if (window.Plotly) window.Plotly.purge(side); strip.remove(); button.remove(); statusChip.remove(); contractChip.remove(); }};
+        host._mapTools = {destroy: function () { alive = false; invalidate(); if (window.Plotly) window.Plotly.purge(side); strip.remove(); button.remove(); statusChip.remove(); contractChip.remove(); if (hint) hint.remove(); }};
         return host._mapTools;
     }
-    window.MapTools = {mount: mount, localPreview: localPreview};
+    window.MapTools = {mount: mount, localPreview: localPreview, VERIFY_HINT: VERIFY_HINT, PARTIAL_HINT: PARTIAL_HINT, verifyHint: verifyHint};
 })();

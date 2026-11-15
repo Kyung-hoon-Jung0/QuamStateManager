@@ -22,6 +22,9 @@ not applicable" and comes with a reason field where one exists -- never a zero.
 
 ## `/cz-plan/map` (unchanged fields omitted: `qubits[].f01_hz/defects/safe/loss_data/tier/direction`, `segments`, `planned`, `refused`, `missing`, `op`, `operations`, `unavailable`)
 
+* `counts` -- object, added after the freeze: the one pair count the page header and the map legend
+  read (`cz_gate_plan.pair_counts`): `operations` (aliases excluded), `aliases`, `with_op` (pairs holding
+  an operation), `total` (every pair in `pairs`), `without_op`, `header` (the header's text).
 * `qubits[].grid_location` -- string|null: the qubit's stored `grid_location` ("col,row" as the chip
   spells it, pointers resolved); `null` when the chip has none. Parsing is the client's
   (`TopoGraph.layoutFor`).
