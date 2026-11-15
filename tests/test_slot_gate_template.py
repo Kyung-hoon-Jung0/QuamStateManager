@@ -612,6 +612,7 @@ TIMING_WORDS = [
     "Steps are statements in this order. An xy play starts when its own channel is free.",
     "A wait holds each gate channel for that time from the moment that channel is free; it does not",
     "wait for other channels. Steps on different channels overlap unless an align step is between them.",
+    "Channels that share a core run one after the other, never together.",
 ]
 #: An xy play, then a wait, then an xy play on the other qubit, all after the gate. The wait is one
 #: statement over every gate channel and no align follows it, so the second play is not held until
@@ -627,7 +628,7 @@ def test_class_docstring_is_true_for_a_wait_between_plays():
     doc = ast.get_docstring(ast.parse(source).body[-1]).splitlines()
     steps = ("After the gate pulses: play x180 on the control xy channel, wait 16 ns,"
              " play y90 on the target xy channel.")
-    assert doc[-4:] == [steps] + TIMING_WORDS
+    assert doc[-5:] == [steps] + TIMING_WORDS
     lines = source.splitlines()
     first = lines.index("        pair.qubit_control.xy.play('x180')")
     assert lines[first - 1:first + 3] == ["        align(*channels)", "        pair.qubit_control.xy.play('x180')",
@@ -657,6 +658,8 @@ def test_class_docstring_names_the_steps():
     lambda s: s.replace("# after = [{'kind': 'align'}]", "# after = not a list"),
     lambda s: s.replace("    # after = [{'kind': 'align'}]\n", ""),
     lambda s: s.replace("Before the gate pulses: wait 16 ns", "Before the gate pulses: wait 20 ns"),
+    lambda s: s.replace("    Channels that share a core run one after the other, never together.\n", ""),
+    lambda s: s.replace("one after the other, never together.", "one after the other."),
 ])
 def test_hand_edited_steps_are_refused(change):
     source = T.render(T.SlotSpec("ExampleGate", {"coupler"}, False, [WAIT, XY], [ALIGN]))
@@ -1131,7 +1134,8 @@ def _standin_check(monkeypatch, tmp_path, source, **request):
     qua = types.ModuleType("qm.qua")
     qua.align = lambda *channels: None
     qua.wait = lambda duration, *channels: None
-    qua.amp = lambda scale: scale
+    # The generated class multiplies an operation name by the amp value, as QUA does.
+    qua.amp = lambda scale: type("Amp", (), {"__rmul__": lambda self, name: (name, scale)})()
     qua.play = lambda pulse, element, **kwargs: None
     qua.program = contextlib.nullcontext
     core, macro, pulses, channels = (types.ModuleType(n) for n in (
@@ -1196,3 +1200,33 @@ def test_standin_xy_play_is_a_statement_and_not_a_slot_play(monkeypatch, tmp_pat
 def test_lab_xy_play_is_a_statement_and_not_a_slot_play(tmp_path):
     source = T.render(T.SlotSpec("ExampleGate", {"coupler"}, False, *XY_BOTH[:2]))
     _xy_play_is_a_statement_only(run_check(tmp_path, source, xy_operations={"control": ["x180"], "target": ["y90"]}))
+
+
+#: Every statement kind the checker reports, in one class: control and coupler slots, one spectator
+#: row, steps before and after the gate, and a phase correction on each qubit.
+EVERY_KIND = ([WAIT, XY], [{"kind": "xy", "qubit": "target", "operation": "y90"}, WAIT],
+              ["wait 4", "play control_xy x180", "align", "play control_z control_op", "play coupler coupler_op",
+               "play spectator_a_z spectator", "align", "frame_rotation control_xy", "frame_rotation target_xy",
+               "align", "play target_xy y90", "wait 4"])
+EVERY_KIND_REQUEST = dict(spectators={"spectator_a": [0.125, 52, 0.25]},
+                          xy_operations={"control": ["x180"], "target": ["y90"]},
+                          apply_kwargs={"phase_shift_control": 0.125, "phase_shift_target": -0.25})
+
+
+def _every_statement_kind_in_order(result):
+    assert result["status"] == "ok" and result["ok"], json.dumps(result)
+    assert result["statements"] == EVERY_KIND[2]
+    assert result["slots_declared"] == result["slots_played"] == ["control", "coupler"]
+    assert result["rotations"] == [["control_xy", 0.125], ["target_xy", -0.25]]
+    assert result["spectator_plays"] == [{"name": "spectator_a", "scale": 0.5, "duration": 13}]
+
+
+def test_standin_every_statement_kind_in_order(monkeypatch, tmp_path):
+    source = T.render(T.SlotSpec("ExampleGate", {"control", "coupler"}, True, *EVERY_KIND[:2]))
+    _every_statement_kind_in_order(_standin_check(monkeypatch, tmp_path, source, **EVERY_KIND_REQUEST))
+
+
+@lab
+def test_lab_every_statement_kind_in_order(tmp_path):
+    source = T.render(T.SlotSpec("ExampleGate", {"control", "coupler"}, True, *EVERY_KIND[:2]))
+    _every_statement_kind_in_order(run_check(tmp_path, source, **EVERY_KIND_REQUEST))

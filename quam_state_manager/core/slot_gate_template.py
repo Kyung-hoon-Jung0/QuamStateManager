@@ -79,7 +79,8 @@ XY_MISSING_PROBLEM = ("Sequence step {number} {where} the gate plays {operation!
 #: Docstring lines of a class with steps, after the two lines that list the steps.
 STEP_TIMING_NOTE = ("    Steps are statements in this order. An xy play starts when its own channel is free.",
                     "    A wait holds each gate channel for that time from the moment that channel is free; it does not",
-                    "    wait for other channels. Steps on different channels overlap unless an align step is between them.")
+                    "    wait for other channels. Steps on different channels overlap unless an align step is between them.",
+                    "    Channels that share a core run one after the other, never together.")
 
 
 @dataclass
