@@ -140,7 +140,7 @@ def test_only_readable_slot_drafts_are_listed_with_presets_and_names(env):
     assert [c["class"] for c in slot] == [QCLASS]
     c = slot[0]
     assert set(c) == {"class", "label", "layout", "available", "why", "slots", "models",
-                      "slot_spec", "spectators"}
+                      "slot_spec", "spectators", "older_render"}
     assert c["label"] == f"{NAME} (slot class SM made)" and c["available"] and c["why"] == ""
     assert c["slot_spec"] == {"slots": list(sgt.SLOTS), "spectators": True}
     assert [s["field"] for s in c["slots"]] == [sgp.slot_field(s) for s in sgt.SLOTS]
@@ -662,3 +662,167 @@ def test_slot_spec_says_whether_the_class_has_spectators(env):
     env.make(spectators=False)
     c = next(c for c in env.dialog()["classes"] if c["layout"] == "slot")
     assert c["slot_spec"]["spectators"] is False
+
+
+# ---------------------------------------------------------------- older renders
+
+OWN = ("control", "target")
+
+
+def _older_draft(env, slots=OWN, spectators=True, name=NAME):
+    text = sgt.render_v1(sgt.SlotSpec(name, frozenset(slots), spectators))
+    D.save_draft(env.a.app.instance_path, env.scope, name, text)
+    W.watch_for(env.a.app.instance_path, env.scope, name).adopt(text.encode("utf-8"))
+    return text
+
+
+def test_an_older_render_draft_is_listed_and_made_again_as_the_current_render(env):
+    _older_draft(env)
+    c = next(c for c in env.dialog()["classes"] if c["layout"] == "slot")
+    assert c["class"] == QCLASS and c["older_render"] is True
+    env.make(slots=OWN)
+    text = D.load_draft(env.a.app.instance_path, env.scope, NAME).decode("utf-8")
+    assert text == sgt.render(sgt.SlotSpec(NAME, frozenset(OWN), True))
+    assert sgt.parse(text).version == sgt.TEMPLATE_VERSION
+    assert next(c for c in env.dialog()["classes"] if c["layout"] == "slot")["older_render"] is False
+
+
+def test_junk_under_the_name_still_gets_the_draft_refusal(env):
+    D.save_draft(env.a.app.instance_path, env.scope, NAME, _older_draft(env) + "# edited\n")
+    assert env.make(slots=OWN, code=409)["error"] == czr.NAME_DRAFT.format(name=NAME)
+
+
+def test_an_older_render_in_use_is_made_again_only_with_its_own_spec(env):
+    _older_draft(env)
+    env.save()
+    j = _check(env, _slot_body(slots=OWN))
+    assert env.c.post(CREATE, json={"check_token": j["check_token"],
+                                    "plan_sig": j["plan_sig"]}).status_code == 200
+    assert env.make(slots=["coupler"], code=409)["error"] == czr.NAME_IN_USE.format(name=NAME, count=1)
+    env.make(slots=OWN)
+    assert sgt.parse(D.load_draft(env.a.app.instance_path, env.scope, NAME).decode()).version == 2
+
+
+def _notes(env, slots, gate="cz_s"):
+    plan = _pair(env.c.post(PLAN, json=_slot_body(slots=slots, name=gate)).get_json())
+    check = _pair(_check(env, _slot_body(slots=slots, name=gate)))
+    assert plan["ok"] and check["ok"], (plan, check)
+    return plan["notes"], check["notes"]
+
+
+def test_a_gate_on_an_older_control_or_target_lab_file_says_so(env):
+    _older_draft(env)
+    env.save()
+    note = czr.OLDER_RENDER_NOTE.format(file=f"{NAME}.py", name=NAME)
+    assert _notes(env, OWN) == ([note], [note])
+    env.make(slots=OWN)
+    env.save()
+    assert _notes(env, OWN) == ([], [])
+
+
+def test_a_gate_on_an_older_coupler_only_lab_file_says_nothing(env):
+    _older_draft(env, slots=["coupler"])
+    env.save()
+    assert _notes(env, ["coupler"]) == ([], [])
+
+
+STEPS = ([{"kind": "wait", "length": 16}], [{"kind": "xy", "qubit": "control", "operation": "x180"}])
+
+
+def _stepped_draft(env, render, slots=OWN, spectators=True):
+    spec = sgt.SlotSpec(NAME, frozenset(slots), spectators, *STEPS)
+    text = render(spec)
+    D.save_draft(env.a.app.instance_path, env.scope, NAME, text)
+    W.watch_for(env.a.app.instance_path, env.scope, NAME).adopt(text.encode("utf-8"))
+    env.save()
+    j = _check(env, _slot_body(slots=slots))
+    assert env.c.post(CREATE, json={"check_token": j["check_token"],
+                                    "plan_sig": j["plan_sig"]}).status_code == 200
+    return spec
+
+
+def _draft_text(env):
+    return D.load_draft(env.a.app.instance_path, env.scope, NAME).decode("utf-8")
+
+
+def test_a_stepped_older_render_in_use_is_made_again_with_its_steps(env):
+    spec = _stepped_draft(env, sgt.render_v1)
+    j = env.make(slots=OWN)
+    assert j["ok"] and j["cls"] == NAME
+    text = _draft_text(env)
+    assert text == sgt.render(spec)
+    parsed = sgt.parse(text)
+    assert parsed.version == sgt.TEMPLATE_VERSION and parsed.spec == spec
+    assert parsed.spec.before == spec.before and parsed.spec.after == spec.after
+
+
+@pytest.mark.parametrize("change", [{"slots": ["control"]}, {"spectators": False}])
+def test_a_stepped_older_render_in_use_with_another_carried_field_is_refused(env, change):
+    _stepped_draft(env, sgt.render_v1)
+    before = env.stored()
+    j = env.make(**{"slots": OWN, **change}, code=409)
+    assert j["error"] == czr.NAME_IN_USE.format(name=NAME, count=1)
+    assert env.stored() == before
+
+
+def test_posted_steps_are_not_taken_through_the_older_render_remake(env):
+    _stepped_draft(env, sgt.render_v1)
+    before = env.stored()
+    r = env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": list(OWN), "spectators": True,
+                                     "before": [{"kind": "wait", "length": 32}], "after": []})
+    assert r.status_code == 409
+    assert r.get_json()["error"] == czr.NAME_IN_USE.format(name=NAME, count=1)
+    assert env.stored() == before
+
+
+def test_a_stepped_current_render_in_use_is_still_refused(env):
+    _stepped_draft(env, sgt.render)
+    before = env.stored()
+    assert env.make(slots=OWN, code=409)["error"] == czr.NAME_IN_USE.format(name=NAME, count=1)
+    assert env.stored() == before
+
+
+def _mtimes(env):
+    return {str(p.relative_to(env.tmp)): p.stat().st_mtime_ns
+            for p in sorted(env.tmp.rglob("*")) if p.is_file() and "__pycache__" not in p.parts}
+
+
+def _in_use_older_made_again(env):
+    _older_draft(env)
+    env.save()
+    j = _check(env, _slot_body(slots=OWN))
+    assert env.c.post(CREATE, json={"check_token": j["check_token"],
+                                    "plan_sig": j["plan_sig"]}).status_code == 200
+    env.make(slots=OWN)
+    assert sgt.parse(_draft_text(env)).version == sgt.TEMPLATE_VERSION
+
+
+def test_making_an_in_use_class_again_with_the_same_text_writes_nothing_and_the_note_names_the_save(env):
+    _in_use_older_made_again(env)
+    before, times = env.stored(), _mtimes(env)
+    j = env.make(slots=OWN)
+    assert j == {"ok": True, "cls": NAME, "qclass": QCLASS}
+    assert env.stored() == before and _mtimes(env) == times
+    note = czr.OLDER_RENDER_SAVE_NOTE.format(file=f"{NAME}.py", name=NAME)
+    assert _notes(env, OWN, "cz_t") == ([note], [note])
+    env.save()
+    assert _notes(env, OWN, "cz_t") == ([], [])
+
+
+@pytest.mark.parametrize("change", [{"slots": ["control"]}, {"spectators": False}])
+def test_a_changed_make_of_an_in_use_current_render_is_refused(env, change):
+    _in_use_older_made_again(env)
+    before = env.stored()
+    j = env.make(**{"slots": OWN, **change}, code=409)
+    assert j["error"] == czr.NAME_IN_USE.format(name=NAME, count=1)
+    assert env.stored() == before
+
+
+def test_posted_steps_on_an_in_use_current_render_are_refused(env):
+    _in_use_older_made_again(env)
+    before = env.stored()
+    r = env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": list(OWN), "spectators": True,
+                                     "before": [{"kind": "wait", "length": 32}], "after": []})
+    assert r.status_code == 409
+    assert r.get_json()["error"] == czr.NAME_IN_USE.format(name=NAME, count=1)
+    assert env.stored() == before

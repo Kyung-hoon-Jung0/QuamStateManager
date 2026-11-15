@@ -380,9 +380,10 @@ def macro_spectator_problem(merged: dict, pair_id: str, macro: Any) -> str | Non
         real_qubit(merged, cgb.pair_qubit(merged, pair_id, "qubit_target")), units)
 
 
-def slot_drafts(instance, scope) -> list[tuple[str, sgt.SlotSpec]]:
+def slot_drafts(instance, scope, versions=False) -> list[tuple]:
     """``[(class name, spec)]`` for every draft in *scope* that parses as a
-    slot gate class whose class name is the draft's name."""
+    slot gate class whose class name is the draft's name, at any version the
+    parser reads; ``[(class name, spec, version)]`` with *versions*."""
     from quam_state_manager.core import pulse_class_drafts as drafts
     out = []
     for d in drafts.list_drafts(instance, scope):
@@ -396,5 +397,5 @@ def slot_drafts(instance, scope) -> list[tuple[str, sgt.SlotSpec]]:
             continue
         parsed = sgt.parse(text)
         if parsed.ok and parsed.spec is not None and parsed.spec.class_name == name:
-            out.append((name, parsed.spec))
+            out.append((name, parsed.spec, parsed.version) if versions else (name, parsed.spec))
     return out

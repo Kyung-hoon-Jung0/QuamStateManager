@@ -138,7 +138,7 @@ UNREADABLE = {
     "broken region marker": _broken_marker,
     "xy step with a variable name": _variable_xy,
     "hand-edited text": lambda: _slot().replace("Slot duration is in clock cycles", "Slot duration in clock cycles"),
-    "another template version": lambda: _slot().replace(", version 1.", ", version 2.", 1),
+    "another template version": lambda: _slot().replace(f", version {S.TEMPLATE_VERSION}.", ", version 9.", 1),
 }
 
 # Drafts the parser answers with the text of an exception it caught: the door words them itself.
@@ -258,7 +258,7 @@ def test_a_saved_slot_class_is_not_listed_as_a_pulse_class_module(setup):
 
 def test_a_slot_header_without_version_is_refused_before_any_check(setup):
     folder, calls, answer, save = setup
-    bad = _slot().replace(", version 1.", "", 1)
+    bad = _slot().replace(f", version {S.TEMPLATE_VERSION}.", "", 1)
     with pytest.raises(D.DraftError, match="SM header and template version"):
         save(bad)
     assert [c["action"] for c in calls] == ["discover"]
@@ -550,3 +550,76 @@ def test_worker_slot_check_loads_the_chip_copy_with_the_draft(tmp_path, monkeypa
                                    "chip": "chip_copy", "root_class": "quam_config.Quam"})
     assert result["ok"] is loads and result.get("chip_loaded", False) is loads
     assert loads or result["chip_error"] == "ValueError: chip refused chip_copy"
+
+
+# ---------------------------------------------------------------- slot pointers on a real chip
+
+#: Gate fields as the gate plan stores them: references to operations of each slot's own channel.
+POINTER_FIELDS = {"control_flux_pulse": "#/qubits/q1/z/operations/cz_unipolar_flux_pulse_q1_q2",
+                  "target_flux_pulse": "#/qubits/q2/z/operations/const",
+                  "coupler_flux_pulse": "#/qubit_pairs/q1-2/coupler/operations/cz_unipolar_coupler_pulse_q1_q2"}
+
+_POINTER_RUN = r'''
+import importlib, json, sys
+folder = sys.argv[1]
+root = json.load(open(folder + "/state.json", encoding="utf-8"))["__class__"]
+module, name = root.rsplit(".", 1)
+machine = getattr(importlib.import_module(module), name).load(folder)
+from qm.qua import program
+out = {}
+for gate, macro in machine.qubit_pairs["q1-2"].macros.items():
+    if not gate.startswith("slot_"):
+        continue
+    try:
+        labels = {s: getattr(macro, s + "_flux_pulse_label") for s in ("control", "target", "coupler")
+                  if hasattr(macro, s + "_flux_pulse")}
+        with program() as prog:
+            macro.apply()
+        out[gate] = {"ok": True, "labels": labels}
+    except Exception as exc:
+        out[gate] = {"ok": False, "error": type(exc).__name__ + ": " + str(exc)}
+print("RESULT " + json.dumps(out))
+'''
+
+
+@lab
+def test_lab_gate_with_slot_pointers_plays_on_a_built_chip():
+    """A control-slot class and a control + target + coupler class, stored with references as the plan
+    writes them, load with the lab code and apply inside a QUA program; a control reference to another
+    channel's operation is refused with the slot sentence."""
+    from tests.test_coupler_only_live import _build, _spec
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        tmp = Path(tmp)
+        spec = _spec(quam_class=None)
+        spec.pop("populate")
+        spec["pair_gate"] = "cz_fixed"
+        spec["lines"] = spec["lines"] + [{"element": q, "line": "flux", "channel": {"kind": "lf_fem"}}
+                                         for q in spec["qubits"]]
+        built = tmp / "built"
+        _build(spec, built)
+        package = tmp / "slot_pointer_classes"
+        package.mkdir()
+        (package / "__init__.py").write_text("", encoding="utf-8")
+        classes = {"ControlGate": {"control"}, "FullGate": set(S.SLOTS)}
+        for name, slots in classes.items():
+            (package / f"{name}.py").write_text(S.render(S.SlotSpec(name, slots)), encoding="utf-8")
+        state = json.loads((built / "state.json").read_text(encoding="utf-8"))
+        macros = state["qubit_pairs"]["q1-2"]["macros"]
+        for name, slots in classes.items():
+            macros[f"slot_{name}"] = {"__class__": f"slot_pointer_classes.{name}.{name}",
+                                      **{f"{s}_flux_pulse": POINTER_FIELDS[f"{s}_flux_pulse"] for s in slots}}
+        macros["slot_other_channel"] = {"__class__": "slot_pointer_classes.ControlGate.ControlGate",
+                                        "control_flux_pulse": POINTER_FIELDS["target_flux_pulse"]}
+        (built / "state.json").write_text(json.dumps(state, indent=1), encoding="utf-8")
+        env = dict(os.environ, PYTHONPATH=str(tmp), PYTHONUTF8="1")
+        run = subprocess.run([str(LAB_PY), "-c", _POINTER_RUN, str(built)], capture_output=True, text=True,
+                             encoding="utf-8", timeout=900, env=env)
+        assert run.returncode == 0, run.stdout[-2000:] + run.stderr[-4000:]
+        result = json.loads(next(ln for ln in run.stdout.splitlines() if ln.startswith("RESULT "))[7:])
+        assert result["slot_ControlGate"] == {"ok": True, "labels": {"control": "cz_unipolar_flux_pulse_q1_q2"}}
+        assert result["slot_FullGate"] == {"ok": True, "labels": {
+            "control": "cz_unipolar_flux_pulse_q1_q2", "target": "const",
+            "coupler": "cz_unipolar_coupler_pulse_q1_q2"}}, result
+        other = result["slot_other_channel"]
+        assert not other["ok"] and other["error"].startswith(
+            "ValueError: " + S.SLOT_PROBLEM.split("{")[0] + "control slot accepts " + S.SLOT_KINDS["control"]), other
