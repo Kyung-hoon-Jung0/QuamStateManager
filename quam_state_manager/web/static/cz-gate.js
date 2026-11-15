@@ -1279,7 +1279,11 @@
         if (!b || !S) return;
         var stop = !!(S.sim && (SIM_LIVE[S.sim.state] || S.sim.state === 'busy'));
         b.textContent = stop ? 'Stop' : 'Simulate';
-        b.disabled = !stop && (S.busy || !simCanStart());
+        // Stop needs the run id: while the start answer is out there is nothing to stop yet
+        b.disabled = stop ? simNoId() : (S.busy || !simCanStart());
+    }
+    function simNoId() {
+        return !!(S && S.sim && S.sim.state === 'starting' && !S.sim.id);
     }
     function simShow(line, elapsed) {
         var l = $('czg-sim-line');
@@ -1343,8 +1347,24 @@
             if (typeof t === 'string' && t) host.appendChild(el('p', 'ui-text-quiet', t));
         });
     }
-    function simAnswer(g, gen, x) {
-        if (S !== g || S.simGen !== gen) return;               // closed, or the plan changed
+    /* Every request takes a sequence number; an answer older than the latest
+       action (start / stop) or the latest applied answer is ignored, so the
+       line shown is always the latest action's answer. */
+    function simSeq(g, action) {
+        g.simReq = (g.simReq || 0) + 1;
+        if (action) g.simAction = g.simReq;
+        return g.simReq;
+    }
+    function simAnswer(g, gen, x, seq, isStart) {
+        if (S !== g || S.simGen !== gen) {                     // closed, or the plan changed
+            // a run the server started for a plan that is gone is stopped by its id;
+            // the stop answer is not shown (it belongs to no plan on screen)
+            if (isStart && x && x.j && SIM_LIVE[x.j.state] && typeof x.j.id === 'string' && x.j.id)
+                simCall('/api/pulse/cz-gate/simulate/stop', { id: x.j.id });
+            return;
+        }
+        if (seq < (g.simAction || 0) || seq < (g.simApplied || 0)) return;   // a newer action owns the line
+        g.simApplied = seq;
         var sim = S.sim || {};
         if (sim.timer) clearTimeout(sim.timer);
         sim.timer = null;
@@ -1374,16 +1394,22 @@
     }
     function simPoll(g, gen) {
         if (S !== g || S.simGen !== gen || !S.sim || !S.sim.id) return;
+        S.sim.timer = null;
+        var seq = simSeq(g, false);
         return simCall('/api/pulse/cz-gate/simulate/status?id=' + encodeURIComponent(S.sim.id))
-            .then(function (x) { simAnswer(g, gen, x); });
+            .then(function (x) { simAnswer(g, gen, x, seq, false); });
     }
     function simulate() {
         if (!S) return Promise.resolve();
         var g = S;
         if (S.sim && (SIM_LIVE[S.sim.state] || S.sim.state === 'busy')) {      // the action is Stop
+            if (simNoId()) return Promise.resolve();          // no id yet: nothing to stop, nothing sent
             var gen0 = S.simGen;
+            if (S.sim.timer) { clearTimeout(S.sim.timer); S.sim.timer = null; }
+            var sseq = simSeq(g, true);
+            // without an id only after a 409 busy answer: the server stops this window's run
             return simCall('/api/pulse/cz-gate/simulate/stop', S.sim.id ? { id: S.sim.id } : {})
-                .then(function (x) { simAnswer(g, gen0, x); });
+                .then(function (x) { simAnswer(g, gen0, x, sseq, false); });
         }
         if (!simCanStart()) return Promise.resolve();
         var p = shownPair();
@@ -1391,8 +1417,9 @@
         var gen = S.simGen;
         S.sim = { state: 'starting', pair: p.pair, t0: Date.now() };
         simButton();
+        var seq = simSeq(g, true);
         return simCall('/api/pulse/cz-gate/simulate/start', Object.assign({}, S.checkBody, { pair: p.pair }))
-            .then(function (x) { simAnswer(g, gen, x); });
+            .then(function (x) { simAnswer(g, gen, x, seq, true); });
     }
 
     /* ---- create ---------------------------------------------------------- */

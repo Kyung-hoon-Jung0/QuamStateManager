@@ -42,7 +42,7 @@ const { window } = dom;
 const doc = window.document;
 
 /* what the mock answers; the test sets these */
-const M = { sent: [], sim: [], twoPairs: false };
+const M = { sent: [], sim: [], twoPairs: false, held: [] };
 window.__dialogHtml = dialogHtml;
 window.__M = M;
 window.__lanes = () => [
@@ -66,6 +66,7 @@ window.fetch = function (url, opt) {
         M.sim.push({ kind: kind, url: url, body: opt && opt.body ? JSON.parse(opt.body) : null, win: win });
         var q = M.simQueue && M.simQueue[kind] && M.simQueue[kind].shift();
         if (q === 'offline') return Promise.reject(new TypeError('Failed to fetch'));
+        if (q && q.hold) return new Promise(function (res) { M.held.push({ kind: kind, go: function () { res(respond(q.hold[0], q.hold[1])); } }); });
         if (q) return respond(q[0], q[1]);
         return respond(200, { ok: true, state: 'running', line: 'Simulating on the QM-SaaS cloud simulator: building the gate program.', id: 'r1' });
     }
@@ -106,6 +107,15 @@ function ok(cond, label) { n++; if (cond) console.log('ok - ' + label); else { f
 const tick = (ms) => new Promise((r) => setTimeout(r, ms || 0));
 async function until(cond, cap) { for (let i = 0; i < (cap || 400); i++) { if (cond()) return true; await tick(10); } return false; }
 const $ = (s) => doc.querySelector(s);
+const plans = () => M.sent.filter((s) => s.kind === 'plan');
+/* the latest plan request has been answered and applied */
+const planned = () => { const st = window.CzGate.state(); const last = plans().pop();
+    return !!(st && last && st.planSig === 's' + JSON.stringify(last.body)); };
+async function edited(fn) { const p0 = plans().length; fn(); return until(() => plans().length > p0 && planned()); }
+const checks = () => M.sent.filter((s) => s.kind === 'check').length;
+async function checked() { const c0 = checks(); await window.CzGate._check(); return until(() => checks() > c0 && !simBtn().disabled); }
+/* release the held answer of a kind (oldest first) and let its handlers run */
+async function release(kind) { const h = M.held.filter((x) => x.kind === kind)[0]; M.held.splice(M.held.indexOf(h), 1); h.go(); }
 const simBtn = () => $('[data-czg-sim]');
 const line = () => $('[data-czg-sim-line]').textContent;
 const elapsed = () => $('[data-czg-sim-elapsed]').textContent;
@@ -130,27 +140,21 @@ const DONE = { ok: true, state: 'done', id: 'r1', line: 'Simulated on the QOP si
 async function openAndCheck(two) {
     M.twoPairs = !!two;
     $('#gate').click();
-    await until(() => $('#czg-dialog') && M.sent.some((s) => s.kind === 'plan'));
-    await tick(400);
-    type($('#czg-name'), 'cz_sim');
-    await tick(400);
+    await until(() => $('#czg-dialog') && planned());
+    await edited(() => type($('#czg-name'), 'cz_sim'));
     const nChecks = M.sent.filter((s) => s.kind === 'check').length;
     $('#czg-primary').click();
-    await until(() => M.sent.filter((s) => s.kind === 'check').length > nChecks && /Create/.test($('#czg-primary').textContent));
-    await tick(20);
+    await until(() => M.sent.filter((s) => s.kind === 'check').length > nChecks && /Create/.test($('#czg-primary').textContent) && !simBtn().disabled);
 }
 
 (async () => {
     $('#gate').click();
-    await until(() => $('#czg-dialog') && M.sent.some((s) => s.kind === 'plan'));
-    await tick(400);
+    await until(() => $('#czg-dialog') && planned());
     ok(simBtn() && simBtn().classList.contains('btn-sync') && simBtn().textContent === 'Simulate' && simBtn().disabled,
        'Simulate is a kit button, off before a check');
-    type($('#czg-name'), 'cz_sim');
-    await tick(400);
+    await edited(() => type($('#czg-name'), 'cz_sim'));
     $('#czg-primary').click();
-    await until(() => /Create/.test($('#czg-primary').textContent));
-    await tick(20);
+    await until(() => /Create/.test($('#czg-primary').textContent) && !simBtn().disabled);
     ok(!simBtn().disabled, 'Simulate is on once the check has a plan to draw');
     const checkBody = M.sent.filter((s) => s.kind === 'check').pop().body;
 
@@ -190,55 +194,48 @@ async function openAndCheck(two) {
        'a lane the simulator gave no port for is named');
     ok(!ns.some((t) => /^q3\.z has no/.test(t)), 'a time-step-unknown lane is covered by the server note, not a second line');
     const statusN = simOf('status').length;
-    await tick(1300);
+    await tick(1300);   // negative check: wait past one poll period, no further poll may happen
     ok(simOf('status').length === statusN, 'polling stops at done');
 
     // a form edit drops the traces and the line
     const chartsBefore = charts.length;
-    type($('input[data-czg-name="amplitude"]'), '0.2');
-    await tick(20);
+    await edited(() => type($('input[data-czg-name="amplitude"]'), '0.2'));
     ok(charts.length > chartsBefore && !laneOf('q1.z').sim, 'a form edit draws the chart again without the traces');
     ok(line() === '' && notes().length === 0 && simBtn().disabled, 'a form edit clears the status line and the notes; Simulate waits for a check');
 
     // a new check after a simulation drops it too
-    await tick(400);
     $('#czg-primary').click();
-    await until(() => /Create/.test($('#czg-primary').textContent));
+    await until(() => /Create/.test($('#czg-primary').textContent) && !simBtn().disabled);
     M.simQueue = { start: [[200, DONE]] };
     simBtn().click();
     await until(() => line() === DONE.line);
     ok(laneOf('q1.z').sim, 'done straight from start draws the traces');
-    await window.CzGate._check();
-    await tick(20);
+    await checked();
     ok(line() === '' && !laneOf('q1.z').sim && notes().length === 0, 'a new check removes the simulated traces and the line');
 
     // running, then the form changes: polling stops and the run is stopped
     M.simQueue = { start: [[200, { ok: true, state: 'running', id: 'r2', line: RUNNING }]], status: [] };
-    await tick(400);
-    await window.CzGate._check();
-    await until(() => !simBtn().disabled, 100);
+    await checked();
     simBtn().click();
     await until(() => line() === RUNNING);
     const stops0 = simOf('stop').length;
-    type($('input[data-czg-name="amplitude"]'), '0.25');
-    await tick(20);
+    await edited(() => type($('input[data-czg-name="amplitude"]'), '0.25'));
     const polls0 = simOf('status').length;
-    await tick(1300);
+    await tick(1300);   // negative check: wait past one poll period, no further poll may happen
     ok(simOf('status').length === polls0, 'a form edit stops the polling');
     ok(simOf('stop').length === stops0 + 1 && simOf('stop').pop().body.id === 'r2', 'a form edit stops the running simulation');
     ok(line() === '', 'a form edit clears a running status line');
 
     // errors: network failure, non-JSON, 409 busy
-    await tick(400);
-    await window.CzGate._check();
-    await tick(20);
+    await checked();
     M.simQueue = { start: ['offline'] };
     simBtn().click();
     await until(() => line() !== STARTING && line() !== '');
     ok(line() === 'Not simulated: the app did not answer.' && simBtn().textContent === 'Simulate', 'network failure: the one client line');
     M.simQueue = { start: [[500, '__bad__']] };
+    const startsBad = simOf('start').length;
     simBtn().click();
-    await tick(30);
+    await until(() => simOf('start').length > startsBad && window.CzGate.state().simApplied === window.CzGate.state().simReq);
     ok(line() === 'Not simulated: the app did not answer.', 'a non-JSON answer: the same line');
     const BUSY = 'A simulation is already running in this window. Stop it first.';
     M.simQueue = { start: [[409, { ok: true, state: 'busy', line: BUSY }]],
@@ -248,13 +245,12 @@ async function openAndCheck(two) {
     ok(line() === BUSY && simBtn().textContent === 'Stop' && !simBtn().disabled, '409 busy: the server line and Stop offered');
     const stops1 = simOf('stop').length;
     simBtn().click();
-    await until(() => simOf('stop').length > stops1);
-    await tick(20);
+    await until(() => simOf('stop').length > stops1 && line() === 'Not simulated: stopped.');
     ok(line() === 'Not simulated: stopped.' && simBtn().textContent === 'Simulate', 'Stop after busy shows the server line');
 
     // a pair change drops the output
     window.CzGate.close(true);
-    await tick(20);
+    await until(() => !$('#czg-dialog') || !window.CzGate.state());
     await openAndCheck(true);
     M.simQueue = { start: [[200, DONE]] };
     simBtn().click();
@@ -263,7 +259,7 @@ async function openAndCheck(two) {
     const seg = doc.querySelectorAll('[data-czg-pair-idx]');
     const other = [...seg].filter((b) => b.getAttribute('data-czg-pair-idx') === '1')[0];
     if (other) other.click(); else { window.CzGate.state().pairIdx = 1; }
-    await tick(20);
+    await until(() => line() === '' && !laneOf('q1.z').sim);
     ok(other && line() === '' && !laneOf('q1.z').sim && notes().length === 0, 'a pair change removes the traces and the line');
     M.simQueue = { start: [[200, { ok: true, state: 'starting', id: 'r3', line: STARTING }]], status: [] };
     simBtn().click();
@@ -274,9 +270,117 @@ async function openAndCheck(two) {
     const stops2 = simOf('stop').length;
     window.CzGate.close(true);
     const polls1 = simOf('status').length;
-    await tick(1300);
+    await tick(1300);   // negative check: wait past one poll period, no further poll may happen
     ok(simOf('status').length === polls1, 'closing the dialog stops the polling');
     ok(simOf('stop').length === stops2 + 1 && simOf('stop').pop().body.id === 'r3', 'closing the dialog stops the running simulation');
+
+    // ---- no run left running unseen, Stop only with an id, answers in action order ----
+    const held = (kind) => M.held.filter((x) => x.kind === kind).length;
+    const RUN = (id) => ({ ok: true, state: 'running', id: id, line: RUNNING });
+    await openAndCheck(false);
+
+    // starting without an id: Stop is shown but disabled, a second press sends nothing
+    M.simQueue = { start: [{ hold: [200, { ok: true, state: 'starting', id: 'r9', line: STARTING }] }], status: [] };
+    let starts = simOf('start').length, stops = simOf('stop').length;
+    simBtn().click();
+    await until(() => held('start') === 1);
+    ok(simBtn().textContent === 'Stop' && simBtn().disabled, 'starting without an id: Stop is shown disabled');
+    await window.CzGate._simulate();
+    ok(simOf('stop').length === stops && simOf('start').length === starts + 1, 'a second press before the id is known sends nothing');
+    release('start');
+    await until(() => line() === STARTING);
+    ok(simBtn().textContent === 'Stop' && !simBtn().disabled, 'once the id is known Stop is offered');
+    await checked();                                      // a new check stops r9 by its id
+
+    // a reset while the start answer is out: the run it reports is stopped by its id
+    M.simQueue = { start: [{ hold: [200, RUN('r10')] }], status: [] };
+    stops = simOf('stop').length;
+    simBtn().click();
+    await until(() => held('start') === 1);
+    await edited(() => type($('input[data-czg-name="amplitude"]'), '0.3'));
+    release('start');
+    await until(() => simOf('stop').length > stops);
+    ok(simOf('stop').length === stops + 1 && simOf('stop').pop().body.id === 'r10', 'a start answer for a reset plan is stopped by its id');
+    ok(line() === '' && simBtn().disabled, 'the dropped answer does not reach the line');
+
+    // reset twice before the answer: one stop
+    await checked();
+    M.simQueue = { start: [{ hold: [200, RUN('r11')] }], status: [] };
+    stops = simOf('stop').length;
+    simBtn().click();
+    await until(() => held('start') === 1);
+    await edited(() => type($('input[data-czg-name="amplitude"]'), '0.31'));
+    await edited(() => type($('input[data-czg-name="amplitude"]'), '0.32'));
+    release('start');
+    await until(() => simOf('stop').length > stops);
+    await tick(50);   // negative check: no second stop may follow
+    ok(simOf('stop').length === stops + 1 && simOf('stop').pop().body.id === 'r11', 'two resets before the answer: one stop with the id');
+
+    // a reset, then the start answer is a 409 busy or an error: no stop
+    for (const ans of [[409, { ok: true, state: 'busy', line: 'A simulation is already running in this window. Stop it first.' }],
+                       [500, { ok: false, state: 'error', line: 'Not simulated: the runner failed.' }]]) {
+        await checked();
+        M.simQueue = { start: [{ hold: ans }], status: [] };
+        stops = simOf('stop').length;
+        simBtn().click();
+        await until(() => held('start') === 1);
+        await edited(() => type($('input[data-czg-name="amplitude"]'), '0.33'));
+        release('start');
+        await tick(50);   // negative check: nothing may be sent for an answer with no live run
+        ok(simOf('stop').length === stops && line() === '', 'a dropped ' + ans[0] + ' start answer sends no stop');
+    }
+
+    // the start answer arrives after the dialog was closed and opened on another pair
+    await checked();
+    M.simQueue = { start: [{ hold: [200, RUN('r12')] }], status: [] };
+    simBtn().click();
+    await until(() => held('start') === 1);
+    window.CzGate.close(true);
+    await until(() => !window.CzGate.state());
+    await openAndCheck(true);
+    const other2 = [...doc.querySelectorAll('[data-czg-pair-idx]')].filter((b) => b.getAttribute('data-czg-pair-idx') === '1')[0];
+    other2.click();
+    M.simQueue = { start: [[200, DONE]], status: [] };
+    simBtn().click();
+    await until(() => line() === DONE.line);
+    const chartsNow = charts.length, notesNow = notes().join('|');
+    stops = simOf('stop').length;
+    release('start');
+    await until(() => simOf('stop').length > stops);
+    ok(simOf('stop').pop().body.id === 'r12', 'a start answer from a closed dialog is stopped by its id');
+    await tick(50);   // negative check: the stop answer must not touch the new dialog
+    ok(line() === DONE.line && charts.length === chartsNow && notes().join('|') === notesNow && laneOf('q1.z').sim,
+       'the orphan stop leaves the new dialog\'s line and chart alone');
+
+    // Stop's answer before an older poll answer of the same run: the Stop line stays
+    await checked();
+    const STOPPING = 'Simulating on the QOP simulator at 10.0.0.1: stopping.';
+    M.simQueue = { start: [[200, RUN('r13')]], status: [{ hold: [200, RUN('r13')] }],
+                   stop: [{ hold: [200, { ok: true, state: 'running', phase: 'stopping', id: 'r13', line: STOPPING }] }] };
+    simBtn().click();
+    await until(() => held('status') === 1, 300);
+    simBtn().click();
+    await until(() => held('stop') === 1);
+    release('stop');
+    await until(() => line() === STOPPING);
+    release('status');
+    await tick(50);   // negative check: the older poll answer must not replace the line
+    ok(line() === STOPPING, 'a poll answer older than Stop does not overwrite the Stop line');
+    await checked();
+
+    // a poll answer done racing with Stop: the Stop answer wins, no traces
+    M.simQueue = { start: [[200, RUN('r14')]], status: [{ hold: [200, Object.assign({}, DONE, { id: 'r14' })] }],
+                   stop: [{ hold: [200, { ok: true, state: 'stopped', id: 'r14', line: 'Not simulated: stopped.' }] }] };
+    simBtn().click();
+    await until(() => held('status') === 1, 300);
+    simBtn().click();
+    await until(() => held('stop') === 1);
+    release('status');
+    await tick(50);   // negative check: the done poll answer, older than Stop, is ignored
+    ok(line() === RUNNING, 'a done poll answer older than Stop is not applied');
+    release('stop');
+    await until(() => line() === 'Not simulated: stopped.');
+    ok(line() === 'Not simulated: stopped.' && !laneOf('q1.z').sim && simBtn().textContent === 'Simulate', 'Stop\'s answer is shown, no traces drawn');
 
     console.log(failed ? `FAIL cz_gate_simulate_client_selfcheck (${n} assertions, ${failed} failed)` : `ok cz_gate_simulate_client_selfcheck (${n} assertions)`);
     process.exit(failed ? 1 : 0);

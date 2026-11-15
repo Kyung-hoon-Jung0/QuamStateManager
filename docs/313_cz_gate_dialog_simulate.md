@@ -15,4 +15,10 @@ Code: `quam_state_manager/web/static/cz-gate.js` (section "simulate"); server: `
   `note` and `cannot_draw` are shown verbatim; an unmatched port and a lane without a port each get one line.
 - Any form edit, pair change, new check or close drops the run: polling stops, a running run is stopped, traces,
   line and notes are cleared. A failed fetch or a non-JSON answer shows `Not simulated: the app did not answer.`
+- A start answer that arrives after its run was dropped (form edit, pair change, new check, close) and names a
+  `starting` / `running` run is stopped by its id; that stop's answer is not shown. A dropped busy or error answer
+  sends nothing. Stop stays disabled while `starting` has no id yet, so a second press sends nothing.
+- Every request carries a client sequence number; an answer older than the latest start / stop or the latest
+  applied answer is ignored, so the line is always the latest action's answer. Stop server side with an id that is
+  no longer current is a no-op (`core/port_test_runs.py` `stop`, the id check).
 - Pins: `tests/cz_gate_simulate_client_selfcheck.cjs` (run on the rendered dialog by `tests/test_cz_gate_routes.py`).
