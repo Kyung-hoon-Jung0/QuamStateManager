@@ -2187,7 +2187,7 @@
         S.phase = ok.length ? 'create' : 'check';
         S.checkSig = c.plan_sig;
         var verified = ok.length && ok.every(function (x) { return x.verdict.state === 'verified'; });
-        setBusy(false, !ok.length ? 'Checked: nothing can be created. Change the inputs.'
+        setBusy(false, !ok.length ? 'Checked: nothing can be created.' + nextStep(no)
             : (verified ? 'Checked with the lab code. ' : 'Not checked with the lab code. ')
             + 'Press Create to add ' + (ok.length === 1 ? 'it' : 'the ' + ok.length + ' gates') + ' to the working copy.'
             + (ok.length && (c.sync || {}).auto_push ? ' ' + AUTO_NOTE : ''));
