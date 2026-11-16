@@ -78,7 +78,37 @@ def conflict_block(path: Path | str, file_sha: str | None = None) -> dict:
     }
 
 
+#: the class page line of a slot gate class SM made: the pulse form does not edit it, the
+#: New CZ gate dialog makes it; {slots} and the step words come from the slot template's own read-back
+SLOT_CLASS_LINE = ("SM made this slot gate class (slots: {slots}). Before the gate pulses: {before}. "
+                   "After the gate pulses: {after}. Make a changed one in the New CZ gate dialog; "
+                   "here it can only be edited in the code view.")
+
+
+def _slot_describe(text: str) -> dict | None:
+    """The read-back of a slot gate class text SM made (one parser: ``slot_gate_template.parse``),
+    or None when *text* is not one."""
+    from quam_state_manager.core import slot_gate_template as S
+    if not text.startswith(S.HEADER_MARK):
+        return None
+    p = S.parse(text)
+    if not p.ok:
+        return None
+    sp = p.spec
+    slots = ", ".join(s for s in S.SLOTS if s in sp.slots)
+    before = [dict(x) for x in sp.before]
+    after = [dict(x) for x in sp.after]
+    return {"editable": False, "protect": None, "spec": None,
+            "reason": SLOT_CLASS_LINE.format(slots=slots, before=S._describe(before),
+                                             after=S._describe(after)),
+            "slot": {"class_name": sp.class_name, "slots": slots.split(", "),
+                     "spectators": bool(sp.spectators), "before": before, "after": after}}
+
+
 def _describe(text: str) -> dict:
+    slot = _slot_describe(text) if isinstance(text, str) else None
+    if slot is not None:
+        return slot
     p = T.parse(text)
     spec = None
     if p.spec is not None:

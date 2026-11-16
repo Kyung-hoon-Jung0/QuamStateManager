@@ -382,6 +382,53 @@ def macro_spectator_problem(merged: dict, pair_id: str, macro: Any) -> str | Non
         real_qubit(merged, cgb.pair_qubit(merged, pair_id, "qubit_target")), units)
 
 
+def xy_operations(merged: dict, pair_id: str, role: str) -> list[str] | None:
+    """The operation names of the xy channel of the pair's *role* qubit
+    (``control`` / ``target``), sorted; None when that qubit has no xy channel
+    with an operations dict. The qubit is named through :func:`real_qubit`;
+    an xy entry that is an absolute reference is followed one hop."""
+    try:
+        key = {"control": "qubit_control", "target": "qubit_target"}[role]
+        qubit = real_qubit(merged, cgb.pair_qubit(merged, pair_id, key))
+        if not qubit:
+            return None
+        _, entry = _qubit_entry(merged, qubit)
+        xy = entry.get("xy") if isinstance(entry, dict) else None
+        if isinstance(xy, str):
+            hop = cgb._follow(merged, xy)
+            xy = hop[1] if hop else None
+        ops = xy.get("operations") if isinstance(xy, dict) else None
+        return sorted(str(k) for k in ops) if isinstance(ops, dict) else None
+    except Exception:  # noqa: BLE001 -- chip data never raises here
+        return None
+
+
+def xy_steps_problem(merged: dict, pair_id: str, spec: Any) -> str | None:
+    """None, or the template's one sentence for the first xy step of *spec*
+    that plays an operation the pair's qubit of that role does not have."""
+    for where in ("before", "after"):
+        for number, step in enumerate(getattr(spec, where, ()) or (), 1):
+            if not isinstance(step, dict) or step.get("kind") != "xy":
+                continue
+            role, operation = step.get("qubit"), step.get("operation")
+            if operation not in (xy_operations(merged, pair_id, role) or ()):
+                return sgt.XY_MISSING_PROBLEM.format(number=number, where=where, role=role,
+                                                     operation=operation)
+    return None
+
+
+def steps_sentence(spec: Any) -> str | None:
+    """One plain sentence naming the class's sequence steps, or None without steps."""
+    before, after = getattr(spec, "before", ()) or (), getattr(spec, "after", ()) or ()
+    if not before and not after:
+        return None
+    try:
+        words = [sgt._describe(sgt._plain_steps(s, w)) for w, s in (("before", before), ("after", after))]
+    except ValueError as exc:
+        return str(exc)
+    return f"This class plays steps before the gate pulses: {words[0]}; after them: {words[1]}."
+
+
 def slot_drafts(instance, scope, versions=False) -> list[tuple]:
     """``[(class name, spec)]`` for every draft in *scope* that parses as a
     slot gate class whose class name is the draft's name, at any version the

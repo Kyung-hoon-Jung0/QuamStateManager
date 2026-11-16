@@ -1036,9 +1036,10 @@
 }
 .ui-input-unit:hover { border-color: var(--ui-ctl-border-hover); }
 .ui-input-unit:focus-within { border-color: var(--ui-accent); box-shadow: var(--ui-ctl-ring); }
-.ui-input-unit > .ui-input.ui-input, .ui-input-unit > .ui-input.ui-input:hover, .ui-input-unit > .ui-input.ui-input:focus {
+.ui-input-unit > .ui-input.ui-input, .ui-input-unit > .ui-input.ui-input:hover {
     height: auto; min-height: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; outline: 0;
 }
+.ui-input-unit > .ui-input.ui-input:focus { outline: var(--ui-focus-w) solid var(--ui-accent); outline-offset: var(--ui-focus-inset); box-shadow: none; }
 .ui-input-unit-text { padding-left: var(--ui-gap-1); color: var(--ui-text-2); font-size: var(--ui-fs-xs); line-height: var(--ui-lh-tight); white-space: nowrap; user-select: none; }
 .ui-input-unit--invalid.ui-input-unit--invalid { border-color: var(--ui-danger-text); }
 .ui-input-unit--invalid:focus-within { box-shadow: var(--ui-ctl-ring-danger); }

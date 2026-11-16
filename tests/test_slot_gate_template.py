@@ -493,6 +493,11 @@ def test_lab_duplicate_spectator_guard(tmp_path):
 
 # Sequence steps placed before and after the gate pulses.
 
+@pytest.mark.parametrize("value", ["", None])
+def test_empty_wait_length_needs_a_length_in_words(value):
+    assert T.sequence_steps_problem([{"kind": "wait", "length": value}], "before") == (
+        "Sequence step 1 before the gate needs a wait length in ns.")
+
 #: sha256 of the rendered source without sequence steps, including the duration and spectator length guards.
 NO_STEP_SHA256 = {
     ('control', False): '9ffd4fcbe53a35d6a5b1a9c1776991f114c958e85344e4782712f67643dc3a08',
@@ -704,7 +709,7 @@ def test_valid_steps(steps):
     ([{"length": 16}], 1, "mapping"),
     ([None], 1, "mapping"),
     ([ALIGN, ALIGN, {"kind": "wait", "length": "16"}], 3, "waits"),
-    ([{"kind": "wait"}], 1, "waits"),
+    ([{"kind": "wait"}], 1, "needs a wait length"),
     ([{"kind": "wait", "length": 12}], 1, "waits"),
     ([{"kind": "wait", "length": 0}], 1, "waits"),
     ([{"kind": "wait", "length": 18}], 1, "waits"),

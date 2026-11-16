@@ -197,6 +197,8 @@ def sequence_steps_problem(steps, where="before") -> str | None:
             if unused:
                 return STEP_KEY_PROBLEM.format(number=number, where=where, value=unused[0], kind=kind)
             if kind == "wait" and _wait_length_bad(step.get("length")):
+                if step.get("length") in (None, ""):
+                    return f"Sequence step {number} {where} the gate needs a wait length in ns."
                 return WAIT_PROBLEM.format(number=number, where=where, value=_shown(step.get("length")))
             if kind == "xy":
                 role, operation = step.get("qubit"), step.get("operation")

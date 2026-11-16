@@ -534,6 +534,19 @@
         plot.setAttribute("data-gate-timeline-plot", "");
         plot.setAttribute("role", "img");
         root.appendChild(plot);
+        if ((data.marks || []).length) {
+            var markList = el("details", "ui-disclosure");
+            markList.appendChild(el("summary", null, "Sequence steps"));
+            data.marks.forEach(function (m) {
+                var text = (m.element ? m.element + ": " : "") + m.label + ", " +
+                    (m.kind === "wait" ? fmt(m.start_ns) + " to " + fmt(m.end_ns) : fmt(m.t_ns)) + " ns";
+                var item = el("p", "ui-note", text);
+                item.title = text + (m.statement ? ": " + m.statement : "");
+                item.setAttribute("data-step-description", "");
+                markList.appendChild(item);
+            });
+            root.appendChild(markList);
+        }
 
         /* Every pair of visible gate lines is listed here (both views), one row per
            pair in the order timing() returns; more than six rows: the first six and a
@@ -637,6 +650,11 @@
                     lo = Math.min(lo, l.sim.t_ns[0]); hi = Math.max(hi, l.sim.t_ns[l.sim.t_ns.length - 1]);
                 }
             });
+            (data.marks || []).forEach(function (m) {
+                [m.start_ns, m.end_ns, m.t_ns].forEach(function (t) {
+                    if (num(t)) { lo = Math.min(lo, t); hi = Math.max(hi, t); }
+                });
+            });
             // program time starts at 0: a late first pulse (a port delay) must show as a gap
             if (lo === Infinity) return [0, 1];
             lo = Math.min(0, lo);
@@ -661,6 +679,64 @@
                 if (e[1] > 0) vals.push(e[1]);
             }
             return { tickvals: vals, ticktext: vals.map(fmtV) };
+        }
+
+        // wait and align steps play nothing, so they are drawn as labelled marks
+        // on both views: a wait is a shaded span, an align a dashed line.
+        function stepMarks(shapes, c, drawn, overlay) {
+            var notes = [];
+            (data.marks || []).forEach(function (m) {
+                var index = drawn.map(function (l) { return l.key; }).indexOf(m.element);
+                if (m.element && index < 0) return;
+                var yr = !overlay && index >= 0 ? "y" + (index ? index + 1 : "") + " domain" : "paper";
+                var meta = { role: "step-mark", kind: m.kind, lane: m.element };
+                if (m.kind === "wait" && num(m.start_ns) && num(m.end_ns)) {
+                    shapes.push({ type: "rect", name: "step-mark", xref: "x", x0: m.start_ns, x1: m.end_ns,
+                                  yref: yr, y0: 0, y1: 1, fillcolor: c.grid, opacity: 0.3,
+                                  line: { width: 0 }, layer: "below", meta: meta });
+                    notes.push({ xref: "x", yref: yr, x: (m.start_ns + m.end_ns) / 2, y: 0, yanchor: "bottom",
+                                 showarrow: false, text: esc(m.label), font: { size: TEXT_PX, color: c.muted },
+                                 hovertext: esc(m.statement || m.label), meta: meta });
+                } else if (m.kind === "align" && num(m.t_ns)) {
+                    shapes.push({ type: "line", name: "step-mark", xref: "x", x0: m.t_ns, x1: m.t_ns,
+                                  yref: yr, y0: 0, y1: 1, line: { color: c.muted, width: 1, dash: "dashdot" },
+                                  layer: "below", meta: meta });
+                    notes.push({ xref: "x", yref: yr, x: m.t_ns, y: 0, yanchor: "bottom", showarrow: false,
+                                 text: esc(m.label), font: { size: TEXT_PX, color: c.muted },
+                                 hovertext: esc(m.statement || m.label), meta: meta });
+                }
+            });
+            return notes;
+        }
+        function fitMarks(notes, xr, w) {
+            var used = {}, seen = {};
+            // A wait label carries a number the picture needs, so waits take their place
+            // first; an align is already a dashed line, and one label serves marks that
+            // share a place. Every mark stays in the Sequence steps list.
+            var ordered = notes.map(function (a) { return Object.assign({}, a); });
+            ordered.sort(function (a, b) {
+                return ((a.meta || {}).kind === "wait" ? 0 : 1) - ((b.meta || {}).kind === "wait" ? 0 : 1);
+            });
+            return ordered.filter(function (a) {
+                if (a.x < xr[0] || a.x > xr[1]) return false;
+                var place = a.yref + "|" + a.x + "|" + a.text;
+                if (seen[place]) return false;
+                seen[place] = true;
+                var width = a.text.length * CHAR_PX + 8;
+                if (width > w) return false;
+                var px = (a.x - xr[0]) * w / (xr[1] - xr[0]);
+                a.xanchor = px < width / 2 ? "left" : px > w - width / 2 ? "right" : "center";
+                var left = a.xanchor === "left" ? px : a.xanchor === "right" ? px - width : px - width / 2;
+                var rows = used[a.yref] || (used[a.yref] = [[], []]);
+                for (var r = 0; r < rows.length; r++) {
+                    if (rows[r].every(function (b) { return left >= b[1] || left + width <= b[0]; })) {
+                        rows[r].push([left, left + width]);
+                        a.yshift = 2 + r * 16;
+                        return true;
+                    }
+                }
+                return false;
+            });
         }
 
         function figure() {
@@ -913,9 +989,11 @@
             layout.annotations = fixed.filter(function (a) {
                 return startsAtFits(a, pulseLabels, span, widthPx);
             }).concat(pulseLabels);
+            var markNotes = stepMarks(shapes, c, drawn, false);
+            layout.annotations = layout.annotations.concat(fitMarks(markNotes, span, widthPx));
             if (window.PlotTheme && window.PlotTheme.houseLayout) layout = window.PlotTheme.houseLayout(layout);
-            return { data: traces, layout: layout, drawn: drawn, fixedAnnotations: fixed, labels: labels,
-                     span: span, widthPx: widthPx };
+            return { data: traces, layout: layout, drawn: drawn, fixedAnnotations: fixed, labels: labels, markNotes: markNotes,
+                     span: span, widthPx: widthPx, hostPx: hostPx };
         }
 
         /* A lane exceeds a limit when a received sample lies beyond it. */
@@ -1197,10 +1275,11 @@
                              text: esc(nameOf(p.a)) + " to " + esc(nameOf(p.b)) + ": " + what, font: { size: TEXT_PX, color: col },
                              meta: { role: "bracket-label", kind: p.kind, a: p.a, b: p.b } });
             });
+            var markNotes = stepMarks(shapes, c, lines, true);
             if (window.PlotTheme && window.PlotTheme.houseLayout) layout = window.PlotTheme.houseLayout(layout);
             function labels(xr, w) { return guideLabels(edges, xr, w, c); }
-            layout.annotations = fixed.concat(labels(span, widthPx));
-            return { data: traces, layout: layout, drawn: lines, fixedAnnotations: fixed, labels: labels,
+            layout.annotations = fixed.concat(labels(span, widthPx)).concat(fitMarks(markNotes, span, widthPx));
+            return { data: traces, layout: layout, drawn: lines, fixedAnnotations: fixed, labels: labels, markNotes: markNotes,
                      span: span, widthPx: widthPx, view: "overlay", timing: pairs };
         }
 
@@ -1315,13 +1394,17 @@
             if (destroyed || !lastFigure || !ev) return;
             var keys = Object.keys(ev);
             if (!keys.some(function (k) { return /^xaxis|^width$|^autosize$/.test(k); })) return;
+            if (state.view === "lanes" && host.clientWidth && host.clientWidth !== lastFigure.hostPx) {
+                draw();
+                return;
+            }
             var fl = plot._fullLayout;
             var xr = fl && fl.xaxis && fl.xaxis.range ? fl.xaxis.range.slice() : lastFigure.span;
             var w = fl && fl.xaxis && fl.xaxis._length ? fl.xaxis._length : lastFigure.widthPx;
             var texts = lastFigure.labels(xr, w);
             var anns = lastFigure.fixedAnnotations.filter(function (a) {
                 return startsAtFits(a, texts, xr, w);
-            }).concat(texts);
+            }).concat(texts).concat(fitMarks(lastFigure.markNotes || [], xr, w));
             lastFigure.layout.annotations = anns;
             if (window.Plotly && window.Plotly.relayout) window.Plotly.relayout(plot, { annotations: anns });
         }
