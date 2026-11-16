@@ -376,7 +376,9 @@ class TestRunsNeverKillBeforeHalt:
         deadline = time.time() + 5
         while time.time() < deadline and len(tries) < 3:
             time.sleep(0.05)
-        time.sleep(0.2)
+        deadline = time.time() + 5        # wait on the outcome, not on a fixed sleep
+        while time.time() < deadline and not (r.status()["state"] == "done" and getattr(procs[0], "closed", False)):
+            time.sleep(0.05)
         assert len(tries) >= 3 and r.status()["state"] == "done"
         assert getattr(procs[0], "closed", False), "stdin is closed once the runner ended"
 
