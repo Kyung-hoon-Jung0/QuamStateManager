@@ -63,6 +63,12 @@ _ROW_FIELDS = tuple(f.name for f in _dc_fields(ChangeEntry))
 #: Only rows WITHOUT a plot origin become readable that way: a row that has one
 #: still carries ``origin`` and an older SM still refuses the file (safe).
 _OMIT_IF_NONE = frozenset(f.name for f in _dc_fields(ChangeEntry) if f.default is None)
+#: Row fields never written to the file: the editing window's id names one
+#: browser document of this SM process, and a recovery is read by a later one
+#: (every window there has a new id, docs/160), so the stamp carries nothing
+#: across; an older SM would also refuse the row for that unknown keyword.
+#: A recovered row is stamped by the window that restores it.
+_NEVER_STORED = frozenset({"window_id"})
 #: The re-apply stash tags an SM before v1.5.1 turns back into tags: 2 or 3
 #: elements. A plot-click edit's tag has a 4th (its origin); that SM keeps it
 #: as a plain LIST and its replay writes the list into the chip as the value.
@@ -87,10 +93,12 @@ def _older_sm_decodes(flags: dict) -> bool:
 
 
 def _row_doc(entry, *, full: bool = False) -> dict:
-    """One change-log row as the file stores it (see ``_OMIT_IF_NONE``).
-    *full* keeps every field, null ones included."""
+    """One change-log row as the file stores it (see ``_OMIT_IF_NONE`` and
+    ``_NEVER_STORED``). *full* keeps every stored field, null ones included."""
     out = {}
     for name in _ROW_FIELDS:
+        if name in _NEVER_STORED:
+            continue
         value = getattr(entry, name)
         if value is None and name in _OMIT_IF_NONE and not full:
             continue

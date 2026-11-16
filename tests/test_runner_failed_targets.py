@@ -385,7 +385,7 @@ class TestRevertTheFailedTargets:
         body = r.get_json()
         assert r.status_code == 409 and body["error"] == "scheduler_running"
         assert "Experiment Runner is running" in body["message"]
-        assert "until it finishes or is cancelled" in body["message"]
+        assert "try again after it finishes or is cancelled" in body["message"]
         assert chip.live_state() == before
 
     def test_nothing_written_for_a_failed_target_is_a_409(self, chip):

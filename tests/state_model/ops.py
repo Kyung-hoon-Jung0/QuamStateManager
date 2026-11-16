@@ -163,6 +163,10 @@ class Rig:
         self.app.config["HUB_SYNC_ON_OPEN"] = False
         self.ca = self.app.test_client()
         self.cb = self.app.test_client()
+        # Each window is a browser document: every request carries its window
+        # id, as the page sends it (docs/160 stamps journal steps with it).
+        self.ca.environ_base["HTTP_X_SM_WINDOW_ID"] = "window-a"
+        self.cb.environ_base["HTTP_X_SM_WINDOW_ID"] = "window-b"
         r = self.ca.post("/load", data={"folder": str(self.live)}, follow_redirects=True)
         assert r.status_code in (200, 302), r.get_data(as_text=True)[:300]
         self.boot_html = r.get_data(as_text=True)
@@ -647,7 +651,9 @@ class Rig:
         st.live_writer = True
         c = self.client(window)
         sig = ("0" * 12) if stale_sig else self.seen[window][1]
-        data = {"n": str(n), "expect_chip": self.token, "expect_sig": sig}
+        # The model has no other-window question: each window has already said
+        # its standing Yes (docs/160), which the page then sends on every press.
+        data = {"n": str(n), "expect_chip": self.token, "expect_sig": sig, "ack_other_windows": "1"}
         r = c.post("/undo", data=data)
         st.status = r.status_code
         cr = _trigger(r).get("cellsReverted") or {}
@@ -682,7 +688,8 @@ class Rig:
     def op_redo(self, n: int = 1, window: str = "a"):
         st = Step("", {})
         st.live_writer = True
-        r = self.client(window).post("/redo", data={"n": str(n), "expect_chip": self.token})
+        r = self.client(window).post("/redo", data={"n": str(n), "expect_chip": self.token,
+                                                    "ack_other_windows": "1"})
         st.status = r.status_code
         cr = _trigger(r).get("cellsReverted") or {}
         st.exp = self.model.redo_press(n)
