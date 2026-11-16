@@ -2566,7 +2566,7 @@ def _run_adapter():
 
 
 def _run_approval_state(m: dict) -> dict | None:
-    """gl-ck9: the run's held-writes approval as it stands NOW, read from the
+    """the run's held-writes approval as it stands NOW, read from the
     live approval record (approved / rejected / expired / pending), or None.
     The run's own result keeps the approval as it was when the run ended, so a
     view built from that alone said "waiting" after the person had decided."""
@@ -2579,7 +2579,7 @@ def _run_approval_state(m: dict) -> dict | None:
 def _approval_state(chip: str | None, aid: str | None) -> dict | None:
     """One held-writes approval as its live record holds it now
     (``{id, status, decided_by, decided_at, n_writes}``), or None. The one
-    reader for a run view and a plan step (gl-ck9, gl-bbi)."""
+    reader for a run view and a plan step."""
     if not aid or not chip:
         return None
     try:
@@ -2598,7 +2598,7 @@ def _run_view(m: dict) -> dict:
     ap_state = _run_approval_state(m)
     ap_status = (ap_state or {}).get("status")
     if ap_state and isinstance(res.get("approval"), dict):
-        # gl-e02: the nested copy follows the live record too, so an agent reading
+        # the nested copy follows the live record too, so an agent reading
         # the raw result never sees "pending" beside a settled approval_state
         res = dict(res)
         res["approval"] = {**res["approval"], "status": ap_status,
@@ -2615,7 +2615,7 @@ def _run_view(m: dict) -> dict:
         # unreachable is not contention; contention is not a node error)
         out["how"] = res["failure"]["how"]
     elif res.get("approval") and ap_status in ("approved", "rejected", "expired"):
-        # gl-ck9 / gl-dke: the decision as the approval record holds it, so neither the card nor
+        # the decision as the approval record holds it, so neither the card nor
         # the agent reading this run reports a settled approval as pending
         who = (ap_state or {}).get("decided_by")
         n = (ap_state or {}).get("n_writes") or 0
@@ -3669,7 +3669,7 @@ def _plan_view(rec: dict, *, with_may_change: bool = False) -> dict:
 
 
 def _step_approvals(view: dict) -> None:
-    """gl-bbi: every step whose writes were held carries ``approval_state``, the
+    """every step whose writes were held carries ``approval_state``, the
     approval as its live record holds it now (the same reader as a run view).
     A settled approval leaves ``approval`` empty (nothing waits) and keeps its id
     as ``approval_id``; without this a rejected step read like a pending one."""
