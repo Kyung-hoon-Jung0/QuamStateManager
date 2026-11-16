@@ -31775,7 +31775,9 @@ def _undo_live_flush(ctx, store, modifier, unit: dict, staged: list, *,
     if body.get("status") == "conflict":
         note = _walk_conflict_note(ctx, "undo")
     else:
-        note = f"{body.get('message') or 'apply failed'}; nothing was written"
+        msg = str(body.get("message") or "apply failed").rstrip(" .;")
+        # the refusal may already say what stayed; end it once, with one stop
+        note = msg + ("." if "written" in msg.lower() else ". Nothing was written.")
     if not clean:
         note += " — the rollback could not complete: check the review tray"
     return {"live": False, "note": note, "rolled_back": True}
