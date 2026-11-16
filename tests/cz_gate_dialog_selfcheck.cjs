@@ -2027,6 +2027,10 @@ function tableWidths(el, sw, cw) {
            && btn('data-czg-step-length', 'before', 1).getAttribute('aria-invalid') === 'true'
            && $('#czg-new-body [data-czg-new-create]').disabled,
            'steps: a bad wait is marked while typed, by the server rule, and Create class waits for a fix');
+        setVal(btn('data-czg-step-length', 'before', 1), 'abc');
+        const quoted = rows('before')[1].querySelector('[data-czg-step-problem]');
+        ok(quoted && quoted.textContent === "Sequence step 2 before the gate waits 'abc' ns, a multiple of 4 ns.",
+           'steps: a typed wait that is not a number is quoted as the server quotes it');
         setVal(btn('data-czg-step-length', 'before', 1), '48');
         ok(!doc.querySelector('#czg-new-body [data-czg-step-problem]')
            && !$('#czg-new-body [data-czg-new-create]').disabled,
@@ -2149,6 +2153,71 @@ function tableWidths(el, sw, cw) {
         ok(cls().value === 'P.SquarePulse',
            'back to class defaults: the hand-picked class stays, the copied choice is gone');
         window.CzGate.close();
+        dataOverride = null;
+    }
+    // ---- start from a gate: no pulse picked by hand, and a source change shows no old plan
+    {
+        const FT = { 'class': 'P.FlatTopPulse', label: 'Flat-top', length: 'explicit',
+                     fields: [{ name: 'length', label: 'Length', kind: 'int', unit: 'ns', 'default': 60 },
+                              { name: 'flat_length', label: 'Flat length', kind: 'int', unit: 'ns', 'default': 100 }] };
+        const SQ = DATA.classes[0].slots[0].pulse_classes[0];
+        dataOverride = JSON.parse(JSON.stringify(DATA));
+        dataOverride.pairs[0].gates = ['cz_a', 'cz_b'];
+        dataOverride.classes[0].slots[0].pulse_classes = [SQ, FT];
+        dataOverride.classes[0].slots.push({ field: 'coupler_flux_pulse', line: 'coupler', line_words: 'the coupler',
+                                             required: false, pulse_classes: [SQ] });
+        const st = () => window.CzGate.state();
+        const until = async (fn) => {
+            const end = Date.now() + 3000;
+            while (!fn()) { if (Date.now() > end) throw new Error('Condition wait expired: ' + fn); await tick(5); }
+        };
+        const SRC_A = { flux_pulse_qubit: { __class__: 'P.FlatTopPulse', length: 120, flat_length: 20 },
+                        coupler_flux_pulse: { __class__: 'P.SquarePulse', length: 40, amplitude: 0.02 } };
+        const answer = (b, refuse) => ({ ok: true, plan_sig: 'two-' + JSON.stringify(b),
+                                         pairs: b.pairs.map((p) => refuse
+            ?{ pair: p, ok: false, refusals: [refuse], class_refusals: [], name_refusals: [] }
+            : { pair: p, ok: true, refusals: [], creates: 2, paths: ['a', 'b'], layout: 'known',
+                operations: { flux_pulse_qubit: { key: 'op_' + p, channel: 'q1.z' } },
+                fields: { flux_pulse_qubit: { length: 'copied', flat_length: 'copied' } },
+                pulses: JSON.parse(JSON.stringify(SRC_A)) }) });
+        const sel = (f) => $('#czg-slots select[data-czg-slot="' + f + '"]');
+        const fld = (name) => $('#czg-slots input[data-czg-field="flux_pulse_qubit"][data-czg-name="' + name + '"]');
+        const plans = () => sent.filter((x) => x.kind === 'plan');
+        const pick = (node, v) => {
+            node.value = v;
+            node.dispatchEvent(new window.Event('change', { bubbles: true }));
+        };
+        queue.plan.length = 0;
+        await window.CzGate.open({ pair: 'q1-2' });
+        await until(() => st() && !st().busy && sel('flux_pulse_qubit'));
+        type($('#czg-name'), 'cz_two');
+        let from = plans().length;
+        for (let k = 0; k < 4; k++) queue.plan.push((b) => answer(b));
+        pick($('#czg-from'), 'cz_a');
+        await until(() => plans().length > from && !st().busy && fld('flat_length'));
+        ok(!plans()[plans().length - 1].body.pulses.coupler_flux_pulse && sel('coupler_flux_pulse').value === '@copied',
+           'start from a gate: an optional line not picked by hand sends nothing, so its pulse is copied');
+        from = plans().length;
+        pick(sel('coupler_flux_pulse'), '');
+        await until(() => plans().length > from && !st().busy);
+        ok(JSON.stringify(plans()[plans().length - 1].body.pulses.coupler_flux_pulse) === '{"none":true}'
+           && sel('coupler_flux_pulse').value === '',
+           'no pulse picked by hand while copying is sent as no pulse, so the source pulse is not copied');
+        // a new source: the old plan's class and values are never shown as copied from it
+        queue.plan.length = 0;
+        const REFUSED = 'The gate cz_b holds no pulse in flux_pulse_qubit to copy.';
+        for (let k = 0; k < 4; k++) queue.plan.push((b) => answer(b, REFUSED));
+        from = plans().length;
+        pick($('#czg-from'), 'cz_b');
+        const shownNow = sel('flux_pulse_qubit').selectedOptions[0].textContent;
+        const valueNow = fld('flat_length') ? fld('flat_length').value : null;
+        await until(() => plans().length > from && !st().busy);
+        const shownLater = sel('flux_pulse_qubit').selectedOptions[0].textContent;
+        ok(shownNow === 'As the gate cz_b' && valueNow === null && shownLater === 'As the gate cz_b'
+           && !fld('flat_length'),
+           'a new source: the slot never shows the old source\'s class or values as copied from the new one');
+        window.CzGate.close();
+        queue.plan.length = 0;
         dataOverride = null;
     }
 

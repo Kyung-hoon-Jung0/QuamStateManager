@@ -73,7 +73,11 @@
                     if (Object.keys(given).length) pulses[s.field] = { 'class': null, fields: given };
                     return;
                 }
-                if (!cls) return;
+                // no pulse picked by hand while copying: say so, or the server copies the source pulse
+                if (!cls) {
+                    if (cls === '' && copiedFrom() && (S.clsHand || {})[s.field]) pulses[s.field] = { none: true };
+                    return;
+                }
                 pulses[s.field] = { 'class': cls, fields: given };
             });
         } else {
@@ -803,18 +807,22 @@
        pulse class and values (the server copies them when no class is sent). */
     var AS_COPIED = '@copied';
     function copiedFrom() { return $('czg-from') ? $('czg-from').value : ''; }
-    function memoKey(from, field) { return from + '\u0000' + field; }
-    /* What the last plan that could be made used for each slot copied from *from*: the source
-       pulse's class and, per field, its value and whether it was copied or the class default. */
-    function rememberCopied(c, fp) {
-        var from = copiedFrom();
-        if (!from || !fp || !fp.ok) return;
+    function memoKey(pair, from, field) { return pair + '\u0000' + from + '\u0000' + field; }
+    /* Recorded when a plan answer arrives, for the pair and source that plan was made for
+       (*b* is the request it answers): what it used for each slot copied from that source,
+       the source pulse's class and, per field, its value and whether it was copied or the
+       class default. */
+    function rememberCopied(c, fp, b) {
+        var from = b.copy_from || '';
+        if (!from || !slotted(c) || !fp || !fp.ok) return;
         S.copyMemo = S.copyMemo || {};
         (c.slots || []).forEach(function (s) {
+            var sent = (b.pulses || {})[s.field];
+            if (sent && sent.none) return;
             var planned = fp.pulses ? fp.pulses[s.field] : null;
-            var key = memoKey(from, s.field);
+            var key = memoKey(b.pairs[0], from, s.field);
             var m = S.copyMemo[key] || { cls: undefined, vals: {} };
-            if (S.cls[s.field] === AS_COPIED) m.cls = planned ? planned.__class__ || null : null;
+            if (!sent || !sent['class']) m.cls = planned ? planned.__class__ || null : null;
             Object.keys(planned || {}).forEach(function (k) {
                 var src = sourceOf(fp, s.field, k);
                 if (k === '__class__' || k === 'id' || src === 'entered') return;
@@ -833,7 +841,7 @@
         var given = S.entered[field] || {};
         if (given.hasOwnProperty(f.name)) return [given[f.name], 'entered'];
         if (!from) return [f['default'], 'default'];
-        var m = (S.copyMemo || {})[memoKey(from, field)];
+        var m = (S.copyMemo || {})[memoKey(selectedPairs()[0] || '', from, field)];
         var x = m && m.vals[f.name];
         if (!x) return ['', null];
         return x.copied ? [x.v, 'copied'] : [f['default'], 'default'];
@@ -870,7 +878,9 @@
         if (sum) { var nl = S.slotChannels.length; sum.textContent = nl === 1 ? '1 line' : nl + ' lines'; }
         if (slotted(c)) {
             var from = copiedFrom();
-            rememberCopied(c, fp);
+            // a plan made for another pair or source is not this form's plan (its answer is on the way)
+            var pf = S.planFor || {};
+            if (fp && (pf.pair !== (selectedPairs()[0] || '') || pf.from !== from)) fp = null;
             (c.slots || []).forEach(function (s) {
                 if (!slotOffered(s)) return;
                 if (S.cls[s.field] === AS_COPIED && !from) S.cls[s.field] = undefined;
@@ -893,7 +903,7 @@
                     S.cls[s.field] = from ? AS_COPIED : s.required ? first : '';
                 }
                 var planned = fp && fp.ok && fp.pulses ? fp.pulses[s.field] : null;
-                var memo = (S.copyMemo || {})[memoKey(from, s.field)];
+                var memo = (S.copyMemo || {})[memoKey(selectedPairs()[0] || '', from, s.field)];
                 // the class the plan builds for this slot: picked by hand, else the source pulse's
                 var copiedCls = !from ? undefined : fp && fp.ok ? (planned ? planned.__class__ || null : null)
                     : memo ? memo.cls : undefined;
@@ -1244,7 +1254,20 @@
         var ok = typeof value === 'number' && value % 1 === 0 && value % r.step === 0
             && value >= r.min && value <= r.max;
         return ok ? null : r.problem.replace('{number}', k + 1).replace('{where}', where)
-            .replace('{value}', String(value).trim());
+            .replace('{value}', shownValue(value));
+    }
+    /* A value in a message as the server's sentence shows it: text quoted, ASCII only. */
+    function shownValue(value) {
+        if (typeof value !== 'string') return String(value);
+        var q = value.indexOf("'") >= 0 && value.indexOf('"') < 0 ? '"' : "'";
+        return q + value.replace(/[\\]/g, '\\\\').replace(q === "'" ? /'/g : /"/g, '\\' + q)
+            .replace(/[^\x20-\x7e]/g, function (ch) {
+                var c = ch.charCodeAt(0), h = c.toString(16);
+                if (ch === '\n') return '\\n';
+                if (ch === '\t') return '\\t';
+                if (ch === '\r') return '\\r';
+                return c < 256 ? '\\x' + ('0' + h).slice(-2) : '\\u' + ('000' + h).slice(-4);
+            }) + q;
     }
     function badWaits() {
         var ns = S.newSlot;
@@ -1643,6 +1666,8 @@
             }
             S.plan = x.j;
             S.planSig = x.j.plan_sig;
+            S.planFor = { pair: b.pairs[0], from: b.copy_from || '' };
+            rememberCopied(klass(), firstPlan(), b);
             renderPlan();
         }).catch(function (e) {
             if (S !== g) return;

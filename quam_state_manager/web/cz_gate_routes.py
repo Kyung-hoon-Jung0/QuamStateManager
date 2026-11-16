@@ -375,6 +375,9 @@ def _plan_all(merged: dict, body: dict, slot: SlotClass | None = None) -> list[t
         if i > 0 and first is not None and "error" not in first:
             pulses = {}
             for f, spec in body["pulses"].items():
+                if isinstance(spec, dict) and spec.get("none") is True:
+                    pulses[f] = {"none": True}      # no pulse on that line, on every pair
+                    continue
                 pp = gate_intent.planned_pulse(first, f)
                 cls = (spec or {}).get("class") if isinstance(spec, dict) else None
                 pulses[f] = {"class": cls or (pp or {}).get("__class__"),

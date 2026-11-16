@@ -1646,6 +1646,27 @@ def test_copy_from_a_given_value_wins_over_the_copied_one():
     assert res["fields"]["flux_pulse_qubit"]["amplitude"] == cgb.GIVEN
 
 
+def test_copy_from_with_no_pulse_asked_for_an_optional_slot_copies_nothing_there():
+    s = _copy_chip("absolute")
+    res = _plan(s, copy_from="cz_src", pulses={"coupler_flux_pulse": {"none": True}})
+    assert "error" not in res, res
+    assert "coupler_flux_pulse" not in res["operations"]
+    assert "coupler_flux_pulse" not in res["fields"]
+    paths = [p for p, _ in res["creates"]]
+    assert not any("coupler" in p for p in paths), paths
+    assert dict(res["creates"])["qubit_pairs.q1-2.macros.cz_new"].get("coupler_flux_pulse") is None
+    assert any("No pulse is built for coupler_flux_pulse" in n and "cz_src" in n
+               for n in res.get("notes") or []), res.get("notes")
+    # the request with nothing for that slot still copies the source pulse
+    assert "coupler_flux_pulse" in _plan(s, copy_from="cz_src", pulses=None)["operations"]
+
+
+def test_no_pulse_asked_for_a_required_slot_is_refused():
+    s = _copy_chip("absolute")
+    res = _plan(s, copy_from="cz_src", pulses={"flux_pulse_qubit": {"none": True}})
+    assert "This gate needs a pulse for flux_pulse_qubit" in res["error"]
+
+
 def test_copy_from_leaves_an_optional_slot_the_source_does_not_fill_empty():
     s = _chip()
     _op_owned_ref(s, "q1-2", "cz_src", coupler=False)
