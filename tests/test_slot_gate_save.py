@@ -296,8 +296,9 @@ def test_an_unpublished_sm_slot_file_is_not_taken_for_a_lab_class(setup):
     (folder / (NAME + ".py")).write_text("class SlotCz: pass\n", encoding="utf-8")
     assert Q.class_refusal(instance, "scope", classes=[qclass], lab_folder=folder) is None
     (folder / (NAME + ".py")).write_text(_slot(), encoding="utf-8")
-    assert Q.class_refusal(instance, "scope", classes=[qclass], lab_folder=folder) == (
-        f"Save {NAME} to quam_config before creating a gate that uses it.")
+    why = Q.class_refusal(instance, "scope", classes=[qclass], lab_folder=folder)
+    assert why == f"Save {NAME} to quam_config before creating a gate that uses it."
+    assert why.cls == NAME   # the class to save first, for the dialog's class page action
 
 
 def _worker(tmp_path, source, **more):

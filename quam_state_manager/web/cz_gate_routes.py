@@ -51,6 +51,7 @@ import logging
 import secrets
 import threading
 import time
+import types
 from pathlib import Path
 from collections import OrderedDict
 from typing import Any
@@ -104,8 +105,19 @@ def _pairs(merged: dict) -> list[dict]:
                     "target": _qid(merged, pid, "qubit_target"),
                     "moving_qubit": p.get("moving_qubit"),
                     "gates": sorted(n for n, m in macros.items() if cgb.is_cz_macro(n, m)),
-                    "spectator_candidates": cgb.spectator_candidates(merged, pid)})
+                    "spectator_candidates": cgb.spectator_candidates(merged, pid),
+                    "lines": _pulse_lines(merged, pid),
+                    "xy_operations": {r: sgp.xy_operations(merged, pid, r) for r in sgt.XY_ROLES}})
     return out
+
+
+def _pulse_lines(merged: dict, pid: str) -> dict:
+    """``{control, target, coupler: bool}``: whether that line of the pair can hold a pulse."""
+    try:
+        lines = cgb._lines(merged, pid)
+    except Exception:  # noqa: BLE001 -- a broken pair offers no line
+        return {s: False for s in sgt.SLOTS}
+    return {s: isinstance(lines.get(s), tuple) for s in sgt.SLOTS}
 
 
 def _pulse_classes() -> list[dict]:
@@ -195,7 +207,9 @@ def _slot_entry(sc: SlotClass, pcs: list) -> dict:
                        "line_words": _LINE_WORDS.get(s, s), "required": True,
                        "pulse_classes": pcs} for s in slots],
             "models": [],
-            "slot_spec": {"slots": slots, "spectators": bool(sc.spec.spectators)},
+            "slot_spec": {"slots": slots, "spectators": bool(sc.spec.spectators),
+                          "before": [dict(x) for x in sc.spec.before if isinstance(x, dict)],
+                          "after": [dict(x) for x in sc.spec.after if isinstance(x, dict)]},
             "spectators": _spectator_offer(sc.qclass, sc)}
 
 
@@ -378,6 +392,10 @@ def _plan_all(merged: dict, body: dict, slot: SlotClass | None = None) -> list[t
                 merged, pid, gate_name=body["gate_name"], gate_class=body["gate_class"],
                 pulses=pulses, copy_from=copy_from, model_gate=body["model_gate"],
                 macro_fields=body["macro_fields"] or None, gate_desc=desc)
+            if not why and "error" not in res:
+                missing = sgp.xy_steps_problem(merged, pid, slot.spec)
+                if missing:
+                    res = {"error": missing, "refusals": [missing]}
             if not why and "error" not in res and pid in spect:
                 res, added = _plan_slot_rows(merged, pid, body["gate_name"], slot, res,
                                              spect[pid], planned_units)
@@ -401,12 +419,17 @@ def _plan_all(merged: dict, body: dict, slot: SlotClass | None = None) -> list[t
                 planned_units.pop(key, None)
         if why:
             res = {"error": why, "refusals": [why]}
+            if getattr(why, "cls", None):
+                # the class to save first: the dialog offers its class page, no text is read
+                res["save_class"] = {"cls": why.cls, "refusal": str(why)}
         else:
             _record_class_files(res, pid, body["gate_name"], files)
             if slot is not None:
                 note = older_render_note(slot, published_path(current_app.instance_path, scope, slot.qclass))
-                if note:
-                    res["notes"] = [note]
+                steps = sgp.steps_sentence(slot.spec)
+                if note or steps:
+                    # the build's own notes stay first, in order
+                    res["notes"] = list(res.get("notes") or []) + [n for n in (steps, note) if n]
         if i == 0:
             first = res
         out.append((pid, res))
@@ -737,6 +760,8 @@ def _summary(pid: str, p: dict, merged: dict | None = None, gate_class: str = ""
         mine = [r for r in refusals if r in about]
         if mine:
             out["class_refusals"] = mine
+        if isinstance(p.get("save_class"), dict):
+            out["save_class"] = p["save_class"]
         return out
     pulses = {f: gate_intent.planned_pulse(p, f) for f in (p.get("operations") or {})}
     return {"pair": pid, "ok": True, "refusals": [],
@@ -1216,8 +1241,45 @@ NAME_LAB = "{name} is already a class file of the lab's quam_config folder. Pick
 NAME_DRAFT = "A class draft named {name} already exists and is not a slot gate class. Pick another class name."
 NAME_IN_USE = ("The slot gate class {name} is used by {count} gate(s) of this chip, so SM does not "
                "replace it. Pick another class name.")
-STEPS_NOT_TAKEN = ("This door makes a slot gate class without steps and cannot take before or after "
-                   "steps. Post the class without them.")
+
+
+def _step_at(steps: dict, problems: list) -> dict | None:
+    """``{where, index}`` of the step a refusal sentence of the one step check
+    names (index from 0), or None. Found by asking that same check of growing
+    prefixes, so no rule is restated here."""
+    for where in ("before", "after"):
+        listed = steps.get(where)
+        problem = sgt.sequence_steps_problem(listed, where)
+        if not problem or problem not in problems or type(listed) not in (list, tuple):
+            continue
+        for k in range(1, len(listed) + 1):
+            if sgt.sequence_steps_problem(listed[:k], where):
+                return {"where": where, "index": k - 1}
+    return None
+
+
+PAIR_UNKNOWN = "The pair {pair} is not in this chip, so its xy steps cannot be checked."
+
+
+def _xy_step_refusal(merged: dict, pair, steps: dict) -> dict | None:
+    """The refusal body when the dialog of *pair* posts an xy step whose operation the pair's
+    qubit of that role lacks, with ``step`` naming that row; None when every xy step plays.
+    The one lookup is ``slot_gate_plan.xy_steps_problem``; the row is found by asking it of
+    growing prefixes, so no rule is restated here."""
+    pairs = (merged or {}).get("qubit_pairs")
+    if not isinstance(pair, str) or not isinstance(pairs, dict) or pair not in pairs:
+        text = PAIR_UNKNOWN.format(pair=pair if isinstance(pair, str) else repr(pair))
+        return {"ok": False, "error": text, "problems": [text]}
+    for where in ("before", "after"):
+        listed = list(steps.get(where) or ())
+        for k in range(1, len(listed) + 1):
+            only = types.SimpleNamespace(before=(), after=())
+            setattr(only, where, listed[:k])
+            problem = sgp.xy_steps_problem(merged, pair, only)
+            if problem:
+                return {"ok": False, "error": problem, "problems": [problem],
+                        "step": {"where": where, "index": k - 1}}
+    return None
 
 
 def _gates_using(merged: dict, qclass: str) -> int:
@@ -1231,13 +1293,19 @@ def _gates_using(merged: dict, qclass: str) -> int:
 
 
 def _older_match(spec: sgt.SlotSpec | None, mine: list) -> sgt.SlotSpec | None:
-    """The stored spec of an older-render draft that equals *spec* once its steps are left out, or None.
+    """The stored spec of an older-render draft that *spec* may make again, or None.
 
-    The make-class route refuses posted steps, so the stored steps are kept as they are."""
+    *spec* must equal the stored spec once the steps of both are left out, and it
+    must either post no steps (the stored steps are kept as they are) or post
+    exactly the stored steps. Other steps would change what the gates that use
+    the class play, so they fall under the in-use refusal."""
     if spec is None:
         return None
+    bare = dataclasses.replace(spec, before=(), after=())
     for s, v in mine:
-        if v != sgt.TEMPLATE_VERSION and dataclasses.replace(s, before=(), after=()) == spec:
+        if v == sgt.TEMPLATE_VERSION or dataclasses.replace(s, before=(), after=()) != bare:
+            continue
+        if (not spec.before and not spec.after) or (s.before, s.after) == (spec.before, spec.after):
             return s
     return None
 
@@ -1265,7 +1333,7 @@ def _name_check(name: str, merged: dict, spec: sgt.SlotSpec | None = None):
             return None, None
         # an older render made again with the same spec only widens what its slots accept,
         # so the gates that use it keep working: that remake is allowed while they use it,
-        # and the stored steps (which this route refuses to take) are written again unchanged
+        # and the stored steps are written again unchanged (posted steps must equal them)
         # a make that renders exactly the stored draft changes nothing, so it is answered ok
         if spec is not None and sgt.render(spec).encode("utf-8") == data:
             return None, UNCHANGED
@@ -1282,8 +1350,8 @@ def _name_check(name: str, merged: dict, spec: sgt.SlotSpec | None = None):
 @bp.route("/api/pulse/cz-gate/slot-class", methods=["POST"])
 def api_cz_gate_slot_class():
     """Make (or replace, while no gate uses it) a slot gate class draft:
-    ``{class_name, slots, spectators}`` -> ``{ok, cls, qclass}`` or
-    ``{ok: false, error, problems}``. Writes the draft only; saving it into
+    ``{class_name, slots, spectators, before?, after?}`` -> ``{ok, cls, qclass}`` or
+    ``{ok: false, error, problems, step?}`` (``step`` names the refused step). Writes the draft only; saving it into
     the lab's code is the class save door's two-step."""
     from quam_state_manager.core import pulse_class_drafts as drafts
     from quam_state_manager.core import pulse_class_watch as watch
@@ -1303,12 +1371,21 @@ def api_cz_gate_slot_class():
     slots = data.get("slots")
     if isinstance(slots, list):
         slots = [s if isinstance(s, (str, int, float, bool, type(None))) else repr(s) for s in slots]
-    spec = sgt.SlotSpec(name, slots, data.get("spectators", False))
+    steps = {k: (() if data.get(k) is None else data.get(k)) for k in ("before", "after")}
+    spec = sgt.SlotSpec(name, slots, data.get("spectators", False), steps["before"], steps["after"])
     problems = sgt.validate(spec)
     if problems:
-        return refuse(problems)
-    if any(data.get(k) not in (None, [], ()) for k in ("before", "after")):
-        return refuse([STEPS_NOT_TAKEN])
+        j = {"ok": False, "error": problems[0], "problems": problems}
+        at = _step_at(steps, problems)
+        if at:
+            j["step"] = at
+        return jsonify(j), 400
+    pair = data.get("pair")
+    if pair is not None:
+        with store._lock:
+            xy = _xy_step_refusal(store.merged, pair, steps)
+        if xy:
+            return jsonify(xy), 400
     with store._lock:
         taken, keep = _name_check(name, store.merged, spec)
     if taken:

@@ -230,3 +230,18 @@ def test_pulses_amp_and_used_by_leave_only_on_a_phone():
     sel, body, stack = rules[0]
     assert sel == ".ui-col-phone" and stack == ["@media (max-width: 600px)"], (sel, stack)
     assert _decls(body) == {"display": "none"}
+
+
+def test_chart_is_visible_before_its_lane_width_is_measured():
+    js = (WEB / "static/cz-gate.js").read_text(encoding="utf8")
+    render = js[js.index("function renderChart("):js.index("function lineOfChannel(")]
+    assert render.index("$('czg-sec-chart').hidden = false") < render.index("window.GateTimeline.render(host")
+    chart = (WEB / "static/gate-timeline.js").read_text(encoding="utf8")
+    assert "hostPx - margin.l - margin.r < STACK_PLOT_PX" in chart
+    assert "var STACK_PLOT_PX = 200" in chart
+
+
+def test_unit_fields_keep_a_visible_kit_focus_ring():
+    ring = _rule(".ui-input-unit > .ui-input.ui-input:focus")
+    assert ring["outline"] == "var(--ui-focus-w) solid var(--ui-accent)"
+    assert ring["outline-offset"] == "var(--ui-focus-inset)"

@@ -356,6 +356,19 @@ def _sm_classes(instance, scope, creates=(), classes=()):
     return out
 
 
+class ClassRefusal(str):
+    """A refusal sentence that also names the SM class to save first (``cls``), so the
+    dialog can offer that class's page without reading the sentence."""
+
+    cls: str | None = None
+
+
+def _unsaved(text: str, name: str) -> ClassRefusal:
+    out = ClassRefusal(text)
+    out.cls = name
+    return out
+
+
 def class_refusal(instance, scope, creates=(), classes=(), lab_folder=None):
     """Why a gate cannot be created yet: it uses (in *creates*, or by name in
     *classes*) an SM class whose file is not saved to quam_config. None when
@@ -372,7 +385,7 @@ def class_refusal(instance, scope, creates=(), classes=(), lab_folder=None):
             text = f"Save {name} to quam_config before creating a gate that uses it."
             if not target and not lab_folder:
                 text += f" If {name} is a lab class, rename or delete the draft named {name}."
-            return text
+            return _unsaved(text, name)
         if receipt.get("importable") is not True:
             return "The selected environment does not import this class file. Save it to its quam_config folder first."
     return None

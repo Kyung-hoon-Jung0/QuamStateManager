@@ -33,8 +33,10 @@ UNIT = sgt.SPECTATOR_UNIT_OP
 LAB_PY = Path(os.environ.get("SM_LAB_ENV_PYTHON") or "__no_lab_env__")
 
 
-def _state(n=5, units=None):
+def _state(n=5, units=None, xy=("x180", "x90")):
     st = _chip(n)
+    for q in st["qubits"].values():      # an xy channel with the operations a step may name
+        q["xy"] = {"operations": {op: {"length": 40, "amplitude": 0.1} for op in xy}}
     for q, amp in ({"q3": 0.25} if units is None else units).items():
         st["qubits"][q]["z"]["operations"][UNIT] = {"id": UNIT, "amplitude": amp, "length": 16,
                                                     "__class__": SQUARE}
@@ -142,7 +144,7 @@ def test_only_readable_slot_drafts_are_listed_with_presets_and_names(env):
     assert set(c) == {"class", "label", "layout", "available", "why", "slots", "models",
                       "slot_spec", "spectators", "older_render"}
     assert c["label"] == f"{NAME} (slot class SM made)" and c["available"] and c["why"] == ""
-    assert c["slot_spec"] == {"slots": list(sgt.SLOTS), "spectators": True}
+    assert c["slot_spec"] == {"slots": list(sgt.SLOTS), "spectators": True, "before": [], "after": []}
     assert [s["field"] for s in c["slots"]] == [sgp.slot_field(s) for s in sgt.SLOTS]
     assert all(s["required"] and s["pulse_classes"] for s in c["slots"])
     assert c["spectators"] == {"offered": True, "method": "unit", "why": ""}
@@ -267,7 +269,10 @@ def _check(env, body):
 def test_an_unsaved_slot_class_waits_for_its_file(env):
     env.make()
     j = env.c.post(PLAN, json=_slot_body()).get_json()
-    assert _pair(j)["refusals"][0].startswith(f"Save {NAME} to quam_config")
+    row = _pair(j)
+    assert row["refusals"][0].startswith(f"Save {NAME} to quam_config")
+    # the class to save first, named apart from the sentence so the dialog can offer its page
+    assert row["save_class"] == {"cls": NAME, "refusal": row["refusals"][0]}
 
 
 def test_every_plan_gets_the_one_descriptor_and_no_spectator_rows(env, monkeypatch):
@@ -720,6 +725,22 @@ def test_a_gate_on_an_older_control_or_target_lab_file_says_so(env):
     assert _notes(env, OWN) == ([], [])
 
 
+def test_the_build_notes_stay_first_and_the_older_render_note_follows(env, monkeypatch):
+    _older_draft(env)
+    env.save()
+    real = cgb.plan
+
+    def with_note(*a, **kw):
+        out = real(*a, **kw)
+        out["notes"] = ["first build note", "second build note"]
+        return out
+    monkeypatch.setattr(cgb, "plan", with_note)
+    note = czr.OLDER_RENDER_NOTE.format(file=f"{NAME}.py", name=NAME)
+    plan = _pair(env.c.post(PLAN, json=_slot_body(slots=OWN, name="cz_s")).get_json())
+    assert plan["ok"], plan
+    assert plan["notes"] == ["first build note", "second build note", note]
+
+
 def test_a_gate_on_an_older_coupler_only_lab_file_says_nothing(env):
     _older_draft(env, slots=["coupler"])
     env.save()
@@ -765,13 +786,23 @@ def test_a_stepped_older_render_in_use_with_another_carried_field_is_refused(env
     assert env.stored() == before
 
 
-def test_posted_steps_are_not_taken_through_the_older_render_remake(env):
+def test_other_posted_steps_on_an_in_use_older_render_are_name_in_use(env):
+    # another step list is another class body: the in-use rule answers, nothing is written
     _stepped_draft(env, sgt.render_v1)
     before = env.stored()
     r = env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": list(OWN), "spectators": True,
                                      "before": [{"kind": "wait", "length": 32}], "after": []})
-    _steps_refused(r)
+    assert r.status_code == 409
+    assert r.get_json()["error"] == czr.NAME_IN_USE.format(name=NAME, count=1)
     assert env.stored() == before
+
+
+def test_the_stored_steps_posted_again_remake_the_in_use_older_render(env):
+    spec = _stepped_draft(env, sgt.render_v1)
+    r = env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": list(OWN), "spectators": True,
+                                     "before": list(STEPS[0]), "after": list(STEPS[1])})
+    assert r.status_code == 200 and r.get_json()["ok"], r.get_json()
+    assert _draft_text(env) == sgt.render(spec)
 
 
 def test_a_stepped_current_render_in_use_is_still_refused(env):
@@ -817,43 +848,101 @@ def test_a_changed_make_of_an_in_use_current_render_is_refused(env, change):
     assert env.stored() == before
 
 
-def test_posted_steps_on_an_in_use_current_render_are_refused(env):
+def test_posted_steps_on_an_in_use_current_render_are_name_in_use(env):
     _in_use_older_made_again(env)
     before = env.stored()
     r = env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": list(OWN), "spectators": True,
                                      "before": [{"kind": "wait", "length": 32}], "after": []})
-    _steps_refused(r)
+    assert r.status_code == 409
+    assert r.get_json()["error"] == czr.NAME_IN_USE.format(name=NAME, count=1)
     assert env.stored() == before
 
 
-def _steps_refused(r):
-    assert r.status_code == 400, r.get_json()
-    assert r.get_json() == {"ok": False, "error": czr.STEPS_NOT_TAKEN, "problems": [czr.STEPS_NOT_TAKEN]}
-
-
 _WAIT = [{"kind": "wait", "length": 32}]
+_GOOD = {"before": [{"kind": "align"}, {"kind": "wait", "length": 24},
+                    {"kind": "xy", "qubit": "target", "operation": "x90"}],
+         "after": [{"kind": "xy", "qubit": "control", "operation": "x180"}, {"kind": "align"}]}
 
 
-@pytest.mark.parametrize("steps", [{"before": _WAIT}, {"after": _WAIT}, {"before": _WAIT, "after": _WAIT},
-                                   {"before": _WAIT, "after": []}, {"after": "wait"}, {"before": 1},
-                                   {"before": {"kind": "wait"}},
-                                   # only None, [] and () are no steps: every other value is refused
-                                   {"before": 0}, {"after": False}, {"before": ""}, {"after": {}}])
-def test_posted_steps_on_a_new_class_are_refused_and_nothing_is_written(env, steps):
+def test_accepted_steps_are_written_and_read_back_value_by_value(env):
+    r = env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": list(OWN), "spectators": True, **_GOOD})
+    assert r.status_code == 200 and r.get_json()["ok"], r.get_json()
+    parsed = sgt.parse(_draft_text(env))
+    assert [dict(x) for x in parsed.spec.before] == _GOOD["before"]
+    assert [dict(x) for x in parsed.spec.after] == _GOOD["after"]
+    assert _draft_text(env) == sgt.render(sgt.SlotSpec(NAME, list(OWN), True, _GOOD["before"], _GOOD["after"]))
+    listed = next(c for c in env.dialog()["classes"]
+                  if c["class"] == QCLASS)["slot_spec"]
+    assert listed["before"] == _GOOD["before"] and listed["after"] == _GOOD["after"]
+
+
+_BAD = [  # (steps, where, index of the named row or None)
+    ({"before": [{"kind": "align"}, {"kind": "hop"}]}, "before", 1),
+    ({"after": [{"kind": "wait", "length": -4}]}, "after", 0),
+    ({"after": [{"kind": "wait", "length": 16}, {"kind": "xy", "qubit": "middle", "operation": "x180"}]}, "after", 1),
+    ({"before": [{"kind": "xy", "qubit": "control", "operation": "not a name"}]}, "before", 0),
+    ({"before": [{"kind": "align", "length": 4}]}, "before", 0),
+    ({"before": [7]}, "before", 0),
+    ({"after": "wait"}, None, None), ({"before": 1}, None, None), ({"before": {"kind": "wait"}}, None, None),
+    ({"before": 0}, None, None), ({"after": False}, None, None), ({"before": ""}, None, None),
+    ({"after": {}}, None, None)]
+
+
+@pytest.mark.parametrize("steps, where, index", _BAD)
+def test_refused_steps_say_the_one_check_sentence_at_its_row_and_write_nothing(env, steps, where, index):
     before = env.stored()
     r = env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": list(OWN), "spectators": True, **steps})
-    _steps_refused(r)
+    assert r.status_code == 400
+    j = r.get_json()
+    spec = sgt.SlotSpec(NAME, list(OWN), True, steps.get("before", ()), steps.get("after", ()))
+    assert j["ok"] is False and j["problems"] == sgt.validate(spec) and j["error"] == j["problems"][0]
+    assert j["error"] in {sgt.sequence_steps_problem(steps.get(w, ()), w) for w in ("before", "after")}
+    assert j.get("step") == ({"where": where, "index": index} if where else None)
     assert env.stored() == before
     assert D.load_draft(env.a.app.instance_path, env.scope, NAME) is None
 
 
-def test_posted_steps_on_a_stored_free_draft_leave_its_bytes(env):
+def test_posted_steps_on_a_stored_free_draft_replace_it(env):
+    # a name not in use: the draft is replaced, as for any other changed body
+    env.make(slots=OWN)
+    r = env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": ["control"], "spectators": True,
+                                     "after": _WAIT})
+    assert r.status_code == 200 and r.get_json()["ok"]
+    assert _draft_text(env) == sgt.render(sgt.SlotSpec(NAME, ["control"], True, (), _WAIT))
+
+
+def test_refused_steps_on_a_stored_free_draft_leave_its_bytes(env):
     env.make(slots=OWN)
     before, text = env.stored(), _draft_text(env)
     r = env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": ["control"], "spectators": True,
-                                     "after": _WAIT})
-    _steps_refused(r)
+                                     "after": [{"kind": "wait", "length": "x y"}]})
+    assert r.status_code == 400
     assert env.stored() == before and _draft_text(env) == text
+
+
+def test_an_xy_step_the_qubit_lacks_is_refused_by_the_plan_and_nothing_is_written(env):
+    steps = {"after": [{"kind": "wait", "length": 16}, {"kind": "xy", "qubit": "target", "operation": "x45"}]}
+    r = env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": list(OWN), "spectators": True, **steps})
+    assert r.status_code == 200
+    env.save()
+    before = env.stored()
+    pair = _pair(env.c.post(PLAN, json=_slot_body(slots=OWN)).get_json())
+    want = sgt.XY_MISSING_PROBLEM.format(number=2, where="after", role="target", operation="x45")
+    assert pair["ok"] is False and pair["refusals"] == [want], pair
+    check = _pair(_check(env, _slot_body(slots=OWN)))
+    assert not (check.get("verdict") or {}).get("allowed")
+    assert want in json.dumps(check)
+    assert env.stored() == before
+
+
+def test_a_gate_with_steps_says_its_steps_in_the_plan(env):
+    r = env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": list(OWN), "spectators": True, **_GOOD})
+    assert r.status_code == 200
+    env.save()
+    pair = _pair(env.c.post(PLAN, json=_slot_body(slots=OWN)).get_json())
+    spec = sgt.SlotSpec(NAME, list(OWN), True, _GOOD["before"], _GOOD["after"])
+    assert pair["ok"] and sgp.steps_sentence(spec) in pair["notes"]
+    assert sgp.steps_sentence(sgt.SlotSpec(NAME, list(OWN), True)) is None
 
 
 @pytest.mark.parametrize("steps", [{}, {"before": None}, {"before": [], "after": []}, {"after": None}])
@@ -872,4 +961,178 @@ def test_a_bad_name_or_slots_is_refused_before_posted_steps(env, body, error):
     if error == "name":
         assert got == czr.NAME_NOT_TEXT
     else:
-        assert got != czr.STEPS_NOT_TAKEN
+        assert got == sgt.validate(sgt.SlotSpec(NAME, "nope", False))[0]
+        assert "step" not in r.get_json()
+
+
+# ------------------------------------------------ roles, fixed couplers, notes
+
+def _dialog_pair(data, pid):
+    return next(p for p in data["pairs"] if p["id"] == pid)
+
+
+def _role_state():
+    """A chip whose control (q1) and target (q2) qubits carry different xy operations."""
+    st = _state()
+    st["qubits"]["q1"]["xy"] = {"operations": {"shared_op": {"length": 40, "amplitude": 0.1},
+                                               "ctl_only": {"length": 40, "amplitude": 0.1}}}
+    st["qubits"]["q2"]["xy"] = {"operations": {"tgt_only": {"length": 40, "amplitude": 0.1}}}
+    return st
+
+
+@pytest.fixture
+def role_env(monkeypatch):
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        yield Env(tmp, monkeypatch, state=_role_state())
+        from quam_state_manager.core.hub_index import close_readers
+        close_readers()
+
+
+def test_each_role_offers_only_its_own_qubits_xy_operations(role_env):
+    ops = _dialog_pair(role_env.dialog(), "q1-2")["xy_operations"]
+    assert ops == {"control": ["ctl_only", "shared_op"], "target": ["tgt_only"]}
+    merged = _role_state()
+    assert sgp.xy_operations(merged, "q1-2", "control") == ["ctl_only", "shared_op"]
+    assert sgp.xy_operations(merged, "q1-2", "target") == ["tgt_only"]
+
+
+@pytest.mark.parametrize("where", ["before", "after"])
+@pytest.mark.parametrize("role, operation, number", [("control", "tgt_only", 1), ("target", "ctl_only", 2)])
+def test_a_step_naming_the_other_qubits_operation_is_refused_with_step_role_and_operation(
+        role_env, role, operation, number, where):
+    steps = [{"kind": "wait", "length": 16}][:number - 1] + [{"kind": "xy", "qubit": role, "operation": operation}]
+    r = role_env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": list(OWN), "spectators": True,
+                                          where: steps})
+    assert r.status_code == 200
+    role_env.save()
+    pair = _pair(role_env.c.post(PLAN, json=_slot_body(slots=OWN)).get_json())
+    want = sgt.XY_MISSING_PROBLEM.format(number=number, where=where, role=role, operation=operation)
+    assert pair["ok"] is False and pair["refusals"] == [want], pair
+    assert f"{role} qubit" in want and repr(operation) in want and f"Sequence step {number} {where}" in want
+
+
+def test_each_role_accepts_its_own_operation_in_the_plan(role_env):
+    steps = {"before": [{"kind": "xy", "qubit": "control", "operation": "ctl_only"},
+                        {"kind": "xy", "qubit": "target", "operation": "tgt_only"}]}
+    assert role_env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": list(OWN),
+                                             "spectators": True, **steps}).status_code == 200
+    role_env.save()
+    assert _pair(role_env.c.post(PLAN, json=_slot_body(slots=OWN)).get_json())["ok"]
+
+
+def test_an_xy_entry_given_as_a_reference_is_followed_one_hop(role_env):
+    st = _role_state()
+    st["shared_xy"] = {"operations": {"via_ref": {"length": 40, "amplitude": 0.1}}}
+    st["qubits"]["q2"]["xy"] = "#/shared_xy"
+    assert sgp.xy_operations(st, "q1-2", "target") == ["via_ref"]
+    assert sgp.xy_operations(st, "q1-2", "control") == ["ctl_only", "shared_op"]
+    st["qubits"]["q2"]["xy"] = "#/shared_xy/missing"
+    assert sgp.xy_operations(st, "q1-2", "target") is None
+
+
+def test_the_steps_sentence_reads_before_and_after_words_apart():
+    spec = sgt.SlotSpec(NAME, list(OWN), True, _GOOD["before"], _GOOD["after"])
+    assert sgp.steps_sentence(spec) == (
+        "This class plays steps before the gate pulses: align, wait 24 ns, play x90 on the target xy channel;"
+        " after them: play x180 on the control xy channel, align.")
+    only_after = sgt.SlotSpec(NAME, list(OWN), True, (), _WAIT)
+    assert sgp.steps_sentence(only_after) == (
+        "This class plays steps before the gate pulses: nothing; after them: wait 32 ns.")
+
+
+def test_the_steps_note_comes_before_the_older_render_note_after_the_build_notes(env, monkeypatch):
+    text = sgt.render_v1(sgt.SlotSpec(NAME, frozenset(OWN), True, *STEPS))
+    D.save_draft(env.a.app.instance_path, env.scope, NAME, text)
+    W.watch_for(env.a.app.instance_path, env.scope, NAME).adopt(text.encode("utf-8"))
+    env.save()
+    real = cgb.plan
+
+    def with_note(*a, **kw):
+        out = real(*a, **kw)
+        out["notes"] = ["first build note"]
+        return out
+    monkeypatch.setattr(cgb, "plan", with_note)
+    older = czr.OLDER_RENDER_NOTE.format(file=f"{NAME}.py", name=NAME)
+    steps = ("This class plays steps before the gate pulses: wait 16 ns;"
+             " after them: play x180 on the control xy channel.")
+    plan = _pair(env.c.post(PLAN, json=_slot_body(slots=OWN, name="cz_s")).get_json())
+    assert plan["ok"], plan
+    assert plan["notes"] == ["first build note", steps, older]
+
+
+def _fixed_coupler_state():
+    st = _state()
+    del st["qubit_pairs"]["q2-3"]["coupler"]
+    return st
+
+
+@pytest.fixture
+def fixed_env(monkeypatch):
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        yield Env(tmp, monkeypatch, state=_fixed_coupler_state())
+        from quam_state_manager.core.hub_index import close_readers
+        close_readers()
+
+
+def test_the_dialog_offers_no_coupler_line_on_a_pair_without_one(fixed_env):
+    data = fixed_env.dialog()
+    assert _dialog_pair(data, "q2-3")["lines"] == {"control": True, "target": True, "coupler": False}
+    assert _dialog_pair(data, "q1-2")["lines"] == {"control": True, "target": True, "coupler": True}
+
+
+# ------------------------------------------------ the make door knows the pair it was opened on
+
+def _no_draft(env):
+    return D.load_draft(env.a.app.instance_path, env.scope, NAME) is None
+
+
+@pytest.mark.parametrize("where", ["before", "after"])
+def test_an_xy_step_the_pairs_qubit_lacks_is_refused_at_its_row_when_the_pair_is_posted(role_env, where):
+    steps = [{"kind": "wait", "length": 16}, {"kind": "xy", "qubit": "target", "operation": "ctl_only"}]
+    stored = role_env.stored()
+    r = role_env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": list(OWN), "spectators": True,
+                                          "pair": "q1-2", where: steps})
+    want = sgt.XY_MISSING_PROBLEM.format(number=2, where=where, role="target", operation="ctl_only")
+    j = r.get_json()
+    assert r.status_code == 400 and j["error"] == want and j["problems"] == [want]
+    assert j["step"] == {"where": where, "index": 1}
+    assert role_env.stored() == stored and _no_draft(role_env)
+    # the same body without a pair keeps the present behaviour: made, refused only at use
+    r = role_env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": list(OWN), "spectators": True,
+                                          where: steps})
+    assert r.status_code == 200 and not _no_draft(role_env)
+
+
+def test_an_xy_step_the_pairs_qubit_has_is_made_when_the_pair_is_posted(role_env):
+    steps = {"before": [{"kind": "xy", "qubit": "control", "operation": "ctl_only"}],
+             "after": [{"kind": "xy", "qubit": "target", "operation": "tgt_only"}]}
+    r = role_env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": list(OWN), "spectators": True,
+                                          "pair": "q1-2", **steps})
+    assert r.status_code == 200 and r.get_json()["ok"]
+    assert _draft_text(role_env) == sgt.render(
+        sgt.SlotSpec(NAME, list(OWN), True, steps["before"], steps["after"]))
+
+
+def test_a_posted_pair_the_chip_lacks_is_refused_and_nothing_is_written(role_env):
+    stored = role_env.stored()
+    r = role_env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": list(OWN), "spectators": True,
+                                          "pair": "no-such-pair", "after": _WAIT})
+    assert r.status_code == 400
+    assert r.get_json()["error"] == czr.PAIR_UNKNOWN.format(pair="no-such-pair")
+    assert role_env.stored() == stored and _no_draft(role_env)
+
+
+# ------------------------------------------------ the class page reads back SM's own slot class
+
+def test_the_class_page_reads_an_sm_made_slot_class_with_its_steps_as_sm_made():
+    spec = sgt.SlotSpec(NAME, list(OWN), True, _GOOD["before"], _GOOD["after"])
+    info = W._describe(sgt.render(spec))
+    assert info["editable"] is False and "changed by hand" not in info["reason"]
+    assert info["slot"]["before"] == list(_GOOD["before"]) and info["slot"]["after"] == list(_GOOD["after"])
+    assert "align, wait 24 ns, play x90 on the target xy channel" in info["reason"]
+    # an older render without steps still reads as SM-made
+    old = W._describe(sgt.render_v1(sgt.SlotSpec(NAME, list(OWN), True)))
+    assert old["slot"]["before"] == [] and "changed by hand" not in old["reason"]
+    # a slot class edited by hand is not claimed as SM-made
+    hand = W._describe(sgt.render(spec).replace("align(*channels)", "align()", 1))
+    assert "slot" not in hand and "changed by hand" in hand["reason"]

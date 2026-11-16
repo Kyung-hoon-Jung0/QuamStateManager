@@ -239,3 +239,42 @@ def test_port_delay_gap_comes_from_the_server_timeline(delay, gap):
     data = {"lanes": [_lane("moving.z", delay, delay + 100), _lane("coupler", 0, 100)]}
     t = _tile(tiles(data), "timing")
     assert (t["value"] if t["tone"] == "warn" else None) == gap
+
+
+STEPS = ('from qm.qua import *\n\nwith program() as prog:\n'
+         '    play("x180", "q1.xy")\n'
+         '    wait(10, "q1.z")\n'
+         '    play("sp_pulse", "q3.z")\n'
+         '    align("q1.z", "q1.xy")\n'
+         '    play("cz_pulse", "q1.z")\n\nconfig = {}\n')
+
+
+def _steps_cfg():
+    cfg = _multi_cfg()
+    cfg["elements"]["q1.xy"] = {"singleInput": {"port": ["con1", 1, 1]}, "operations": {"x180": "x180.pulse"}}
+    cfg["pulses"]["x180.pulse"] = {"length": N, "waveforms": {"single": "x.wf"}}
+    cfg["waveforms"]["x.wf"] = {"type": "constant", "sample": 0.3}
+    return cfg
+
+
+def test_an_xy_step_of_the_pair_is_a_gate_lane_never_a_spectator():
+    data = timeline_data(_entry(script=STEPS, cfg=_steps_cfg()), control="q1", target="q2")
+    assert data["cannot_draw"] is None
+    by = {l["key"]: l for l in data["lanes"]}
+    assert by["q1.xy"]["group"] == "gate" and by["q1.xy"]["step"] is True
+    assert by["q1.xy"]["label"] == "q1.xy (step)"
+    # counter-example: a real spectator stays a spectator, and is the only one
+    assert by["q3.z"]["group"] == "spectator" and by["q3.z"]["step"] is False
+    assert [k for k, l in by.items() if l["group"] == "spectator"] == ["q3.z"]
+
+
+def test_wait_and_align_marks_pass_through_and_the_wait_moves_the_gate():
+    data = timeline_data(_entry(script=STEPS, cfg=_steps_cfg()), control="q1", target="q2")
+    kinds = [(m["kind"], m["label"]) for m in data["marks"]]
+    assert kinds == [("wait", "wait 40 ns"), ("align", "align"), ("align", "align")]
+    wait, align, xy_align = data["marks"]
+    assert wait["element"] == "q1.z"
+    assert (wait["start_ns"], wait["end_ns"]) == (4, 44)
+    # the align meets after the xy step (N ns) and the wait (40 ns): the later one wins
+    assert align["t_ns"] == max(N, 40) + 4
+    assert xy_align["element"] == "q1.xy" and xy_align["t_ns"] == max(N, 40) + 4

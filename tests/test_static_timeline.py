@@ -174,3 +174,63 @@ def test_negative_port_delay():
     res = static_timeline(_script('wait(10, "q1.z")', 'play("p", "q1.z")'),
                           [_op("q1.z", "p", 20, sample=0.1, delay=-8)])
     assert _rows(res) == [("q1.z", "p", 32, 52, 0.1, 1.0)]
+
+
+def test_waits_shift_what_follows_and_add_up():
+    one = static_timeline(_script('wait(10, "q1.z")', 'play("p", "q1.z")'), [_op("q1.z", "p", 20, sample=0.1)])
+    two = static_timeline(_script('wait(10, "q1.z")', 'wait(5, "q1.z")', 'play("p", "q1.z")'),
+                          [_op("q1.z", "p", 20, sample=0.1)])
+    after = static_timeline(_script('play("p", "q1.z")', 'wait(10, "q1.z")'), [_op("q1.z", "p", 20, sample=0.1)])
+    assert _rows(one)[0][2] == 40 and _rows(two)[0][2] == 60 and _rows(after)[0][2] == 0
+    assert [(m["kind"], m["start_ns"], m["end_ns"]) for m in two["marks"]] == [("wait", 0, 40), ("wait", 40, 60)]
+    assert [(m["start_ns"], m["end_ns"]) for m in after["marks"]] == [(20, 60)]
+
+
+def test_an_align_is_a_mark_at_the_meeting_time():
+    res = static_timeline(_script('play("p", "q1.z")', 'align("q1.z", "q2.z")', 'play("p", "q2.z")'),
+                          [_op("q1.z", "p", 20, sample=0.1), _op("q2.z", "p", 20, sample=0.1)])
+    assert [(m["element"], m["kind"], m["t_ns"]) for m in res["marks"]] == [
+        ("q1.z", "align", 20), ("q2.z", "align", 20)]
+    assert _rows(res)[1][2] == 20
+
+
+def test_cannot_draw_carries_no_marks():
+    res = static_timeline(_script('wait(10, "q1.z")', 'for_(1)', 'play("p", "q1.z")'),
+                          [_op("q1.z", "p", 20, sample=0.1)])
+    assert res["cannot_draw"] and res["marks"] == []
+
+
+def test_step_marks_use_each_lines_drawn_clock():
+    ops = [_op("q1.z", "p", 100, sample=0.1, delay=161),
+           _op("q1.xy", "x", 40, sample=0.1), _op("q2.z", "p", 20, sample=0.1, delay=7)]
+    res = static_timeline(_script('align()', 'wait(10)', 'play("x", "q1.xy")',
+                                  'align()', 'play("p", "q1.z")', 'play("p", "q2.z")',
+                                  'wait(4, "q1.z", "q2.z")',
+                                  'play("p", "q1.z")', 'play("p", "q2.z")'), ops)
+    assert res["cannot_draw"] is None
+    waits = [m for m in res["marks"] if m["kind"] == "wait"]
+    assert [(m["element"], m["start_ns"], m["end_ns"]) for m in waits] == [
+        ("q1.z", 161, 201), ("q1.xy", 0, 40), ("q2.z", 7, 47),
+        ("q1.z", 341, 357), ("q2.z", 107, 123)]
+    assert [(m["element"], m["t_ns"]) for m in res["marks"] if m["kind"] == "align"] == [
+        ("q1.z", 161), ("q1.xy", 0), ("q2.z", 7),
+        ("q1.z", 241), ("q1.xy", 80), ("q2.z", 87)]
+    for m in waits[-2:]:
+        rows = [r for r in res["rows"] if r.element == m["element"]]
+        assert rows[0].end_ns == m["start_ns"] and rows[1].start_ns == m["end_ns"]
+    assert res["notes"][0] == "Pulses and step marks include each line's port delay, before filters."
+
+
+@pytest.mark.parametrize("delay", ["unknown", 1.5])
+@pytest.mark.parametrize("statement", ['wait(4, "q1.z")', 'align("q1.z")'])
+def test_a_mark_never_guesses_an_unknown_delay(delay, statement):
+    res = static_timeline(_script(statement), [_op("q1.z", "p", 20, sample=0.1, delay=delay)])
+    assert res["cannot_draw"] == f"cannot draw: {statement} (the port delay of q1.z is not a whole number of ns)"
+    assert res["marks"] == res["rows"] == []
+
+
+@pytest.mark.parametrize("statement,key", [('wait(4, "q1.z")', "start_ns"), ('align("q1.z")', "t_ns")])
+def test_a_port_without_a_delay_places_marks_at_zero_like_its_pulses(statement, key):
+    res = static_timeline(_script(statement), [_op("q1.z", "p", 20, sample=0.1, delay=None)])
+    assert not res.get("cannot_draw")
+    assert [m[key] for m in res["marks"]] == [0]

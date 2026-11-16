@@ -100,6 +100,9 @@ const DATA = {
 (async () => {
 const h = GT.render(host, DATA, {});
 let fig = last();
+ok(require('crypto').createHash('sha256').update(JSON.stringify({ data: fig.data, layout: fig.layout })).digest('hex') ===
+   'c57fdd52080a3da5f4beb390ab7dd52310c77ab7715b9fc38a9a7f72268a91d8',
+   'without steps the complete plotted data and layout remain byte identical');
 
 // one row per drawn lane, one x axis
 let ya = yAxes(fig.layout);
@@ -1008,6 +1011,78 @@ hc.destroy();
 const he = GT.render(host, { lanes: [], notes: [] });
 ok(host.querySelector('.ui-state--empty') && window.__renders.length === nRenders, 'empty lanes: empty state, no chart');
 he.destroy();
+// wait and align steps: labelled marks on both views, the same marks
+{
+    const MK = { lanes: [lane('q1.z', 'gate', [seg('fx', [40, 140], [0.01, 0.01])])], notes: [],
+                 marks: [{ kind: 'wait', label: 'wait 40 ns', start_ns: 0, end_ns: 40 },
+                         { kind: 'align', label: 'align', t_ns: 140 }] };
+    const pick = (f) => ({
+        sh: f.layout.shapes.filter((x) => x.name === 'step-mark').map((x) => x.meta.kind + ':' + x.x0 + '-' + x.x1).join(),
+        an: f.layout.annotations.filter((a) => a.meta && a.meta.role === 'step-mark').map((a) => a.text + '@' + a.x).join() });
+    const h1 = GT.render(host2, MK); const a = pick(last()); h1.destroy();
+    const h2 = GT.render(host2, MK, { view: 'overlay' }); const b = pick(last()); h2.destroy();
+    ok(a.sh === 'wait:0-40,align:140-140' && a.an === 'wait 40 ns@20,align@140', 'lanes view: a wait span and an align line, each labelled');
+    ok(JSON.stringify(a) === JSON.stringify(b), 'overlay view draws the same step marks as the lanes view');
+}
+// A final wait and a later align extend both axes; shapes stay on their own lanes.
+{
+    const MK = { lanes: [lane('q1.z', 'gate', [seg('fx', [241, 341], [0.1, 0.1])]),
+                         lane('q1.xy', 'gate', [seg('x', [40, 80], [0.1, 0.1])], { label: 'q1.xy (step)', step: true }),
+                         lane('q3.z', 'spectator', [seg('sp', [241, 341], [0.1, 0.1])])],
+                 marks: [{ kind: 'wait', element: 'q1.z', label: 'wait 16 ns', start_ns: 341, end_ns: 357 },
+                         { kind: 'wait', element: 'q1.xy', label: 'wait 16 ns', start_ns: 180, end_ns: 196 },
+                         { kind: 'align', element: 'q1.z', label: 'align', t_ns: 380 }] };
+    for (const view of ['lanes', 'overlay']) {
+        Object.defineProperty(host2, 'clientWidth', { configurable: true, value: 700 });
+        const h = GT.render(host2, MK, { view, foldSpectators: false });
+        const f = h.figure(), shapes = f.layout.shapes.filter(s => s.name === 'step-mark');
+        ok(f.layout.xaxis.range[1] >= 380 && f.span[0] === 0, view + ': all final marks fit the axis');
+        ok(shapes.length === 3 && shapes[0].x0 === 341 && shapes[0].x1 === 357 && shapes[1].x0 === 180,
+           view + ': different drawn clocks keep separate spans');
+        ok(view === 'overlay' || (shapes[0].yref === 'y domain' && shapes[1].yref === 'y2 domain'),
+           view + ': lane marks cover only their own line');
+        ok(f.layout.annotations.some(a => a.meta && a.meta.role === 'step-mark' && a.text === 'wait 16 ns' && a.x === 349),
+           view + ': a wait after the final pulse is labelled');
+        ok(h.laneCount().spectator === 1, view + ': only the real spectator is counted');
+        h.setFold(true);
+        ok(h.laneCount().drawn === 2, view + ': folding the spectator keeps the xy step');
+        h.destroy();
+    }
+    for (const width of [360, 400, 700]) {
+        Object.defineProperty(host2, 'clientWidth', { configurable: true, value: width - 80 });
+        const h = GT.render(host2, MK, { foldSpectators: false }), f = h.figure();
+        const sideWidth = width - 80 - (f.layout.margin.l + f.layout.margin.r);
+        ok(sideWidth >= 200 && (width === 700 || title(f, 'q1.xy').yanchor === 'bottom'),
+           width + ' px: step lane titles leave at least 200 px for the plot');
+        h.destroy();
+    }
+    Object.defineProperty(host2, 'clientWidth', { configurable: true, value: 620 });
+    const resizing = GT.render(host2, MK);
+    for (const width of [280, 320, 620]) {
+        Object.defineProperty(host2, 'clientWidth', { configurable: true, value: width });
+        resizing.relayout({ width });
+        ok(resizing.figure().hostPx === width && (width === 620 || title(resizing.figure(), 'q1.xy').yanchor === 'bottom'),
+           'resizing remeasures step lane titles at ' + width + ' px');
+    }
+    resizing.destroy();
+    const crowded = Object.assign({}, MK, { marks: Array.from({ length: 8 }, () =>
+        ({ kind: 'align', element: 'q1.z', label: 'align', t_ns: 341 })).concat(
+        [{ kind: 'wait', element: 'q1.z', label: 'wait 16 ns', start_ns: 341, end_ns: 357 }]) });
+    for (const view of ['lanes', 'overlay']) {
+        const h = GT.render(host2, crowded, { view }), f = h.figure();
+        const labels = f.layout.annotations.filter(a => a.meta && a.meta.role === 'step-mark');
+        ok(labels.length === 2 && new Set(labels.map(a => a.yshift)).size === 2,
+           view + ': crowded marks use two rows and one label serves marks that share a place');
+        ok(labels.some(a => a.text === 'wait 16 ns' && a.x === 349),
+           view + ': a wait keeps its label when aligns crowd the same place');
+        ok(host2.querySelectorAll('[data-step-description][title]').length === 9,
+           view + ': every mark keeps its full text in a title');
+        h.relayout({ 'xaxis.range': [0, 400] });
+        ok(h.figure().layout.annotations.filter(a => a.meta && a.meta.role === 'step-mark').length === 2,
+           view + ': relayout keeps labels fitted');
+        h.destroy();
+    }
+}
 ok(host.childNodes.length === 0, 'host clean at the end');
 
 console.log(`${passed} passed, ${failed} failed`);
