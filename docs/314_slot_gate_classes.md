@@ -86,7 +86,7 @@ for a class (slots, fields, lines), is built per class by `slot_desc` (slot_gate
   target line's operation and expects the slot sentence (tests/test_slot_gate_save.py
   `test_lab_gate_with_slot_pointers_plays_on_a_built_chip`). The plan builds each pulse on the slot's own line: the
   descriptor's slot rows carry line `control` / `target` / `coupler` (`slot_desc`, slot_gate_plan.py:95) and
-  `cz_gate_build._plan_known` creates the operation on that line (cz_gate_build.py:1090-1131).
+  `cz_gate_build._plan_known` creates the operation on that line (cz_gate_build.py:1180-1225).
 - **Older render.** Version 1 refused any `Pulse` on control and target (`V1_SLOT_KINDS` comment, slot_gate_template.py:72-73; generated
   guard, slot_gate_template.py:448-449).
 - **Refusal sentences by name** (slot_gate_template.py): `SLOT_PROBLEM` (slot_gate_template.py:63), `KEYS_PROBLEM` (slot_gate_template.py:51),
@@ -124,7 +124,7 @@ for a class (slots, fields, lines), is built per class by `slot_desc` (slot_gate
   `test_one_unit_operation_per_qubit_for_the_whole_request`, `test_assign_units_gives_a_unit_to_the_first_written_gate_only`,
   `test_a_shared_unit_is_written_with_the_gates_that_are_written`.
 - **`not_calibrated`.** Every planned slot row carries `not_calibrated` set to `cgb.NOT_CALIBRATED`
-  (cz_gate_routes.py:481-482; text at cz_gate_build.py:1164). The dialog shows it once, after a check
+  (cz_gate_routes.py:481-482; text at cz_gate_build.py:1259). The dialog shows it once, after a check
   (cz-gate.js:586-594). Pin: `test_every_planned_slot_row_carries_the_not_calibrated_line`.
 - **Amp scale limit.** The rule is `|level / unit|` strictly below `AMP_SCALE_LIMIT` (slot_gate_template.py:35,
   `level_scale_problem`, slot_gate_template.py:286); both numbers must be finite, the unit nonzero, bool refused (slot_gate_template.py:289-295). A negative
@@ -138,11 +138,17 @@ for a class (slots, fields, lines), is built per class by `slot_desc` (slot_gate
   `MIN_LENGTH_NS` (slot_gate_template.py:40) and at most `MAX_SPECTATOR_NS` (slot_gate_template.py:45, whose comment quotes its documentation source);
   `spectator_length_problem` (slot_gate_template.py:310) adds the shared `length_rule`, and `MIN_LENGTH_NS` / `LENGTH_STEP_NS` are pinned
   equal to that rule (`test_min_length_matches_shared_rule`, `test_length_step_matches_shared_rule`).
-  The length floor has one owner, `spec_constraints.length_floor_ns(state, from_qua)` (spec_constraints.py:152),
+  The length floor has one owner, `spec_constraints.length_floor_ns(state, from_qua)` (spec_constraints.py:155),
   after docs Guides/timing_in_qua.md:14-16: a chip that declares a QOP before 3.3 gets 16 ns; QOP 3.3 or later
   gets 4 ns for a length set in the configuration and 8 ns for one set from QUA; a chip with no version gets the
   3.3 floor plus the note `LENGTH_FLOOR_NOTE` when a value under 16 ns is accepted. The CZ gate builder's
-  `length_rule` (cz_gate_build.py:363) and the gate check's `length` result use the chip's floor. The slot
+  `chip_length_rule` (cz_gate_build.py:389, over `length_rule`, cz_gate_build.py:363) and the gate check's
+  `length` result (`_length_check`, gate_check.py:498) use the chip's floor. The builder puts the note in the
+  plan answer's `notes` (`_floor_notes`, cz_gate_build.py:403), which the plan and check doors pass on
+  (cz_gate_routes.py:751, cz_gate_routes.py:1054) and the dialog shows beside the plan and after the write, so a
+  known-class gate created without a lab check still names the QOP it needs. Exception: on the slot path an
+  older-render note replaces the plan's `notes` (cz_gate_routes.py:409). Every caller of the floor reads its
+  note, or is listed with the place that shows it (`FLOOR_ONLY`, tests/test_gate_length_floor.py). The slot
   template keeps `MIN_LENGTH_NS` at `LENGTH_FLOOR_ANY_QOP_NS` (16 ns): its generated class is chip-independent
   text that sets spectator lengths and waits from QUA, and a lower floor there is a new render version. The slot
   duration (clock cycles) is capped by `DURATION_PROBLEM`, checked in the generated apply (slot_gate_template.py:490-493). A wait step is
@@ -159,7 +165,7 @@ for a class (slots, fields, lines), is built per class by `slot_desc` (slot_gate
   raises (slot_gate_plan.py:244-245, slot_gate_plan.py:278-279).
 - **What the dialog shows.** The spectator panel lists the pair's candidates with length, level and unit cells
   (`fillSpect`, cz-gate.js:500). `_spectator_offer` (cz_gate_routes.py:263) says offered with `method: "unit"` when the
-  class has spectators, else the descriptor sentence of `spectator_refusal` (cz_gate_build.py:1181). `_unit_candidates`
+  class has spectators, else the descriptor sentence of `spectator_refusal` (cz_gate_build.py:1276). `_unit_candidates`
   (cz_gate_routes.py:215) adds the stored `unit` and `reachable` per candidate. A blank unit is passed on as absent (`_slot_rows`,
   cz_gate_routes.py:277).
 

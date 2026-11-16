@@ -23,7 +23,9 @@ Rules:
   (``[-range - offset, range - offset]``), or None when the range is unknown;
 - ``over_range``: a value plus the offset outside the port's range;
   ``bad_length``: the played length is not a whole number of ns, not a
-  multiple of 4 ns or below 16 ns (the gate check's length rule);
+  multiple of 4 ns or below the chip's floor (the gate check's length rule:
+  16 ns before QOP 3.3, 4 ns from QOP 3.3 on; 16 ns when the timeline names
+  no floor);
 - ``notes`` and ``cannot_draw`` of the check are passed through verbatim;
   when ``cannot_draw`` is set there are NO lanes.
 

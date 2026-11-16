@@ -193,3 +193,116 @@ def test_gate_check_stores_the_chip_floor_with_the_timeline():
 
 def test_slot_template_keeps_the_floor_every_qop_plays():
     assert slot_gate_template.MIN_LENGTH_NS == sc.LENGTH_FLOOR_ANY_QOP_NS == 16
+
+
+# --- the plan carries the note to every surface that shows it -----------------
+
+@pytest.mark.parametrize("version,length,notes", [
+    (NONE, 8, [NOTE]), (NONE, 4, [NOTE]), (NONE, 12, [NOTE]), (NONE, 16, None), (NONE, 48, None),
+    (NEW, 8, None), (NEW, 4, None), (OLD, 16, None)])
+def test_known_class_plan_notes_a_short_length_without_version(version, length, notes):
+    res = tb._plan(_with(tb._chip(), version), pulses=tb._square(length=length))
+    assert "creates" in res, res.get("error")
+    assert res.get("notes") == notes
+
+
+def test_old_qop_plan_answer_has_no_notes_key():
+    assert "notes" not in tb._plan(_with(tb._chip(), OLD), pulses=tb._square(length=48))
+    assert "notes" not in tb._plan(_with(tb._chip(), OLD), pulses=tb._square(length=8))
+
+
+@pytest.mark.parametrize("version,length,notes", [
+    (NONE, 8, [NOTE]), (NONE, 48, None), (NEW, 8, None)])
+def test_spectator_plan_notes_a_short_length_without_version(version, length, notes):
+    res = ts._plan(_with(ts._chip(), version), [{"qubit": "q3", "length": length, "level": 0.05}])
+    assert "error" not in res, res
+    assert res.get("notes") == notes
+
+
+def test_two_short_lengths_give_the_note_once():
+    res = ts._plan(_with(ts._chip(), NONE), [{"qubit": "q3", "length": 8, "level": 0.05},
+                                             {"qubit": "q4", "length": 12, "level": 0.05}],
+                   pulses=None)
+    assert res.get("notes") == [NOTE]
+
+
+@pytest.mark.parametrize("version,length,notes", [
+    (NONE, 8, [NOTE]), (NONE, 48, None), (NEW, 8, None)])
+def test_copied_layout_plan_notes_a_short_length_without_version(version, length, notes):
+    res = cgb.plan(_with(tb._lab_chip(), version), "q2-3", gate_name="cz_new",
+                   gate_class=tb.LAB_GATE,
+                   pulses={"flux_pulse_control": {"fields": {"length": length}}})
+    assert "creates" in res, res.get("error")
+    assert res.get("notes") == notes
+
+
+def test_plan_and_check_doors_show_the_note(monkeypatch, tmp_path):
+    from tests import test_cz_gate_routes as tr
+    a = tr.App(tmp_path, state=_with(tb._chip(4), NONE))
+    try:
+        body = tr._body()
+        body["pulses"]["flux_pulse_qubit"]["fields"]["length"] = 8
+        plan = a.c.post(tr.PLAN, json=body).get_json()
+        assert plan["pairs"][0]["notes"] == [NOTE], plan
+        # no env picked: a known class is still created without the lab check,
+        # and the check answer (which the dialog shows after the write) names the floor
+        monkeypatch.setattr(tr.czr, "_env_python", lambda: None)
+        chk = tr._check(a.c, body)
+        row = chk["pairs"][0]
+        assert row["verdict"]["allowed"] and row["notes"] == [NOTE], row
+        body["pulses"]["flux_pulse_qubit"]["fields"]["length"] = 48
+        assert a.c.post(tr.PLAN, json=body).get_json()["pairs"][0]["notes"] == []
+    finally:
+        from quam_state_manager.core.hub_index import close_readers
+        close_readers()
+
+
+# --- ratchet: no caller drops the floor's note -------------------------------
+
+#: callers that read only the floor, and where the note is shown instead
+FLOOR_ONLY = {
+    ("gate_check.py", "_one_gate_lab"): "the timeline stores the floor; the length check of "
+                                        "the same gate shows the note",
+}
+
+
+def _floor_calls():
+    import ast
+    from pathlib import Path
+    pkg = Path(sc.__file__).resolve().parents[1]
+    names = {"length_floor_ns", "chip_length_rule"}
+    out = []
+    for path in sorted(pkg.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) or fn.name in names:
+                continue
+            calls, bound = [], []
+            for node in ast.walk(fn):
+                if isinstance(node, ast.Call):
+                    f = node.func
+                    name = f.id if isinstance(f, ast.Name) else getattr(f, "attr", None)
+                    if name in names:
+                        calls.append(node)
+                if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+                        and len(node.targets) == 1 and isinstance(node.targets[0], ast.Tuple)
+                        and len(node.targets[0].elts) == 2
+                        and isinstance(node.targets[0].elts[1], ast.Name)):
+                    f = node.value.func
+                    if (f.id if isinstance(f, ast.Name) else getattr(f, "attr", None)) in names:
+                        bound.append(node.targets[0].elts[1].id)
+            if calls:
+                read = {n.id for n in ast.walk(fn)
+                        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+                used = any(b != "_" and b in read for b in bound)
+                out.append((path.name, fn.name, used))
+    return out
+
+
+def test_every_floor_caller_shows_the_note():
+    calls = _floor_calls()
+    assert len(calls) >= 5, calls
+    dropped = [(m, f) for m, f, used in calls if not used and (m, f) not in FLOOR_ONLY]
+    assert not dropped, f"these functions drop the floor's note: {dropped}"
+    stale = set(FLOOR_ONLY) - {(m, f) for m, f, _ in calls}
+    assert not stale, stale

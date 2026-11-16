@@ -261,7 +261,9 @@ def _play(call, kw, stmt, table, clocks) -> TimelineRow:
                        level=None if peak is None else peak * scale, scale=scale)
 
 
-#: QUA's shortest ``duration=`` / ``wait`` (clock cycles of 4 ns, so 16 ns)
+#: QUA's shortest ``duration=`` / ``wait`` before QOP 3.3 (clock cycles of 4 ns,
+#: so 16 ns); from QOP 3.3 on it is 2 cycles (8 ns), and callers pass the chip's
+#: floor as *min_cycles*
 MIN_CYCLES = 4
 
 
