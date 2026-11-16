@@ -23,7 +23,7 @@
     {%- set _key_tiles = [] -%}
     {%- for _k, _label in (('length', 'Length'), ('amplitude', 'Amplitude')) -%}
     {%- for p in sec.params if p.key == _k and not p.is_list and not p.is_runtime and p.value is not none and p.value != '' and (not p.is_pointer or p.ref_known) -%}
-    {%- set _ = _key_tiles.append({'label': _label, 'value': p.value, 'unit': p.unit or none}) -%}
+    {%- set _ = _key_tiles.append({'label': _label, 'value': p.value, 'unit': p.unit or none, 'path': p.dot_path}) -%}
     {%- endfor -%}
     {%- endfor -%}
     {%- if _key_tiles %}{{ ui_stats(_key_tiles, label='Key values of ' ~ sec.short) }}{% endif %}

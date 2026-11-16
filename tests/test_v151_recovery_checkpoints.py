@@ -232,6 +232,29 @@ def test_the_checkpoint_carries_no_null_optional_fields(tmp_path):
         _OlderRow(**row)                  # what the older reader does with each row
 
 
+def test_a_browser_window_edit_checkpoints_no_window_id(tmp_path):
+    """The editing window's id stamps the row in memory (the undo journal reads it), but a
+    recovery is read by a later SM process whose windows all have new ids: the file never
+    carries it, so an older SM still reads a browser edit's row."""
+    live = tmp_path / "chip" / "quam_state"
+    live.mkdir(parents=True)
+    (live / "state.json").write_text(json.dumps({
+        "qubits": {"q1": {"id": "q1", "f_01": 5000000000}}, "qubit_pairs": {}, "active_qubit_names": ["q1"],
+    }), encoding="utf-8")
+    (live / "wiring.json").write_text("{}", encoding="utf-8")
+    app, client, _ = _open(tmp_path / "instance", live)
+    r = client.post("/field/edit", data={"dot_path": "qubits.q1.f_01", "value": "5100000000"},
+                    headers={"X-SM-Window-ID": "window-a"})
+    assert r.status_code == 200 and r.get_json()["ok"]
+    assert _ctx(app)["store"].change_log[-1].window_id == "window-a"
+    pending_tray.flush_all()
+    doc = json.loads(pending_tray.sidecar_path(_ctx(app)["working_copy"]).read_text(encoding="utf-8"))
+    assert doc["entries"]
+    for row in doc["entries"]:
+        assert "window_id" not in row, row
+        _OlderRow(**row)
+
+
 def test_the_sync_panel_restore_and_discard_selfcheck():
     import shutil
     import subprocess

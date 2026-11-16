@@ -287,4 +287,4 @@ def test_the_page_asks_and_shows_the_age_selfcheck():
     if r.returncode == 2:
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
-    assert r.stdout.count("ok - ") >= 27, r.stdout
+    assert r.stdout.count("ok - ") >= 28, r.stdout

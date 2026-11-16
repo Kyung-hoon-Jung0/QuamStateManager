@@ -230,7 +230,9 @@ class TestReadOnlyMode:
         assert "state_get" in names and "runs" in names and "check_fit" in names
         assert not ({"state_edit", "apply_to_live", "undo", "take_live", "journal_append", "note_set",
                      "cz_gate_check", "cz_gate_create", "class_file_save"} & names)
-        assert "cz_gate_plan" in names
+        # docs/313: the plan tool writes nothing but is a POST, which SM refuses from a read-only bridge,
+        # so the bridge does not offer it (nor the other POST-only tools)
+        assert not ({"cz_gate_plan", "propose_additions", "propose_card"} & names)
         for i in (3, 4):
             assert replies[i]["result"]["isError"] is True and "read-only" in replies[i]["result"]["content"][0]["text"]
 

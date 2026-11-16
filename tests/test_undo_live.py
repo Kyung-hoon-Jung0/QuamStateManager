@@ -1401,6 +1401,7 @@ class TestWorkingCopyContentGate:
     def test_a_diverged_working_copy_does_not_ride_a_ctrl_z_onto_the_chip(self, env, monkeypatch):
         import threading
         from quam_state_manager.core import working_copy as _wc
+        from quam_state_manager.core.autofit import writer as _writer
         from quam_state_manager.core.autofit.writer import ChipHandle, apply_rows
         c = env["client"]
         ctx = _ctx(env)
@@ -1409,13 +1410,17 @@ class TestWorkingCopyContentGate:
         assert _live_off(env) == 0.20
         # an autofit write whose apply_to_live FAILS: batch_set stages it,
         # saver.save() clears the log AND saves the diverged working copy, then
-        # the apply raises -> the never-verified value sits in the working copy
-        # with every ctx flag clean.
+        # the apply raises. The writer takes it back out, so the divergence is
+        # left only when that rollback itself fails and the caller wired no
+        # unresolved-write hook: the never-verified value then sits in the
+        # working copy with every ctx flag clean.
         chip = ChipHandle(store=ctx["store"], modifier=ctx["modifier"],
                           saver=ctx["saver"], wc=ctx["working_copy"],
                           build_lock=threading.RLock(), live_path=env["live"])
         monkeypatch.setattr(_wc, "apply_to_live",
                             lambda *a, **k: (_ for _ in ()).throw(OSError("live folder busy")))
+        monkeypatch.setattr(_writer, "_roll_back",
+                            lambda *a, **k: (_ for _ in ()).throw(OSError("working copy locked")))
         out = apply_rows(chip, [{"path": "qubits.qA1.f_01", "value": 9.9e9}],
                          apply_live=True, label="autofit")
         assert out.ok is False and out.action == "staged"

@@ -227,7 +227,13 @@
 {#- Stats: at most four tiles [{label, value, unit?, note?, tone?, title?}]; tone warn / danger only on an abnormal one,
     quiet on an unknown one (grey, never a state colour). -#}
 {%- macro ui_stats(tiles, label=None) -%}
-<div class="ui-stats" role="group"{% if label %} aria-label="{{ label }}"{% endif %}>{% for t in tiles[:4] %}<div class="ui-stat{% if t.tone %} ui-stat--{{ t.tone }}{% endif %}"{% if t.title %} title="{{ t.title }}"{% endif %}><div class="ui-stat-label">{{ t.label }}</div><p class="ui-stat-value">{{ t.value }}{% if t.unit %}<span class="ui-stat-unit">{{ t.unit }}</span>{% endif %}</p>{% if t.note %}<p class="ui-stat-note">{{ t.note }}</p>{% endif %}</div>{% endfor %}</div>
+<div class="ui-stats" role="group"{% if label %} aria-label="{{ label }}"{% endif %}>
+{%- for t in tiles[:4] %}<div class="ui-stat
+{%- if t.tone %} ui-stat--{{ t.tone }}{% endif %}"{% if t.title %} title="{{ t.title }}"{% endif %}
+{%- if t.path %} data-stat-path="{{ t.path }}"{% endif %}><div class="ui-stat-label">{{ t.label }}</div>
+{#- -#}<p class="ui-stat-value">{{ t.value }}
+{%- if t.unit %}<span class="ui-stat-unit">{{ t.unit }}</span>{% endif %}</p>
+{%- if t.note %}<p class="ui-stat-note">{{ t.note }}</p>{% endif %}</div>{% endfor %}</div>
 {%- endmacro -%}
 
 {#- Checks: [{name, state: pass|fail|skip, why?}]; each failure gets a fail row. -#}

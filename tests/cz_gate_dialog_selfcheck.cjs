@@ -769,6 +769,33 @@ function tableWidths(el, sw, cw) {
     const r14a = $('#czg-alert .ui-callout--note') && /Inputs changed: press Check again\./.test(alertText()) && !/Ready/.test(alertText());
     await settle();
     ok(r14a && $('#czg-alert .ui-callout--note') && !/Ready/.test(alertText()), 'inputs changed after a check: a note banner at once, still there after the plan answer, no "ready"');
+    // the note names the Check press only while Check can follow (mutation: changedAlert ignores the marked field)
+    const lenWas = fieldOf('flux_pulse_qubit', 'length').value;
+    type(fieldOf('flux_pulse_qubit', 'length'), '2.5');
+    await settle();
+    ok(prim().disabled && /Inputs changed: fix the marked field, then press Check\./.test(alertText())
+       && !/press Check again/.test(alertText()),
+       'a marked field after a check: the note asks to fix it, never "press Check again"');
+    type(fieldOf('flux_pulse_qubit', 'length'), lenWas);
+    await settle();
+    ok(!prim().disabled && /Inputs changed: press Check again\./.test(alertText()),
+       'the field fixed: the note says press Check again');
+    // a check whose output range failed puts the focus on the level field (mutation: drop rng in keepCheckFocus)
+    queue.check.push((b) => {
+        const j = checkOk(b);
+        j.pairs.forEach((p) => {
+            p.checks = [{ name: 'range', status: 'fail', message: 'Over the output range.' }];
+            p.timeline.lanes = [{ key: 'q1.z', segments: [{ flags: ['over_range'], peak_v: 3, min_v: 0 }] }];
+            p.verdict = { allowed: false, state: 'not checked',
+                          reason: "q1.z would play 3 V. This port's limit is 2.5 V." };
+        });
+        return j;
+    });
+    prim().focus();
+    prim().click();
+    await settle();
+    ok(prim().textContent === 'Check' && doc.activeElement === fieldOf('flux_pulse_qubit', 'amplitude'),
+       'an output-range failure: the focus goes to the level field, not left on Check');
     // G1 backdrop while busy (mutation: drop "&& !S.busy" from the backdrop close)
     hold = new Promise((r) => { release = r; });
     prim().click();
