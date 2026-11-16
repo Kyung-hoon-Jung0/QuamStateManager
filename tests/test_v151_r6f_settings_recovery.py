@@ -69,7 +69,8 @@ const took = w._schedulerSettingsDamaged(JSON.parse(process.argv[2]));
 setTimeout(() => process.exit(took && /Reset/.test(prompt) && posted === '/scheduler/settings/reset' ? 0 : 1), 20);
 """
     js = Path(__file__).resolve().parents[1] / "quam_state_manager/web/static/scheduler.js"
-    result = subprocess.run(["node", "-e", probe, str(js), json.dumps(body)], capture_output=True, text=True)
+    result = subprocess.run(["node", "-e", probe, str(js), json.dumps(body)], capture_output=True, text=True,
+                            timeout=300)
     assert result.returncode == 0, result.stderr
     answer = app.test_client().post("/scheduler/settings/reset").get_json()
     assert answer["ok"] and "Missing settings reset" in answer["message"]

@@ -98,6 +98,9 @@ from quam_state_manager.core.diagnostics import (
 #: the key of a gate's preview dict that lists the operations the gate must
 #: play (its spectators): ``{REQUIRED: [(element, operation)]}``
 REQUIRED = "required"
+#: the key of a drawn preview (a gate already on the chip) that lists why SM
+#: drew no preview for a played operation: ``{SKIPPED: ["<op> on <el>: why"]}``
+SKIPPED = "skipped"
 
 CHECKS = ("load_config", "ops", "length", "preview", "timeline", "range", "spectator_scale")
 #: SM's own check of a gate's spectator rows; it reads the chip, never the lab's answer
@@ -421,8 +424,9 @@ def _one_gate_lab(key, data, after, after_err, preview, merged=None, chip=None):
             except Exception:  # noqa: BLE001 (an undrawn preview is a skipped comparison)
                 preview = {}
         required = [tuple(x) for x in (preview.get(REQUIRED) or ())]
-        preview = {k: v for k, v in preview.items() if k != REQUIRED}
-        checks["preview"] = _guard(_preview_check, found, preview, no_cfg)
+        undrawn = preview.get(SKIPPED)
+        preview = {k: v for k, v in preview.items() if k not in (REQUIRED, SKIPPED)}
+        checks["preview"] = _guard(_preview_check, found, preview, no_cfg, undrawn)
         if required and not no_cfg:
             played = {(o.get("element"), o.get("operation")) for o in ops if isinstance(o, dict)}
             lost = [f"{op} on {el}" for el, op in required if (el, op) not in played]
@@ -602,10 +606,17 @@ def _iq_note(infos) -> str:
     return _IQ_NOTE if any(i.get("iq") for i in infos) else ""
 
 
-def _preview_check(found: list, preview: dict, no_config: bool) -> dict:
+def _preview_check(found: list, preview: dict, no_config: bool,
+                   undrawn: list | None = None) -> dict:
+    """*undrawn*: for a preview SM drew from the chip, why each played pulse
+    it could not draw was skipped (None for a planned preview)."""
     if no_config:
         return _r("skipped", "Not checked: the config was not built.")
+    why_undrawn = (" " + _sentences([str(x).rstrip(".") for x in undrawn])) if undrawn else ""
     if not preview:
+        if undrawn is not None:
+            return _r("skipped", "Not compared: SM could not draw any pulse the gate plays."
+                      + why_undrawn)
         return _r("skipped", "No preview was given to compare.")
     bad, partial, skipped, compared, used = [], [], [], 0, []
     played = {(i["element"], i["operation"]) for i in found}
@@ -653,7 +664,7 @@ def _preview_check(found: list, preview: dict, no_config: bool) -> dict:
     extra = [f"{o} on {e}" for e, o in sorted(preview) if (e, o) not in played]
     cover = ""
     if no_preview:
-        cover += " No preview for: " + ", ".join(no_preview) + "."
+        cover += " No preview for: " + ", ".join(no_preview) + "." + why_undrawn
     if extra:
         cover += " Preview given for operations the gate does not play: " + ", ".join(extra) + "."
     if bad:

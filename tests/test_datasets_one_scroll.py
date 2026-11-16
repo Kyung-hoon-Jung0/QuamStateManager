@@ -167,7 +167,7 @@ def test_dataset_selfchecks_still_pass():
         if not p.is_file():
             continue
         r = subprocess.run(["node", str(p)], capture_output=True, text=True,
-                           encoding="utf-8", cwd=str(_ROOT))
+                           encoding="utf-8", cwd=str(_ROOT), timeout=300)
         if r.returncode == 2:
             pytest.skip("jsdom not installed")
         assert r.returncode == 0, (name, r.stdout + r.stderr)

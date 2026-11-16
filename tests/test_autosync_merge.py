@@ -238,7 +238,7 @@ class TestTheClientPressesTheDoorItIsGiven:
         if shutil.which("node") is None:
             pytest.skip("node not installed")
         if subprocess.run(["node", "-e", "require.resolve('jsdom')"],
-                          capture_output=True, cwd=str(root)).returncode:
+                          capture_output=True, cwd=str(root), timeout=300).returncode:
             pytest.skip("jsdom not installed (npm install)")
         r = subprocess.run(["node", str(drv)], capture_output=True, text=True,
                            errors="replace", timeout=300, cwd=str(root))

@@ -256,10 +256,11 @@ def test_the_snz_description_follows_its_fields():
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
 def test_pulses_played_selfcheck():
-    if subprocess.run(["node", "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT)).returncode != 0:
+    if subprocess.run(["node", "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT),
+                      timeout=300).returncode != 0:
         pytest.skip("jsdom not installed for node")
     res = subprocess.run(["node", str(_ROOT / "tests" / "pulses_played_selfcheck.cjs")],
-                         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
+                         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=300)
     assert res.returncode == 0, res.stdout + "\n" + res.stderr
     assert "ok -" in res.stdout and "FAIL" not in res.stdout + res.stderr
 

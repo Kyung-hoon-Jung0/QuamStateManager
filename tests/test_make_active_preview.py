@@ -109,3 +109,38 @@ def test_a_planned_coupler_pulse_is_previewed_on_its_element():
     assert skipped == []
     assert pv[("c", "cz_sq_coupler_pulse_q1_q2")] == pytest.approx(0.05)
     assert pv[("q1.z", "cz_sq_pulse_q1_q2")] == pytest.approx(0.3)
+
+
+def test_integer_ids_name_elements_as_quam_does():
+    s = chip()
+    s["qubit_pairs"]["q1-q2"]["coupler"]["id"] = 3
+    assert gate_preview.coupler_element(s, "q1-q2") == "ch3"
+    assert gate_preview.qubit_name("qA", {"id": 7}) == "q7"
+    assert gate_preview.qubit_name("qA", {"id": "q1"}) == "q1"
+    assert gate_preview.qubit_name("qA", {}) == "qA"
+
+
+def test_a_pulse_sm_cannot_draw_is_named_with_its_reason():
+    from quam_state_manager.web import gate_status_routes as gsr
+    found = [{"element": "q1.z", "operation": "x"}]
+
+    class Store:
+        import threading
+        _lock = threading.RLock()
+        merged = {"qubits": {}}
+
+    drawn = gsr._chip_previews(Store(), "q1-q2", GATE)[("q1-q2", GATE)](found)
+    assert drawn[gate_check.SKIPPED] == ["x on q1.z: SM does not find this pulse on the chip."]
+    msg = gate_check._preview_check(found, {}, False, drawn[gate_check.SKIPPED])["message"]
+    assert "could not draw any pulse" in msg and "SM does not find this pulse on the chip." in msg
+    assert "was given" not in msg
+    assert gate_check._preview_check(found, {}, False)["message"] == "No preview was given to compare."
+
+
+def test_a_known_class_gate_whose_pulses_match_is_still_made_active(rig):
+    ctx = next(iter(rig._app.config["contexts"].values()))
+    from quam_state_manager.core import cz_gate_build as cgb
+    ctx["modifier"].set_value(f"{MACRO}.__class__", cgb.CZ_GATE)
+    r = _ma(rig)
+    assert r.status_code == 200, r.data[:600]
+    assert _merged(rig)["qubit_pairs"]["q1-q2"]["macros"]["cz"] == f"#./{GATE}"

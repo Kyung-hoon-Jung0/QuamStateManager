@@ -653,38 +653,6 @@ def _given_kinds(merged: dict, body: dict, desc: dict | None = None) -> tuple[di
     return pulse_kinds, setting_kinds
 
 
-def _whole_ns(v: Any) -> bool:
-    return isinstance(v, int) and not isinstance(v, bool)
-
-
-def flat_top_problem(spec: Any) -> str | None:
-    """Why a flat-top pulse's length and flat length cannot make a waveform,
-    or None. The flat-top classes split ``length - flat_length`` into two
-    equal edges (``waveform_synth._flattop_factory``, the mirror of the lab
-    class): the flat part must fit in the pulse and the rest must be even. A
-    field left out takes its catalog default, as the plan does."""
-    if not isinstance(spec, dict) or not isinstance(spec.get("class"), str):
-        return None
-    cat = pulse_catalog.by_qclass(spec["class"])
-    if cat is None or not cat.key.startswith("FlatTop"):
-        return None
-    given = spec.get("fields") if isinstance(spec.get("fields"), dict) else {}
-    defaults = {prm.name: prm.default for prm in cat.params}
-    length = given.get("length", defaults.get("length"))
-    flat = given.get("flat_length", defaults.get("flat_length"))
-    if flat is None:
-        flat = 0
-    if not (_whole_ns(length) and _whole_ns(flat)):
-        return None
-    if flat > length:
-        return (f"{flat} ns is longer than the whole pulse ({length} ns). The flat part must "
-                f"fit inside the length: make it at most {length} ns, or make the length longer.")
-    if (length - flat) % 2:
-        return (f"the length minus the flat length is {length - flat} ns, an odd number, so the "
-                "two edges cannot be equally long. Change the flat length or the length by 1 ns.")
-    return None
-
-
 def check_values(merged: dict, body: dict, desc: dict | None = None) -> list[str]:
     """Every given pulse field and gate setting checked against its kind on
     the server (the page checks too, but nothing it sends is trusted): one
@@ -692,15 +660,11 @@ def check_values(merged: dict, body: dict, desc: dict | None = None) -> list[str
     pulse_kinds, setting_kinds = _given_kinds(merged, body, desc)
     out = []
     for slot, spec in (body.get("pulses") or {}).items():
-        typed = len(out)
         for k, v in ((spec or {}).get("fields") or {}).items() if isinstance(spec, dict) else ():
             kind, optional = (pulse_kinds.get(slot) or {}).get(k, (value_kind(v), True))
             why = value_problem(v, kind, optional or v is None and kind == "any")
             if why:
                 out.append(f"{cgb.cap_name(slot)}.{cgb.cap_name(k)}: {why}")
-        why = flat_top_problem(spec) if len(out) == typed else None
-        if why:
-            out.append(f"{cgb.cap_name(slot)}.{cgb.cap_name('flat_length')}: {why}")
     for k, v in (body.get("macro_fields") or {}).items():
         kind, optional = setting_kinds.get(k, (value_kind(v), True))
         why = value_problem(v, kind, optional)

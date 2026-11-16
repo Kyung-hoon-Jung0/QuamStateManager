@@ -652,9 +652,9 @@ def test_pulse_gate_tree_selfcheck():
     if node is None:
         pytest.skip("node not available")
     if subprocess.run([node, "-e", "require('jsdom')"], capture_output=True,
-                      cwd=str(_ROOT)).returncode != 0:
+                      cwd=str(_ROOT), timeout=300).returncode != 0:
         pytest.skip("jsdom not installed for node")
     res = subprocess.run([node, str(_ROOT / "tests" / "pulse_gate_tree_selfcheck.cjs")],
-                         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
+                         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=300)
     assert res.returncode == 0, res.stdout + "\n" + res.stderr
     assert "ALL OK" in res.stdout

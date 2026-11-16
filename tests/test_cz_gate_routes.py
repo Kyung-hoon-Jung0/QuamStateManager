@@ -430,6 +430,37 @@ def test_a_flat_top_that_fits_plans(chip):
     assert chip.c.post(PLAN, json=body).get_json()["pairs"][0]["ok"]
 
 
+def _flat_top_source(length, flat):
+    """A 4-qubit chip whose pair q1-2 holds the gate cz_src with a flat-top pulse."""
+    from tests.test_cz_gate_build import _apply
+    s = _chip(4)
+    src = cgb.plan(s, "q1-2", gate_name="cz_src", gate_class=cgb.CZ_GATE, pulses={
+        "flux_pulse_qubit": {"class": FLAT_TOP,
+                             "fields": {"length": length, "amplitude": 0.1, "flat_length": flat}}})
+    assert "creates" in src, src
+    return _apply(s, src["creates"])
+
+
+@pytest.mark.parametrize("source, typed, refused", [
+    ((120, 20), {"length": 60}, None),
+    ((60, 20), {"flat_length": 100}, "100 ns is longer than the whole pulse (60 ns)"),
+])
+def test_a_flat_top_is_judged_as_the_plan_builds_it_with_copied_values(source, typed, refused):
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        a = App(tmp, _flat_top_source(*source))
+        body = _body(name="cz_new", copy_from="cz_src")
+        body["pulses"]["flux_pulse_qubit"] = {"class": FLAT_TOP, "fields": dict(typed)}
+        p = a.c.post(PLAN, json=body).get_json()["pairs"][0]
+        from quam_state_manager.core.hub_index import close_readers
+        close_readers()
+    if refused is None:
+        assert p["ok"], p.get("refusals")
+    else:
+        assert not p["ok"]
+        assert any(r.startswith("flux_pulse_qubit.flat_length: ") and refused in r
+                   for r in p["refusals"]), p["refusals"]
+
+
 def test_field_kinds_come_from_the_value_type_never_from_its_digits():
     assert czr.value_kind(0.0) == "float" and czr.value_kind(92.0) == "float"
     assert czr.value_kind(2) == "int" and czr.value_kind(True) == "bool" and czr.value_kind("x") == "str"

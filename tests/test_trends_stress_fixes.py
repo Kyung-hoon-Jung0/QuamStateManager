@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def _node():
     if shutil.which("node") is None:
         pytest.skip("node not available")
-    r = subprocess.run(["node", "-e", "require('jsdom')"], cwd=ROOT, capture_output=True)
+    r = subprocess.run(["node", "-e", "require('jsdom')"], cwd=ROOT, capture_output=True, timeout=300)
     if r.returncode:
         pytest.skip("jsdom not installed")
 

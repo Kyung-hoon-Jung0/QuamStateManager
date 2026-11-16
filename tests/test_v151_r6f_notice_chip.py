@@ -61,5 +61,5 @@ tray.setAttribute('data-live-landed', '11'); w.LiveWriteNotice.sweep();
 assert(!first.isConnected && !fallback.isConnected, 'later landing on the same chip clears both');
 w.close();
 """
-    result = subprocess.run(["node", "-e", probe, str(js)], capture_output=True, text=True)
+    result = subprocess.run(["node", "-e", probe, str(js)], capture_output=True, text=True, timeout=300)
     assert result.returncode == 0, result.stdout + result.stderr

@@ -387,7 +387,7 @@ class TestDragDefault:
             pytest.skip("node not installed")
         here = Path(__file__).parent
         r = subprocess.run([node, str(here / "pulses_qubit_default_selfcheck.cjs")],
-                           capture_output=True, text=True, env=dict(os.environ))
+                           capture_output=True, text=True, env=dict(os.environ), timeout=300)
         if r.returncode == 2 and "jsdom not installed" in r.stderr:
             pytest.skip("jsdom not installed")
         assert r.returncode == 0, r.stdout + r.stderr

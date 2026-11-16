@@ -27,5 +27,6 @@ def test_qm_headings_use_the_heading_property():
 
 
 def test_wiring_border_consumes_palette():
-    r = subprocess.run(["node", str(Path(__file__).with_name("v152b_consumers.cjs"))], capture_output=True, text=True)
+    r = subprocess.run(["node", str(Path(__file__).with_name("v152b_consumers.cjs"))], capture_output=True, text=True,
+                       timeout=300)
     assert r.returncode == 0, r.stdout + r.stderr

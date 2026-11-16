@@ -71,11 +71,11 @@ def test_browser_evidence_directory(tmp_path):
     code = "const dir = require(process.argv[1]).directory('shots'); process.stdout.write(dir);"
     env = dict(os.environ, SM_EVIDENCE_DIR=str(tmp_path))
     result = subprocess.run(["node", "-e", code, str(helper)], env=env,
-                            capture_output=True, text=True, check=True)
+                            capture_output=True, text=True, check=True, timeout=300)
     assert Path(result.stdout) == tmp_path / "shots"
     assert (tmp_path / "shots").is_dir()
     env["SM_EVIDENCE_DIR"] = str(helper.parents[2])
     result = subprocess.run(["node", "-e", code, str(helper)], env=env,
-                            capture_output=True, text=True)
+                            capture_output=True, text=True, timeout=300)
     assert result.returncode != 0
     assert "outside the repository" in result.stderr

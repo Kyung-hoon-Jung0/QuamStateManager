@@ -23,7 +23,7 @@ def _flipped_spec():
     if shutil.which("node") is None:
         pytest.skip("node not on PATH")
     r = subprocess.run(["node", str(_SELFCHECK)], capture_output=True, text=True,
-                       encoding="utf-8", cwd=str(_ROOT))
+                       encoding="utf-8", cwd=str(_ROOT), timeout=300)
     if r.returncode == 2:
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr

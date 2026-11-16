@@ -12,10 +12,11 @@ _ROOT = Path(__file__).resolve().parent.parent
 
 def test_col_resize_selfcheck():
     node = shutil.which("node")
-    if node is None or subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT)).returncode != 0:
+    if node is None or subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT),
+                                      timeout=300).returncode != 0:
         pytest.skip("jsdom not installed for node")
     res = subprocess.run([node, str(_ROOT / "tests" / "col_resize_selfcheck.cjs")],
-                         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
+                         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=300)
     assert res.returncode == 0, res.stdout + res.stderr
     assert "ok - the other three columns did not move" in res.stdout
 

@@ -12,8 +12,8 @@ ROOT = Path(__file__).resolve().parent.parent
 def test_a_run_in_a_collapsed_lazy_group_is_revealed():
     node = shutil.which("node")
     if node is None or subprocess.run([node, "-e", "require('jsdom')"], capture_output=True,
-                                      cwd=str(ROOT)).returncode != 0:
+                                      cwd=str(ROOT), timeout=300).returncode != 0:
         pytest.skip("node + jsdom not available")
     r = subprocess.run([node, str(ROOT / "tests" / "sidebar_lazy_highlight_selfcheck.cjs")],
-                       capture_output=True, text=True, encoding="utf-8", cwd=str(ROOT))
+                       capture_output=True, text=True, encoding="utf-8", cwd=str(ROOT), timeout=300)
     assert r.returncode == 0, r.stdout + r.stderr

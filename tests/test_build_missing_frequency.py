@@ -216,7 +216,7 @@ def test_the_wizard_headline_says_not_runnable():
     root = Path(__file__).resolve().parent.parent
     r = subprocess.run(
         ["node", str(root / "tests" / "generate_build_unplayable_selfcheck.cjs")],
-        capture_output=True, text=True, encoding="utf-8", cwd=str(root))
+        capture_output=True, text=True, encoding="utf-8", cwd=str(root), timeout=300)
     if r.returncode == 2:
         pytest.skip("jsdom not installed (run `npm install jsdom`)")
     assert r.returncode == 0, (r.stdout + r.stderr)

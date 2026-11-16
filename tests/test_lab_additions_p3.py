@@ -405,7 +405,7 @@ def test_wizard_selfcheck():
     if not shutil.which("node"):
         pytest.skip("node not installed")
     p = subprocess.run(["node", str(Path(__file__).with_name("gen_additions_p3_selfcheck.cjs"))],
-                       capture_output=True, text=True, encoding="utf-8")
+                       capture_output=True, text=True, encoding="utf-8", timeout=300)
     if p.returncode == 2 and "jsdom not installed" in p.stderr:
         pytest.skip("jsdom not installed")
     assert p.returncode == 0, p.stdout + p.stderr

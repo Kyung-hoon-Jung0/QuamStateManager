@@ -72,7 +72,7 @@ def test_f3_derived_map_style():
     from pathlib import Path
     env = dict(os.environ, CZ_DERIVED_PIN="1")
     r = subprocess.run(["node", "tests/cz_map_selfcheck.cjs"], env=env,
-                       cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
+                       cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=300)
     assert r.returncode == 0, r.stdout + r.stderr
 
 
@@ -167,7 +167,7 @@ def test_f6_lobe_detail_and_figure():
     import subprocess
     from pathlib import Path
     r = subprocess.run(["node", "tests/cz_plan_selfcheck.cjs"], env=dict(os.environ, CZ_LOBES_PIN="1"),
-                       cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
+                       cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=300)
     assert r.returncode == 0, r.stdout + r.stderr
 
 
@@ -176,7 +176,7 @@ def test_f5_model_detail_does_not_borrow_quadratic_limit():
     import subprocess
     from pathlib import Path
     r = subprocess.run(["node", "tests/cz_plan_selfcheck.cjs"], env=dict(os.environ, CZ_VALIDITY_PIN="1"),
-                       cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
+                       cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=300)
     assert r.returncode == 0, r.stdout + r.stderr
 
 
@@ -194,5 +194,5 @@ def test_no_quad_term_draws_no_quad_legend():
     import subprocess
     from pathlib import Path
     r = subprocess.run(["node", "tests/cz_plan_selfcheck.cjs"], env=dict(os.environ, CZ_NOQUAD_PIN="1"),
-                       cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
+                       cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=300)
     assert r.returncode == 0, r.stdout + r.stderr

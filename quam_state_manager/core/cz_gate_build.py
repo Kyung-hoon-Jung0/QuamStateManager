@@ -391,6 +391,38 @@ def length_rule(pulse: dict, floor_ns: int = LENGTH_FLOOR_ANY_QOP_NS) -> str | N
     return None
 
 
+def _whole_ns(v: Any) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def flat_top_rule(pulse: dict) -> str | None:
+    """Why a built flat-top pulse's length and flat length cannot make a
+    waveform, or None. Judged on the pulse as the plan builds it (catalog
+    defaults, then copied or model values, then given values). The flat-top
+    classes split ``length - flat_length`` into two equal edges
+    (``waveform_synth._flattop_factory``, the mirror of the lab class): the
+    flat part must fit in the pulse and the rest must be even. A length that
+    is not a whole number of ns (an inferred reference) is not judged here."""
+    if not isinstance(pulse, dict) or not isinstance(pulse.get("__class__"), str):
+        return None
+    cat = pulse_catalog.by_qclass(pulse["__class__"])
+    if cat is None or not cat.key.startswith("FlatTop"):
+        return None
+    length = pulse.get("length")
+    flat = pulse.get("flat_length")
+    if flat is None:
+        flat = 0
+    if not (_whole_ns(length) and _whole_ns(flat)):
+        return None
+    if flat > length:
+        return (f"{flat} ns is longer than the whole pulse ({length} ns). The flat part must "
+                f"fit inside the length: make it at most {length} ns, or make the length longer.")
+    if (length - flat) % 2:
+        return (f"the length minus the flat length is {length - flat} ns, an odd number, so the "
+                "two edges cannot be equally long. Change the flat length or the length by 1 ns.")
+    return None
+
+
 def chip_length_rule(merged: dict, pulse: dict) -> tuple[str | None, str | None]:
     """``(refusal, note)``: :func:`length_rule` of *pulse* against this chip's
     floor (:func:`spec_constraints.length_floor_ns`). *note* is the floor's note
@@ -1205,6 +1237,9 @@ def _plan_known(merged, pair_id, p, gate_name, gate_class, pulses, lines,
         r, note = chip_length_rule(merged, pulse)
         if r:
             reasons.append(f"{s.field}.length: {r}")
+        why = flat_top_rule(pulse)
+        if why:
+            reasons.append(f"{cap_name(s.field)}.flat_length: {why}")
         notes.append(note)
         try:
             key = operation_name(gate_name, s.role, control, target)
@@ -2127,6 +2162,9 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
         r, note = chip_length_rule(merged, pulse)
         if r:
             reasons.append(f"{f}.length: {r}")
+        why = flat_top_rule(pulse)
+        if why:
+            reasons.append(f"{cap_name(f)}.flat_length: {why}")
         notes.append(note)
         if isinstance(model.get(f), dict):
             directions[f] = MACRO_OWNS

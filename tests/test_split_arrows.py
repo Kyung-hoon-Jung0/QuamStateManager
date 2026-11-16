@@ -45,7 +45,7 @@ MODES = ["buttons", "arrows", "drag", "up_next", "down_next", "drag_after_arrow"
 def _node(*args: str) -> subprocess.CompletedProcess:
     node = shutil.which("node")
     if node is None or subprocess.run([node, "-e", "require('jsdom')"], capture_output=True,
-                                      cwd=str(ROOT)).returncode != 0:
+                                      cwd=str(ROOT), timeout=300).returncode != 0:
         pytest.skip("node + jsdom not available")
     return subprocess.run([node, str(ROOT / "tests" / "split_arrows_selfcheck.cjs"), *args],
                           capture_output=True, text=True, encoding="utf-8",

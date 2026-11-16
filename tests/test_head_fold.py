@@ -19,9 +19,10 @@ def test_head_fold_selfcheck():
     node = shutil.which("node")
     if node is None:
         pytest.skip("node not available")
-    if subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT)).returncode != 0:
+    if subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT),
+                      timeout=300).returncode != 0:
         pytest.skip("jsdom not installed for node")
     res = subprocess.run([node, str(_ROOT / "tests" / "head_fold_selfcheck.cjs")], capture_output=True,
-                         text=True, encoding="utf-8", cwd=str(_ROOT))
+                         text=True, encoding="utf-8", cwd=str(_ROOT), timeout=300)
     assert res.returncode == 0, res.stdout + res.stderr
     assert " 0 failed" in res.stdout

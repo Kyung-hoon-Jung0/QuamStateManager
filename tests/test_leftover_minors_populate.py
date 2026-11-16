@@ -19,5 +19,5 @@ def test_equal_flag_and_user_first():
 
 def test_populate_render():
     script = Path(__file__).with_name('leftover_minors_populate_selfcheck.cjs')
-    r = subprocess.run(['node', str(script)], capture_output=True, text=True, encoding='utf-8')
+    r = subprocess.run(['node', str(script)], capture_output=True, text=True, encoding='utf-8', timeout=300)
     assert r.returncode == 0, r.stdout + r.stderr

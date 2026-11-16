@@ -158,7 +158,7 @@ def test_the_two_languages_scan_alike():
         % str(_STATIC / "search-query.js")
     )
     r = subprocess.run(["node", "-e", script, json.dumps(corpus)],
-                       capture_output=True, text=True, encoding="utf-8")
+                       capture_output=True, text=True, encoding="utf-8", timeout=300)
     assert r.returncode == 0, r.stderr
     got = json.loads(r.stdout)
     for q, (toks, span) in zip(corpus, got):
@@ -510,7 +510,7 @@ class TestBothSearchBoxesReadTheTokenTheSameWay:
                   + "rows.map((r, i) => hit({pm: r}, t) ? i : -1).filter(i => i >= 0))));")
         r = subprocess.run(["node", "-e", script,
                             _json.dumps([_RUNS, self.TOKENS])],
-                           capture_output=True, text=True, encoding="utf-8")
+                           capture_output=True, text=True, encoding="utf-8", timeout=300)
         assert r.returncode == 0, r.stderr
         got = _json.loads(r.stdout)
         for tok, js_sel in zip(self.TOKENS, got):
@@ -627,7 +627,7 @@ class TestThePreviewCannotPrintACountItCannotDeliver:
         r = subprocess.run(
             ["node", str(_ROOT / "tests" / "param_preview_probe.cjs"),
              _json.dumps({"payload": payload, "asks": asks})],
-            capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
+            capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=300)
         if r.returncode == 2:
             pytest.skip("jsdom not installed (run `npm install jsdom`)")
         assert r.returncode == 0, (r.stdout + r.stderr)
@@ -656,7 +656,7 @@ class TestThePreviewCannotPrintACountItCannotDeliver:
 def test_param_typeahead_selfcheck_passes():
     r = subprocess.run(
         ["node", str(_ROOT / "tests" / "param_typeahead_selfcheck.cjs")],
-        capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
+        capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=300)
     if r.returncode == 2:
         pytest.skip("jsdom not installed (run `npm install jsdom`)")
     assert r.returncode == 0, (r.stdout + r.stderr)

@@ -14,7 +14,7 @@ _CHECKS = sorted(p.name for p in (_ROOT / "tests").glob("rules_*_selfcheck.cjs")
 @pytest.mark.parametrize("name", _CHECKS)
 def test_rules_selfcheck_passes(name):
     r = subprocess.run(["node", str(_ROOT / "tests" / name)], capture_output=True, text=True,
-                       encoding="utf-8", cwd=str(_ROOT))
+                       encoding="utf-8", cwd=str(_ROOT), timeout=300)
     if r.returncode == 2:
         pytest.skip("jsdom not installed (run `npm install jsdom`)")
     assert r.returncode == 0, r.stdout + r.stderr

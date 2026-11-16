@@ -18,7 +18,7 @@ def test_cz_plan_measurements_client():
 def test_cz_plan_client():
     root = Path(__file__).resolve().parents[1]
     probe = subprocess.run(["node", "-e", "require('jsdom')"], cwd=root, env=os.environ.copy(),
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, timeout=300)
     if probe.returncode:
         pytest.skip("jsdom not installed")
     result = subprocess.run(["node", str(root / "tests/cz_plan_selfcheck.cjs")], cwd=root, env=os.environ.copy(),
@@ -38,7 +38,7 @@ def test_cz_chip_map_client():
     the chip drawing joined to the columns, colours, labels, highlight, the measured loss."""
     root = Path(__file__).resolve().parents[1]
     probe = subprocess.run(["node", "-e", "require('jsdom')"], cwd=root, env=os.environ.copy(),
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, timeout=300)
     if probe.returncode:
         pytest.skip("jsdom not installed")
     result = subprocess.run(["node", str(root / "tests/cz_map_selfcheck.cjs")], cwd=root, env=os.environ.copy(),
@@ -114,7 +114,7 @@ def test_cz_plan_theme_client():
     and redraws on a theme switch without a refetch."""
     root = Path(__file__).resolve().parents[1]
     probe = subprocess.run(["node", "-e", "require('jsdom')"], cwd=root, env=os.environ.copy(),
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, timeout=300)
     if probe.returncode:
         pytest.skip("jsdom not installed")
     result = subprocess.run(["node", str(root / "tests/cz_plan_theme_selfcheck.cjs")], cwd=root, env=os.environ.copy(),

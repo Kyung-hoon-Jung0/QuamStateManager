@@ -112,7 +112,7 @@ def test_the_js_insert_rule_agrees():
               "console.log(JSON.stringify(a.map(x => "
               "window.__paramVocabInsert(x[0], x[1], x[2]))));")
     r = subprocess.run(["node", "-e", script, json.dumps(asks)],
-                       capture_output=True, text=True, encoding="utf-8")
+                       capture_output=True, text=True, encoding="utf-8", timeout=300)
     assert r.returncode == 0, r.stderr
     got = json.loads(r.stdout)
     assert got == [insert_token(k, v, op=o) for k, v, o in asks]

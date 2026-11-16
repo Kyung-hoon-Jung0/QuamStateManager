@@ -125,10 +125,10 @@ class TestTheGrammarIsRealEverywhere:
     def test_selfcheck(self):
         node = shutil.which("node")
         if node is None or subprocess.run([node, "-e", "require('jsdom')"],
-                                          capture_output=True, cwd=str(_ROOT)).returncode != 0:
+                                          capture_output=True, cwd=str(_ROOT), timeout=300).returncode != 0:
             pytest.skip("jsdom not installed for node")
         res = subprocess.run([node, str(_ROOT / "tests" / "search_hint_selfcheck.cjs")],
-                             capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
+                             capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=300)
         assert res.returncode == 0, res.stdout + res.stderr
         assert "ok - filterTable: a standalone | is OR" in res.stdout
         assert "ok - detail panel: a standalone | is OR" in res.stdout

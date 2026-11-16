@@ -145,10 +145,11 @@ def test_the_loader_executes_under_jsdom():
     node = shutil.which("node")
     if node is None:
         pytest.skip("node not available")
-    if subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT)).returncode != 0:
+    if subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT),
+                      timeout=300).returncode != 0:
         pytest.skip("jsdom not installed for node")
     res = subprocess.run([node, str(_ROOT / "tests" / "bundles_selfcheck.cjs")], capture_output=True, text=True,
-                         encoding="utf-8", cwd=str(_ROOT))
+                         encoding="utf-8", cwd=str(_ROOT), timeout=300)
     assert res.returncode == 0, res.stdout + "\n" + res.stderr
     assert "ok bundles_selfcheck" in res.stdout and " 0 failed" in res.stdout
 
@@ -172,7 +173,7 @@ def test_an_htmx_navigation_loads_every_bundle_a_full_load_of_that_page_ships(cl
               + " if (out[p].indexOf(n) < 0) out[p].push(n); }); }); }\n"
               + "console.log(JSON.stringify(out));")
     got = json.loads(subprocess.run([node, "-e", script], capture_output=True, text=True,
-                                     check=True).stdout)
+                                     check=True, timeout=300).stdout)
     assert set(man["pages"]["pulses"]) <= set(got["/pulses"]), got
     assert set(man["pages"]["czplan"]) <= set(got["/cz-plan"]), got
 

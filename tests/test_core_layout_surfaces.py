@@ -204,7 +204,7 @@ def test_selfchecks_pass(name, marker):
     if shutil.which("node") is None:
         pytest.skip("node not on PATH")
     r = subprocess.run(["node", str(Path("tests") / name)], capture_output=True, text=True,
-                       encoding="utf-8")
+                       encoding="utf-8", timeout=300)
     if r.returncode == 2 or "Cannot find module 'jsdom'" in (r.stderr or ""):
         pytest.skip("jsdom not installed")
     assert r.returncode == 0 and marker in r.stdout, r.stdout + r.stderr

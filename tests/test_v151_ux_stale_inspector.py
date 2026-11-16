@@ -25,7 +25,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 def test_navigation_closes_a_stale_inspector():
     node = shutil.which("node")
     if node is None or subprocess.run([node, "-e", "require('jsdom')"], capture_output=True,
-                                      cwd=str(_ROOT)).returncode != 0:
+                                      cwd=str(_ROOT), timeout=300).returncode != 0:
         pytest.skip("node + jsdom not available")
     res = subprocess.run([node, str(_ROOT / "tests" / "stale_inspector_selfcheck.cjs")],
                          capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=120)

@@ -95,5 +95,5 @@ class TestCalcFormulas:
         r = subprocess.run(
             ["node", str(_ROOT / "tests" / "calc_selfcheck.cjs")],
             capture_output=True, text=True, encoding="utf-8",
-        )
+         timeout=300)
         assert r.returncode == 0, (r.stdout + r.stderr)

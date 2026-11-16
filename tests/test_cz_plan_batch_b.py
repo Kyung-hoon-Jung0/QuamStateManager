@@ -211,7 +211,7 @@ def test_pulse_label_rule():
 @pytest.mark.parametrize("mode", ["history", "fit", "card", "map", "map_segment", "map_refused", "map_unknown", "card:unknown"])
 def test_browser_contracts(mode):
     result = subprocess.run(["node", "tests/cz_batch_b_selfcheck.cjs", *mode.split(":")], cwd=ROOT,
-                            capture_output=True, text=True, env=os.environ.copy())
+                            capture_output=True, text=True, env=os.environ.copy(), timeout=300)
     assert result.returncode == 0, result.stdout + result.stderr
 
 

@@ -10,9 +10,13 @@ Only a class whose waveform SM transcribed is drawn
 (``pulse_catalog.spec_at_known_home``); any other pulse is named as skipped,
 so the check says it was not compared instead of claiming it was.
 
-The config element name of a pair's coupler follows quam's ``Channel.name``
-(``quam/components/channels.py``): the channel's ``id`` when that is text,
-else ``<parent name>.<attribute>``; a pair's name is its ``id``, else its key.
+Element names follow quam. A pair's coupler (``Channel.name``,
+``quam/components/channels.py``): the channel's ``id`` when that is text,
+``ch<id>`` when it is an integer (the base ``Channel._default_label``; a channel
+class with its own label is not covered and is left undrawn, so the check is
+refused, never passed), else ``<pair name>.coupler``; a pair's name is its text
+``id``, else its key. A qubit (``Qubit.name``): its text ``id``, ``q<id>`` for an
+integer id, else its key.
 """
 from __future__ import annotations
 
@@ -20,6 +24,19 @@ from typing import Any, Callable
 
 from quam_state_manager.core import flux_dc, pulse_catalog
 from quam_state_manager.core.pointer_resolver import _get
+
+
+def _int_id(v: Any) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def qubit_name(key: str, node: dict) -> str:
+    """The config name of the qubit stored at ``qubits.<key>`` (``Qubit.name``)."""
+    qid = node.get("id")
+    if isinstance(qid, str) and qid:
+        return qid
+    return f"q{qid}" if _int_id(qid) else key
+
 
 def coupler_element(merged: dict, pair: str) -> str | None:
     """The config element name of the coupler stored on pair *pair*, or None."""
@@ -31,6 +48,8 @@ def coupler_element(merged: dict, pair: str) -> str | None:
     node = _get(merged, list(path)) if path and not why else None
     if isinstance(node, dict) and isinstance(node.get("id"), str) and node["id"]:
         return node["id"]
+    if isinstance(node, dict) and _int_id(node.get("id")):
+        return f"ch{node['id']}"
     pid = entry.get("id")
     return f"{pid if isinstance(pid, str) and pid else pair}.coupler"
 
@@ -65,8 +84,7 @@ def _line_path(merged: dict, element: str) -> tuple | None:
         for key, node in qubits.items():
             if not isinstance(node, dict):
                 continue
-            name = node.get("id") if isinstance(node.get("id"), str) else key
-            if name == q and isinstance(node.get(comp), (dict, str)):
+            if qubit_name(key, node) == q and isinstance(node.get(comp), (dict, str)):
                 return ("qubits", key, comp)
     pairs = merged.get("qubit_pairs") if isinstance(merged, dict) else None
     for key in (pairs or {}) if isinstance(pairs, dict) else ():

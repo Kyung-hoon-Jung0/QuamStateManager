@@ -26,10 +26,10 @@ _ROOT = Path(__file__).resolve().parent.parent
 def test_trends_view_selfcheck():
     node = shutil.which("node")
     if node is None or subprocess.run([node, "-e", "require('jsdom')"], capture_output=True,
-                                      cwd=str(_ROOT)).returncode != 0:
+                                      cwd=str(_ROOT), timeout=300).returncode != 0:
         pytest.skip("jsdom not installed for node")
     res = subprocess.run([node, str(_ROOT / "tests" / "trends_view_selfcheck.cjs")],
-                         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
+                         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=300)
     assert res.returncode == 0, res.stdout + res.stderr
     for line in ("ok - A: x = each dated run's own instant, in order",
                  "ok - A: and the note counts it",

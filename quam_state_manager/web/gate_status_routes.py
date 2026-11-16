@@ -614,8 +614,12 @@ def api_cz_gate_recheck():
 def _chip_previews(store, pair: str, gate: str) -> dict:
     """The preview of a gate already on the chip: SM's drawing of each pulse
     the lab's code played, read from the chip (``gate_preview``), so a gate of
-    a class SM made is compared like a planned one."""
-    return {(pair, gate): lambda found: gate_preview.chip_previews(store, found)[0]}
+    a class SM made is compared like a planned one. Why a played pulse was not
+    drawn travels under ``gate_check.SKIPPED`` so the check names it."""
+    def drawn(found):
+        out, skipped = gate_preview.chip_previews(store, found)
+        return {**out, gate_check.SKIPPED: skipped}
+    return {(pair, gate): drawn}
 
 
 def delete_gate_together(ctx, modifier, body: dict):
