@@ -134,6 +134,16 @@ def test_no_overlap_is_a_warn_gap():
     assert _tile(ts, "length")["value"] == "261"
 
 
+def test_a_sequence_step_before_the_gate_is_no_timing_gap():
+    step = dict(_lane("q1.xy", 0, 40), step=True)
+    gate = [_lane("q1.z", 225, 273), _lane("q2.z", 225, 273), _lane("c12", 225, 273)]
+    t = _tile(tiles({"lanes": [step] + gate}), "timing")
+    assert (t["value"], t["note"], t["tone"]) == ("0", "same start (largest of 3 line pairs)", "neutral")
+    # a real gap between gate lines still warns with the step present
+    gate[2] = _lane("c12", 0, 60)
+    assert _tile(tiles({"lanes": [step] + gate}), "timing")["tone"] == "warn"
+
+
 def test_overlap_with_different_starts_is_a_note():
     t = _tile(tiles({"lanes": [_lane("q1.z", 10, 110), _lane("c12", 0, 100)]}), "timing")
     assert (t["value"], t["unit"], t["note"], t["tone"]) == ("10", "ns", "start difference, the lines overlap", "note")

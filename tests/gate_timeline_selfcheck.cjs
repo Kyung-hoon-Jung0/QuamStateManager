@@ -1044,6 +1044,8 @@ he.destroy();
         ok(f.layout.annotations.some(a => a.meta && a.meta.role === 'step-mark' && a.text === 'wait 16 ns' && a.x === 349),
            view + ': a wait after the final pulse is labelled');
         ok(h.laneCount().spectator === 1, view + ': only the real spectator is counted');
+        ok(host2.querySelectorAll('[data-gate-timeline-pairs] [data-pair]').length === 0,
+           view + ': a sequence step before the gate lists no gap against the gate line');
         h.setFold(true);
         ok(h.laneCount().drawn === 2, view + ': folding the spectator keeps the xy step');
         h.destroy();

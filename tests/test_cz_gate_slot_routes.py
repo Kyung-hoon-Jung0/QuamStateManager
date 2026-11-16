@@ -1136,3 +1136,20 @@ def test_the_class_page_reads_an_sm_made_slot_class_with_its_steps_as_sm_made():
     # a slot class edited by hand is not claimed as SM-made
     hand = W._describe(sgt.render(spec).replace("align(*channels)", "align()", 1))
     assert "slot" not in hand and "changed by hand" in hand["reason"]
+
+
+def test_simulate_plans_a_slot_gate_from_its_slots(env, monkeypatch):
+    from quam_state_manager.web import cz_gate_sim_routes as simr
+    _ready(env)
+    seen = {}
+
+    class Manager:
+        def start(self, window, **kw):
+            seen.update(kw)
+            return {"state": "starting", "id": "r1"}, 200
+    monkeypatch.setattr(simr, "_target", lambda: (object(), "simulator", 20))
+    monkeypatch.setattr(simr, "manager", lambda: Manager())
+    r = env.c.post("/api/pulse/cz-gate/simulate/start", json=_slot_body(),
+                   headers={"X-SM-Window-ID": "w1"})
+    assert r.status_code == 200, r.get_json()
+    assert seen["macro"] == "qubit_pairs.q1-2.macros.cz_s"

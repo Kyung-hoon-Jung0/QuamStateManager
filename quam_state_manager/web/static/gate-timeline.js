@@ -1079,7 +1079,8 @@
         /* Every pair of visible gate lines: overlaps first, then meets, then gaps,
            each group in time order. */
         function timing() {
-            var ls = visibleGate();
+            // a sequence step plays before or after the gate by design: its marks show it
+            var ls = visibleGate().filter(function (l) { return !l.step; });
             var out = [];
             for (var i = 0; i < ls.length; i++) {
                 for (var j = i + 1; j < ls.length; j++) {

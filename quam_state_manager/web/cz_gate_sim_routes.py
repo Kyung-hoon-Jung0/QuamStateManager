@@ -59,8 +59,10 @@ def cz_gate_simulate_start():
     if target is None:
         # An expected refusal is a handled answer; API callers still get ok=False.
         return jsonify(ok=False, **sim.answer("not_configured")), 200
+    # a slot class plans from its own slots, as the check and the create do
+    slot = cz._request_slot(body["gate_class"])
     with store._lock:
-        plans = dict(cz._plan_all(store.merged, body))
+        plans = dict(cz._plan_all(store.merged, body, slot))
     plan = plans.get(pair) or {}
     if "error" in plan:
         return jsonify(ok=False, **sim.answer("not_run", reason=plan["error"])), 400

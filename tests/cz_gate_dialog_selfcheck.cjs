@@ -578,6 +578,16 @@ function tableWidths(el, sw, cw) {
     ok($('#czg-checks').querySelectorAll('.ui-fail-row').length === 1 && [...$('#czg-checks').querySelectorAll('p.ui-text-quiet')].some((q) => q.textContent === '4 checks were not run because the gate does not run.'),
        'a lab refusal: one red row, then one quiet line for the four checks not run');
     ok(/\u201d Change the inputs and check again\./.test(alertText()), 'the lab\'s sentence is quoted, then SM\'s sentence');
+    // a chip (or class file) that does not load: the inputs are not what to change
+    queue.check.push((b) => { const j = checkOk(b, { refuse: 'q1-2' }); j.pairs.forEach((p) => {
+        p.verdict.reason = 'The chip as it is does not load or build its config with the lab\'s code,'
+            + ' so this gate was not checked. The lab\'s error: SyntaxError: invalid syntax (MyGate.py, line 3)';
+        p.verdict.headline = p.verdict.reason; }); return j; });
+    prim().click();
+    await settle();
+    ok(/fix what the lab's error names \(a class file or the chip\), then press Check again\./.test(alertText())
+       && !/Change the inputs/.test(alertText()),
+       'a chip or class file that does not load: the verdict never asks to change the inputs');
     window.CzGate.close();
 
     // the created banner follows the app's sync state read after the create's entries were counted
@@ -776,6 +786,13 @@ function tableWidths(el, sw, cw) {
     ok(prim().disabled && /Inputs changed: fix the marked field, then press Check\./.test(alertText())
        && !/press Check again/.test(alertText()),
        'a marked field after a check: the note asks to fix it, never "press Check again"');
+    ok(/Fix the marked field, then press Check\./.test($('#czg-status').textContent)
+       && !/check again/.test($('#czg-status').textContent),
+       'a marked field after a check: the status line under the buttons agrees with the note');
+    const lenBadge = fieldOf('flux_pulse_qubit', 'length').closest('.ui-field')
+        .querySelector('.ui-field-head .ui-badge');
+    ok(!lenBadge || !/default|entered|copied/.test(lenBadge.textContent),
+       'a field holding text that is not used claims no source (never "default" beside it)');
     type(fieldOf('flux_pulse_qubit', 'length'), lenWas);
     await settle();
     ok(!prim().disabled && /Inputs changed: press Check again\./.test(alertText()),
@@ -1394,10 +1411,13 @@ function tableWidths(el, sw, cw) {
         queue.plan.push((b) => ({ ok: true, plan_sig: 'r', pairs: b.pairs.map((p) => ({ pair: p, ok: false, refusals: [R3, RD] })) }));
         type(fld('q3', 'level'), '0.7');
         await ready();
-        ok(lines('#czg-spect-body [data-czg-spect-row="q3"] .ui-field-error').indexOf(R3) >= 0
-           && lines('#czg-spect-body [data-czg-spect-row="q4"] .ui-field-error').indexOf(R3) < 0
-           && lines('#czg-spect-body .ui-field-error').filter((t) => t === R3).length === 1,
-           'refusal: the server\'s sentence about a spectator sits in that spectator\'s row, verbatim, once');
+        const levelSaid = (t) =>
+            /too large for the line: its size must stay below 2\.0 times the unit amplitude/.test(t);
+        ok(fld('q3', 'level').getAttribute('aria-invalid') === 'true' && levelSaid(errOf(fld('q3', 'level')))
+           && fld('q4', 'level').getAttribute('aria-invalid') !== 'true'
+           && lines('#czg-spect-body .ui-field-error').filter(levelSaid).length === 1
+           && lines('#czg-spect-body .ui-field-error').indexOf(R3) < 0,
+           'refusal: a spectator level out of range marks that row\'s Level field once, in plain words');
         ok(lines('#czg-spect-body [data-czg-spect-pair="q1-2"] > .ui-field-error').join('|') === RD && prim().disabled,
            'refusal: a sentence about no single row stays under the pair, verbatim; Check is blocked');
         type(fld('q3', 'level'), '0.1');
@@ -1952,8 +1972,13 @@ function tableWidths(el, sw, cw) {
         ok(at && at.textContent === SENT && doc.querySelectorAll('#czg-new-body [data-czg-step-problem]').length === 1
            && lines('#czg-new-body [data-czg-new-problem]').join('|') === 'Another problem.',
            'steps: the server\'s sentence shows once, beside the row it names; the others stay below');
+        const waitIn = btn('data-czg-step-length', 'before', 1);
+        ok(waitIn.getAttribute('aria-invalid') === 'true' && at.id && waitIn.getAttribute('aria-describedby') === at.id,
+           'steps: a refused wait marks its length field, tied to the sentence');
         setVal(btn('data-czg-step-length', 'before', 1), '48');
-        ok(!doc.querySelector('#czg-new-body [data-czg-step-problem]'), 'steps: an edit clears the old sentence');
+        ok(!doc.querySelector('#czg-new-body [data-czg-step-problem]')
+           && btn('data-czg-step-length', 'before', 1).getAttribute('aria-invalid') !== 'true',
+           'steps: an edit clears the old sentence and the mark');
         // a slot class picked: its stored steps prefill the lists
         dataOverride.classes = [CZ, ST];
         window.CzGate.close();
@@ -1969,6 +1994,9 @@ function tableWidths(el, sw, cw) {
         ok(cpl && cpl.disabled && !cpl.checked && $('#czg-new-body [data-czg-new-shut]')
            && /no coupler line that can hold a pulse/.test($('#czg-new-body [data-czg-new-shut]').textContent),
            'fixed coupler: the Coupler slot is neither ticked nor enabled, and the panel says why');
+        const cplLabel = cpl.closest('label');
+        ok(/\(not offered\)/.test(cplLabel.textContent) && cplLabel.classList.contains('ui-check--off'),
+           'fixed coupler: the box\'s own label says not offered and wears the kit\'s disabled look');
         ok(!doc.querySelector('#czg-slots [data-czg-slot="coupler_flux_pulse"]') && !st().slotChannels.some((c) => c && /coupler/.test(JSON.stringify(c))),
            'fixed coupler: no coupler pulse line is offered');
         ok(add('before', 'xy').disabled && /neither qubit of this pair has an xy operation/.test($('#czg-new-body [data-czg-steps="before"]').textContent),

@@ -215,8 +215,8 @@ def tiles(data: dict) -> list[dict]:
       significant places, V (note: the line, "over the port's range" with the
       offset when one is in play, "from the samples received" when samples
       were cut), ``danger`` when a segment is over its range;
-    - ``timing`` (two or more lines only), the worst case over every pair of
-      lines: the largest gap, ``warn``; else lines that only meet, "0 ns" /
+    - ``timing`` (two or more lines only, sequence-step lines left out), the
+      worst case over every pair of lines: the largest gap, ``warn``; else lines that only meet, "0 ns" /
       "the lines meet", ``neutral``; else the largest start difference,
       ``note`` ("start difference, the lines overlap") or "0 ns" / "same
       start", ``neutral``. With three or more lines the note says how many
@@ -256,8 +256,11 @@ def tiles(data: dict) -> list[dict]:
             note += ", from the samples received"
         out.append({"key": "peak", "label": "Largest level", "value": f"{best:.4g}", "unit": "V",
                     "note": note, "tone": "danger" if over else "neutral"})
-    if len(spans) >= 2:
-        rel = [_pair_relation(a, b) for i, a in enumerate(spans) for b in spans[i + 1:]]
+    # a sequence step plays before or after the gate by design (its own marks
+    # show it), so the timing relation is over the lines that play the gate
+    timed = [sp for sp, ln in zip(spans, lanes) if not ln.get("step")]
+    if len(timed) >= 2:
+        rel = [_pair_relation(a, b) for i, a in enumerate(timed) for b in timed[i + 1:]]
         many = f" (largest of {len(rel)} line pairs)" if len(rel) > 1 else ""
         gaps = [v for k, v in rel if k == "gap"]
         overlaps = [v for k, v in rel if k == "overlap"]

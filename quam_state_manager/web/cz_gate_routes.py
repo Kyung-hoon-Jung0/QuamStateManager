@@ -62,7 +62,8 @@ from quam_state_manager.core import chip_copy, cz_gate_build as cgb, cz_gate_cre
 from quam_state_manager.core.quam_config_save import (ClassFileError, class_files,
                                                       class_files_moved, class_refusal,
                                                       lab_package, published_path)
-from quam_state_manager.core import gate_check, gate_check_log, gate_intent, gate_timeline_view, pulse_catalog
+from quam_state_manager.core import gate_check, gate_check_log, gate_intent, gate_preview, gate_timeline_view
+from quam_state_manager.core import pulse_catalog
 from quam_state_manager.core import slot_gate_plan as sgp, slot_gate_template as sgt
 from quam_state_manager.web import request_body
 from quam_state_manager.web import routes as R
@@ -652,6 +653,38 @@ def _given_kinds(merged: dict, body: dict, desc: dict | None = None) -> tuple[di
     return pulse_kinds, setting_kinds
 
 
+def _whole_ns(v: Any) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def flat_top_problem(spec: Any) -> str | None:
+    """Why a flat-top pulse's length and flat length cannot make a waveform,
+    or None. The flat-top classes split ``length - flat_length`` into two
+    equal edges (``waveform_synth._flattop_factory``, the mirror of the lab
+    class): the flat part must fit in the pulse and the rest must be even. A
+    field left out takes its catalog default, as the plan does."""
+    if not isinstance(spec, dict) or not isinstance(spec.get("class"), str):
+        return None
+    cat = pulse_catalog.by_qclass(spec["class"])
+    if cat is None or not cat.key.startswith("FlatTop"):
+        return None
+    given = spec.get("fields") if isinstance(spec.get("fields"), dict) else {}
+    defaults = {prm.name: prm.default for prm in cat.params}
+    length = given.get("length", defaults.get("length"))
+    flat = given.get("flat_length", defaults.get("flat_length"))
+    if flat is None:
+        flat = 0
+    if not (_whole_ns(length) and _whole_ns(flat)):
+        return None
+    if flat > length:
+        return (f"{flat} ns is longer than the whole pulse ({length} ns). The flat part must "
+                f"fit inside the length: make it at most {length} ns, or make the length longer.")
+    if (length - flat) % 2:
+        return (f"the length minus the flat length is {length - flat} ns, an odd number, so the "
+                "two edges cannot be equally long. Change the flat length or the length by 1 ns.")
+    return None
+
+
 def check_values(merged: dict, body: dict, desc: dict | None = None) -> list[str]:
     """Every given pulse field and gate setting checked against its kind on
     the server (the page checks too, but nothing it sends is trusted): one
@@ -659,11 +692,15 @@ def check_values(merged: dict, body: dict, desc: dict | None = None) -> list[str
     pulse_kinds, setting_kinds = _given_kinds(merged, body, desc)
     out = []
     for slot, spec in (body.get("pulses") or {}).items():
+        typed = len(out)
         for k, v in ((spec or {}).get("fields") or {}).items() if isinstance(spec, dict) else ():
             kind, optional = (pulse_kinds.get(slot) or {}).get(k, (value_kind(v), True))
             why = value_problem(v, kind, optional or v is None and kind == "any")
             if why:
                 out.append(f"{cgb.cap_name(slot)}.{cgb.cap_name(k)}: {why}")
+        why = flat_top_problem(spec) if len(out) == typed else None
+        if why:
+            out.append(f"{cgb.cap_name(slot)}.{cgb.cap_name('flat_length')}: {why}")
     for k, v in (body.get("macro_fields") or {}).items():
         kind, optional = setting_kinds.get(k, (value_kind(v), True))
         why = value_problem(v, kind, optional)
@@ -788,50 +825,46 @@ def _store_or_error():
 # previews and the check
 # ---------------------------------------------------------------------------
 
-def _element(op: dict) -> str | None:
+def _element(op: dict, merged: dict | None = None, pair: str | None = None) -> str | None:
+    """The config element an operation plays on; a coupler named only in
+    words ("the coupler of pair X") is named from the chip when *merged* and
+    *pair* are given (``gate_preview.coupler_element``)."""
     ch = op.get("channel")
     if not isinstance(ch, str):
         return None
     if ch.startswith("coupler "):
         return ch[len("coupler "):]
     if ch.startswith("the coupler of pair "):
-        return None
+        if merged is None:
+            return None
+        return gate_preview.coupler_element(merged, pair or ch[len("the coupler of pair "):])
     return ch
 
 
-def _previews(plan: dict) -> tuple[dict, list[str]]:
+def _previews(plan: dict, merged: dict | None = None,
+              pair: str | None = None) -> tuple[dict, list[str]]:
     """``({(element, operation): samples | constant}, [why skipped])``."""
     from quam_state_manager.core import waveform_synth
     out, skipped = {}, []
     for f, op in (plan.get("operations") or {}).items():
         pulse = gate_intent.planned_pulse(plan, f) or {}
-        el = _element(op)
-        qclass = pulse.get("__class__")
+        el = _element(op, merged, pair)
         if el is None:
             skipped.append(f"{op.get('key')}: SM does not know the coupler's element name.")
             continue
-        if not isinstance(qclass, str) or pulse_catalog.spec_at_known_home(qclass) is None:
-            skipped.append(f"{op.get('key')}: SM cannot draw the pulse class {qclass} itself.")
-            continue
         params = {k: v for k, v in pulse.items() if k not in ("__class__", "id")
                   and not (isinstance(v, str) and v.startswith("#"))}
-        try:
-            pay = waveform_synth.synthesize(qclass, params)
-        except Exception as exc:  # noqa: BLE001
-            skipped.append(f"{op.get('key')}: SM could not draw it ({type(exc).__name__}).")
+        qclass = pulse.get("__class__")
+        value, why = gate_preview.draw(
+            qclass, lambda q=qclass, pr=params: waveform_synth.synthesize(q, pr),
+            pulse.get("length"), every_sample=op.get("group") == "spectator")
+        if why:
+            skipped.append(f"{op.get('key')}: {why}")
             continue
-        if not pay.get("ok") or pay.get("truncated"):
-            skipped.append(f"{op.get('key')}: {pay.get('error') or 'SM could not draw it in full.'}")
-            continue
-        cv = pay.get("constant_value")
-        if (op.get("group") == "spectator" and isinstance(cv, (int, float))
-                and isinstance(pulse.get("length"), int)):
-            # every sample, so the check compares the entered length as well
-            out[(el, op.get("key"))] = [float(cv)] * pulse["length"]
-            continue
-        out[(el, op.get("key"))] = float(cv) if isinstance(cv, (int, float)) else list(pay.get("i") or [])
-    must = [(_element(op), op.get("key")) for op in (plan.get("operations") or {}).values()
-            if op.get("group") == "spectator"]
+        # a spectator gets every sample, so the check compares the entered length as well
+        out[(el, op.get("key"))] = value
+    must = [(_element(op, merged, pair), op.get("key"))
+            for op in (plan.get("operations") or {}).values() if op.get("group") == "spectator"]
     if must:
         out[gate_check.REQUIRED] = must
     return out, skipped
@@ -1031,7 +1064,7 @@ def check_answer():
         creates = [c for _, p in good for c in p["creates"]]
         previews = {}
         for pid, p in good:
-            pv, sk = _previews(p)
+            pv, sk = _previews(p, store.merged, pid)
             previews[(pid, body["gate_name"])] = pv
             skipped_by[pid] = sk
         res = run_check(store, _env_python(), gates, creates, previews) if gates else None
@@ -1059,7 +1092,7 @@ def check_answer():
                                           "reason": " ".join(p.get("refusals") or [p["error"]])}})
             verdicts[pid] = {"allowed": False}
             continue
-        couplers = {_element(op) for op in (p.get("operations") or {}).values()
+        couplers = {_element(op, store.merged, pid) for op in (p.get("operations") or {}).values()
                     if (op.get("channel") or "").startswith(("coupler", "the coupler"))}
         src = p.get("sources") or {}
         rows_ops = {op.get("key") for op in (p.get("operations") or {}).values()

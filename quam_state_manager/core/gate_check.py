@@ -301,7 +301,8 @@ def evaluate(gates: Iterable, ran: dict, previews: dict | None = None,
 
     *gates*: gate keys (see :func:`gate_key`). *previews*: ``{gate key:
     {(element, operation): samples list or constant}}``, keyed through the
-    same :func:`gate_key`. *merged*: the chip, to read each flux line's
+    same :func:`gate_key`; a value may instead be a function of the gate's
+    played operations (the lab's ``found`` entries) that returns that dict. *merged*: the chip, to read each flux line's
     run-time DC level (:func:`flux_dc.element_dc_levels`); None keeps the
     config's channel offset alone."""
     keys = [gate_key(g) for g in gates]
@@ -413,6 +414,12 @@ def _one_gate_lab(key, data, after, after_err, preview, merged=None, chip=None):
                                    no_cfg)
         found = [o for o in ops if isinstance(o, dict) and o.get("found")]
         checks["length"] = _guard(_length_check, found, no_cfg, g.get("script"), chip)
+        if callable(preview):
+            # a gate already on the chip: drawn from what the lab's code played
+            try:
+                preview = preview(found) or {}
+            except Exception:  # noqa: BLE001 (an undrawn preview is a skipped comparison)
+                preview = {}
         required = [tuple(x) for x in (preview.get(REQUIRED) or ())]
         preview = {k: v for k, v in preview.items() if k != REQUIRED}
         checks["preview"] = _guard(_preview_check, found, preview, no_cfg)

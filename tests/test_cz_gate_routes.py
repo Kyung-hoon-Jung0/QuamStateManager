@@ -374,7 +374,7 @@ def test_dialog_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):
     r = subprocess.run([node, str(root / "tests" / "cz_gate_dialog_selfcheck.cjs")], env=env,
                        capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
-    assert "ok cz_gate_dialog_selfcheck (452 assertions)" in r.stdout
+    assert "ok cz_gate_dialog_selfcheck (457 assertions)" in r.stdout
 
 
 def test_simulate_client_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):
@@ -405,6 +405,29 @@ def test_headline_names_line_value_and_limit():
         {"peak_v": 3.0, "min_v": 0.0, "flags": ["over_range"]}]}]}
     assert czr.headline(entry, tl, "long") == "q1.z would play 3 V. This port's limit is 2.5 V."
     assert czr.headline({"checks": {"ops": {"status": "fail"}}}, tl, "why") == "why"
+
+
+FLAT_TOP = "quam.components.pulses.FlatTopGaussianPulse"
+
+
+@pytest.mark.parametrize("fields, words", [
+    ({"length": 60, "amplitude": 0.1}, "100 ns is longer than the whole pulse (60 ns)"),
+    ({"length": 61, "amplitude": 0.1, "flat_length": 20}, "41 ns, an odd number"),
+])
+def test_a_flat_top_that_cannot_make_a_waveform_marks_its_flat_length(chip, fields, words):
+    body = _body()
+    body["pulses"]["flux_pulse_qubit"] = {"class": FLAT_TOP, "fields": fields}
+    p = chip.c.post(PLAN, json=body).get_json()["pairs"][0]
+    assert not p["ok"]
+    assert any(r.startswith("flux_pulse_qubit.flat_length: ") and words in r
+               for r in p["refusals"]), p["refusals"]
+
+
+def test_a_flat_top_that_fits_plans(chip):
+    body = _body()
+    body["pulses"]["flux_pulse_qubit"] = {"class": FLAT_TOP,
+                                          "fields": {"length": 60, "amplitude": 0.1, "flat_length": 20}}
+    assert chip.c.post(PLAN, json=body).get_json()["pairs"][0]["ok"]
 
 
 def test_field_kinds_come_from_the_value_type_never_from_its_digits():
