@@ -31775,12 +31775,18 @@ def _undo_live_flush(ctx, store, modifier, unit: dict, staged: list, *,
     if body.get("status") == "conflict":
         note = _walk_conflict_note(ctx, "undo")
     else:
-        msg = str(body.get("message") or "apply failed").rstrip(" .;")
-        # the refusal may already say what stayed; end it once, with one stop
-        note = msg + ("." if "written" in msg.lower() else ". Nothing was written.")
+        note = _refused_step_note(body.get("message"))
     if not clean:
         note += " — the rollback could not complete: check the review tray"
     return {"live": False, "note": note, "rolled_back": True}
+
+
+def _refused_step_note(message) -> str:
+    """The note of an undo or redo step whose live write was refused: the refusal, ended
+    once with one full stop; "Nothing was written." is added only when the refusal does not
+    already say what was written."""
+    msg = str(message or "apply failed").rstrip(" .;")
+    return msg + ("." if "written" in msg.lower() else ". Nothing was written.")
 
 
 def _redo_journal_forward(ctx, store, modifier, index: int, unit_id: str | None = None):
@@ -31895,7 +31901,7 @@ def _redo_journal_forward(ctx, store, modifier, index: int, unit_id: str | None 
         _journal_persist_cursor(ctx)    # F-5: the sidecar follows the rollback
         _redo_mark(ctx, store)
         why = (_walk_conflict_note(ctx, "redo")
-               if body.get("status") == "conflict" else f"{body.get('message') or 'apply failed'}; nothing was written")
+               if body.get("status") == "conflict" else _refused_step_note(body.get("message")))
         return [], why
     ctx["undo_cursor"] = index + 1
     _redo_mark(ctx, store)

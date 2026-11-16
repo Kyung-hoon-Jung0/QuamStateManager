@@ -1734,3 +1734,22 @@ def test_the_window_declares_the_undo_step_it_saw():
     if "Cannot find module 'jsdom'" in r.stderr:
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+@pytest.mark.parametrize("message, note", [
+    ("Apply refused. Not written to the live chip: x. Your edits are kept.",
+     "Apply refused. Not written to the live chip: x. Your edits are kept."),
+    ("Apply refused: x.;", "Apply refused: x. Nothing was written."),
+    ("the chip is locked ; ", "the chip is locked. Nothing was written."),
+    (None, "apply failed. Nothing was written."),
+])
+def test_a_refused_undo_or_redo_note_ends_once(message, note):
+    """A refused live undo and a refused live redo end their note the same way: the
+    refusal, one full stop, and "Nothing was written." only when it does not say so."""
+    import inspect
+    from quam_state_manager.web import routes as R
+    assert R._refused_step_note(message) == note
+    for fn in (R._undo_live_flush, R._redo_journal_forward):
+        src = inspect.getsource(fn)
+        assert "_refused_step_note(" in src, fn.__name__
+        assert "'apply failed'}; nothing was written" not in src, fn.__name__

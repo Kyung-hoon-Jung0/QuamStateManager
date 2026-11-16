@@ -25,6 +25,7 @@ Apply.
 from __future__ import annotations
 
 import logging
+from urllib.parse import quote
 
 from flask import current_app, g, jsonify, make_response, render_template, request
 
@@ -299,6 +300,27 @@ def cz_gate_offer_close():
     """Cancel / Close of the delete offer: the empty slot. Stages nothing and
     calls no delete door; works on every page, with or without the script."""
     return ""
+
+
+def _reopen_url(paths) -> str:
+    """The pulse detail a Ctrl+Z of a gate delete draws again (static/gate-status.js)."""
+    return "/pulse/detail?" + "&".join("paths=" + quote(p, safe="") for p in list(paths)[:4])
+
+
+@bp.route("/pulse/cz-gate/deleted-detail")
+def cz_gate_deleted_detail():
+    """The pulse detail of a gate a redo (or an undo of its creation) took away: the same
+    "deleted" detail a delete from the row leaves. Empty (204, nothing swapped) while the
+    gate is still on the chip, so a stale request never hides a live gate."""
+    store = R._store()
+    pair, gate = _args()
+    if not store or not pair or not gate or not _gate_problem(store, pair, gate):
+        return "", 204
+    paths = [p.strip() for p in request.args.getlist("paths") if p and p.strip()]
+    return render_template(
+        "_gate_deleted_detail.html", pair=pair, gate=gate,
+        message=f"{gate} is no longer on the chip. Ctrl+Z brings it back.",
+        reopen=_reopen_url(paths) if paths else "")
 
 
 @bp.route("/pulse/cz-gate/delete-offer")
@@ -704,8 +726,14 @@ def delete_gate_together(ctx, modifier, body: dict):
                 "tone": "note", "title": f"{gate} deleted", "text": done})
             out.set_data(out.get_data(as_text=True) + R._tray_oob())
         else:
+            # the pulse detail the row sits in shows a gate that is gone: it says so,
+            # with nothing left to edit; a Ctrl+Z draws the gate's pulses again
+            reopen = _reopen_url(parts["pulses"] or parts["operations"])
             out = make_response(render_template(
-                "_status.html", level="success", message=done) + R._tray_oob())
+                "_gate_deleted_detail.html", pair=pair, gate=gate, message=done,
+                reopen=reopen) + R._tray_oob())
+            out.headers["HX-Retarget"] = "closest #pulse-detail-root"
+            out.headers["HX-Reswap"] = "outerHTML"
         out.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
         # the pair page drops the gate's parameter zone (static/gate-status.js)
         out.headers["HX-Trigger-After-Swap"] = current_app.json.dumps(

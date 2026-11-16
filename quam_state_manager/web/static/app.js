@@ -6458,12 +6458,44 @@ window.livePushExtrasLine = function (typedPaths) {
         return "sent";
     }
     window._followOnInspector = followOnInspector;
+    /* A pair page in the inspector follows a foreign edit the same way: its CZ gate zones
+       (a gate another window deleted, brought back or changed) are drawn again, the folds
+       and the scroll kept by the inspector's own swap; never while someone is using it. */
+    var _pairFollowTimer = null;
+    function _pairOnScreen(insp) {
+        var list = insp && insp.querySelector(".pair-detail .gate-status-list[data-gate-pair]");
+        return list ? list.getAttribute("data-gate-pair") : null;
+    }
+    function followOnPair(pair) {
+        if (_pairFollowTimer) { clearTimeout(_pairFollowTimer); _pairFollowTimer = null; }
+        var insp = document.getElementById("inspector-pane");
+        if (!window.htmx || _pairOnScreen(insp) !== pair) return "gone";
+        if (_inspectorInUse(insp)) {
+            _pairFollowTimer = setTimeout(function () { followOnPair(pair); }, 2000);
+            return "deferred";
+        }
+        window.htmx.ajax("GET", "/pair/" + encodeURIComponent(pair),
+                         { source: _syncLane("pair-follow-src"), target: "#inspector-pane",
+                           swap: "innerHTML", headers: { "X-SM-Follow-Pair": encodeURIComponent(pair) } });
+        return "sent";
+    }
     /* ...and it lands only where it still belongs: the pane shows that pulse
        and nobody started using it while the GET was out (then it waits, and
        asks again). Capture phase: decided before the plot teardown reads
        shouldSwap. */
     document.addEventListener("htmx:beforeSwap", function (evt) {
         var rc = evt.detail && evt.detail.requestConfig;
+        var pairTag = rc && rc.headers && rc.headers["X-SM-Follow-Pair"];
+        if (pairTag) {
+            var pair = decodeURIComponent(pairTag), pane = document.getElementById("inspector-pane");
+            if (_pairOnScreen(pane) !== pair) {
+                evt.detail.shouldSwap = false;
+            } else if (_inspectorInUse(pane)) {
+                evt.detail.shouldSwap = false;
+                _pairFollowTimer = setTimeout(function () { followOnPair(pair); }, 2000);
+            }
+            return;
+        }
         var tag = rc && rc.headers && rc.headers["X-SM-Follow-Pulse"];
         if (!tag) return;
         var path = decodeURIComponent(tag);
@@ -6524,6 +6556,7 @@ window.livePushExtrasLine = function (typedPaths) {
             var root = insp && insp.querySelector("#pulse-detail-root");
             var path = root && root.getAttribute("data-pulse-path");
             if (path) followOnInspector(path, root);
+            else if (_pairOnScreen(insp)) followOnPair(_pairOnScreen(insp));
         } catch (e) {}
     }
     /* The poll's own decision, as a function a test can drive: the FIRST

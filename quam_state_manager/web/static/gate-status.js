@@ -406,6 +406,51 @@
             });
         });
     });
+    /* A gate deleted from its own row in a pulse detail leaves a "deleted" detail
+       (_gate_deleted_detail.html); an undo of that whole gate brings it back and draws its pulses
+       again, and a redo that takes it away again (or an undo of its creation) puts the same
+       "deleted" detail back. One reading of the pane says which gate it shows and whether that
+       gate is gone; one reading of the answer says what happened to that whole gate. */
+    function gateOnScreen(pane) {
+        var gone = pane.querySelector('[data-gate-gone]');
+        if (gone) {
+            return { pair: gone.getAttribute('data-gate-gone-pair'), gate: gone.getAttribute('data-gate-gone'),
+                     gone: true, reopen: gone.getAttribute('data-reopen') || '' };
+        }
+        var line = pane.querySelector('#pulse-detail-root .gate-status[data-gate-pair][data-gate]');
+        if (!line) return null;
+        var bar = pane.querySelector('#pulse-detail-root .pulse-view-bar[data-view-paths]');
+        var paths = [];
+        try { paths = JSON.parse(bar ? bar.getAttribute('data-view-paths') : '[]') || []; } catch (e) { paths = []; }
+        return { pair: line.getAttribute('data-gate-pair'), gate: line.getAttribute('data-gate'),
+                 gone: false, paths: paths };
+    }
+    // an entry's flags say what happened to the cell now: created = it is gone, deleted = it is back
+    function wholeGateMove(entries, shown) {
+        var macro = 'qubit_pairs.' + shown.pair + '.macros.' + shown.gate, move = '';
+        (entries || []).forEach(function (e) {
+            if (!e || String(e.dot_path || '') !== macro) return;
+            if (e.created) move = 'gone';
+            else if (e.deleted) move = 'back';
+        });
+        return move;
+    }
+    document.addEventListener('cellsReverted', function (ev) {
+        var pane = document.getElementById('inspector-pane');
+        var shown = pane && window.htmx ? gateOnScreen(pane) : null;
+        if (!shown) return;
+        var move = wholeGateMove((ev.detail || {}).entries, shown), url = '';
+        if (shown.gone && move === 'back') {
+            url = shown.reopen;
+        } else if (!shown.gone && move === 'gone') {
+            url = '/pulse/cz-gate/deleted-detail?pair=' + encodeURIComponent(shown.pair)
+                + '&gate=' + encodeURIComponent(shown.gate)
+                + shown.paths.map(function (p) { return '&paths=' + encodeURIComponent(p); }).join('');
+        }
+        if (!url) return;
+        var drawn = window.htmx.ajax('GET', url, { source: pane, target: pane, swap: 'innerHTML' });
+        if (drawn && drawn.catch) drawn.catch(function () {});
+    });
     document.addEventListener('cellsReverted', function (ev) {
         var pane = document.getElementById('inspector-pane');
         var zone = pane ? pane.querySelector('.pair-detail .gate-status-list') : null;
