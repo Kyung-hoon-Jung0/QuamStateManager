@@ -3040,6 +3040,31 @@ window.SidebarNarrow = (function () {
     return { sync: sync, close: close, query: NARROW };
 })();
 
+/* A collapsed sidebar (the narrow-window overlay while closed, or the wide window's own
+   collapse) is invisible and unclickable, so nothing inside it may take a Tab stop:
+   `inert` follows the layout's sidebar-collapsed class, whichever code sets it (the
+   toggle, the narrow-window rule, the restore on load). The toggle button sits in the
+   top bar, outside the sidebar, and stays reachable. */
+window.SidebarInert = (function () {
+    function sync() {
+        var l = document.querySelector('.app-layout'), sb = document.getElementById('sidebar');
+        if (!l || !sb) return;
+        var closed = l.classList.contains('sidebar-collapsed');
+        if (closed) sb.setAttribute('inert', ''); else sb.removeAttribute('inert');
+    }
+    function init() {
+        var l = document.querySelector('.app-layout');
+        if (!l) return;
+        sync();
+        if (window.MutationObserver) {
+            new MutationObserver(sync).observe(l, { attributes: true, attributeFilter: ['class'] });
+        }
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+    else init();
+    return { sync: sync };
+})();
+
 /* docs/126 cycled THREE states (sidebar → +top bar → restore). Customer
    feedback (2026-08-27): "don't make us press it twice" — ONE press now
    collapses the sidebar AND the top bar together (the floating ☰ + the sync

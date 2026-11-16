@@ -610,6 +610,27 @@ def _finite_or_none(obj):
     return obj
 
 
+def _dump_finite(dump, obj, kwargs):
+    """``dump(obj, **kwargs)`` with ``allow_nan=False`` first; only a payload that
+    holds a non-finite float is walked and re-encoded with null in its place."""
+    kwargs.setdefault("allow_nan", False)
+    try:
+        return dump(obj, **kwargs)
+    except ValueError as exc:
+        # only the non-finite refusal is ours to repair; a circular
+        # reference (also a ValueError) is raised as before
+        if "Out of range float" not in str(exc):
+            raise
+        return dump(_finite_or_none(obj), **kwargs)
+
+
+def finite_json_dumps(obj, **kwargs):
+    """``json.dumps`` for a hand-built HTTP JSON body: never a bare NaN / Infinity
+    token. The one door beside :class:`FiniteJSONProvider` (``jsonify`` already
+    goes through it); needs no app context."""
+    return _dump_finite(json.dumps, obj, kwargs)
+
+
 class FiniteJSONProvider(DefaultJSONProvider):
     """The app's JSON provider: never a bare NaN / Infinity token (D-NF1).
 
@@ -622,15 +643,7 @@ class FiniteJSONProvider(DefaultJSONProvider):
     """
 
     def dumps(self, obj, **kwargs):
-        kwargs.setdefault("allow_nan", False)
-        try:
-            return super().dumps(obj, **kwargs)
-        except ValueError as exc:
-            # only the non-finite refusal is ours to repair; a circular
-            # reference (also a ValueError) is raised as before
-            if "Out of range float" not in str(exc):
-                raise
-            return super().dumps(_finite_or_none(obj), **kwargs)
+        return _dump_finite(super().dumps, obj, kwargs)
 
 
 def create_app(*, testing: bool = False, instance_path: str | None = None) -> Flask:

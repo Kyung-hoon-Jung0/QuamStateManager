@@ -29,7 +29,15 @@
         else offer.remove();
         releaseRefresh(zone);
         var del = row ? row.querySelector('.gate-status-delete') : null;
-        if (del && del.focus) del.focus();
+        if (del && del.disabled) {
+            /* the Cancel press itself holds the other buttons of the zone off until its
+               answer is in: the focus goes back when that press ends */
+            var rec = from.__gatePress, gate = row.getAttribute('data-gate');
+            if (rec && zone) rec.after = function () {
+                var r2 = rowOf(zone, gate), d2 = r2 ? r2.querySelector('.gate-status-delete') : null;
+                if (d2 && !d2.disabled) d2.focus();
+            };
+        } else if (del && del.focus) del.focus();
         return true;
     }
 
@@ -158,13 +166,25 @@
         var row = a.closest ? a.closest('.gate-status') : null;
         var act = null;
         for (var i = 0; i < ACTIONS.length; i++) if (a.classList && a.classList.contains(ACTIONS[i])) act = ACTIONS[i];
-        return { gate: row ? row.getAttribute('data-gate') : null, action: act };
+        var later = [];                       // the rows after this one, nearest first
+        for (var r = row && row.nextElementSibling; r; r = r.nextElementSibling) {
+            if (r.classList.contains('gate-status')) later.push(r.getAttribute('data-gate'));
+        }
+        return { gate: row ? row.getAttribute('data-gate') : null, action: act, later: later };
     }
     function focusBack(zone, key) {
         var a = document.activeElement;
         if (!key || (a && a !== document.body && document.body.contains(a))) return;
         var row = key.gate !== null ? rowOf(zone, key.gate) : null;
         var to = row && key.action ? row.querySelector('.' + key.action) : null;
+        if (!row && key.gate !== null) {                     // the row is gone: the next row, else the add button
+            var later = key.later || [];
+            for (var i = 0; i < later.length && !to; i++) {
+                var nr = rowOf(zone, later[i]);
+                to = nr ? nr.querySelector('button:not([disabled])') : null;
+            }
+            if (!to) to = zone.querySelector('[data-czg-open]:not([disabled])');
+        }
         if (!to || to.disabled) to = zone.querySelector('button:not([disabled])');
         if (!to) { zone.setAttribute('tabindex', '-1'); to = zone; }
         if (to.focus) to.focus();
@@ -205,6 +225,7 @@
             done = true;
             delete busyPairs[pair];
             rec.off.forEach(function (b) { b.disabled = false; });
+            if (rec.after) { var after = rec.after; rec.after = null; after(); }
             if (rec.held || !rec.painted) { due[pair] = true; owed[pair] = ++debts; }
             refreshDue(pair);
         }
@@ -291,7 +312,7 @@
         if (!t || !t.classList || !t.classList.contains('gate-status-slot')) return;
         if (!t.querySelector('.gate-delete-offer')) releaseRefresh(t.closest('.gate-status-list'));
         var offer = t.querySelector('.gate-delete-offer');
-        if (offer && window.UI) window.UI.focusQuestion(offer);
+        if (offer && window.UI) window.UI.focusQuestion(offer, '.gate-delete-cancel');
     });
 
     var activating = new Set();

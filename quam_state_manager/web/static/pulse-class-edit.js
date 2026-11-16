@@ -392,9 +392,16 @@
         var body = { cls: S.cls, python: q(S.root, "[data-pce-env]").value,
                      folder: q(S.root, "[data-pce-config-folder]").value.trim() };
         if (confirmedFolder) body.confirmed_folder = confirmedFolder;
+        var btn = q(S.root, "[data-pce-save-config]"), result = q(S.root, "[data-pce-config-result]");
+        if (btn.getAttribute("aria-busy") === "true") return Promise.resolve();
+        // the lab check takes seconds: one status line and a button that cannot be pressed again
+        // until an answer, a refusal or a failure ends the wait
+        function idle() { mine.busy = false; setBusy(btn, false); showLines(result, []); }
         S.busy = true;
+        setBusy(btn, true);
+        showLines(result, ["Checking the class in the lab environment..."]);
         return api("POST", "/pulse-class/save-config", body).then(function (r) {
-            mine.busy = false;
+            idle();
             if (S !== mine) return;
             if (r.confirm) {
                 var c = r.confirm;
@@ -420,7 +427,7 @@
             showLines(q(S.root, "[data-pce-config-result]"), ["Saved to " + r.target, r.dependency,
                 r.restart, r.warning, r.chip_warning, r.proportional_warning, r.record_error, r.backup ? "Backup of the replaced file: " + r.backup : ""]);
         }).catch(function (err) {
-            mine.busy = false;
+            idle();
             if (S === mine) show(q(S.root, "[data-pce-error]"), String(err));
         });
     }

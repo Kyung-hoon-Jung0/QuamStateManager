@@ -547,6 +547,33 @@ function outsideEdit(fields, formula) {
       "class save lock shows the message as text or the existing error fallback");
   }
 
+  // The lab check takes seconds: one busy line, a button that cannot be pressed twice, and every
+  // exit (answer, refusal, confirm question, failure) clears it.
+  {
+    const sc = $("[data-pce-save-config]"), res = $("[data-pce-config-result]");
+    const holdOne = () => { const d = deferred(); hold = { "/pulse-class/save-config": d }; return d; };
+    const nCfg = () => calls.filter((c) => c.url === "/pulse-class/save-config").length;
+    for (const exit of ["success", "refusal", "confirm", "failure"]) {
+      const d = holdOne();
+      if (exit === "success") answer("/pulse-class/save-config", 200, { ok: true, target: "q/flat.py", status: "Saved" });
+      if (exit === "refusal") answer("/pulse-class/save-config", 409, { ok: false, error: "refused here" });
+      if (exit === "confirm") answer("/pulse-class/save-config", 409, { ok: false, confirm: { path: "q/flat.py", env_folder: "q", notice: "n", gates: [], folder: "q" } });
+      if (exit === "failure") win.__fetchMode = "";
+      const before = nCfg();
+      sc.click(); await flush();
+      ok(/Checking the class in the lab environment/.test(res.textContent) && !res.hidden && sc.getAttribute("aria-busy") === "true" && sc.disabled,
+        "config save busy (" + exit + "): one status line and a busy button while the lab check runs");
+      sc.click(); await flush();
+      if (exit === "failure") win.__fetchMode = "reject";
+      d.res(); await flush(); await flush();
+      win.__fetchMode = "";
+      if (exit !== "failure") ok(nCfg() === before + 1, "config save busy (" + exit + "): the second press sent nothing");
+      ok(!/Checking the class/.test(res.textContent) && idle(sc),
+        "config save busy (" + exit + "): the line is gone and the button is normal after the answer");
+      if (dialogOpen()) closeDialog();
+    }
+  }
+
   // Merge seam: missing poll status_line is displayed verbatim.
   const gone = "The draft file is gone: D:/draft/FlatTop.py";
   answer("/pulse-class/poll", 200, { status: "missing", status_line: gone });

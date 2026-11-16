@@ -527,9 +527,11 @@
         }
     }
 
-    function focusQuestion(root) {
+    /* A question takes the focus on its safe button: `safe` is a selector for it
+       (Cancel); without one, the first enabled button. */
+    function focusQuestion(root, safe) {
         if (!root) return;
-        var first = root.querySelector('button:not(:disabled)');
+        var first = (safe && root.querySelector(safe + ':not(:disabled)')) || root.querySelector('button:not(:disabled)');
         if (root.scrollIntoView) root.scrollIntoView({ block: 'nearest' });
         if (first) first.focus();
     }

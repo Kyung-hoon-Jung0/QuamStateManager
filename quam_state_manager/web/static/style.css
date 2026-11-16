@@ -6649,9 +6649,9 @@ table.h5-vars-table tr.h5-var-selected .btn-sm { background: var(--pico-primary)
     font-weight: 700; font-size: 0.85em; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
 }
-.ds-search-help-btn:hover, .ds-search-help-btn:focus {
+.ds-search-help-btn:hover, .ds-search-help-btn:focus-visible {
     background: var(--pico-primary); color: var(--pico-primary-inverse);
-    border-color: var(--pico-primary); outline: none;
+    border-color: var(--pico-primary);
 }
 /* Pad the search input so the typed text doesn't slide under the ? button. */
 .ds-search-wrap input[type="search"] { padding-right: 2.5rem; }
