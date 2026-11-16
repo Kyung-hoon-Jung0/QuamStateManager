@@ -131,7 +131,7 @@ def test_redone_delete_returns_an_honest_inspector(client):
     assert client.get("/pulse/detail", query_string={"path": MARKER_OP}).status_code == 200
     assert client.post("/redo").status_code == 200
     r = client.get("/pulse/detail", query_string={"path": MARKER_OP})
-    assert r.status_code == 404
+    assert r.status_code == 200
     assert r.headers.get("X-Pulse-Missing") == "1"
     assert b"This pulse no longer exists" in r.data
     assert b"Deleted saturation" in r.data

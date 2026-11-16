@@ -25731,7 +25731,8 @@ def _pulse_section_ctx(store, pulse_index, path: str):
             message=f"Deleted {path.rsplit('.', 1)[-1]}. This pulse no longer exists.",
             level="warning"))
         resp.headers["X-Pulse-Missing"] = "1"
-        return resp, 404
+        resp.headers["HX-Trigger"] = "pulses-changed"
+        return resp, 200
 
     from quam_state_manager.core.pulse_catalog import (
         infer_spec_ex, unmodeled_fields)

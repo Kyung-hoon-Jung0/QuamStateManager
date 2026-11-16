@@ -251,7 +251,7 @@ class TestPulseDetail:
         assert loaded_client.get(
             "/pulse/detail?path=qubits.qA1.f_01").status_code == 404
         assert loaded_client.get(
-            f"/pulse/detail?path={XY}.nope").status_code == 404
+            f"/pulse/detail?path={XY}.nope").status_code == 200
         assert loaded_client.get("/pulse/detail").status_code == 404
 
     def test_detail_no_state(self, client):

@@ -22,7 +22,7 @@
     </ul>
     {% if parts.kept %}<p class="ui-note">Kept: {{ parts.kept | join(', ') }} (other code may use them).</p>{% endif %}
     {% if parts.active %}
-    {{ ui.ui_callout('warn', gate ~ ' is the active CZ gate', 'After this, pair ' ~ pair ~ ' has no active CZ gate.') }}
+    {{ ui.ui_callout('warn', gate ~ ' is the active CZ gate', 'The previous gate alias will be restored.' if parts.restores_alias else 'After this, pair ' ~ pair ~ ' has no active CZ gate; the gate alias will be unset.') }}
     {% endif %}
     <div class="ui-actions gate-delete-actions">
         <button type="button" class="btn-sm danger gate-delete-confirm" hx-sync="this:drop"

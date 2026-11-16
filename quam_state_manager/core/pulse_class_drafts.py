@@ -161,7 +161,9 @@ def import_check(instance, scope, class_name, data: bytes) -> str | None:
     """None when *data* may become a class file; otherwise the reason it may
     not. A class file that does not import stops the whole chip from loading,
     so the draft must parse and its exact bytes must have imported in the lab
-    env (the last good preview carries their hash)."""
+    env. An ordinary class carries that fact in the last good preview's hash; a
+    slot gate class carries it in ``lab_import.json``, written by Save to
+    quam_config after its lab check passed on the same bytes."""
     try:
         ast.parse(data.decode("utf-8"), filename=DRAFT_FILE)
     except UnicodeDecodeError:
@@ -170,10 +172,26 @@ def import_check(instance, scope, class_name, data: bytes) -> str | None:
         where = f" on line {exc.lineno}" if exc.lineno else ""
         return f"The draft does not parse as Python{where}: {exc.msg}. Fix it before saving it as a class file."
     prev = last_preview(instance, scope, class_name)
+    from quam_state_manager.core import slot_gate_template
+    if data.startswith(slot_gate_template.HEADER_MARK.encode("utf-8")):
+        try:
+            fact = json.loads((_folder(instance, scope, class_name) / "lab_import.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            fact = {}
+        if fact.get("sha256") == sha256_bytes(data):
+            return None
+        return ("This version of the draft has not imported in a lab env yet. "
+                "Use Save to quam_config to check this draft before saving to a file.")
     if not prev or prev.get("draft_sha256") != sha256_bytes(data):
         return ("This version of the draft has not imported in a lab env yet. Run the preview; "
                 "the class file is written once the preview of this exact draft succeeded.")
     return None
+
+
+def record_import(instance, scope, class_name, data: bytes) -> None:
+    """One lab-import fact for the exact version both save doors read."""
+    safe_io.atomic_write_json(_folder(instance, scope, class_name) / "lab_import.json",
+                              {"sha256": sha256_bytes(data)})
 
 
 def last_preview(instance, scope, class_name) -> dict | None:
