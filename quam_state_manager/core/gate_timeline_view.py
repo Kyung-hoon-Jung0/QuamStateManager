@@ -23,7 +23,9 @@ Rules:
   (``[-range - offset, range - offset]``), or None when the range is unknown;
 - ``over_range``: a value plus the offset outside the port's range;
   ``bad_length``: the played length is not a whole number of ns, not a
-  multiple of 4 ns or below 16 ns (the gate check's length rule);
+  multiple of 4 ns or below the chip's floor (the gate check's length rule:
+  16 ns before QOP 3.3, 4 ns from QOP 3.3 on; 16 ns when the timeline names
+  no floor);
 - ``notes`` and ``cannot_draw`` of the check are passed through verbatim;
   when ``cannot_draw`` is set there are NO lanes.
 
@@ -65,16 +67,17 @@ def sample_step_ns(rate: Any) -> float:
     return 1e9 / r if r and r > 0 else 1.0
 
 
-def length_flag(length: Any) -> bool:
-    """True when *length* (ns) breaks the gate check's length rule."""
+def length_flag(length: Any, floor_ns: int = LENGTH_MIN_NS) -> bool:
+    """True when *length* (ns) breaks the gate check's length rule; *floor_ns*
+    is the chip's floor the check stored with the timeline."""
     f = _num(length)
     if f is None or f != int(f):
         return True
     n = int(f)
-    return n % LENGTH_STEP_NS != 0 or n < LENGTH_MIN_NS
+    return n % LENGTH_STEP_NS != 0 or n < floor_ns
 
 
-def _segment(row: dict) -> dict:
+def _segment(row: dict, floor_ns: int = LENGTH_MIN_NS) -> dict:
     scale = _num(row.get("scale"))
     scale = 1.0 if scale is None else scale
     start, end = row.get("start_ns"), row.get("end_ns")
@@ -96,7 +99,7 @@ def _segment(row: dict) -> dict:
         o = off or 0.0
         if peak + o > rng + RANGE_EPS or low + o < -rng - RANGE_EPS:
             flags.append("over_range")
-    if played is None or length_flag(played):
+    if played is None or length_flag(played, floor_ns):
         flags.append("bad_length")
     return {"operation": row.get("operation"), "start_ns": start, "end_ns": end,
             "t_ns": t, "v": v, "peak_v": peak, "min_v": low, "length_ns": played,
@@ -127,6 +130,8 @@ def timeline_data(entry: dict | None, *, control: str | None, target: str | None
     gate_order = [e for e in (f"{control}.z" if control else None,
                               f"{target}.z" if target else None) if e]
     couplers = [e for e in coupler_elements if e and e not in gate_order]
+    floor = tl.get("length_floor_ns")
+    floor = floor if type(floor) is int else LENGTH_MIN_NS
     lanes: dict[str, dict] = {}
     seen: list[str] = []
     for row in tl.get("rows") or []:
@@ -141,7 +146,7 @@ def timeline_data(entry: dict | None, *, control: str | None, target: str | None
         if lane["limit_v"] is None:
             lane["limit_v"] = _limit(row)
         try:
-            lane["segments"].append(_segment(row))
+            lane["segments"].append(_segment(row, floor))
         except (TypeError, ValueError, KeyError) as exc:
             return {"lanes": [], "notes": notes,
                     "cannot_draw": "cannot draw: a timeline row has a form SM does not read "

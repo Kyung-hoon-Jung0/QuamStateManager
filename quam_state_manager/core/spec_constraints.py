@@ -136,7 +136,34 @@ PULSE_LENGTH_STEP_NS = 4
 def min_pulse_length_ns(qop_version=None) -> int:
     """4 ns for QOP >= 3.3 and for an unknown version, 16 ns before 3.3."""
     mm = qop_minor(qop_version)
-    return 16 if mm is not None and mm < (3, 3) else 4
+    return LENGTH_FLOOR_ANY_QOP_NS if mm is not None and mm < (3, 3) else LENGTH_FLOOR_CONFIG_NS
+
+
+#: The shortest pulse or wait that plays on every QOP: 16 ns (4 clock cycles), the
+#: minimum before QOP 3.3 (docs Guides/timing_in_qua.md:16, quoted above).
+LENGTH_FLOOR_ANY_QOP_NS = 16
+#: docs Guides/timing_in_qua.md:14: since QOP 3.3 the minimum pulse length set in
+#: the configuration is 4 ns.
+LENGTH_FLOOR_CONFIG_NS = 4
+#: docs Guides/timing_in_qua.md:14: since QOP 3.3 "The minimum pulse and wait duration
+#: is 4 ns if set in the configuration, or 8 ns if set from QUA."
+LENGTH_FLOOR_FROM_QUA_NS = 8
+#: The result line for a length under 16 ns on a chip that declares no QOP version.
+LENGTH_FLOOR_NOTE = "Lengths and waits under 16 ns play only on QOP 3.3 or later."
+
+
+def length_floor_ns(state, from_qua: bool = False) -> tuple[int, str | None]:
+    """``(floor in ns, note)`` for a pulse length set in the configuration
+    (``from_qua`` False) or a play-time duration / wait set from QUA (``from_qua``
+    True) on this chip. A declared QOP before 3.3 gives 16 ns; 3.3 or later gives
+    4 ns (8 ns from QUA). A chip with no readable QOP version gets the 3.3 floor
+    and the note :data:`LENGTH_FLOOR_NOTE`, which a caller shows when it accepts a
+    value under 16 ns; a chip with a readable version gets None."""
+    version = qop_version_of(state)
+    floor = min_pulse_length_ns(version)
+    if from_qua and floor < LENGTH_FLOOR_ANY_QOP_NS:
+        floor = LENGTH_FLOOR_FROM_QUA_NS
+    return floor, (LENGTH_FLOOR_NOTE if qop_minor(version) is None else None)
 
 
 def pulse_length_problem(length, qop_version=None) -> str | None:
@@ -162,8 +189,10 @@ def pulse_length_problem(length, qop_version=None) -> str | None:
 
 def qop_version_of(state) -> str | None:
     """A chip's declared QOP version when it carries one (``extras.qop_version``,
-    or ``extras.versions.qop`` / ``.qop_version``); None otherwise. Nothing SM
-    generates stamps one today, so the usual answer is "unknown"."""
+    or ``extras.versions.qop`` / ``.qop_version``); None otherwise. Generate
+    stamps ``extras.qop_version`` from the wizard's QOP choice, so it is the
+    version the chip was generated for, not one read from the controller; a
+    chip made elsewhere often carries none."""
     ex = (state or {}).get("extras") if isinstance(state, dict) else None
     if not isinstance(ex, dict):
         return None

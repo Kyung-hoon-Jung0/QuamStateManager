@@ -38,9 +38,11 @@
     var BAR_PX = 3;            // the lane colour bar at the gutter's left edge
     var CHIP_ALPHA = 0.16;     // tint behind the lane name chip
 
+    // bad_length: "short" is under the chip's floor (16 ns before QOP 3.3, 4 ns from QOP 3.3 on;
+    // gate_timeline_view.length_flag); the gate check's length line names the number.
     var FLAG_TEXT = {
         over_range: "over the port range",
-        bad_length: "length is not a multiple of 4 ns"
+        bad_length: "length is not a multiple of 4 ns or is short"
     };
     /* Data contract, flag severity: a flag in REFUSING_FLAGS refuses the gate
        and draws in the kit danger tone; every other flag (unknown ones too) and a

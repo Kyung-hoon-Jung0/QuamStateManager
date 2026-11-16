@@ -32,6 +32,7 @@ from quam_state_manager.core.add_names import (
 from quam_state_manager.core.pointer_path import resolve_field_target
 from quam_state_manager.core.pointer_resolver import (
     _SENTINEL, _get, _walk_relative, target_path)
+from quam_state_manager.core.spec_constraints import LENGTH_FLOOR_ANY_QOP_NS, length_floor_ns
 
 CZ_GATE = ("quam_builder.architecture.superconducting.custom_gates."
            "flux_tunable_transmon_pair.two_qubit_gates.CZGate")
@@ -359,12 +360,14 @@ def operation_length(macro_pulse: dict, macro_ref: str) -> Any:
     return macro_ref + "/length"
 
 
-def length_rule(pulse: dict) -> str | None:
+def length_rule(pulse: dict, floor_ns: int = LENGTH_FLOOR_ANY_QOP_NS) -> str | None:
     """An explicit pulse ``length`` is a whole number of ns (an int, or a
     float with an integral value, which the plan writes as an int), a
-    multiple of 4 ns and at least 16 ns. A string that is not a reference is
-    refused. A reference (an inferred length) is not computed here: the
-    lab-side check owns the real length."""
+    multiple of 4 ns and at least *floor_ns* (the chip's floor from
+    :func:`spec_constraints.length_floor_ns`; 16 ns, which plays on every QOP,
+    when not given). A string that is not a reference is refused. A
+    reference (an inferred length) is not computed here: the lab-side check
+    owns the real length."""
     length = pulse.get("length")
     if length is None or (isinstance(length, str) and length.startswith("#")):
         return None
@@ -377,10 +380,31 @@ def length_rule(pulse: dict) -> str | None:
                     "Change the length.")
         pulse["length"] = int(length)
         length = int(length)
-    if length < 16 or length % 4:
+    if length < floor_ns or length % 4:
         return (f"The pulse length {length} ns must be a multiple of 4 ns and "
-                "at least 16 ns. Change the length.")
+                f"at least {floor_ns} ns. Change the length.")
     return None
+
+
+def chip_length_rule(merged: dict, pulse: dict) -> tuple[str | None, str | None]:
+    """``(refusal, note)``: :func:`length_rule` of *pulse* against this chip's
+    floor (:func:`spec_constraints.length_floor_ns`). *note* is the floor's note
+    when the length is accepted, is under 16 ns and the chip declares no QOP
+    version; the plan shows it (``"notes"``), so a gate written at 4-12 ns
+    without a lab check still names the QOP it needs. Otherwise None."""
+    floor, note = length_floor_ns(merged)
+    refusal = length_rule(pulse, floor)
+    length = pulse.get("length")
+    short = (refusal is None and note is not None and type(length) is int
+             and length < LENGTH_FLOOR_ANY_QOP_NS)
+    return refusal, (note if short else None)
+
+
+def _floor_notes(notes: list) -> dict[str, Any]:
+    """The plan's ``"notes"`` key for the floor notes collected while
+    planning, each sentence once; empty (no key) when there is none."""
+    seen = list(dict.fromkeys(n for n in notes if n))
+    return {"notes": seen} if seen else {}
 
 
 def same_kind(a: Any, b: Any) -> bool:
@@ -899,7 +923,10 @@ def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
     {key: copied from the model gate}}, "sources": {...}}`` or ``{"error":
     str, "refusals": [str], "name_refusals": [str]}`` (``name_refusals``: the
     refusals a new gate name fixes, the same sentences). Every created value
-    is a fresh copy.
+    is a fresh copy. ``"notes"`` (present only when there is one) lists
+    sentences the person reads beside the plan: on a chip that declares no
+    QOP version, an accepted length under 16 ns carries
+    :data:`spec_constraints.LENGTH_FLOOR_NOTE`.
 
     ``spectators`` (official class only, see :func:`spectator_refusal`):
     ``[{"qubit", "length" (ns), "level" (V)}]``; each becomes a square pulse
@@ -1107,6 +1134,7 @@ def _plan_known(merged, pair_id, p, gate_name, gate_class, pulses, lines,
     slots = {s.field: s for s in desc["slots"]}
     have = ", ".join(slots)
     copy_refused: set = set()
+    notes: list = []
     for f in pulses:
         if f not in slots:
             reasons.append(f"This gate class has no pulse field {f} (its pulse "
@@ -1169,9 +1197,10 @@ def _plan_known(merged, pair_id, p, gate_name, gate_class, pulses, lines,
             continue
         pulse, prov = built
         provenance[s.field] = prov
-        r = length_rule(pulse)
+        r, note = chip_length_rule(merged, pulse)
         if r:
             reasons.append(f"{s.field}.length: {r}")
+        notes.append(note)
         try:
             key = operation_name(gate_name, s.role, control, target)
         except ValueError:
@@ -1198,10 +1227,11 @@ def _plan_known(merged, pair_id, p, gate_name, gate_class, pulses, lines,
     if spectators:
         extra = _plan_spectators(merged, pair_id, gate_name, spectators, macro,
                                  macro_segs, direction, op_creates, operations,
-                                 provenance, reasons)
+                                 provenance, reasons, notes)
     if reasons:
         return _refuse(reasons)
-    return {**extra, "creates": [(_dot(macro_segs), macro)] + op_creates,
+    return {**extra, **_floor_notes(notes),
+            "creates": [(_dot(macro_segs), macro)] + op_creates,
             "direction": direction,
             "pulse_directions": {f: direction for f in provenance},
             "model_gate": None, "layout": "known", "reset": [],
@@ -1405,7 +1435,8 @@ def range_not_compared(line: str, port: Any) -> str:
 
 
 def _spectator_problem(merged, pair_id, spec, control, target, seen) -> tuple[Any, str | None]:
-    """``(line info with "length" and "level", None)`` or ``(None, reason)``."""
+    """``(line info with "length", "level" and "floor_note", None)`` or ``(None,
+    reason)``; ``floor_note`` is :func:`chip_length_rule`'s note (or None)."""
     if not isinstance(spec, dict) or not isinstance(spec.get("qubit"), str) or not spec["qubit"]:
         return None, "Each spectator needs a qubit, a length and a level. Pick the spectators again."
     q = spec["qubit"]
@@ -1427,7 +1458,7 @@ def _spectator_problem(merged, pair_id, spec, control, target, seen) -> tuple[An
         return None, (f"For the spectator {q}: the length {length!r} must be a number "
                       "of ns. Type a whole number such as 48.")
     probe = {"length": length}
-    r = length_rule(probe)
+    r, note = chip_length_rule(merged, probe)
     if r:
         return None, f"For the spectator {q}: {r[0].lower()}{r[1:]}"
     level = spec.get("level")
@@ -1448,15 +1479,17 @@ def _spectator_problem(merged, pair_id, spec, control, target, seen) -> tuple[An
             off = f" on top of its {dc:g} V {label} ({total:g} V)" if dc else ""
             return None, (f"For the spectator {q}: {ln['line']} would play {float(level):g} V"
                           f"{off}, outside its port's range of ±{rng:g} V. Lower the level.")
-    return {**ln, "length": probe["length"], "level": float(level)}, None
+    return {**ln, "length": probe["length"], "level": float(level), "floor_note": note}, None
 
 
 def _plan_spectators(merged, pair_id, gate_name, spectators, macro, macro_segs,
-                     direction, op_creates, operations, provenance, reasons) -> dict[str, Any]:
+                     direction, op_creates, operations, provenance, reasons,
+                     notes=None) -> dict[str, Any]:
     """Fill the macro's spectator fields and add one square pulse operation
     per spectator (the way the macro's own pulse is held: a macro-owned pulse
     with a linked operation, or an operation the macro refers to). Returns
-    the answer's spectator keys; problems go to *reasons*."""
+    the answer's spectator keys; problems go to *reasons*, and each accepted
+    length's floor note to *notes* (when given)."""
     control = pair_qubit(merged, pair_id, "qubit_control")
     target = pair_qubit(merged, pair_id, "qubit_target")
     seen: set = set()
@@ -1467,6 +1500,8 @@ def _plan_spectators(merged, pair_id, gate_name, spectators, macro, macro_segs,
             reasons.append(why)
             continue
         q = info["qubit"]
+        if notes is not None:
+            notes.append(info["floor_note"])
         try:
             key = operation_name(gate_name, SPECTATOR_ROLE, control, target)
         except ValueError:
@@ -1961,6 +1996,7 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
     if r:
         return _refuse(reasons + [r])
     mlines = _lines(merged, mpair)
+    notes: list = []
     mids = mlines["_ids"]
     control, target = lines["_ids"]
     fields = pulse_fields(model, _op_keys(mlines))
@@ -2083,9 +2119,10 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
             continue
         pulse, prov = built
         provenance[f] = prov
-        r = length_rule(pulse)
+        r, note = chip_length_rule(merged, pulse)
         if r:
             reasons.append(f"{f}.length: {r}")
+        notes.append(note)
         if isinstance(model.get(f), dict):
             directions[f] = MACRO_OWNS
             owned = norm(pulse)
@@ -2172,7 +2209,7 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
     for old, new in plain.items():
         if old != mname and (old in used_strings or any(_has_run(t, old) for t in tails)):
             renamed[old] = new
-    return {"creates": creates,
+    return {**_floor_notes(notes), "creates": creates,
             "direction": kinds.pop() if len(kinds) == 1 else MIXED,
             "pulse_directions": directions,
             "model_gate": (mpair, mname),

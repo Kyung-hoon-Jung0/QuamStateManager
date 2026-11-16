@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 from quam_state_manager.core.cz_gate_build import length_rule
 from quam_state_manager.core.pulse_class_template import check_class_name
+from quam_state_manager.core.spec_constraints import LENGTH_FLOOR_ANY_QOP_NS
 
 TEMPLATE_VERSION = 2
 #: Older renders the parser still reads (a text must be the exact render of its spec at that version).
@@ -33,8 +34,10 @@ PRESETS = {
 #: docs/docs/docs/Guides/error.md line 174, starting with %, not published).
 AMP_SCALE_LIMIT = 2.0
 
-#: Shortest pulse length in ns; equal to the edge the shared ``length_rule`` enforces (pinned by a test).
-MIN_LENGTH_NS = 16
+#: Shortest spectator length and wait in ns: the shared floor that plays on every QOP. The generated
+#: class is chip-independent text and sets both from QUA (play duration=, wait), so it keeps this floor
+#: (the 3.3 floor from QUA is 8 ns, spec_constraints.LENGTH_FLOOR_FROM_QUA_NS); pinned by a test.
+MIN_LENGTH_NS = LENGTH_FLOOR_ANY_QOP_NS
 #: Pulse length step in ns; equal to the step the shared ``length_rule`` enforces (pinned by a test).
 LENGTH_STEP_NS = 4
 #: Guides/features.md line 1128: "Arbitrary waveforms cannot be compressed and can only be expanded
@@ -170,7 +173,7 @@ def _shown(value) -> str:
 def _wait_length_bad(value) -> bool:
     if type(value) is not int or value > MAX_WAIT_NS or value % LENGTH_STEP_NS or value < MIN_LENGTH_NS:
         return True
-    return bool(length_rule({"length": value}))
+    return bool(length_rule({"length": value}, MIN_LENGTH_NS))
 
 
 def sequence_steps_problem(steps, where="before") -> str | None:
@@ -309,7 +312,7 @@ def spectator_length_problem(length_ns) -> str | None:
     if (isinstance(length_ns, bool) or not isinstance(length_ns, (int, float))
             or length_ns > MAX_SPECTATOR_NS or length_ns % LENGTH_STEP_NS or length_ns < MIN_LENGTH_NS):
         return LENGTH_PROBLEM.format(name="spectator", value=length_ns)
-    return length_rule({"length": length_ns})
+    return length_rule({"length": length_ns}, MIN_LENGTH_NS)
 
 
 def qubit_name(ref):
