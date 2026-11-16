@@ -44,7 +44,8 @@
                  opener: null, nameTouched: false, seq: 0, created: null, pairIdx: 0, invalid: {}, creating: false,
                  confirmClose: false, downOnBackdrop: false, spectOn: {}, spectNote: '',
                  newSlot: { name: '', preset: '', slots: {}, spectators: false, busy: false, busyWord: '',
-                            cls: '', qclass: '', saved: false, lines: [], done: [], confirm: null } };
+                            cls: '', qclass: '', saved: false, lines: [], done: [], confirm: null,
+                            before: [], after: [], stepProblem: null } };
     }
 
     /* ---- the request body ------------------------------------------------ */
@@ -733,19 +734,31 @@
         if (sub) b.appendChild(el('p', 'ui-text-quiet', sub));
         return b;
     }
+    /* Whether the picked pair has a line that can hold a pulse (the server's per-pair
+       fact; a pair the server says nothing about offers every line). */
+    function lineOpen(line) {
+        var p = pairInfo($('czg-pair') ? $('czg-pair').value : '');
+        return !(p && p.lines && p.lines[line] === false);
+    }
+    /* An optional pulse on a line the pair does not have is not offered at all. */
+    function slotOffered(s) { return !!s.required || !(s.line === 'coupler' && !lineOpen('coupler')); }
     function fillSlots() {
         var host = clear($('czg-slots'));
         var c = klass();
         var fp = firstPlan();
         if (!c) return;
+        if (slotted(c)) {
+            (c.slots || []).forEach(function (s) { if (!slotOffered(s)) S.cls[s.field] = ''; });
+        }
         S.slotChannels = slotted(c)
-            ? (c.slots || []).filter(function (s) { return S.cls[s.field] !== '' || s.required; })
+            ? (c.slots || []).filter(function (s) { return slotOffered(s) && (S.cls[s.field] !== '' || s.required); })
                 .map(function (s) { return slotChannel(s.field, s.line, fp); })
             : Object.keys((fp && fp.ok && fp.pulses) || {}).map(function (f) { return slotChannel(f, null, fp); });
         var sum = $('czg-pulses-sum');
         if (sum) { var nl = S.slotChannels.length; sum.textContent = nl === 1 ? '1 line' : nl + ' lines'; }
         if (slotted(c)) {
             (c.slots || []).forEach(function (s) {
+                if (!slotOffered(s)) return;
                 var b = slotBlock(s.field, slotChannel(s.field, s.line, fp), '');
                 var l = el('div', 'ui-field');
                 var lh = el('div', 'ui-field-head');
@@ -909,6 +922,176 @@
     function newEdited() {
         var ns = S.newSlot;
         ns.cls = ''; ns.qclass = ''; ns.saved = false; ns.lines = []; ns.done = []; ns.confirm = null;
+        ns.stepProblem = null;
+    }
+    /* ---- sequence steps of the new class: two ordered lists, Before and After.
+       The client holds no step rule: the server's one check answers, and its
+       sentence is shown beside the row it names. */
+    var STEP_WHERE = [['before', 'Before the gate pulses'], ['after', 'After the gate pulses']];
+    var STEP_KIND_WORDS = { align: 'Align', wait: 'Wait', xy: 'xy pulse' };
+    function copySteps(list) {
+        return (Array.isArray(list) ? list : []).map(function (x) { return Object.assign({}, x); });
+    }
+    /* The operation names the pair's qubit of a role has on its xy channel (from the server). */
+    function xyOps(role) {
+        var p = pairInfo($('czg-pair') ? $('czg-pair').value : '');
+        var m = (p && p.xy_operations) || {};
+        return Array.isArray(m[role]) ? m[role] : [];
+    }
+    function xyRoles() { return ['control', 'target'].filter(function (r) { return xyOps(r).length > 0; }); }
+    function newStep(kind) {
+        if (kind === 'wait') return { kind: 'wait', length: 16 };
+        if (kind === 'xy') {
+            var role = xyRoles()[0];
+            return role ? { kind: 'xy', qubit: role, operation: xyOps(role)[0] } : null;
+        }
+        return { kind: 'align' };
+    }
+    function stepsBody() {
+        var ns = S.newSlot, out = {};
+        STEP_WHERE.forEach(function (w) {
+            if (ns[w[0]].length) out[w[0]] = copySteps(ns[w[0]]);
+        });
+        return out;
+    }
+    function stepControl(tag, cls, label, attr, where, k) {
+        var n = el(tag, cls);
+        n.setAttribute('aria-label', label);
+        n.setAttribute(attr, where);
+        n.setAttribute('data-czg-step-index', String(k));
+        n.disabled = !!S.newSlot.busy;
+        return n;
+    }
+    function stepOptions(sel, items, value) {
+        items.forEach(function (it) {
+            var o = el('option', null, it[1]);
+            o.value = it[0];
+            if (it[2]) o.disabled = true;
+            sel.appendChild(o);
+        });
+        sel.value = value;
+    }
+    function stepRow(where, words, k, step, count) {
+        var U = UIkit();
+        // one step is one kit item: its fields on one line, its move buttons on the next, both wrap whole
+        var row = el('div', 'ui-item');
+        row.setAttribute('role', 'group');
+        row.setAttribute('aria-label', words + ', step ' + (k + 1));
+        row.setAttribute('data-czg-step-row', where);
+        row.setAttribute('data-czg-step-index', String(k));
+        var bar = el('div', 'ui-actions');
+        var n = ' ' + where + ' step ' + (k + 1);
+        var kind = stepControl('select', 'ui-select', 'Kind of' + n, 'data-czg-step-kind', where, k);
+        var noXy = !xyRoles().length;
+        stepOptions(kind, [['align', STEP_KIND_WORDS.align], ['wait', STEP_KIND_WORDS.wait],
+                           ['xy', STEP_KIND_WORDS.xy, noXy && step.kind !== 'xy']], step.kind);
+        bar.appendChild(kind);
+        if (step.kind === 'wait') {
+            var len = stepControl('input', 'ui-input', 'Wait length in ns of' + n, 'data-czg-step-length', where, k);
+            len.type = 'text';
+            len.inputMode = 'numeric';
+            len.spellcheck = false;
+            len.value = step.length === undefined || step.length === null ? '' : String(step.length);
+            bar.appendChild(len);
+            bar.appendChild(el('span', 'ui-text-quiet', 'ns'));
+        } else if (step.kind === 'xy') {
+            var role = stepControl('select', 'ui-select', 'Qubit of' + n, 'data-czg-step-qubit', where, k);
+            stepOptions(role, ['control', 'target'].map(function (r) {
+                return [r, slotWord(r) + ' qubit', !xyOps(r).length && r !== step.qubit];
+            }), step.qubit);
+            bar.appendChild(role);
+            var ops = xyOps(step.qubit);
+            var op = stepControl('select', 'ui-select', 'xy operation of' + n, 'data-czg-step-op', where, k);
+            var items = ops.map(function (o) { return [o, o]; });
+            if (ops.indexOf(step.operation) < 0) items.unshift([step.operation, step.operation + ' (not on this qubit)']);
+            stepOptions(op, items, step.operation);
+            bar.appendChild(op);
+        }
+        row.appendChild(bar);
+        var moves = el('div', 'ui-actions');
+        moves.setAttribute('data-czg-step-moves', '');
+        [['up', 'Up', 'Move' + n + ' up', k === 0],
+         ['down', 'Down', 'Move' + n + ' down', k === count - 1],
+         ['remove', 'Remove', 'Remove' + n, false]].forEach(function (b) {
+            var btn = U.actions([{ label: b[1], cls: 'btn-sync outline', aria_label: b[2] }]).children[0];
+            btn.setAttribute('data-czg-step-' + b[0], where);
+            btn.setAttribute('data-czg-step-index', String(k));
+            btn.disabled = !!S.newSlot.busy || b[3];
+            moves.appendChild(btn);
+        });
+        row.appendChild(moves);
+        var pr = S.newSlot.stepProblem;
+        if (pr && pr.where === where && pr.index === k) {
+            var w = el('p', 'ui-field-error', pr.text);
+            w.setAttribute('role', 'alert');
+            w.setAttribute('data-czg-step-problem', '');
+            row.appendChild(w);
+        }
+        return row;
+    }
+    function stepLists(host) {
+        var ns = S.newSlot;
+        var U = UIkit();
+        var noXy = !xyRoles().length;
+        STEP_WHERE.forEach(function (w) {
+            var where = w[0];
+            var f = el('div', 'ui-field');
+            f.setAttribute('data-czg-steps', where);
+            var h = el('div', 'ui-field-head');
+            h.appendChild(el('span', 'ui-field-label', w[1]));
+            f.appendChild(h);
+            var list = el('div', 'ui-field-stack ui-field-stack--dense');
+            list.setAttribute('role', 'list');
+            list.setAttribute('aria-label', w[1]);
+            if (!ns[where].length) list.appendChild(el('p', 'ui-text-quiet', 'No steps.'));
+            ns[where].forEach(function (step, k) {
+                var item = el('div');
+                item.setAttribute('role', 'listitem');
+                item.appendChild(stepRow(where, w[1], k, step, ns[where].length));
+                list.appendChild(item);
+            });
+            f.appendChild(list);
+            var adds = U.actions([{ label: 'Add align', cls: 'btn-sync outline', aria_label: 'Add an align step ' + where + ' the gate pulses' },
+                                  { label: 'Add wait', cls: 'btn-sync outline', aria_label: 'Add a wait step ' + where + ' the gate pulses' },
+                                  { label: 'Add xy pulse', cls: 'btn-sync outline', aria_label: 'Add an xy pulse step ' + where + ' the gate pulses' }],
+                                 'Add a step ' + where + ' the gate pulses');
+            ['align', 'wait', 'xy'].forEach(function (kind, i) {
+                var b = adds.children[i];
+                b.setAttribute('data-czg-step-add', where);
+                b.setAttribute('data-czg-step-add-kind', kind);
+                b.disabled = !!ns.busy || (kind === 'xy' && noXy);
+            });
+            f.appendChild(adds);
+            if (noXy) {
+                var nx = el('p', 'ui-text-quiet', 'No xy pulse step: neither qubit of this pair has an xy operation.');
+                nx.setAttribute('data-czg-step-no-xy', '');
+                f.appendChild(nx);
+            }
+            host.appendChild(f);
+        });
+    }
+    /* One edit of a step list; the row starts over as for any other choice. */
+    function editSteps(where, change, focusSel) {
+        var ns = S.newSlot;
+        if (ns.busy || !Array.isArray(ns[where])) return;
+        newEdited();
+        change(ns[where]);
+        fillNew();
+        if (focusSel) focusNew(focusSel);
+    }
+    function editWait(t) {
+        var ns = S.newSlot;
+        if (ns.busy) return;
+        var st = (ns[t.getAttribute('data-czg-step-length')] || [])[+t.getAttribute('data-czg-step-index')];
+        if (!st) return;
+        newEdited();
+        st.length = /^\s*\d+\s*$/.test(t.value) ? parseInt(t.value, 10) : t.value;
+        // Keep the field and command nodes alive across blur and the following click.
+        var host = $('czg-new-body');
+        host.querySelectorAll('[data-czg-step-problem], [data-czg-new-problem], [data-czg-new-done], [data-czg-new-confirm], [data-czg-new-save]')
+            .forEach(function (n) { n.remove(); });
+        var create = host.querySelector('[data-czg-new-create]');
+        if (create) create.disabled = false;
     }
     /* Prefill: the picked slot class's own slots, else the first preset. */
     function prefillNew() {
@@ -920,11 +1103,24 @@
             ns.preset = '';
             setNewSlots((c.slot_spec.slots || []).map(function (x) { return typeof x === 'string' ? x : x && x.name; }),
                         c.slot_spec.spectators);
+            ns.before = copySteps(c.slot_spec.before);
+            ns.after = copySteps(c.slot_spec.after);
             return;
         }
-        var p = slotPresets()[0];
+        ns.before = []; ns.after = [];
+        var p = fittingPreset();
         ns.preset = p ? p.key : '';
         setNewSlots(p ? p.slots : [], false);
+    }
+    /* The preset that is what the picked pair has: its slots are exactly the pair's open
+       lines (qubit z lines, coupler line); else the first preset whose every slot the pair
+       has; else the first preset. One rule for tunable and fixed couplers alike. */
+    function fittingPreset() {
+        var all = slotPresets();
+        var open = slotNames().filter(lineOpen).sort().join();
+        var fits = all.filter(function (p) { return (p.slots || []).every(lineOpen); });
+        return fits.filter(function (p) { return (p.slots || []).slice().sort().join() === open; })[0]
+            || fits[0] || all[0];
     }
     function focusNew(selector) {
         var n = $('czg-new-body').querySelector(selector);
@@ -947,8 +1143,10 @@
         var act = document.activeElement;
         var keep = act && host.contains(act)
             ? ['data-czg-new-slot', 'data-czg-new-spect', 'data-czg-new-name', 'data-czg-new-create',
-               'data-czg-new-save', 'data-czg-new-cancel', 'data-czg-new-confirm-save'].filter(function (a) { return act.hasAttribute(a); })[0] : null;
+               'data-czg-new-save', 'data-czg-new-cancel', 'data-czg-new-confirm-save',
+               'data-czg-step-kind', 'data-czg-step-length', 'data-czg-step-qubit', 'data-czg-step-op'].filter(function (a) { return act.hasAttribute(a); })[0] : null;
         var keepVal = keep ? act.getAttribute(keep) : '';
+        var keepIdx = keep ? act.getAttribute('data-czg-step-index') : null;
         clear(host);
         var presets = slotPresets();
         panel.hidden = !presets.length;
@@ -987,7 +1185,9 @@
         sg.setAttribute('role', 'group');
         sg.setAttribute('aria-label', 'Slots of the new class');
         slotNames().forEach(function (n) {
-            var l = U.check(slotWord(n), !!ns.slots[n], ns.busy);
+            // a line the pair does not have is neither ticked nor offered
+            if (!lineOpen(n)) ns.slots[n] = false;
+            var l = U.check(slotWord(n), !!ns.slots[n], ns.busy || !lineOpen(n));
             var i = l.querySelector('input');
             i.checked = !!ns.slots[n];
             i.setAttribute('data-czg-new-slot', n);
@@ -999,7 +1199,15 @@
         spi.setAttribute('data-czg-new-spect', '');
         sg.appendChild(spl);
         sf.appendChild(sg);
+        var shutNames = slotNames().filter(function (n) { return !lineOpen(n); });
+        if (shutNames.length) {
+            var shut = el('p', 'ui-text-quiet', 'This pair has no ' + shutNames.map(function (n) { return n + ' line'; }).join(' and ')
+                + ' that can hold a pulse, so ' + (shutNames.length === 1 ? 'that slot is' : 'those slots are') + ' not offered.');
+            shut.setAttribute('data-czg-new-shut', '');
+            sf.appendChild(shut);
+        }
         host.appendChild(sf);
+        stepLists(host);
         var acts = U.actions([{ label: 'Create class', cls: 'btn-sync outline' }], 'New slot gate class');
         var cb = acts.children[0];
         cb.setAttribute('data-czg-new-create', '');
@@ -1050,7 +1258,10 @@
         }
         if (keep) {
             var again = Array.prototype.slice.call(host.querySelectorAll('[' + keep + ']'))
-                .filter(function (x) { return x.getAttribute(keep) === keepVal; })[0];
+                .filter(function (x) {
+                    return x.getAttribute(keep) === keepVal
+                        && (keepIdx === null || x.getAttribute('data-czg-step-index') === keepIdx);
+                })[0];
             if (again) { try { again.focus(); } catch (e) { /* not focusable */ } }
         }
     }
@@ -1067,10 +1278,26 @@
         var picked = slotNames().filter(function (n) { return ns.slots[n]; });
         newEdited();
         newBusy(true, 'Making the class.');
-        return post('/api/pulse/cz-gate/slot-class', { class_name: ns.name.trim(), slots: picked, spectators: !!ns.spectators })
+        var req = Object.assign({ class_name: ns.name.trim(), slots: picked, spectators: !!ns.spectators }, stepsBody());
+        // the pair the dialog is open on: the door checks each xy step against that pair's qubits
+        var pairNow = $('czg-pair') ? $('czg-pair').value : '';
+        if (pairNow) req.pair = pairNow;
+        return post('/api/pulse/cz-gate/slot-class', req)
             .then(function (x) {
                 if (S !== g) return null;
-                if (!x.r.ok || !x.j.ok || !x.j.cls) { ns.lines = problemLines(x.j, x.r.status); newBusy(false); return null; }
+                if (!x.r.ok || !x.j.ok || !x.j.cls) {
+                    var all = problemLines(x.j, x.r.status);
+                    var at = x.j && x.j.step;
+                    var list = at && Array.isArray(ns[at.where]) ? ns[at.where] : null;
+                    if (list && typeof at.index === 'number' && at.index >= 0 && at.index < list.length) {
+                        // the server named the step: its sentence goes beside that row, once
+                        ns.stepProblem = { where: at.where, index: at.index, text: all[0] };
+                        all = all.slice(1);
+                    }
+                    ns.lines = all;
+                    newBusy(false);
+                    return null;
+                }
                 ns.cls = x.j.cls;
                 ns.qclass = x.j.qclass || '';
                 ns.done = ['The class ' + plainClassName(ns.qclass || ns.cls) + ' is made as a draft.'];
@@ -1259,8 +1486,19 @@
                                   fp && !fp.ok ? (fp.name_refusals || []) : []);
         var bad = split.names;
         var general = clear($('czg-refusals'));
+        var U = UIkit();
+        var save = fp && !fp.ok && fp.save_class && fp.save_class.cls ? fp.save_class : null;
         split.rest.forEach(function (r) {
-            general.appendChild(el('p', 'ui-note', r));
+            if (save && r === save.refusal) {
+                // the class is saved on its class page: the notice offers that page
+                var n = U.notice('warn', 'Not saved yet', r + ' Saving is done on the class page of ' + save.cls + ' (Save to quam_config).',
+                                 [{ label: 'Open the class page', cls: 'btn-sync outline', aria_label: 'Open the class page of ' + save.cls }]);
+                var b = n.querySelector('button');
+                if (b) b.setAttribute('data-czg-class-page', save.cls);
+                general.appendChild(n);
+            } else {
+                general.appendChild(U.notice('warn', 'Cannot create', r));
+            }
         });
         general.hidden = !general.childNodes.length;
         renderClassWhy(S.noClass ? [] : aboutClass);
@@ -1431,6 +1669,8 @@
             return ln && ln.group === 'spectator' && typeof ln.color !== 'number' && typeof ln.color_index === 'number'
                 ? Object.assign({}, ln, { color: ln.color_index }) : ln;
         }) });
+        // Measure the chart in its visible section, including on the first check.
+        $('czg-sec-chart').hidden = false;
         try { S.handle = window.GateTimeline.render(host, data, { toolbarHost: $('czg-chart-tools'), foldSpectators: false }); }
         catch (e) { clear(host).appendChild(note('Chart not loaded: ' + e)); }
     }
@@ -1705,11 +1945,15 @@
                 + (unv.length === 1 ? 'it was' : 'they were') + ' not checked.'), 'verdict');
         } else {
             var line = outcomeLine(ok, many);
-            alertBox(banner('ok', many ? 'Ready to create on ' + ok.length + ' pairs' : 'Ready to create',
-                line === 'every check passed.'
-                    ? 'The lab\'s code built ' + (many ? 'these gates' : 'this gate') + ' on a copy of the chip and every check passed.'
-                    : 'The lab\'s code built ' + (many ? 'these gates' : 'this gate') + ' on a copy of the chip. '
-                      + line.charAt(0).toUpperCase() + line.slice(1)), 'verdict');
+            if (line === 'every check passed.') {
+                alertBox(banner('ok', many ? 'Ready to create on ' + ok.length + ' pairs' : 'Ready to create',
+                    'The lab\'s code built ' + (many ? 'these gates' : 'this gate') + ' on a copy of the chip and every check passed.'), 'verdict');
+            } else {
+                // a check that could not run: never the green tick, the same count sentence
+                alertBox(banner('warn', many ? 'Can be created on ' + ok.length + ' pairs; not every check ran' : 'Can be created; not every check ran',
+                    'The lab\'s code built ' + (many ? 'these gates' : 'this gate') + ' on a copy of the chip. '
+                    + line.charAt(0).toUpperCase() + line.slice(1)), 'verdict');
+            }
         }
         pairs.forEach(function (p) {
             (p.tiles || []).filter(function (t) {
@@ -2291,6 +2535,15 @@
         if (t.closest('[data-czg-discard]')) { close(); return; }
         if (t.closest('[data-czg-keep]')) { S.confirmClose = false; clear($('czg-top')); return; }
         if (t.closest('[data-czg-close]')) { close(); return; }
+        var cp = t.closest('[data-czg-class-page]');
+        if (cp) {
+            // the class is saved to quam_config on its class page: open it where the class pages open
+            var url = '/pulse-class?cls=' + encodeURIComponent(cp.getAttribute('data-czg-class-page'));
+            close();
+            if (window.htmx) window.htmx.ajax('GET', url, { target: '#table-pane', swap: 'innerHTML' }).then(function () { history.pushState({}, '', url); });
+            else window.location.href = url;
+            return;
+        }
         if (t.closest('#czg-open-pair')) {
             var ob = $('czg-open-pair');
             var p = (ob && ob.getAttribute('data-czg-open-target')) || ($('czg-pair') ? $('czg-pair').value : '');
@@ -2306,6 +2559,28 @@
             // the switch is drawn again: the pressed option keeps the focus
             Array.prototype.slice.call(($('czg-pairs') || document.createElement('div')).querySelectorAll('[data-czg-pair-idx]'))
                 .forEach(function (b) { if (+b.getAttribute('data-czg-pair-idx') === k) { try { b.focus(); } catch (e) { /* not focusable */ } } });
+            return;
+        }
+        var sa = t.closest('[data-czg-step-add]');
+        if (sa) {
+            var addTo = sa.getAttribute('data-czg-step-add'), made = newStep(sa.getAttribute('data-czg-step-add-kind'));
+            if (made) editSteps(addTo, function (l) { l.push(made); }, '[data-czg-step-add="' + addTo + '"][data-czg-step-add-kind="' + made.kind + '"]');
+            return;
+        }
+        var sm = t.closest('[data-czg-step-up],[data-czg-step-down],[data-czg-step-remove]');
+        if (sm) {
+            var mv = sm.hasAttribute('data-czg-step-up') ? 'up' : sm.hasAttribute('data-czg-step-down') ? 'down' : 'remove';
+            var mw = sm.getAttribute('data-czg-step-' + mv), mk = +sm.getAttribute('data-czg-step-index');
+            var to = mv === 'up' ? mk - 1 : mk + 1;
+            editSteps(mw, function (l) {
+                if (mv === 'remove') { l.splice(mk, 1); return; }
+                if (to < 0 || to >= l.length) return;
+                var x = l[mk]; l[mk] = l[to]; l[to] = x;
+            }, mv === 'remove' ? '[data-czg-step-add="' + mw + '"]'
+                : '[data-czg-step-' + mv + '="' + mw + '"][data-czg-step-index="' + to + '"]');
+            if (mv !== 'remove' && sm.ownerDocument.activeElement && sm.ownerDocument.activeElement.disabled !== false) {
+                focusNew('[data-czg-step-kind="' + mw + '"][data-czg-step-index="' + to + '"]');
+            }
             return;
         }
         if (t.closest('[data-czg-new-create]')) { newCreate(); return; }
@@ -2337,6 +2612,25 @@
         if (!t || !inDialog(t) || !S) return;
         if (S.newSlot.busy && (t.hasAttribute('data-czg-new-slot') || t.hasAttribute('data-czg-new-spect'))) { fillNew(); return; }
         if (t.id === 'czg-pair-shown') { S.pairIdx = +t.value; renderPair(); return; }
+        var stepAttr = ['data-czg-step-kind', 'data-czg-step-length', 'data-czg-step-qubit', 'data-czg-step-op']
+            .filter(function (a) { return t.hasAttribute(a); })[0];
+        if (stepAttr) {
+            if (stepAttr === 'data-czg-step-length') { editWait(t); return; }
+            var sw = t.getAttribute(stepAttr), sk = +t.getAttribute('data-czg-step-index'), sv = t.value;
+            editSteps(sw, function (l) {
+                var st = l[sk];
+                if (!st) return;
+                if (stepAttr === 'data-czg-step-kind') {
+                    if (sv !== st.kind) { var fresh = newStep(sv); if (fresh) l[sk] = fresh; }
+                } else if (stepAttr === 'data-czg-step-qubit') {
+                    st.qubit = sv;
+                    if (xyOps(sv).indexOf(st.operation) < 0 && xyOps(sv).length) st.operation = xyOps(sv)[0];
+                } else {
+                    st.operation = sv;
+                }
+            }, null);
+            return;
+        }
         if (t.hasAttribute('data-czg-new-slot')) {
             newEdited();
             S.newSlot.slots[t.getAttribute('data-czg-new-slot')] = t.checked;
@@ -2358,6 +2652,15 @@
             S.spectNote = had ? 'The spectator choices were cleared: ' + (t.value || 'the new pair') + ' has other neighbouring lines. Tick them again.' : '';
             if (fillClasses()) { S.entered = {}; S.raw = {}; S.cls = {}; S.placed = {}; S.invalid = {}; fillSlots(); }
             fillPairLine(); fillFrom(); fillModel(); fillMore(); fillSpect();
+            if (slotted(klass())) fillSlots();     // a line the new pair lacks is not offered
+            if (!S.newSlot.busy) {
+                // the new-class row follows the pair: a preset that fits it, its xy operations
+                if (S.newSlot.preset) {
+                    var fpz = fittingPreset();
+                    if (fpz) { S.newSlot.preset = fpz.key; setNewSlots(fpz.slots, S.newSlot.spectators); }
+                }
+                fillNew();
+            }
         }
         else if (t.hasAttribute('data-czg-slot')) {
             var f = t.getAttribute('data-czg-slot');
@@ -2414,6 +2717,7 @@
     document.addEventListener('input', function (ev) {
         var t = ev.target;
         if (!t || !inDialog(t) || !S) return;
+        if (t.hasAttribute('data-czg-step-length')) { editWait(t); return; }
         if (t.id === 'czg-name') { S.nameTouched = true; inputsChanged(); return; }
         if (t.hasAttribute('data-czg-new-name')) {
             if (S.newSlot.busy) { t.value = S.newSlot.name; return; }

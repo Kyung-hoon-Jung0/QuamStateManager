@@ -135,7 +135,7 @@ def test_dialog_waveform_source_line_is_never_cut(chip):
     sec = html.split('id="czg-sec-chart"', 1)[1].split("</section>", 1)[0]
     head = sec.split('class="ui-panel-head"', 1)[1].split("</div>", 1)[0]
     assert "from the lab" not in head and "ui-panel-hint" not in head
-    assert '<p class="ui-panel-sub" data-czg-chart-source>from the lab' in sec and 'program time before filters</p>' in sec
+    assert '<p class="ui-panel-sub" data-czg-chart-source>from the lab' in sec and 'config, before filters</p>' in sec
     css = (Path(__file__).resolve().parents[1] / "quam_state_manager/web/static/ui-kit.css").read_text(encoding="utf-8")
     rule = css.split(".ui-panel-sub {", 1)[1].split("}", 1)[0]
     assert "white-space: normal" in rule and "ellipsis" not in rule and "nowrap" not in rule
@@ -374,7 +374,7 @@ def test_dialog_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):
     r = subprocess.run([node, str(root / "tests" / "cz_gate_dialog_selfcheck.cjs")], env=env,
                        capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
-    assert "ok cz_gate_dialog_selfcheck (414 assertions)" in r.stdout
+    assert "ok cz_gate_dialog_selfcheck (452 assertions)" in r.stdout
 
 
 def test_simulate_client_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):

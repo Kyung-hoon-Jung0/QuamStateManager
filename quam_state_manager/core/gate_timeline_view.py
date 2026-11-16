@@ -3,19 +3,26 @@
 :func:`timeline_data` turns a gate entry of :func:`core.gate_check.check_gates`
 into the ``data`` that ``window.GateTimeline.render`` draws::
 
-    {"lanes": [{"key", "group": "gate" | "spectator", "label", "port",
+    {"lanes": [{"key", "group": "gate" | "spectator", "label", "port", "step",
                 "limit_v": [lo, hi] | None, "offset_v",
                 "segments": [{"operation", "start_ns", "end_ns", "t_ns", "v",
                               "peak_v", "min_v", "length_ns", "truncated",
                               "flags"}],
                 "sim": None}],
+     "marks": [{"kind": "wait" | "align", "label", "statement",
+                "start_ns", "end_ns" | "t_ns"}],
      "notes": [str], "cannot_draw": None | str}
 
 Rules:
 
 - lanes are ordered control z, target z, coupler, then every other element
   (the spectators) in the order they first play; the first three are the
-  ``gate`` group;
+  ``gate`` group; the xy lines of the pair's own two qubits play only the
+  class's sequence steps, so they are ``gate`` lanes too (``step`` True,
+  labelled "<element> (step)"), shown with the gate and never counted,
+  folded or named as spectators;
+- ``marks`` are the wait and align statements of the program
+  (:func:`core.static_timeline.static_timeline`), passed through in order;
 - every sample is placed at ``start_ns + i * step`` where ``step`` is the
   port's sampling period (1 ns at 1 GS/s), times the play scale; a constant
   waveform is two points (start and end);
@@ -123,12 +130,14 @@ def timeline_data(entry: dict | None, *, control: str | None, target: str | None
     if not isinstance(tl, dict):
         checks = (entry or {}).get("checks") or {}
         ran_but_failed = any((checks.get(c) or {}).get("status") == "fail" for c in ("load_config", "ops"))
-        return {"lanes": [], "notes": [], "cannot_draw": NOT_RUN if ran_but_failed else NOT_CHECKED}
+        return {"lanes": [], "marks": [], "notes": [], "cannot_draw": NOT_RUN if ran_but_failed else NOT_CHECKED}
     notes = list(tl.get("notes") or [])
     if tl.get("cannot_draw"):
-        return {"lanes": [], "notes": notes, "cannot_draw": tl["cannot_draw"]}
+        return {"lanes": [], "marks": [], "notes": notes, "cannot_draw": tl["cannot_draw"]}
     gate_order = [e for e in (f"{control}.z" if control else None,
                               f"{target}.z" if target else None) if e]
+    steps = [e for e in (f"{control}.xy" if control else None,
+                         f"{target}.xy" if target else None) if e]
     couplers = [e for e in coupler_elements if e and e not in gate_order]
     floor = tl.get("length_floor_ns")
     floor = floor if type(floor) is int else LENGTH_MIN_NS
@@ -138,8 +147,10 @@ def timeline_data(entry: dict | None, *, control: str | None, target: str | None
         el = row.get("element")
         if el not in lanes:
             seen.append(el)
-            lanes[el] = {"key": el, "group": "gate" if (el in gate_order or el in couplers)
-                         else "spectator", "label": el, "port": _port_text(row.get("port")),
+            step = el in steps
+            lanes[el] = {"key": el, "group": "gate" if (el in gate_order or el in couplers or step)
+                         else "spectator", "label": f"{el} (step)" if step else el,
+                         "step": step, "port": _port_text(row.get("port")),
                          "limit_v": _limit(row), "offset_v": _num(row.get("offset_v")) or 0.0,
                          "segments": [], "sim": None}
         lane = lanes[el]
@@ -148,7 +159,7 @@ def timeline_data(entry: dict | None, *, control: str | None, target: str | None
         try:
             lane["segments"].append(_segment(row, floor))
         except (TypeError, ValueError, KeyError) as exc:
-            return {"lanes": [], "notes": notes,
+            return {"lanes": [], "marks": [], "notes": notes,
                     "cannot_draw": "cannot draw: a timeline row has a form SM does not read "
                                    f"({type(exc).__name__})"}
     order = ([e for e in gate_order if e in lanes] + [e for e in couplers if e in lanes]
@@ -158,7 +169,8 @@ def timeline_data(entry: dict | None, *, control: str | None, target: str | None
         ln["color_index"] = i          # the lane's identity colour (block, lane, table dot)
         if ln["group"] == "gate":
             ln["color"] = i            # the timeline component draws this index
-    return {"lanes": out, "notes": notes, "cannot_draw": None}
+    marks = [dict(m) for m in tl.get("marks") or [] if isinstance(m, dict)]
+    return {"lanes": out, "marks": marks, "notes": notes, "cannot_draw": None}
 
 
 def fmt_num(v: float) -> str:

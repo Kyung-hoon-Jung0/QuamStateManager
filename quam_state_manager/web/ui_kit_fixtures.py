@@ -435,7 +435,7 @@ def reading_evidence(state):
     n = len(EXAMPLE_OPS) + 1  # its pulses and the gate macro
     written = {"part": "panel", "title": "What will be written", "fold": True, "summary": ["%d objects" % n],
                "body": [{"part": "note", "text": WRITES_LINE}]}
-    wave = {"part": "panel", "title": "Waveform", "hint": "from the lab's config, program time before filters",
+    wave = {"part": "panel", "title": "Waveform", "hint": "from the lab's config, before filters",
             "summary": [{"part": "line", "line": i, "text": k} for i, (k, _a, _b) in enumerate(EXAMPLE_SPANS, 1)],
             "body": [{"part": "placeholder", "text": WAVE_PLACEHOLDER}]}
     return [{"part": "zone", "step": 3, "title": "Result", "fill": True,

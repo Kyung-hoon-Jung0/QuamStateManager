@@ -508,6 +508,8 @@ def test_range_partly_checked_names_both_sides():
     cfg = _cfg()
     cfg["elements"]["q2.z"] = {"singleInput": {"port": ["con9", 1]},
                                "operations": {"other": "cz_pulse.pulse"}}
+    # Timing is known while this port's output range remains unknown.
+    cfg["controllers"]["con9"] = {"analog_outputs": {1: {"delay": 0}}}
     res = gate_check.evaluate([GATE], _ran(script=script, cfg=cfg))
     assert _checks(res)["range"] == "note" and "range" in _g(res)["partly_checked"]
     m = _msg(res, "range")
@@ -686,7 +688,7 @@ def test_timeline_not_drawn_is_unchecked_and_unknown_level_is_null():
     res = gate_check.evaluate([GATE], _ran(script=LOOP), PREVIEW)
     assert "timeline" in _g(res)["unchecked"]
     from quam_state_manager.core.static_timeline import static_timeline
-    tl = static_timeline(SCRIPT, [{"element": "q1.z", "operation": "cz_pulse", "length": 16,
+    tl = static_timeline(SCRIPT, [{"element": "q1.z", "operation": "cz_pulse", "length": 16, "delay": 0,
                                    "waveform": {"type": None, "error": "gone"}}])
     assert tl["rows"][0].level is None and any("level is not known" in n for n in tl["notes"])
 

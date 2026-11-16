@@ -13,8 +13,8 @@ for a class (slots, fields, lines), is built per class by `slot_desc` (slot_gate
 
 - **Slots and presets.** `SLOTS` (slot_gate_template.py:23) names the three slots; `PRESETS` (slot_gate_template.py:24) maps each preset
   name to the slot set it ticks. The dialog route renders `_cz_gate_dialog.html`; its template data carries
-  `slot_presets` (rows `{key, label, slots}`, `_slot_presets`, cz_gate_routes.py:202) and `slot_names` (`cz_gate_dialog`,
-  cz_gate_routes.py:919-940). A spec is `SlotSpec` (slot_gate_template.py:108): class name, slots, a spectators flag and
+  `slot_presets` (rows `{key, label, slots}`, `_slot_presets`, cz_gate_routes.py:215) and `slot_names` (`cz_gate_dialog`,
+  cz_gate_routes.py:938-959). A spec is `SlotSpec` (slot_gate_template.py:108): class name, slots, a spectators flag and
   optional `before` / `after` sequence steps (`STEP_KINDS`, slot_gate_template.py:78; checked by `sequence_steps_problem`, slot_gate_template.py:179). The
   make door takes no steps (section 7); it keeps the steps of an existing older draft (section 2).
 - **Slot fields.** Each slot gives the macro one field `<slot>_flux_pulse` (`_region`, slot_gate_template.py:419; `slot_field`,
@@ -46,23 +46,23 @@ for a class (slots, fields, lines), is built per class by `slot_desc` (slot_gate
   target slot). A coupler-only class of the older render gets no note (tests/test_cz_gate_slot_routes.py
   `test_a_gate_on_an_older_coupler_only_lab_file_says_nothing`).
 - **How an older draft is shown.** `slot_drafts(..., versions=True)` lists every draft the parser reads with its
-  version (slot_gate_plan.py:385); `SlotClass.version` keeps it (cz_gate_routes.py:157) and the class entry carries
-  `older_render: sc.version != sgt.TEMPLATE_VERSION` (cz_gate_routes.py:193). When a gate is planned, `older_render_note` (cz_gate_routes.py:502)
+  version (slot_gate_plan.py:432); `SlotClass.version` keeps it (cz_gate_routes.py:171) and the class entry carries
+  `older_render: sc.version != sgt.TEMPLATE_VERSION` (cz_gate_routes.py:204). When a gate is planned, `older_render_note` (cz_gate_routes.py:521)
   reads the saved lab file: if it is a version-1 render with a control or target slot, the plan answer carries a note
-  (`res["notes"]`, cz_gate_routes.py:406-409): `OLDER_RENDER_NOTE` (cz_gate_routes.py:494) while the draft is still the older render, and
-  `OLDER_RENDER_SAVE_NOTE` (cz_gate_routes.py:497) once the draft was made again and only the save is left (cz_gate_routes.py:516). An absent or
-  unreadable lab file gives no note (cz_gate_routes.py:509-514).
-- **Make again.** The make door accepts the name of an existing slot draft (`_name_check`, cz_gate_routes.py:1249):
-  - no gate of this chip uses the class (`_gates_using`, cz_gate_routes.py:1223): the draft is replaced (cz_gate_routes.py:1264-1265), an older render
+  (`res["notes"]`, cz_gate_routes.py:424-428): `OLDER_RENDER_NOTE` (cz_gate_routes.py:513) while the draft is still the older render, and
+  `OLDER_RENDER_SAVE_NOTE` (cz_gate_routes.py:516) once the draft was made again and only the save is left (cz_gate_routes.py:535). An absent or
+  unreadable lab file gives no note (cz_gate_routes.py:527-533).
+- **Make again.** The make door accepts the name of an existing slot draft (`_name_check`, cz_gate_routes.py:1287):
+  - no gate of this chip uses the class (`_gates_using`, cz_gate_routes.py:1255): the draft is replaced (cz_gate_routes.py:1302-1303), an older render
     becomes the current render;
   - gates use it and the new text would equal the stored draft: nothing is written and the door
-    answers ok (`UNCHANGED`, cz_gate_routes.py:1246; cz_gate_routes.py:1269-1271 and cz_gate_routes.py:1316-1317);
+    answers ok (`UNCHANGED`, cz_gate_routes.py:1284; cz_gate_routes.py:1307-1309 and cz_gate_routes.py:1357-1358);
   - gates use it, the stored draft is an older render, and the posted spec equals the stored spec once its steps are
-    left out (`_older_match`, cz_gate_routes.py:1233): the stored spec, steps included, is written again in the current render
-    (cz_gate_routes.py:1319). Such a remake only widens what control and target accept (comment, cz_gate_routes.py:1266-1268), so gates keep working;
-  - after the steps refusal (section 5), anything else while gates use it is refused with `NAME_IN_USE` (cz_gate_routes.py:1217, returned cz_gate_routes.py:1274).
+    left out (`_older_match`, cz_gate_routes.py:1265): the stored spec, steps included, is written again in the current render
+    (cz_gate_routes.py:1313). Such a remake only widens what control and target accept (comment, cz_gate_routes.py:1304-1306), so gates keep working;
+  - after the steps refusal (section 5), anything else while gates use it is refused with `NAME_IN_USE` (cz_gate_routes.py:1236, returned cz_gate_routes.py:1312).
   After a write the draft watch (`pulse_class_watch`) records the bytes SM wrote as settled content (`adopt`,
-  pulse_class_watch.py:107; the call, cz_gate_routes.py:1323), so they are not taken for an outside edit and the save door sees the same
+  pulse_class_watch.py:118; the call, cz_gate_routes.py:1364), so they are not taken for an outside edit and the save door sees the same
   bytes.
 - **Sha pins of the older render.** tests/test_slot_gate_template.py pins the rendered text of every slot set and
   spectator choice per version: `NO_STEP_SHA256` (current, tests/test_slot_gate_template.py:497) and `NO_STEP_SHA256_V1` (older, tests/test_slot_gate_template.py:514), checked by
@@ -86,14 +86,14 @@ for a class (slots, fields, lines), is built per class by `slot_desc` (slot_gate
   target line's operation and expects the slot sentence (tests/test_slot_gate_save.py
   `test_lab_gate_with_slot_pointers_plays_on_a_built_chip`). The plan builds each pulse on the slot's own line: the
   descriptor's slot rows carry line `control` / `target` / `coupler` (`slot_desc`, slot_gate_plan.py:95) and
-  `cz_gate_build._plan_known` creates the operation on that line (cz_gate_build.py:1180-1225).
+  `cz_gate_build._plan_known` creates the operation on that line (cz_gate_build.py:1130-1217).
 - **Older render.** Version 1 refused any `Pulse` on control and target (`V1_SLOT_KINDS` comment, slot_gate_template.py:72-73; generated
   guard, slot_gate_template.py:448-449).
 - **Refusal sentences by name** (slot_gate_template.py): `SLOT_PROBLEM` (slot_gate_template.py:63), `KEYS_PROBLEM` (slot_gate_template.py:51),
   `OWN_PROBLEM` (slot_gate_template.py:52), `LENGTH_PROBLEM` (slot_gate_template.py:53), `UNIT_PROBLEM` (slot_gate_template.py:55), `UNIT_VALUE_PROBLEM` (slot_gate_template.py:56), `LEVEL_PROBLEM`
   (slot_gate_template.py:58), `DUPLICATE_PROBLEM` (slot_gate_template.py:60), `TYPE_PROBLEM` (slot_gate_template.py:61), `DURATION_PROBLEM` (slot_gate_template.py:62). Step sentences: `STEPS_PROBLEM`
   (slot_gate_template.py:87) to `XY_MISSING_PROBLEM` (slot_gate_template.py:98). Name sentences of the make door: `NAME_NOT_TEXT` to `NAME_IN_USE`
-  (cz_gate_routes.py:1212-1217; `STEPS_NOT_TAKEN`, cz_gate_routes.py:1219). `validate` (slot_gate_template.py:139) adds "Select at least one slot." and the duplicate / subset
+  (cz_gate_routes.py:1231-1236). `validate` (slot_gate_template.py:139) adds "Select at least one slot." and the duplicate / subset
   sentence (slot_gate_template.py:146, slot_gate_template.py:148). tests/test_slot_gate_template.py `test_spectator_cap_sentence_and_constant` pins the
   wording of `LENGTH_PROBLEM` and `DURATION_PROBLEM` and that both are ASCII.
 
@@ -117,15 +117,15 @@ for a class (slots, fields, lines), is built per class by `slot_desc` (slot_gate
   (`_same_number`, slot_gate_plan.py:163). A stored unit operation with no readable amplitude is refused with
   `UNIT_NO_AMPLITUDE_PROBLEM` (slot_gate_plan.py:40, returned slot_gate_plan.py:242).
 - **Created once per request.** `_plan_all` keeps one `planned_units` map for the request so a qubit gets one create
-  (cz_gate_routes.py:343, cz_gate_routes.py:381-383); a refused gate removes the units it added (cz_gate_routes.py:399-401). `assign_units` (cz_gate_routes.py:420) then
+  (cz_gate_routes.py:356, cz_gate_routes.py:399-400); a refused gate removes the units it added (cz_gate_routes.py:416-418). `assign_units` (cz_gate_routes.py:439) then
   gives each new unit to exactly one written gate: the first allowed gate, in request order, whose rows use it; the
-  rows' `unit_created` follow. The check loop recomputes this until it is stable (`check_answer`, cz_gate_routes.py:1004-1022), and
-  the create door applies it with the verdicts' allowed set (cz_gate_routes.py:1142). Pins: tests/test_cz_gate_slot_routes.py
+  rows' `unit_created` follow. The check loop recomputes this until it is stable (`check_answer`, cz_gate_routes.py:1023-1041), and
+  the create door applies it with the verdicts' allowed set (cz_gate_routes.py:1161). Pins: tests/test_cz_gate_slot_routes.py
   `test_one_unit_operation_per_qubit_for_the_whole_request`, `test_assign_units_gives_a_unit_to_the_first_written_gate_only`,
   `test_a_shared_unit_is_written_with_the_gates_that_are_written`.
 - **`not_calibrated`.** Every planned slot row carries `not_calibrated` set to `cgb.NOT_CALIBRATED`
-  (cz_gate_routes.py:481-482; text at cz_gate_build.py:1259). The dialog shows it once, after a check
-  (cz-gate.js:586-594). Pin: `test_every_planned_slot_row_carries_the_not_calibrated_line`.
+  (cz_gate_routes.py:500-501; text at cz_gate_build.py:1264). The dialog shows it once, after a check
+  (cz-gate.js:624). Pin: `test_every_planned_slot_row_carries_the_not_calibrated_line`.
 - **Amp scale limit.** The rule is `|level / unit|` strictly below `AMP_SCALE_LIMIT` (slot_gate_template.py:35,
   `level_scale_problem`, slot_gate_template.py:286); both numbers must be finite, the unit nonzero, bool refused (slot_gate_template.py:289-295). A negative
   unit counts by magnitude; `reachable_level` (slot_gate_template.py:305) is the excluded boundary in V. Its source is the comment at
@@ -142,12 +142,12 @@ for a class (slots, fields, lines), is built per class by `slot_desc` (slot_gate
   after docs Guides/timing_in_qua.md:14-16: a chip that declares a QOP before 3.3 gets 16 ns; QOP 3.3 or later
   gets 4 ns for a length set in the configuration and 8 ns for one set from QUA; a chip with no version gets the
   3.3 floor plus the note `LENGTH_FLOOR_NOTE` when a value under 16 ns is accepted. The CZ gate builder's
-  `chip_length_rule` (cz_gate_build.py:389, over `length_rule`, cz_gate_build.py:363) and the gate check's
+  `chip_length_rule` (cz_gate_build.py:394, over `length_rule`, cz_gate_build.py:368) and the gate check's
   `length` result (`_length_check`, gate_check.py:498) use the chip's floor. The builder puts the note in the
-  plan answer's `notes` (`_floor_notes`, cz_gate_build.py:403), which the plan and check doors pass on
-  (cz_gate_routes.py:751, cz_gate_routes.py:1054) and the dialog shows beside the plan and after the write, so a
+  plan answer's `notes` (`_floor_notes`, cz_gate_build.py:408), which the plan and check doors pass on
+  (cz_gate_routes.py:770, cz_gate_routes.py:1073) and the dialog shows beside the plan and after the write, so a
   known-class gate created without a lab check still names the QOP it needs. Exception: on the slot path an
-  older-render note replaces the plan's `notes` (cz_gate_routes.py:409). Every caller of the floor reads its
+  older-render note is appended to the plan's `notes` (cz_gate_routes.py:428). Every caller of the floor reads its
   note, or is listed with the place that shows it (`FLOOR_ONLY`, tests/test_gate_length_floor.py). The slot
   template keeps `MIN_LENGTH_NS` at `LENGTH_FLOOR_ANY_QOP_NS` (16 ns): its generated class is chip-independent
   text that sets spectator lengths and waits from QUA, and a lower floor there is a new render version. The slot
@@ -164,83 +164,98 @@ for a class (slots, fields, lines), is built per class by `slot_desc` (slot_gate
   refused (slot_gate_plan.py:230-232). `ROW_PROBLEM` (slot_gate_plan.py:43) and `UNREADABLE_PROBLEM` (slot_gate_plan.py:44) cover rows of another shape; data never
   raises (slot_gate_plan.py:244-245, slot_gate_plan.py:278-279).
 - **What the dialog shows.** The spectator panel lists the pair's candidates with length, level and unit cells
-  (`fillSpect`, cz-gate.js:500). `_spectator_offer` (cz_gate_routes.py:263) says offered with `method: "unit"` when the
-  class has spectators, else the descriptor sentence of `spectator_refusal` (cz_gate_build.py:1276). `_unit_candidates`
-  (cz_gate_routes.py:215) adds the stored `unit` and `reachable` per candidate. A blank unit is passed on as absent (`_slot_rows`,
-  cz_gate_routes.py:277).
+  (`fillSpect`, cz-gate.js:533). `_spectator_offer` (cz_gate_routes.py:276) says offered with `method: "unit"` when the
+  class has spectators, else the descriptor sentence of `spectator_refusal` (cz_gate_build.py:1281). `_unit_candidates`
+  (cz_gate_routes.py:228) adds the stored `unit` and `reachable` per candidate. A blank unit is passed on as absent (`_slot_rows`,
+  cz_gate_routes.py:290).
 
 ## 5. The routes
 
-All doors answer through functions shared with the agent's routes (comment, cz_gate_routes.py:963-965).
+All doors answer through functions shared with the agent's routes (comment, cz_gate_routes.py:982-984).
 
-- **Dialog read** `GET /pulse/cz-gate/dialog` (cz_gate_routes.py:919): the answer is HTML, not JSON; no chip gives the `_status.html`
-  partial with 400 (cz_gate_routes.py:923-924). Template data keys: `pairs`, `selected`, `classes`,
-  `fit`, `env`, `sync`, `slot_presets`, `slot_names` (cz_gate_routes.py:936-938). A slot class entry has `class`, `label`, `layout`
-  `"slot"`, `available`, `why`, `older_render`, `slots`, `models`, `slot_spec` (`slots`, `spectators`) and
-  `spectators` (`_slot_entry`, cz_gate_routes.py:190). Reading writes nothing (`test_the_dialog_read_has_no_side_effects`).
-- **Make** `POST /api/pulse/cz-gate/slot-class` (cz_gate_routes.py:1282). Request keys: `class_name`, `slots`, `spectators` (cz_gate_routes.py:1300-1306);
-  `before` and `after` are not read into the spec (see Known limits). Answer: `{ok, cls, qclass}`; a refusal is
-  `{ok: false, error, problems}`. Status 400 for a non-text name (cz_gate_routes.py:1301-1302) or a `validate` problem (cz_gate_routes.py:1307-1309);
-  400 for a body with a non-empty `before` or `after`, answered with the sentence of `STEPS_NOT_TAKEN` (cz_gate_routes.py:1310-1311);
-  the steps refusal comes before `_name_check` (cz_gate_routes.py:1313), so a taken name with steps gets 400,
-  as pinned by tests/test_cz_gate_slot_routes.py `test_posted_steps_on_an_in_use_current_render_are_refused`;
-  409 for a taken name (cz_gate_routes.py:1314-1315: class table, pulse class, other draft, lab-made file, in use); 400 also for a body
-  that is not a JSON object (`BadBody`, cz_gate_routes.py:1293-1295) and when the draft cannot be written (`DraftError`, `ValueError`,
-  cz_gate_routes.py:1318-1322); a store problem answers through `_store_or_error` (cz_gate_routes.py:1290). It writes the draft only; saving is the class
-  save door (docs/313_quam_config_save.md).
-- **Plan** `POST /api/pulse/cz-gate/plan` (cz_gate_routes.py:943, `plan_answer`, cz_gate_routes.py:967). Body (`_body`, cz_gate_routes.py:307): `pairs`, `gate_name`,
+- **Dialog read** `GET /pulse/cz-gate/dialog` (cz_gate_routes.py:938): the answer is HTML, not JSON; no chip gives the `_status.html`
+  partial with 400 (cz_gate_routes.py:942-943). Template data keys: `pairs`, `selected`, `classes`,
+  `fit`, `env`, `sync`, `slot_presets`, `slot_names` (cz_gate_routes.py:955-957). A slot class entry has `class`, `label`, `layout`
+  `"slot"`, `available`, `why`, `older_render`, `slots`, `models`, `slot_spec` (`slots`, `spectators`, `before`, `after`) and
+  `spectators` (`_slot_entry`, cz_gate_routes.py:201). Each pair entry also carries `lines` (`{control, target, coupler}`:
+  true when that line can hold a pulse, `_pulse_lines`, cz_gate_routes.py:113) and `xy_operations` (per role, the operation
+  names of that qubit's xy channel, or null; `slot_gate_plan.xy_operations`, slot_gate_plan.py:385). The dialog offers no
+  optional pulse on a line the pair lacks, neither ticks nor enables that slot in the new-class panel, and picks the first
+  preset that fits the pair (`lineOpen`, `slotOffered`, `fittingPreset`, static/cz-gate.js:727, :732, :1086). Reading writes nothing (`test_the_dialog_read_has_no_side_effects`).
+- **Make** `POST /api/pulse/cz-gate/slot-class` (cz_gate_routes.py:1320). Request keys: `class_name`, `slots`, `spectators`,
+  `before`, `after` (a missing or null list is no steps). The steps are checked only by `validate`, which calls
+  `sequence_steps_problem` (cz_gate_routes.py:1346); there is no second copy of the rule in the route or in the browser.
+  Answer: `{ok, cls, qclass}`; a refusal is `{ok: false, error, problems}` and, when the sentence names one step, `step:
+  {where, index}` (index from 0; `_step_at`, cz_gate_routes.py:1240, which asks the same check of growing prefixes). The
+  dialog shows that sentence beside the row it names (static/cz-gate.js:1256). Status 400 for a non-text name or a
+  `validate` problem; a refused body writes nothing. 409 for a taken name (`_name_check`, cz_gate_routes.py:1354: class table,
+  pulse class, other draft, lab-made file, in use). A class in use with other posted steps is another class body, so it
+  answers `NAME_IN_USE`; an older render in use is made again only when the body posts no steps or exactly its stored steps
+  (`_older_match`, cz_gate_routes.py:1265). A name not in use replaces its draft with the posted steps. 400 also for a body
+  that is not a JSON object (`BadBody`) and when the draft cannot be written (`DraftError`, `ValueError`); a store problem
+  answers through `_store_or_error`. It writes the draft only; saving is the class save door (docs/313_quam_config_save.md).
+- **Steps in the dialog.** The new-class panel has two ordered lists, Before and After (`stepLists`, `stepRow`,
+  static/cz-gate.js:1016, :962): kind align / wait / xy pulse, a wait length in ns, an xy role and an operation picked from
+  `xy_operations`; Add, Up, Down, Remove. With no xy operation on either qubit the xy kind says so and cannot be added.
+  Non-empty lists are posted (`stepsBody`, static/cz-gate.js:938).
+- **Steps of a gate.** Plan: an xy step whose operation the role's qubit lacks refuses the pair with
+  `XY_MISSING_PROBLEM` (`xy_steps_problem`, slot_gate_plan.py:406; cz_gate_routes.py:395), and a class with steps adds the
+  note of `steps_sentence` (slot_gate_plan.py:420; cz_gate_routes.py:425-428, after the build's own notes). Timeline and
+  check: the steps are statements of the lab-built QUA program, placed by `static_timeline._place`
+  (core/static_timeline.py:182) with wait and xy pulse lengths from the config, or answered "cannot draw: <statement>"
+  (core/static_timeline.py:191-241); the check reads that timeline (gate_check.py:427-437). Spectators play alongside the
+  gate pulses and are not changed by steps.
+- **Plan** `POST /api/pulse/cz-gate/plan` (cz_gate_routes.py:962, `plan_answer`, cz_gate_routes.py:986). Body (`_body`, cz_gate_routes.py:320): `pairs`, `gate_name`,
   `gate_class` (the `qclass` of the class), `pulses`, `copy_from`, `model_gate`, `macro_fields`, `spectators`
-  (`{pair: [rows]}`; a bare list is the one asked pair, `_spectators`, cz_gate_routes.py:291; otherwise `SPECTATORS_ONE_PAIR`, cz_gate_routes.py:85).
-  No pair gives 400 `Pick a pair.` (cz_gate_routes.py:974). Answer: `ok`, `plan_sig`, `pairs` (`_summary`, cz_gate_routes.py:722, with `spectators` and
+  (`{pair: [rows]}`; a bare list is the one asked pair, `_spectators`, cz_gate_routes.py:304; otherwise `SPECTATORS_ONE_PAIR`, cz_gate_routes.py:85).
+  No pair gives 400 `Pick a pair.` (cz_gate_routes.py:993). Answer: `ok`, `plan_sig`, `pairs` (`_summary`, cz_gate_routes.py:741, with `spectators` and
   `spectator_ops` when present). A refused pair has `ok: false` and `refusals`. A class is found by its `qclass`
-  among the readable drafts (`_request_slot`, cz_gate_routes.py:179); spectator rows for a class without spectators are refused with
-  the descriptor sentence (`_plan_slot_rows`, cz_gate_routes.py:466-468).
-- **Check** `POST /api/pulse/cz-gate/check` (cz_gate_routes.py:949, `check_answer`, cz_gate_routes.py:983). Same body. Answer: `ok`, `status`, `sync`,
+  among the readable drafts (`_request_slot`, cz_gate_routes.py:190); spectator rows for a class without spectators are refused with
+  the descriptor sentence (`_plan_slot_rows`, cz_gate_routes.py:485-487).
+- **Check** `POST /api/pulse/cz-gate/check` (cz_gate_routes.py:968, `check_answer`, cz_gate_routes.py:1002). Same body. Answer: `ok`, `status`, `sync`,
   `why_not_checked`, `leftover`, `plan_sig`, `check_token`, `pairs` (each with `checks`, `unchecked`, `verdict`
-  `{allowed, state, reason, headline}`, `paths`, `outcome`; cz_gate_routes.py:1052-1077). `_verdict` (cz_gate_routes.py:1080) uses layout `"slot"`; a
+  `{allowed, state, reason, headline}`, `paths`, `outcome`; cz_gate_routes.py:1071-1082). `_verdict` (cz_gate_routes.py:1099) uses layout `"slot"`; a
   slot gate is never a `known` layout in `may_create` (core/cz_gate_create.py:79), so with SM-made class files it
   is allowed only when `load_config` and `ops` pass (core/cz_gate_create.py:88-90), and without a run it is refused (core/cz_gate_create.py:94-98;
-  `test_a_slot_class_is_never_known_to_may_create`). A moved class file refuses with `class_files_moved` (cz_gate_routes.py:1089-1091).
-- **Create** `POST /api/pulse/cz-gate/create` (cz_gate_routes.py:956, `create_answer`, cz_gate_routes.py:1099). Body: `check_token`, `plan_sig`.
-  Refusals: 400 no chip (cz_gate_routes.py:1107); 400 when the body is not a JSON object (cz_gate_routes.py:1114-1115); 409 read-only archive (cz_gate_routes.py:1109), the agent edit lock's refusal (cz_gate_routes.py:1110-1112), unknown, other-actor or used token (cz_gate_routes.py:1118-1125),
-  another chip (cz_gate_routes.py:1126), changed inputs (cz_gate_routes.py:1129-1131), chip moved (cz_gate_routes.py:1136-1138, `stale: true`), or a gate whose
-  creates no longer match its check (cz_gate_routes.py:1150); 400 when no pair may be created (cz_gate_routes.py:1155); 400 or 500 after a rolled back
-  write (cz_gate_routes.py:1183-1184); 500 `partial` when the rollback failed (cz_gate_routes.py:1180). Success: `created`, `skipped`, `count`,
-  `group` (cz_gate_routes.py:1201). All creates of all written gates are one change group (cz_gate_routes.py:1157).
+  `test_a_slot_class_is_never_known_to_may_create`). A moved class file refuses with `class_files_moved` (cz_gate_routes.py:1108-1110).
+- **Create** `POST /api/pulse/cz-gate/create` (cz_gate_routes.py:975, `create_answer`, cz_gate_routes.py:1118). Body: `check_token`, `plan_sig`.
+  Refusals: 400 no chip (cz_gate_routes.py:1125-1126); 400 when the body is not a JSON object (cz_gate_routes.py:1133-1134); 409 read-only archive (cz_gate_routes.py:1127-1128), the agent edit lock's refusal (cz_gate_routes.py:1129-1131), unknown, other-actor or used token (cz_gate_routes.py:1135-1144),
+  another chip (cz_gate_routes.py:1145-1147), changed inputs (cz_gate_routes.py:1148-1150), chip moved (cz_gate_routes.py:1155-1157, `stale: true`), or a gate whose
+  creates no longer match its check (cz_gate_routes.py:1169-1171); 400 when no pair may be created (cz_gate_routes.py:1172-1175); 400 or 500 after a rolled back
+  write (cz_gate_routes.py:1202-1204); 500 `partial` when the rollback failed (cz_gate_routes.py:1198-1200). Success: `created`, `skipped`, `count`,
+  `group` (cz_gate_routes.py:1220-1222). All creates of all written gates are one change group (cz_gate_routes.py:1176).
 - **Notes.** The table classes' answers are unchanged when a slot draft exists
   (`test_a_table_class_answers_the_same_with_a_slot_draft_present`). A gate of an SM-made class whose gate class has
-  no extras slot gets `EXTRAS_SLOT_REFUSAL` (cz_gate_routes.py:489, added cz_gate_routes.py:1087-1088).
+  no extras slot gets `EXTRAS_SLOT_REFUSAL` (cz_gate_routes.py:508, added cz_gate_routes.py:1106-1107).
 
 ## 6. What the check reads
 
-The check `spectator_scale` (`CHECKS`, `OWN_CHECK`, gate_check.py:98-100) is SM's own reading of the gate's spectator
-rows (module docstring, gate_check.py:19-24). Three facts:
+The check `spectator_scale` (`CHECKS`, `OWN_CHECK`, gate_check.py:102-104) is SM's own reading of the gate's spectator
+rows (module docstring, gate_check.py:22-27). Three facts:
 
 - **The chip as the write would leave it.** `check_gates` builds `own_merged = _with_creates(store.merged, creates)`
-  (gate_check.py:858). `_with_creates` (gate_check.py:819) returns a copy of the merged state with every create set, copying only the dicts on
+  (gate_check.py:883). `_with_creates` (gate_check.py:844) returns a copy of the merged state with every create set, copying only the dicts on
   each create's path; a create the create door would refuse (a path through a non-dict or a list, a missing parent,
   an empty path part, an existing key) is left out. Why: a unit operation the gate creates in the same write must be
-  read by the check, and a create the door refuses must not make a level pass (docstring, gate_check.py:821-825; pins:
+  read by the check, and a create the door refuses must not make a level pass (docstring, gate_check.py:845-850; pins:
   `test_unit_created_in_the_same_write_is_read_by_the_check`, `test_the_overlay_leaves_out_every_create_the_door_refuses`,
   `test_the_overlay_and_the_door_leave_the_same_chip`).
-- **Same rule as the plan.** `_spectator_scale_check` (gate_check.py:344) calls `macro_spectator_problem` (slot_gate_plan.py:363)
+- **Same rule as the plan.** `_spectator_scale_check` (gate_check.py:352) calls `macro_spectator_problem` (slot_gate_plan.py:363)
   on the stored macro, which reads every qubit through `real_qubit` and the unit amplitudes of the merged state, then
   `rows_problem`. The failure message is that sentence; a pass reads "Every spectator level is within the range its
-  unit operation reaches." (gate_check.py:359); a gate without spectator rows gets a `note` with `NO_SPECTATOR_ROWS` (gate_check.py:341, gate_check.py:356)
-  and no entry in the stored count (docstring gate_check.py:23-24). A read failure is `skipped`, never a pass (gate_check.py:353-354).
+  unit operation reaches." (gate_check.py:367); a gate without spectator rows gets a `note` with `NO_SPECTATOR_ROWS` (gate_check.py:349, gate_check.py:364)
+  and no entry in the stored count (docstring gate_check.py:22-27). A read failure is `skipped`, never a pass (gate_check.py:362).
 - **Judged without the lab.** The check does not need the lab's answer: it runs when there is no environment
-  (`check_gates`, gate_check.py:859-861 passes `after_merged`), when the lab code did not run, and when the chip as it is does not
-  load (`_one_gate`, gate_check.py:362; pins `test_the_own_check_is_judged_when_the_lab_code_did_not_run`,
+  (`check_gates`, gate_check.py:884-886 passes `after_merged`), when the lab code did not run, and when the chip as it is does not
+  load (`_one_gate`, gate_check.py:370-374; pins `test_the_own_check_is_judged_when_the_lab_code_did_not_run`,
   `test_the_own_check_is_judged_when_the_chip_as_it_is_does_not_load`,
-  `test_check_gates_without_an_environment_still_judges_the_write`). A plain-words label exists for it (gate_check.py:225).
+  `test_check_gates_without_an_environment_still_judges_the_write`). A plain-words label exists for it (gate_check.py:233).
 
 ## 7. Known limits (as the code states them)
 
-- The make door takes no steps. A body whose `before` or `after` is anything other than None, an empty list or an empty
-  tuple is refused with status 400 and the sentence held in `STEPS_NOT_TAKEN` (cz_gate_routes.py:1219), after the name
-  and slot checks (cz_gate_routes.py:1301-1309) and before anything is stored (cz_gate_routes.py:1310-1311). An older draft's stored steps are kept as
-  they are (`_older_match` docstring, cz_gate_routes.py:1234-1236). A stepped current-render class in use cannot be made again
-  (`NAME_IN_USE`; pin `test_a_stepped_current_render_in_use_is_still_refused`).
+- Steps are checked for shape at the make door and for xy operations at the plan; the browser holds no step rule. A
+  stepped class in use cannot be made again with other steps (`NAME_IN_USE`; pin
+  `test_a_stepped_current_render_in_use_is_still_refused`).
 - A new unit operation cannot be added on a flux line inside a list, and no name with a dot can be written (section 4).
 - A unit amplitude is compared exactly; `0.1 + 0.2` is not the stored `0.3` (slot_gate_plan.py:163-166).
 - A qubit entry that is an alias is followed to the real qubit; if the chain cannot be followed the written name is
@@ -258,3 +273,44 @@ rows (module docstring, gate_check.py:19-24). Three facts:
 | `tests/test_slot_gate_plan.py` | `slot_desc` against the rendered fields; unit reuse, single create, exact-equality, dot and list refusals; alias qubits; the check overlay (`_with_creates`) and the `spectator_scale` check, including without the lab |
 | `tests/test_slot_gate_save.py` | The save door for slot drafts (check route, no proportional rule, unreadable draft refused, header-only recognition); the real lab worker plays every declared slot; slot pointers on a built chip |
 | `tests/test_cz_gate_slot_routes.py` | Dialog read and presets; make door (names, in-use rule, older render remake, unchanged text writes nothing); plan, check and create with units shared across gates; `not_calibrated`; older-render notes |
+
+## 9. Sequence steps on screen and at the door
+
+- **xy steps are gate lanes.** The xy lines of the pair's own two qubits play only the class's steps, so
+  `timeline_data` puts them in the gate group with `step` True and the label "<element> (step)"; they are
+  never counted, folded or named as spectators (`quam_state_manager/core/gate_timeline_view.py:150`).
+- **Wait and align use the drawn clock of each line.** The one placement function records a separate
+  wait span or align line for every covered output line, at its program clock plus the port delay
+  already used by its pulses (`quam_state_manager/core/static_timeline.py:195`, mark builder at
+  `quam_state_manager/core/static_timeline.py:202`). A wait touches the preceding pulse's end and the
+  following pulse's start on that line; different clocks never become one earliest-to-latest block.
+  Elements that never play have no output lane; a covered output line whose delay is unknown makes
+  the timeline say "cannot draw: <statement>", with no guessed zero and no marks.
+  `timeline_data` passes them through (`quam_state_manager/core/gate_timeline_view.py:172`). Both views draw them with one
+  function, `stepMarks` (`quam_state_manager/web/static/gate-timeline.js:686`): a wait is a shaded span, an align a dashed
+  line. Both axis ranges use `spanOf`, including every mark's endpoints. `fitMarks` fits labels on two rows,
+  hides labels that do not fit and runs again on zoom; the Sequence steps disclosure retains every full
+  description in text and its title (`quam_state_manager/web/static/gate-timeline.js:711`, disclosure at
+  `quam_state_manager/web/static/gate-timeline.js:537`). The note says pulses and marks include the line's
+  port delay, before filters (`quam_state_manager/core/static_timeline.py:172`).
+- **The make door checks xy steps against the posted pair.** When the body names `pair`, an xy step whose
+  operation that pair's qubit lacks is refused at its row (`step: {where, index}`), nothing is written
+  (`quam_state_manager/web/cz_gate_routes.py:1264`, called at `quam_state_manager/web/cz_gate_routes.py:1386`). An unknown pair is a 400.
+  The dialog posts the picked pair (`quam_state_manager/web/static/cz-gate.js:1272`).
+- **The class page reads an SM slot class as SM-made**, with its slots and steps, through the slot template
+  parser (`quam_state_manager/core/pulse_class_watch.py:88`). Before, every slot class read as "changed by hand" because the
+  page used the single-pulse template's region markers; the steps in the file were never lost.
+- **Step rows** are one `ui-item` each, with the fields and the move buttons in two `ui-actions` groups
+  (`quam_state_manager/web/static/cz-gate.js:962`). Each row's buttons read Up, Down, Remove in DOM order.
+  Wait typing updates the model without replacing fields or buttons on blur, so the first command click
+  receives the typed value (`quam_state_manager/web/static/cz-gate.js:1070`).
+- **Short plots** put lane titles above the lanes under the existing 200 px plot rule, including step lanes.
+  The dialog shows the chart section before measuring it (`quam_state_manager/web/static/cz-gate.js:1660`);
+  a resize remeasures the layout (`quam_state_manager/web/static/gate-timeline.js:1383`). Unit inputs use
+  the kit focus outline inside their box (`quam_state_manager/web/static/ui-kit.css:1042`).
+- **Default preset**: the preset whose slots are exactly the pair's open lines, else the first that fits, else
+  the first (`quam_state_manager/web/static/cz-gate.js:1106`).
+- **Not saved to quam_config yet**: the refusal carries its class (`ClassRefusal`, `quam_state_manager/core/quam_config_save.py:359`);
+  the plan passes `save_class` (`quam_state_manager/web/cz_gate_routes.py:424`) and the dialog shows a kit notice inside the
+  dialog body that says to save on the class page and offers "Open the class page"
+  (`quam_state_manager/web/static/cz-gate.js:1481`).

@@ -16,13 +16,13 @@ Rules:
   length, or 4*n ns with ``duration=n``; ``op * amp(k)`` and
   ``amplitude_scale=k`` scale the level by k;
 - ``frame_rotation``, ``frame_rotation_2pi``, ``reset_frame``: zero time;
-- the port's ``delay`` is added to the start and the end of each row.
+- the port's ``delay`` is added to each pulse row and each mark on that line.
 
 Anything else (loops, declared variables, conditionals, measure, real-time
 arguments) makes the result ``cannot draw: <statement>`` with NO rows: a
 guessed row would look as trustworthy as a computed one.
 
-Times are program time before any output filter; the output-time offset
+Times include the port delay, before any output filter; the output-time offset
 between microwave and flux ports is not computed (both are stated in
 ``notes`` for the screen).
 """
@@ -123,9 +123,17 @@ def _signed_peak(info: dict) -> float | None:
 
 
 def static_timeline(script: str, ops) -> dict:
-    """``{"rows": [TimelineRow], "cannot_draw": str | None, "notes": [str],
-    "filtered_ports": [port]}``. Drawing is all it does: rows placed here are
-    not compared with any measurement.
+    """``{"rows": [TimelineRow], "marks": [mark], "cannot_draw": str | None,
+    "notes": [str], "filtered_ports": [port]}``. Drawing is all it does: rows
+    placed here are not compared with any measurement.
+
+    *marks*: every ``wait`` and ``align`` in program order, so a step that plays
+    nothing is still on the timeline: ``{"kind": "wait", "label": "wait 40 ns",
+    "element", "statement", "start_ns", "end_ns"}`` and
+    ``{"kind": "align", "label": "align", "element", "statement", "t_ns"}``.
+    Each covered line gets its own mark at its program clock plus the same
+    port delay as its pulses. A wait or align SM cannot place makes the whole
+    timeline ``cannot_draw`` with its statement, never a guessed time.
 
     *ops*: per played operation ``{"element", "operation", "length",
     "waveform": {"type": "constant", "sample"} | {"type": "arbitrary",
@@ -144,7 +152,7 @@ def static_timeline(script: str, ops) -> dict:
     notes = [NOTE_PROGRAM_TIME + (
         " Ports with a filter: " + ", ".join(_port_text(p) for p in filtered) + "."
         if filtered else ""), NOTE_MW_OFFSET]
-    out = {"rows": [], "cannot_draw": None, "notes": notes,
+    out = {"rows": [], "marks": [], "cannot_draw": None, "notes": notes,
            "filtered_ports": filtered}
     try:
         unknown = sorted({f"{o} on {e}" for (e, o), i in table.items()
@@ -159,17 +167,22 @@ def static_timeline(script: str, ops) -> dict:
             raise _CannotDraw("cannot draw: the pulse data of the program could not be read")
         if not isinstance(script, str):
             raise _CannotDraw("cannot draw: no program text")
-        out["rows"] = _place(script, table)
+        marks: list[dict] = []
+        out["rows"] = _place(script, table, marks)
+        out["marks"] = marks
+        if marks:
+            notes[0] = notes[0].replace(NOTE_PROGRAM_TIME,
+                                      "Pulses and step marks include each line's port delay, before filters.")
     except _CannotDraw as exc:
         out["cannot_draw"] = str(exc)
-        out["rows"] = []
+        out["rows"], out["marks"] = [], []
     except SyntaxError as exc:
         out["cannot_draw"] = "cannot draw: the program text could not be read"
-        out["rows"] = []
+        out["rows"], out["marks"] = [], []
     except Exception as exc:  # noqa: BLE001 -- never raise to the caller
         out["cannot_draw"] = ("cannot draw: the program or its pulse data has a form "
                               "SM does not read")
-        out["rows"] = []
+        out["rows"], out["marks"] = [], []
     return out
 
 
@@ -179,10 +192,32 @@ def _port_text(port) -> str:
     return str(port)
 
 
-def _place(script: str, table: dict) -> list[TimelineRow]:
+def _place(script: str, table: dict, marks: list | None = None) -> list[TimelineRow]:
     src = _body(script)
     tree = ast.parse(src)
     clocks: dict[str, int] = {el: 0 for el, _op in table}
+    # The same operation data supplies the pulse rows and each covered line's delay.
+    # A port that carries no delay applies none (0 ns), for marks exactly as for pulses;
+    # a delay that is present but not a whole number of ns is never rounded or guessed.
+    delays = {el: 0 if info.get("delay") is None else _whole(info.get("delay"))
+              for (el, _op), info in table.items()}
+
+    def mark(kind, el, stmt, start, end=None):
+        # Elements that never play have no output lane on this screen.
+        if el not in delays:
+            return
+        delay = delays.get(el)
+        if delay is None:
+            raise _CannotDraw(f"cannot draw: {stmt} (the port delay of {el} is not a whole number of ns)")
+        item = {"kind": kind, "element": el, "statement": stmt,
+                "label": f"wait {end - start} ns" if kind == "wait" else "align"}
+        if end is None:
+            item["t_ns"] = start + delay
+        else:
+            item.update(start_ns=start + delay, end_ns=end + delay)
+        if marks is not None:
+            marks.append(item)
+
     rows: list[TimelineRow] = []
     for node in tree.body:
         stmt = (ast.get_source_segment(src, node) or "").strip().splitlines()[0]
@@ -199,6 +234,9 @@ def _place(script: str, table: dict) -> list[TimelineRow]:
             t = max(clocks.setdefault(e, 0) for e in els)
             for e in els:
                 clocks[e] = t
+            if marks is not None:
+                for e in els:
+                    mark("align", e, stmt, t)
         elif name == "wait":
             if not call.args:
                 raise _CannotDraw(f"cannot draw: {stmt} (the wait has no duration)")
@@ -208,17 +246,20 @@ def _place(script: str, table: dict) -> list[TimelineRow]:
                                   "of clock cycles)")
             targets = [str(_const(a, stmt)) for a in call.args[1:]] or list(clocks)
             for e in targets:
+                start = clocks.get(e, 0)
                 clocks[e] = clocks.get(e, 0) + 4 * n
+                if marks is not None:
+                    mark("wait", e, stmt, start, clocks[e])
         elif name in ZERO_TIME:
             continue
         elif name == "play":
-            rows.append(_play(call, kw, stmt, table, clocks))
+            rows.append(_play(call, kw, stmt, table, clocks, delays))
         else:
             raise _CannotDraw(f"cannot draw: {stmt} (SM places only play, wait, align and frame rotations; loops, variables, conditions and measurements are not placed)")
     return rows
 
 
-def _play(call, kw, stmt, table, clocks) -> TimelineRow:
+def _play(call, kw, stmt, table, clocks, delays) -> TimelineRow:
     if len(call.args) < 2:
         raise _CannotDraw(f"cannot draw: {stmt} (the play names no element)")
     opnode, el = call.args[0], str(_const(call.args[1], stmt))
@@ -243,7 +284,7 @@ def _play(call, kw, stmt, table, clocks) -> TimelineRow:
     if length is None:
         raise _CannotDraw(f"cannot draw: {stmt} (the pulse length {info['length']!r} ns "
                           "is not a whole number)")
-    delay = _whole(info.get("delay") or 0)
+    delay = delays.get(el)
     if delay is None:
         raise _CannotDraw(f"cannot draw: {stmt} (the port delay {info.get('delay')!r} ns "
                           "is not a whole number)")
