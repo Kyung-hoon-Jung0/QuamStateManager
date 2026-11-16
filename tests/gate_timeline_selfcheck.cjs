@@ -221,8 +221,16 @@ ok([...Array(116).keys()].every((t) => hov.x.includes(t)), 'hover grid has every
     let lo = 450, hi = 900;
     while (hi - lo > 1) { const mid = Math.floor((lo + hi) / 2); if (shown(mid)) hi = mid; else lo = mid; }
     ok(!shown(hi - 1) && shown(hi), 'title collision edge: one pixel below clearance hides starts-at; at clearance it returns');
-    const narrow = draw('gate', 280); // chart body inside a 400 px dialog
-    ok(!narrow.layout.annotations.some(a => a.meta && a.meta.role === 'starts-at'), '400 px uses actual plot width for starts-at fit');
+    // a narrow host stacks each lane title above its lane, so the plot takes the row
+    const stack = draw('gate', 280); // chart body inside a 400 px dialog
+    const sTitle = stack.layout.annotations.find(a => a.meta && a.meta.role === 'lane-title');
+    const sFacts = stack.layout.annotations.find(a => a.meta && a.meta.role === 'lane-facts');
+    ok(stack.layout.margin.l < 80 && 280 - stack.layout.margin.l - stack.layout.margin.r >= 200, 'narrow host: the plot keeps at least 200 px');
+    ok(sTitle.y === 1 && sTitle.yanchor === 'bottom' && sFacts.y === 1 && sFacts.yanchor === 'bottom' && sTitle.yshift > sFacts.yshift, 'narrow host: title and facts sit above the lane');
+    ok(stack.layout.xaxis.nticks >= 2 && stack.layout.xaxis.nticks <= Math.floor(209 / 70), 'narrow host: at most one time tick per 70 px');
+    ok(wide.layout.xaxis.nticks === undefined && wide.layout.annotations.find(a => a.meta && a.meta.role === 'lane-title').yanchor === 'bottom' && wide.layout.margin.l > 80, 'wide host keeps the titles beside the lanes');
+    const narrow = draw('gate', 130); // a plot too short for the words even when stacked
+    ok(!narrow.layout.annotations.some(a => a.meta && a.meta.role === 'starts-at'), 'actual plot width decides the starts-at fit');
     const text = segText(narrow, 'late')[0];
     ok(text.meta.name.includes('\u2026') && text.hovertext === 'a_very_long_pulse_operation_name', 'short pulse title exposes the full name on hover');
     delete host2.clientWidth;

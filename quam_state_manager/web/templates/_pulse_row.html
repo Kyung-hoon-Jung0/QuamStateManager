@@ -78,6 +78,6 @@
                 title="The length of SM&#39;s transcription of the lab class (as the CZ gate plan computes it)"{% elif r.length_why %}
                 title="{{ r.length_why }}"{% endif %}>{{
                 r.length if r.length is not none else '-' }}{% if r.length_implausible %} <span aria-hidden="true">⚠</span>{% endif %}</td>
-            <td>{% if r.amplitude is not none %}{{ "%.4g" | format(r.amplitude) }}{% elif r.amplitude_peak is defined and r.amplitude_peak is not none %}<span data-amp-peak="1" title="This pulse stores samples, not an amplitude: the largest sample (the CZ gate plan shows the same peak)">{{ "%.4g" | format(r.amplitude_peak) }} <small class="muted">peak</small></span>{% else %}-{% endif %}</td>
-            <td>{% if r.used_by %}<span class="pulse-usedby" title="{{ r.used_by | join(', ') }}">{{ r.used_by | length }}</span>{% endif %}</td>
+            <td class="ui-col-phone">{% if r.amplitude is not none %}{{ "%.4g" | format(r.amplitude) }}{% elif r.amplitude_peak is defined and r.amplitude_peak is not none %}<span data-amp-peak="1" title="This pulse stores samples, not an amplitude: the largest sample (the CZ gate plan shows the same peak)">{{ "%.4g" | format(r.amplitude_peak) }} <small class="muted">peak</small></span>{% else %}-{% endif %}</td>
+            <td class="ui-col-phone">{% if r.used_by %}<span class="pulse-usedby" title="{{ r.used_by | join(', ') }}">{{ r.used_by | length }}</span>{% endif %}</td>
         </tr>

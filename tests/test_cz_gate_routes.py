@@ -203,6 +203,21 @@ def test_plan_refuses_a_bad_name(chip):
     assert not p["ok"] and any("cz_" in r for r in p["refusals"])
 
 
+@pytest.mark.parametrize("name", ["cz_", "cz__a", "cz_a_"])
+def test_a_gate_name_with_an_empty_part_is_refused_before_anything_is_written(chip, fake, name):
+    before = chip.snap()
+    want = f"The gate name {name} has an empty part between underscores. Pick a name like cz_square."
+    p = chip.c.post(PLAN, json=_body(name=name)).get_json()["pairs"][0]
+    assert not p["ok"] and want in p["refusals"], p["refusals"]
+    r = chip.c.post(CHECK, json=_body(name=name))
+    j = r.get_json() or {}
+    assert want in r.get_data(as_text=True), r.get_data(as_text=True)[:400]
+    assert fake.calls == [], "the lab check never runs on a refused name"
+    if j.get("check_token"):
+        chip.c.post(CREATE, json={"check_token": j["check_token"], "plan_sig": j.get("plan_sig")})
+    assert chip.snap() == before, "nothing is written for a refused name"
+
+
 def test_plan_other_pairs_get_the_first_pairs_values(chip):
     j = chip.c.post(PLAN, json=_body(pairs=["q1-2", "q2-3"], amp=0.25)).get_json()
     second = j["pairs"][1]
@@ -359,7 +374,7 @@ def test_dialog_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):
     r = subprocess.run([node, str(root / "tests" / "cz_gate_dialog_selfcheck.cjs")], env=env,
                        capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
-    assert "ok cz_gate_dialog_selfcheck (406 assertions)" in r.stdout
+    assert "ok cz_gate_dialog_selfcheck (411 assertions)" in r.stdout
 
 
 def test_simulate_client_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):

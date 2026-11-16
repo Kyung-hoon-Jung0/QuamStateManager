@@ -36,6 +36,10 @@
     var SPECT_KEY = "\u0001spectators";  // the legend key of the spectator group (a lane key equal to it is refused)
     var GUIDE_ROWS_PX = 32;    // two rows of edge-time labels above the overlay plot
     var BAR_PX = 3;            // the lane colour bar at the gutter's left edge
+    var STACK_PLOT_PX = 200;   // a plot narrower than this beside the titles: titles go above their lanes
+    var TITLE_LINE_PX = 22;    // a lane name chip's line when titles sit above the lane
+    var FACT_LINE_PX = 15;     // one fact line under it
+    var TICK_SPACE_PX = 70;    // stacked: at most one time tick per this many pixels
     var CHIP_ALPHA = 0.16;     // tint behind the lane name chip
 
     // bad_length: "short" is under the chip's floor (16 ns before QOP 3.3, 4 ns from QOP 3.3 on;
@@ -675,7 +679,18 @@
             var topAxis = n > TOP_AXIS_LANES;
             var margin = { l: gutter + TICK_ROOM, r: 12, t: topAxis ? 30 : 6, b: 38 };
             var span = spanOf(drawn);
-            var widthPx = Math.max(1, ((host.clientWidth || 900) - margin.l - margin.r));
+            var hostPx = host.clientWidth || 900;
+            // A narrow host (a phone-width dialog): titles beside the lanes would leave the plot
+            // a sliver, so each lane's title moves above its lane and the plot takes the row.
+            var stacked = hostPx - margin.l - margin.r < STACK_PLOT_PX;
+            var bands = drawn.map(function (l) {
+                return stacked ? TITLE_LINE_PX + (titleLines(l).length - 1) * FACT_LINE_PX + 4 : 0;
+            });
+            if (stacked) {
+                margin.l = TICK_ROOM + BAR_PX + 4;
+                plotPx += bands.reduce(function (a, b) { return a + b; }, 0);
+            }
+            var widthPx = Math.max(1, (hostPx - margin.l - margin.r));
             var family = uiFont();
             var traces = [], shapes = [], fixed = [];
             var layout = {
@@ -692,6 +707,7 @@
                          gridcolor: c.grid, tickfont: { size: TEXT_PX } },
                 shapes: shapes
             };
+            if (stacked) layout.xaxis.nticks = Math.max(2, Math.floor(widthPx / TICK_SPACE_PX));
             if (topAxis) {
                 layout.xaxis2 = { overlaying: "x", matches: "x", side: "top", anchor: "y", showgrid: false,
                                   zeroline: false, tickfont: { size: TEXT_PX } };
@@ -720,6 +736,7 @@
                 var ax = i === 0 ? "y" : "y" + (i + 1);
                 var axKey = i === 0 ? "yaxis" : "yaxis" + (i + 1);
                 var lanePx = heights[i];
+                y += bands[i];
                 var top = 1 - y / plotPx;
                 var bottom = Math.max(0, 1 - (y + lanePx) / plotPx);
                 y += lanePx + GAP_PX;
@@ -745,8 +762,8 @@
                 // the colour on a see-through tint of it); spectators keep their one
                 // quiet colour with a fainter tint so the gate lanes stand out
                 fixed.push({
-                    xref: "paper", yref: ax + " domain", x: 0, y: mid, xanchor: "left", yanchor: "bottom",
-                    xshift: -margin.l + BAR_PX + 6, yshift: 2, align: "left", showarrow: false,
+                    xref: "paper", yref: ax + " domain", x: 0, y: stacked ? 1 : mid, xanchor: "left", yanchor: "bottom",
+                    xshift: -margin.l + BAR_PX + 6, yshift: stacked ? (tl.length - 1) * FACT_LINE_PX + 4 : 2, align: "left", showarrow: false,
                     text: "<b>" + esc(tl[0]) + "</b>",
                     font: { size: LABEL_PX, color: idCol },
                     bgcolor: faint(idCol, spectLane ? 0.10 : CHIP_ALPHA), borderpad: 3, borderwidth: 0,
@@ -757,8 +774,8 @@
                               x0: -margin.l, x1: -margin.l + BAR_PX, yref: ax + " domain", y0: 0, y1: 1,
                               fillcolor: idCol, line: { width: 0 }, layer: "above" });
                 fixed.push({
-                    xref: "paper", yref: ax + " domain", x: 0, y: mid, xanchor: "left", yanchor: "top",
-                    xshift: -margin.l + BAR_PX + 6, yshift: -2, align: "left", showarrow: false, text: tl.slice(1).map(esc).join("<br>"),
+                    xref: "paper", yref: ax + " domain", x: 0, y: stacked ? 1 : mid, xanchor: "left",
+                    yanchor: stacked ? "bottom" : "top", xshift: -margin.l + BAR_PX + 6, yshift: stacked ? 2 : -2, align: "left", showarrow: false, text: tl.slice(1).map(esc).join("<br>"),
                     font: { size: TEXT_PX, color: c.muted },
                     meta: { role: "lane-facts", lane: lane.key }
                 });
