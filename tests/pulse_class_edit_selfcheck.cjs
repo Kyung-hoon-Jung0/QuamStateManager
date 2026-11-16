@@ -171,6 +171,9 @@ function outsideEdit(fields, formula) {
   const head = root.querySelector("[data-pce-field-head]");
   ok(head && Array.from(head.querySelectorAll(".ui-field-label")).map((x) => x.textContent).join() === "Name,Type,Default,Unit",
     "P2-10: the field rows carry a Name / Type / Default / Unit header");
+  const firstField = root.querySelector("[data-pce-field]");
+  ok(head && firstField && head.children.length === firstField.children.length,
+    "the header row has as many cells as a field row, so the grid columns stay in step");
   // P2-8: the stored preview ran on another draft: labelled
   ok(plots.wave === 1 && vis("[data-pce-prev-label]") && $("[data-pce-prev-label]").textContent === PREVIOUS,
     "P2-8: a stored preview of another draft carries the previous-version line on load");

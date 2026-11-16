@@ -339,3 +339,10 @@ otherwise it takes the full row above the map. At the top bar fit floor (`tb-fit
 inside the window instead of widening the page.
 A gate row's name chip (`.gate-status-row > .ui-chip`) may shrink and wraps a long name inside the row; the delete
 offer's pointer lines (`.gate-delete-list code`) break after each path dot (`<wbr>`) and, as a last resort, anywhere.
+Segmented controls built from buttons (`.ui-segmented-opt`) move focus with ArrowLeft / ArrowRight / Home / End through
+one handler in `ui-menu.js`; the arrow only moves focus, never presses, so no selection and no write follows a key.
+`.ui-field-head` wraps its label and badges onto a second line instead of breaking a label word. The pulse class field
+grid keeps the Name column at least `--ui-pce-name-min` so a name like "amplitude" stays whole beside its Type.
+The Pulses table drops Amp and Used by with the other `ui-col-secondary` columns below 900 px; its headers and alias
+badges break only between words. The gate timeline stacks each lane title above its lane when titles beside the lanes
+would leave the plot under 200 px, and then keeps one time tick per 70 px.

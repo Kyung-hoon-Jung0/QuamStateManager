@@ -267,6 +267,45 @@ for (const mods of [{ altKey: true }, { metaKey: true }, { ctrlKey: true }]) {
     box.remove();
 }
 
+// button options (a view or a statistic switch): arrows, Home and End move focus inside the
+// control and wrap round; they never press an option, so nothing a press writes runs
+{
+    const box = doc.createElement("div");
+    host.appendChild(box);
+    const seg = window.UI.segmented([{ label: "P", selected: true }, { label: "Q" }, { label: "R" }], "Buttons");
+    box.appendChild(seg);
+    const o = [...seg.querySelectorAll(".ui-segmented-opt")];
+    let presses = 0;
+    o.forEach((b) => b.addEventListener("click", () => { presses += 1; }));
+    o[0].focus();
+    let ev = keyMod("ArrowRight", {});
+    ok(ev.defaultPrevented && act_() === o[1], "button segmented: ArrowRight moves focus to the next option");
+    keyMod("ArrowRight", {}); keyMod("ArrowRight", {});
+    ok(act_() === o[0], "button segmented: ArrowRight on the last option wraps to the first");
+    keyMod("ArrowLeft", {});
+    ok(act_() === o[2], "button segmented: ArrowLeft on the first option wraps to the last");
+    keyMod("Home", {});
+    ok(act_() === o[0], "button segmented: Home goes to the first option");
+    keyMod("End", {});
+    ok(act_() === o[2], "button segmented: End goes to the last option");
+    ok(presses === 0 && o[0].getAttribute("aria-pressed") === "true" && o[2].getAttribute("aria-pressed") === "false",
+       "button segmented: an arrow key never presses or selects an option");
+    ok(!keyMod("ArrowRight", { ctrlKey: true }).defaultPrevented && act_() === o[2], "button segmented: Ctrl+ArrowRight is left to the browser");
+    o[1].disabled = true; o[0].focus(); keyMod("ArrowRight", {});
+    ok(act_() === o[2], "button segmented: a disabled option is skipped");
+    o[1].disabled = false;
+    // inside a toolbar the control moves first; at its end the toolbar takes over
+    const tb2 = window.UI.toolbar([{ part: "button", label: "Before", cls: "btn-sm" }], "With a switch");
+    const seg2 = window.UI.segmented([{ label: "S1", selected: true }, { label: "S2" }], "Inner");
+    tb2.appendChild(seg2); box.appendChild(tb2);
+    const s2 = [...seg2.querySelectorAll(".ui-segmented-opt")];
+    s2[0].focus(); keyMod("ArrowRight", {});
+    ok(act_() === s2[1], "toolbar switch: ArrowRight moves inside the switch first");
+    s2[0].focus(); keyMod("ArrowLeft", {});
+    ok(act_() === tb2.querySelector("button"), "toolbar switch: ArrowLeft on its first option hands over to the toolbar");
+    box.remove();
+}
+
 // a field without a control id: generated id, label for, described by hint + error
 const f1 = window.UI.field({ label: "Amplitude", hint: "Volts at the port", error: "Too high", control: { part: "input", num: true, value: "3" } });
 host.appendChild(f1);

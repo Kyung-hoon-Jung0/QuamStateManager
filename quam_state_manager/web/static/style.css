@@ -5277,14 +5277,14 @@ a.topo-health-tile:hover { background: var(--pico-card-sectioning-background-col
 }
 #ov-settings-pop .ov-set-head { font-weight: 600; margin-bottom: 0.4rem; }
 #ov-settings-pop .ov-set-global {
-    display: flex; justify-content: space-between; align-items: center; gap: 0.8rem;
+    display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.8rem;
     padding-bottom: 0.45rem; border-bottom: 1px solid var(--pico-muted-border-color);
     margin-bottom: 0.35rem;
 }
 #ov-settings-pop .ui-segmented { flex: none; }
 #ov-settings-pop .ov-set-list { max-height: 45vh; overflow-y: auto; }
 #ov-settings-pop .ov-set-row {
-    display: flex; justify-content: space-between; align-items: center;
+    display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center;
     gap: 0.8rem; padding: 0.15rem 0;
 }
 #ov-settings-pop .ov-set-title { white-space: nowrap; }
@@ -10529,7 +10529,7 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
     cursor: col-resize; user-select: none; z-index: 1;
 }
 .col-resize-handle:hover { background: var(--pico-primary); opacity: .35; }
-#pulses-table th { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#pulses-table th, #pulses-table .pointer-badge { word-break: keep-all; overflow-wrap: normal; white-space: normal; }
 .bulk-col-head:hover { background: var(--pico-card-sectioning-background-color); }
 .bulk-col-unit { font-weight: 400; font-size: 0.85em; color: var(--pico-muted-color); }
 /* A folded per-neighbour column where some qubit owns more than one operation

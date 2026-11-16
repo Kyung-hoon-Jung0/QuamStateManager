@@ -92,12 +92,16 @@ function planCopied(body) {
         model_gate: ['q1-2', 'cz_m'], reset: ['fidelity', 'extras'] })) };
 }
 const NO_CLASS = 'The gate class must be given by its class name. Pick a gate class from the list.';
+const EMPTY_PART = 'The gate name cz_ has an empty part between underscores. Pick a name like cz_square.';
+let bareRefused = false;            // the server's answer for the bare prefix
 let planExtra = null;               // a test's own refusals: [reason, aboutClass]
 function planOk(body) {
     if (!body.gate_class) return { ok: true, plan_sig: 'none', pairs: body.pairs.map((p) => ({ pair: p, ok: false, refusals: [NO_CLASS], class_refusals: [NO_CLASS] })) };
     if (planExtra) return { ok: true, plan_sig: 'x', pairs: body.pairs.map((p) => ({ pair: p, ok: false,
         refusals: planExtra.map((r) => r[0]), class_refusals: planExtra.filter((r) => r[1]).map((r) => r[0]),
         name_refusals: planExtra.filter((r) => r[2]).map((r) => r[0]) })) };
+    if (bareRefused && body.gate_name === 'cz_') return { ok: true, plan_sig: 'bare', pairs: body.pairs.map((p) => ({ pair: p, ok: false,
+        refusals: [EMPTY_PART], class_refusals: [], name_refusals: [EMPTY_PART] })) };
     if (body.gate_class === 'L.TwoFlux') return planCopied(body);
     return { ok: true, plan_sig: 'sig-' + JSON.stringify(body.pulses) + body.gate_name + body.pairs.join(','),
              pairs: body.pairs.map((p) => p === 'q9-9' ? { pair: p, ok: false, refusals: ['No such pair.'] } : {
@@ -455,6 +459,28 @@ function tableWidths(el, sw, cw) {
     prim().click();
     await settle();
     ok(!$('#czg-dialog'), 'Close closes');
+
+    // the untouched prefill is not an error: neutral on open, the sentence from the first edit or press
+    {
+        bareRefused = true;
+        const calm = () => $('#czg-name-why').hidden && !$('#czg-name').hasAttribute('aria-invalid') && !$('#czg-name-hint').hidden;
+        const hasClass = () => !!$('#czg-name').closest('.ui-field').querySelector('.ui-field-error:not([hidden])');
+        await window.CzGate.close(); await window.CzGate.open({ pair: 'q1-2' }); await settle();
+        ok($('#czg-name').value === 'cz_' && calm() && !hasClass() && prim().disabled,
+           'fresh open: the bare prefix shows no error and no red field, Check is still off');
+        type($('#czg-name'), 'cz_a'); type($('#czg-name'), 'cz_'); await settle();
+        ok($('#czg-name-why').textContent === EMPTY_PART && $('#czg-name').getAttribute('aria-invalid') === 'true'
+           && $('#czg-name-hint').hidden && prim().disabled, 'after typing the bare prefix again: the refusal is said');
+        $('#czg-name').dispatchEvent(new window.Event('blur', { bubbles: true })); await settle();
+        ok($('#czg-name-why').textContent === EMPTY_PART, 'the field stays refused after the person leaves it');
+        await window.CzGate.close(); await window.CzGate.open({ pair: 'q1-2' }); await settle();
+        ok(calm() && prim().disabled, 'reopened after a refusal: neutral again');
+        window.CzGate._check(); await settle();
+        ok($('#czg-name-why').textContent === EMPTY_PART && $('#czg-name').getAttribute('aria-invalid') === 'true',
+           'a Check press on the bare prefix shows the refusal');
+        bareRefused = false;
+        await window.CzGate.close();
+    }
 
     // reopened after a create: a clean dialog from fresh server data
     await window.CzGate.open({ pair: 'q1-2' });
