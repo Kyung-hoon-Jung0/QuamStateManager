@@ -156,8 +156,9 @@ def test_a_raised_flag_alone_refuses_an_approval(tmp_path, monkeypatch):
 
 
 def test_a_mark_whose_values_were_taken_out_asks_nothing(tmp_path, monkeypatch):
-    """Ctrl+Z took the kept value out: the preflight has nothing to name, so the Apply goes on."""
-    case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False)
+    """Ctrl+Z took the kept value out: the preflight has nothing to name, so the Apply goes on.
+    The approving window presses Ctrl+Z, so its own step asks no other-window question."""
+    case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False, window="window-a")
     assert case[1].post("/undo").status_code == 200
     r = case[1].post("/state/apply-to-live", data={"seen_changes": "1"}, headers=JSON)
     assert r.status_code == 200, r.get_data(as_text=True)

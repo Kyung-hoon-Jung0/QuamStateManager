@@ -636,7 +636,7 @@
  },
  "bundle_sha256": {
   "01_make_wiring.py": "e772de5a71e037021b301f2bdd8ee992f2cd1c16a49c21e50d4c9e9abbb07de9",
-  "02_build_machine.py": "1e6e46729fcc2e55798ad07591c9ccfeaf75957a31a8fa04752a5002776b1924",
+  "02_build_machine.py": "3d134c6b67a3f2fc16d996d9a8b0175bd4bf0a07f561d0c7fa813932d327ca8e",
   "03_generate_config.py": "2389efddb9009b8723de3e10eaabf85e2c72e24f3fafccd984748429f8dc32e1",
   "README.md": "b32d8a117baa79ccb15711899ad2e513eb3179cefee69094dd13087990ce3262"
  },

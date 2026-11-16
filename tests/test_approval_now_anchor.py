@@ -1027,13 +1027,17 @@ def _agent_applies_third(client, monkeypatch):
                        headers={"Accept": "application/json", **agent})
 
 
-def _refused_first(tmp_path, monkeypatch, outcome, reject_first):
+def _refused_first(tmp_path, monkeypatch, outcome, reject_first, window=None):
     """Approval A (``value`` 10 -> 30) is refused at its live write with the door's write outcome
     ``outcome``; then the live write works again, and the window polls /state/drift as it does
-    every few seconds. Returns the case, A's response and that poll's answer."""
+    every few seconds. Returns the case, A's response and that poll's answer. ``window`` makes the
+    client a browser window: every request carries that window id, as the page sends it, so the
+    approved card is that window's own journal step (docs/160)."""
     from quam_state_manager.core import working_copy
     from quam_state_manager.web import routes
     case = _case(tmp_path, {"value": 10, "third": 5}, [{"path": "value", "old": 10, "new": 30}])
+    if window:
+        case[1].environ_base["HTTP_X_SM_WINDOW_ID"] = window
     live = case[2] / "state.json"
     armed = [True]
     real_apply, real_outcome = working_copy.apply_to_live, routes._write_outcome
@@ -1172,6 +1176,20 @@ def test_the_window_never_says_an_unverified_write_wrote_nothing(tmp_path, monke
     assert "wrote nothing" not in panel and "Nothing has been written" not in panel, panel[:600]
 
 
+def test_a_headerless_ctrl_z_of_the_approved_step_asks_and_changes_nothing(tmp_path, monkeypatch):
+    """docs/160: a person's /undo without a window id cannot consent, so it gets 409 with the
+    question and nothing moves; the same press from the approving window undoes."""
+    case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False)
+    client = case[1]
+    before = (case[2] / "state.json").read_bytes()
+    asked = client.post("/undo")
+    assert asked.status_code == 409
+    assert "another window's change" in asked.headers.get("HX-Trigger", "")
+    with case[0].app_context():
+        assert _ctx(case)["store"].merged["value"] == 30
+    assert (case[2] / "state.json").read_bytes() == before
+
+
 def test_a_take_live_clears_the_unverified_write_mark(tmp_path, monkeypatch):
     case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False)
     client = case[1]
@@ -1187,8 +1205,9 @@ def test_a_take_live_clears_the_unverified_write_mark(tmp_path, monkeypatch):
 
 def test_ctrl_z_of_the_kept_value_then_apply_clears_the_unverified_write_mark(tmp_path, monkeypatch):
     """Ctrl+Z alone stages the inverse row in the tray (the chip is not known to match): the mark
-    holds, so the text does not offer Ctrl+Z as a way out. Applying that row is the "applies" way."""
-    case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False)
+    holds, so the text does not offer Ctrl+Z as a way out. Applying that row is the "applies" way.
+    The window that approved presses Ctrl+Z: its own step, so no other-window question."""
+    case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False, window="window-a")
     client = case[1]
     live = case[2] / "state.json"
     before = live.read_bytes()
