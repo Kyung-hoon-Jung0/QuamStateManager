@@ -140,6 +140,7 @@
         var t = e.target;
         var tb = t && t.closest ? t.closest(".ui-toolbar") : null;
         if (!tb || t.closest(".ui-menu-list")) return;
+        if (segStep(t, k)) return;   // inside a segmented control the control moves first
         var tag = t.tagName;
         if (tag === "SELECT" || (tag === "INPUT" && t.type !== "checkbox")) return;   // text fields, selects and radios keep their own arrow keys
         var items = tbItems(tb), i = items.indexOf(t);
@@ -163,6 +164,34 @@
             } else el.setAttribute('aria-pressed', on ? 'true' : 'false');
         });
     }
+    // A button option: Left / Right / Home / End only move focus to another option
+    // of the same control; Enter or Space presses it as before, so an arrow key never
+    // changes a selection (and never writes what a press of that option would write).
+    function segButtons(option) {
+        var group = option.closest('.ui-segmented');
+        return group ? Array.prototype.filter.call(group.querySelectorAll('button.ui-segmented-opt'), function (b) {
+            return b.tagName === 'BUTTON' && !b.disabled && b.closest('.ui-segmented') === group;
+        }) : [];
+    }
+    function segStep(t, k) {
+        var option = t && t.closest ? t.closest('button.ui-segmented-opt') : null;
+        if (!option || option.tagName !== 'BUTTON') return null;
+        var items = segButtons(option), i = items.indexOf(option);
+        if (i < 0 || items.length < 2) return null;
+        var j = k === 'Home' ? 0 : k === 'End' ? items.length - 1 :
+            k === 'ArrowRight' ? i + 1 : k === 'ArrowLeft' ? i - 1 : null;
+        if (j === null) return null;
+        // like the link options, the ends wrap round; inside a toolbar an end hands over to the toolbar
+        if (!option.closest('.ui-toolbar')) j = (j + items.length) % items.length;
+        return j >= 0 && j < items.length && j !== i ? items[j] : null;
+    }
+    document.addEventListener('keydown', function (e) {
+        if (hasMod(e) || e.shiftKey) return;
+        var next = segStep(e.target, e.key);
+        if (!next) return;
+        e.preventDefault();
+        next.focus();
+    });
     document.addEventListener('keydown', function (e) {
         if (hasMod(e) || e.shiftKey) return;
         var option = e.target.closest && e.target.closest('.ui-segmented-opt');

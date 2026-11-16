@@ -92,7 +92,9 @@ def test_auto_sync_pill_and_picker_rules_are_reviewed_kit_rules():
 # Every declaration the narrow-width fixes added or changed, with its exact value:
 # deleting one, or changing its value, fails here (one row per declaration).
 _DECLARED = {
-    (":root", None): {"--ui-czp-map-min-w": "24rem"},
+    (":root", None): {"--ui-czp-map-min-w": "24rem", "--ui-pce-cell-min": "6rem",
+                      "--ui-pce-field-cols": "repeat(auto-fit, minmax(var(--ui-pce-cell-min), 1fr))"},
+    (".ui-field-head", None): {"display": "flex", "flex-wrap": "wrap", "align-items": "center"},
     (".ui-menu-trigger > .ui-menu-note", None): {
         "flex": "1 1 100%", "min-width": "0", "font-size": "var(--ui-fs-xs)", "overflow-wrap": "anywhere"},
     (".ui-menu--block > .ui-menu-list", None): {"max-width": "100%"},
@@ -134,7 +136,7 @@ def test_every_narrow_width_declaration_keeps_its_value():
 # Every rule in the table is owned outright by these fixes, except the ones below, which carry older
 # declarations too. An owned rule may hold nothing beside what the table lists: an extra white-space or
 # overflow declaration would undo the wrap while every listed value still matches.
-_SHARED = {":root", ".ui-segmented.ui-segmented", ".gate-status-row"}
+_SHARED = {":root", ".ui-segmented.ui-segmented", ".gate-status-row", ".ui-field-head"}
 
 
 def test_owned_rules_carry_nothing_else():
@@ -189,3 +191,42 @@ def test_kit_page_shows_a_picker_with_a_note():
     kit = (WEB / "templates/ui_kit.html").read_text(encoding="utf8")
     line = [ln for ln in kit.splitlines() if "ui.ui_menu('uk-menu-note'" in ln]
     assert len(line) == 1 and "block=True" in line[0] and "note='" in line[0]
+
+
+def _style_rule(selector):
+    hits = [_decls(b) for sel, b, _s in _rules("style.css") if sel == selector]
+    assert len(hits) == 1, f"one style.css rule for {selector!r}, found {len(hits)}"
+    return hits[0]
+
+
+def test_panels_popover_rows_wrap_at_phone_width():
+    for sel in ("#ov-settings-pop .ov-set-global", "#ov-settings-pop .ov-set-row"):
+        assert _style_rule(sel).get("flex-wrap") == "wrap", sel
+
+
+def test_pulses_headers_and_badges_break_only_between_words():
+    want = {"word-break": "keep-all", "overflow-wrap": "normal", "white-space": "normal"}
+    assert _style_rule("#pulses-table th, #pulses-table .pointer-badge") == want
+    # the badge's own break-all must come before this override, or "alias" breaks mid-word again
+    order = [sel for sel, _b, _s in _rules("style.css")]
+    badge = max(i for i, sel in enumerate(order) if sel == ".pointer-badge")
+    assert badge < order.index("#pulses-table th, #pulses-table .pointer-badge")
+    for sel, body, _s in _rules("style.css"):
+        if sel.startswith("#pulses-table th"):
+            assert "text-overflow" not in _decls(body), sel
+
+
+def test_pulses_amp_and_used_by_leave_only_on_a_phone():
+    import re
+    head = (WEB / "templates" / "_pulse_rows.html").read_text(encoding="utf8")
+    row = (WEB / "templates" / "_pulse_row.html").read_text(encoding="utf8")
+    for col in ("7", "8"):
+        th = re.search(r'<th[^>]*data-col="' + col + r'"[^>]*>', head).group(0)
+        assert "ui-col-phone" in th and "ui-col-secondary" not in th, th
+    tds = re.findall(r"<td[^>]*>", row)
+    assert all("ui-col-phone" in tds[i] and "ui-col-secondary" not in tds[i] for i in (7, 8)), tds
+    rules = [(sel, body, stack) for sel, body, stack in _rules() if ".ui-col-phone" in sel]
+    assert len(rules) == 1, rules
+    sel, body, stack = rules[0]
+    assert sel == ".ui-col-phone" and stack == ["@media (max-width: 600px)"], (sel, stack)
+    assert _decls(body) == {"display": "none"}

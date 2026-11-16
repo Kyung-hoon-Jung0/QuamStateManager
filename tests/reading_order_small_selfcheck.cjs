@@ -152,8 +152,11 @@ async function main() {
         p.focus();
         const bk = new w.KeyboardEvent('keydown', {key: 'ArrowRight', bubbles: true, cancelable: true});
         p.dispatchEvent(bk);
-        assert.equal(bk.defaultPrevented, false, 'a button option keeps the browser key handling');
-        assert.equal(d.activeElement, p);
+        // an arrow moves focus between button options (the kit's one handler) but never presses one
+        assert.equal(bk.defaultPrevented, true, 'an arrow moves between button options');
+        assert.equal(d.activeElement, q);
+        assert.equal(q.getAttribute('aria-pressed'), 'false', 'an arrow never presses a button option');
+        assert.equal(q.className, 'ui-segmented-opt');
         w.UIMenu.selectSegment(q);
         assert.equal(q.className, 'ui-segmented-opt ui-segmented-on');
         assert.equal(q.getAttribute('aria-pressed'), 'true');

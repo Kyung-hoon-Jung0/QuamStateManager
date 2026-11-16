@@ -222,6 +222,11 @@ def name_rule(macros: dict, gate_name: Any) -> str | None:
             and ADDITION_NAME_RE.fullmatch(gate_name)):
         return (f"The gate name {gate_name} is not a valid name. Use letters, "
                 "digits and _ only, at most 64 characters.")
+    if "" in gate_name.split("_")[1:]:
+        # every pulse and operation name repeats the gate name between underscores,
+        # so an empty part ("cz_", "cz__a", "cz_a_") would leave an empty part there too
+        return (f"The gate name {gate_name} has an empty part between underscores. "
+                "Pick a name like cz_square.")
     if gate_name in macros:
         return f"The pair already has a gate named {gate_name}. Pick another name."
     return None

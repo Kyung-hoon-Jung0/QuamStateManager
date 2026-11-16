@@ -542,7 +542,8 @@ def test_7b_stage0_boundary_only_ui_selectors_and_one_token_block():
         assert k not in style_vars, f"{k} redeclares a style.css variable"
     for sel, body, stack in blocks:
         if stack:
-            assert stack == ["@media (max-width: 900px)"] and sel == ".ui-col-secondary"
+            assert (sel, stack) in ((".ui-col-secondary", ["@media (max-width: 900px)"]),
+                                    (".ui-col-phone", ["@media (max-width: 600px)"])), (sel, stack)
             assert dict(_decls(body)) == {"display": "none"}
         if sel == ":root":
             continue

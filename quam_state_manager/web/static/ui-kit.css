@@ -195,7 +195,8 @@
     --ui-pce-code-h: 460px;
     --ui-pce-code-min: 560px;
     --ui-pce-preview-min: 280px;
-    --ui-pce-field-cols: minmax(0, 3fr) minmax(var(--ui-ctl-min-w), 2fr) minmax(0, 2fr) minmax(0, 1.5fr) auto;
+    --ui-pce-cell-min: 6rem;        /* a field row wraps onto more lines before a name, default or unit is cut */
+    --ui-pce-field-cols: repeat(auto-fit, minmax(var(--ui-pce-cell-min), 1fr));
     --ui-code-keyword: var(--ui-line-2);
     --ui-code-string: var(--ui-ok-text);
     --ui-code-number: var(--ui-warn-text);
@@ -516,6 +517,10 @@
 /* Secondary evidence columns yield to names on narrow screens. */
 @media (max-width: 900px) {
     .ui-col-secondary { display: none; }
+}
+/* Evidence columns that only a phone-width table gives up (the table still fits above it). */
+@media (max-width: 600px) {
+    .ui-col-phone { display: none; }
 }
 .ui-segmented { display: inline-flex; border: var(--ui-bw) solid var(--ui-border-strong); border-radius: var(--ui-r-md); overflow: hidden; }
 .ui-segmented-opt { margin: 0; padding: var(--ui-gap-1) var(--ui-gap-3); border: 0; border-radius: 0; background: transparent; color: var(--ui-text-2); font-size: var(--ui-fs-sm); font-weight: var(--ui-fw-normal); width: auto; cursor: pointer; }
@@ -1043,7 +1048,7 @@
 
 /* Field: label above (small, quiet), control, hint, error; a source tag
    sits at the label's right. --inline: label left, control right. */
-.ui-field-head { display: flex; align-items: center; gap: var(--ui-gap-2); min-width: 0; }
+.ui-field-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-gap-2); min-width: 0; }
 .ui-field-head > .ui-field-label { flex: 0 1 auto; min-width: 0; margin: 0; }
 .ui-field-hint, .ui-field-error { margin: 0; font-size: var(--ui-fs-xs); line-height: var(--ui-lh-dense); }
 .ui-field-hint { color: var(--ui-text-2); }

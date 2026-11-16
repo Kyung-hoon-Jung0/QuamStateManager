@@ -41,7 +41,7 @@
     function fresh() {
         return { data: null, busy: false, phase: 'check', plan: null, planSig: null, check: null,
                  checkSig: null, stale: 0, entered: {}, raw: {}, cls: {}, timer: null, handle: null,
-                 opener: null, seq: 0, created: null, pairIdx: 0, invalid: {}, creating: false,
+                 opener: null, nameTouched: false, seq: 0, created: null, pairIdx: 0, invalid: {}, creating: false,
                  confirmClose: false, downOnBackdrop: false, spectOn: {}, spectNote: '',
                  newSlot: { name: '', preset: '', slots: {}, spectators: false, busy: false, busyWord: '',
                             cls: '', qclass: '', saved: false, lines: [], done: [], confirm: null } };
@@ -1251,9 +1251,14 @@
         });
         general.hidden = !general.childNodes.length;
         renderClassWhy(S.noClass ? [] : aboutClass);
-        bad.forEach(function (r) { why.appendChild(el('span', 'czg-why-line', r)); });
-        why.hidden = !bad.length;
-        if (bad.length) $('czg-name').setAttribute('aria-invalid', 'true'); else $('czg-name').removeAttribute('aria-invalid');
+        // the server owns the name rule; the browser only decides when its sentence is shown:
+        // not on an untouched prefill, from the first edit or the first Check / Create press on
+        var said = S.nameTouched ? bad : [];
+        said.forEach(function (r) { why.appendChild(el('span', 'czg-why-line', r)); });
+        why.hidden = !said.length;
+        var hint = $('czg-name-hint');
+        if (hint) hint.hidden = !!said.length;
+        if (said.length) $('czg-name').setAttribute('aria-invalid', 'true'); else $('czg-name').removeAttribute('aria-invalid');
         var focused = document.activeElement;
         var keep = focused && focused.getAttribute ? [focused.getAttribute('data-czg-field'), focused.getAttribute('data-czg-name')] : null;
         var caret = null;
@@ -1712,8 +1717,14 @@
             + 'Press Create to add ' + (ok.length === 1 ? 'it' : 'the ' + ok.length + ' gates') + ' to the working copy.'
             + (ok.length && (c.sync || {}).auto_push ? ' ' + AUTO_NOTE : ''));
     }
+    function touchName() {
+        if (!S || S.nameTouched) return;
+        S.nameTouched = true;
+        if (S.plan) renderPlan();
+    }
     function check() {
         if (!S || S.busy) return Promise.resolve();
+        touchName();
         var b = body();
         var mine = S.seq, g = S;
         simReset();
@@ -1914,6 +1925,7 @@
     /* ---- create ---------------------------------------------------------- */
     function create() {
         if (!S || S.busy || S.phase !== 'create' || !S.check) return Promise.resolve();
+        touchName();
         var g = S;
         S.creating = true;
         setBusy(true, 'Creating\u2026');
@@ -2349,7 +2361,7 @@
     document.addEventListener('input', function (ev) {
         var t = ev.target;
         if (!t || !inDialog(t) || !S) return;
-        if (t.id === 'czg-name') { inputsChanged(); return; }
+        if (t.id === 'czg-name') { S.nameTouched = true; inputsChanged(); return; }
         if (t.hasAttribute('data-czg-new-name')) {
             if (S.newSlot.busy) { t.value = S.newSlot.name; return; }
             var made = S.newSlot.cls || S.newSlot.lines.length || S.newSlot.done.length || S.newSlot.confirm;
