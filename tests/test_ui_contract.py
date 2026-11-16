@@ -787,7 +787,7 @@ def test_6b_ui_menu_behaviour_selfcheck():
     if node is None:
         pytest.skip("node not available")
     res = subprocess.run([node, str(_ROOT / "tests" / "ui_menu_selfcheck.cjs")], capture_output=True,
-                         text=True, encoding="utf-8", cwd=str(_ROOT))
+                         text=True, encoding="utf-8", cwd=str(_ROOT), timeout=300)
     if res.returncode == 2:
         pytest.skip("jsdom not installed for node")
     assert res.returncode == 0, res.stdout + "\n" + res.stderr
@@ -860,12 +860,13 @@ def test_6_macro_and_ui_js_build_the_same_tree(ui_kit_html, tmp_path):
     node = shutil.which("node")
     if node is None:
         pytest.skip("node not available")
-    if subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT)).returncode != 0:
+    if subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT),
+                      timeout=300).returncode != 0:
         pytest.skip("jsdom not installed for node")
     page = tmp_path / "ui_kit.html"
     page.write_text(ui_kit_html[0], encoding="utf-8")
     res = subprocess.run([node, str(_ROOT / "tests" / "ui_kit_selfcheck.cjs"), str(page)], capture_output=True,
-                         text=True, encoding="utf-8", cwd=str(_ROOT))
+                         text=True, encoding="utf-8", cwd=str(_ROOT), timeout=300)
     assert res.returncode == 0, res.stdout + "\n" + res.stderr
     assert "ok ui_kit_selfcheck" in res.stdout and " 0 failed" in res.stdout
 

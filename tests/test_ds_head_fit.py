@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 def test_ds_head_fit():
     node = shutil.which("node")
     if node is None or subprocess.run([node, "-e", "require('jsdom')"], capture_output=True,
-                                      cwd=str(ROOT)).returncode != 0:
+                                      cwd=str(ROOT), timeout=300).returncode != 0:
         pytest.skip("node + jsdom not available")
     res = subprocess.run([node, str(ROOT / "tests" / "ds_head_fit_selfcheck.cjs")], capture_output=True,
                          text=True, encoding="utf-8", cwd=str(ROOT), timeout=60)

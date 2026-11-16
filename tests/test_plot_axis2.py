@@ -26,6 +26,6 @@ def test_plot_axis2_selfcheck():
     if shutil.which("node") is None or env is None:
         pytest.skip("node + jsdom not installed")
     r = subprocess.run(["node", str(ROOT / "tests" / "plot_axis2_selfcheck.cjs")],
-                       capture_output=True, text=True, env=env, encoding="utf-8")
+                       capture_output=True, text=True, env=env, encoding="utf-8", timeout=300)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "all passed" in r.stdout

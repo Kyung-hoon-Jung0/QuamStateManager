@@ -435,13 +435,13 @@ def test_client_patch_selfcheck():
         pytest.skip("node not available")
     try:
         import importlib.util as _u  # noqa: F401
-        r = subprocess.run(["node", "-e", "require('jsdom')"], cwd=ROOT, capture_output=True)
+        r = subprocess.run(["node", "-e", "require('jsdom')"], cwd=ROOT, capture_output=True, timeout=300)
         if r.returncode:
             pytest.skip("jsdom not installed")
     except OSError:
         pytest.skip("node not runnable")
     r = subprocess.run(["node", "tests/trends_patch_selfcheck.cjs"], cwd=ROOT,
-                       capture_output=True, text=True, encoding="utf-8")
+                       capture_output=True, text=True, encoding="utf-8", timeout=300)
     assert r.returncode == 0, r.stdout + r.stderr
     assert re.search(r"ok \(\d+ assertions\)", r.stdout), r.stdout
 

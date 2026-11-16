@@ -88,7 +88,7 @@ def test_the_page_shows_a_responses_toast_trigger():
     if shutil.which("node") is None or node_env is None:
         pytest.skip("node + jsdom not installed")
     r = subprocess.run(["node", str(ROOT / "tests" / "server_toast_selfcheck.cjs")],
-                       capture_output=True, text=True, env=node_env, encoding="utf-8")
+                       capture_output=True, text=True, env=node_env, encoding="utf-8", timeout=300)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "all passed" in r.stdout
 

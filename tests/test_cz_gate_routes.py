@@ -374,7 +374,7 @@ def test_dialog_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):
     r = subprocess.run([node, str(root / "tests" / "cz_gate_dialog_selfcheck.cjs")], env=env,
                        capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
-    assert "ok cz_gate_dialog_selfcheck (461 assertions)" in r.stdout
+    assert "ok cz_gate_dialog_selfcheck (466 assertions)" in r.stdout
 
 
 def test_simulate_client_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):
@@ -405,6 +405,60 @@ def test_headline_names_line_value_and_limit():
         {"peak_v": 3.0, "min_v": 0.0, "flags": ["over_range"]}]}]}
     assert czr.headline(entry, tl, "long") == "q1.z would play 3 V. This port's limit is 2.5 V."
     assert czr.headline({"checks": {"ops": {"status": "fail"}}}, tl, "why") == "why"
+
+
+FLAT_TOP = "quam.components.pulses.FlatTopGaussianPulse"
+
+
+@pytest.mark.parametrize("fields, words", [
+    ({"length": 60, "amplitude": 0.1}, "100 ns is longer than the whole pulse (60 ns)"),
+    ({"length": 61, "amplitude": 0.1, "flat_length": 20}, "41 ns, an odd number"),
+])
+def test_a_flat_top_that_cannot_make_a_waveform_marks_its_flat_length(chip, fields, words):
+    body = _body()
+    body["pulses"]["flux_pulse_qubit"] = {"class": FLAT_TOP, "fields": fields}
+    p = chip.c.post(PLAN, json=body).get_json()["pairs"][0]
+    assert not p["ok"]
+    assert any(r.startswith("flux_pulse_qubit.flat_length: ") and words in r
+               for r in p["refusals"]), p["refusals"]
+
+
+def test_a_flat_top_that_fits_plans(chip):
+    body = _body()
+    body["pulses"]["flux_pulse_qubit"] = {"class": FLAT_TOP,
+                                          "fields": {"length": 60, "amplitude": 0.1, "flat_length": 20}}
+    assert chip.c.post(PLAN, json=body).get_json()["pairs"][0]["ok"]
+
+
+def _flat_top_source(length, flat):
+    """A 4-qubit chip whose pair q1-2 holds the gate cz_src with a flat-top pulse."""
+    from tests.test_cz_gate_build import _apply
+    s = _chip(4)
+    src = cgb.plan(s, "q1-2", gate_name="cz_src", gate_class=cgb.CZ_GATE, pulses={
+        "flux_pulse_qubit": {"class": FLAT_TOP,
+                             "fields": {"length": length, "amplitude": 0.1, "flat_length": flat}}})
+    assert "creates" in src, src
+    return _apply(s, src["creates"])
+
+
+@pytest.mark.parametrize("source, typed, refused", [
+    ((120, 20), {"length": 60}, None),
+    ((60, 20), {"flat_length": 100}, "100 ns is longer than the whole pulse (60 ns)"),
+])
+def test_a_flat_top_is_judged_as_the_plan_builds_it_with_copied_values(source, typed, refused):
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        a = App(tmp, _flat_top_source(*source))
+        body = _body(name="cz_new", copy_from="cz_src")
+        body["pulses"]["flux_pulse_qubit"] = {"class": FLAT_TOP, "fields": dict(typed)}
+        p = a.c.post(PLAN, json=body).get_json()["pairs"][0]
+        from quam_state_manager.core.hub_index import close_readers
+        close_readers()
+    if refused is None:
+        assert p["ok"], p.get("refusals")
+    else:
+        assert not p["ok"]
+        assert any(r.startswith("flux_pulse_qubit.flat_length: ") and refused in r
+                   for r in p["refusals"]), p["refusals"]
 
 
 def test_field_kinds_come_from_the_value_type_never_from_its_digits():

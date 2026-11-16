@@ -242,7 +242,7 @@ def test_golden_a_wizard_additions():
     if not shutil.which("node"):
         pytest.skip("node not installed")
     p = subprocess.run(["node", str(HERE / "add_paths_golden_a.cjs")],
-                       capture_output=True, text=True, encoding="utf-8")
+                       capture_output=True, text=True, encoding="utf-8", timeout=300)
     if p.returncode == 2 and "jsdom not installed" in p.stderr:
         pytest.skip("jsdom not installed")
     assert p.returncode == 0, p.stderr

@@ -24,7 +24,7 @@
 {%- macro ui_note(text, id=None) -%}<p class="ui-note"{% if id %} id="{{ id }}"{% endif %}>{{ text }}</p>{%- endmacro -%}
 
 {%- macro ui_check(text, checked=False, disabled=False, id=None, describedby=None) -%}
-<label class="ui-check"><input type="checkbox"{% if id %} id="{{ id }}"{% endif %}{% if describedby %} aria-describedby="{{ describedby }}"{% endif %}{% if checked %} checked{% endif %}{% if disabled %} disabled{% endif %}>{{ text }}</label>
+<label class="ui-check{% if disabled %} ui-check--off{% endif %}"><input type="checkbox"{% if id %} id="{{ id }}"{% endif %}{% if describedby %} aria-describedby="{{ describedby }}"{% endif %}{% if checked %} checked{% endif %}{% if disabled %} disabled{% endif %}>{{ text }}</label>
 {%- endmacro -%}
 
 {#- K9 pill: a human label (D-44). -#}

@@ -23,13 +23,13 @@ def test_chrome_toggle_selfcheck():
     probe = subprocess.run(
         [_node(), "-e", "require('jsdom')"],
         capture_output=True, text=True, cwd=str(_ROOT),
-    )
+     timeout=300)
     if probe.returncode != 0:
         pytest.skip("jsdom not installed for node")
     res = subprocess.run(
         [_node(), str(_SELFCHECK)],
         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT),
-    )
+     timeout=300)
     assert res.returncode == 0, (res.stdout + "\n" + res.stderr)
     assert "ok - ONE press collapses the sidebar AND the top bar" in res.stdout
 

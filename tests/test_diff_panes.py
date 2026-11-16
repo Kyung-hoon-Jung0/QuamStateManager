@@ -22,10 +22,11 @@ _ROOT = Path(__file__).resolve().parent.parent
 
 def test_diff_panes_selfcheck():
     node = shutil.which("node")
-    if node is None or subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT)).returncode != 0:
+    if node is None or subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT),
+                                      timeout=300).returncode != 0:
         pytest.skip("jsdom not installed for node")
     res = subprocess.run([node, str(_ROOT / "tests" / "diff_panes_selfcheck.cjs")],
-                         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
+                         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=300)
     assert res.returncode == 0, res.stdout + res.stderr
     assert "ok - a tab-strip request is rewritten to the current baseline" in res.stdout
     assert "ok - two words are AND (SearchQuery)" in res.stdout

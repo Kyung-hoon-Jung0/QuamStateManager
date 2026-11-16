@@ -137,6 +137,8 @@
         var marked = hasInvalid() || !!document.querySelector('#czg-form [aria-invalid="true"]');
         var head = marked ? 'Inputs changed: fix the marked field, then press Check.'
             : 'Inputs changed: press Check again.';
+        // the status line under the buttons says the same as the note
+        if (!S.busy) say(marked ? 'Fix the marked field, then press Check.' : 'Inputs changed, check again.');
         if (S.changedHead === head && $('czg-alert') && $('czg-alert').firstChild) return;
         alertBox(callout('note', head, 'The result below is for the earlier inputs.'), 'changed');
         S.changedHead = head;
@@ -552,6 +554,19 @@
                                  'data-czg-spect-allowed', c.qubit, ''));
         return box;
     }
+    /* The server's level-range sentence for spectator *q* in *list*, with the
+       plain-words reason the Level field shows: { text, why } or null. */
+    var LEVEL_RANGE_RE = /^Spectator '([^']+)' level .+ strictly below ([0-9.]+)\.$/;
+    function levelRefusal(list, q) {
+        for (var k = 0; k < list.length; k++) {
+            var m = LEVEL_RANGE_RE.exec(list[k]);
+            if (m && m[1] === q) {
+                return { text: list[k], why: 'This level is too large for the line: its size must stay below ' + m[2]
+                    + ' times the unit amplitude. Type a level closer to 0.' };
+            }
+        }
+        return null;
+    }
     function fillSpect() {
         var panel = $('czg-spect');
         var host = clear($('czg-spect-body'));
@@ -601,7 +616,8 @@
                     var grid = el('div', 'ui-grid2');
                     var raw = S.raw[f] || {};
                     grid.appendChild(fieldInput(f, 'length', 'Length', 'ns', 'int', raw.length, null));
-                    grid.appendChild(fieldInput(f, 'level', 'Level', 'V', 'float', raw.level, null));
+                    var levelNode = fieldInput(f, 'level', 'Level', 'V', 'float', raw.level, null);
+                    grid.appendChild(levelNode);
                     row.appendChild(grid);
                     var planned = ((pr && pr.ok && pr.spectators) || []).filter(function (x) { return x.qubit === c.qubit; })[0];
                     if (unitMethod()) row.appendChild(unitCells(f, c, planned, raw));
@@ -613,6 +629,14 @@
                     var mine = refused.filter(function (r) { return r.indexOf('For the spectator ' + c.qubit + ':') === 0
                         || r.indexOf("Spectator '" + c.qubit + "'") === 0; });
                     var own = S.invalid[fieldKey(f, 'length')] || S.invalid[fieldKey(f, 'level')] || S.invalid[fieldKey(f, 'unit')];
+                    // a level out of range marks the Level field itself, in plain words
+                    var levelWhy = levelRefusal(mine, c.qubit);
+                    var levelIn = levelNode.querySelector ? levelNode.querySelector('input') : null;
+                    if (levelWhy && !own && levelIn) {
+                        showFieldError(levelIn, levelWhy.why);
+                        mine = mine.filter(function (r) { return r !== levelWhy.text; });
+                        refused = refused.filter(function (r) { return r !== levelWhy.text; });
+                    }
                     if (mine.length && !own) {
                         var w = el('p', 'ui-field-error', mine.join(' '));
                         w.setAttribute('role', 'alert');
@@ -674,6 +698,8 @@
         var num = kind === 'float' || kind === 'int';
         var id = ('czg-f-' + field + '-' + name).replace(/[^A-Za-z0-9_-]/g, '_');
         var typed = (S.raw[field] || {})[name];
+        // a field holding text that is not used claims no source for it
+        if (typed !== undefined && (S.invalid || {})[fieldKey(field, name)]) src = null;
         var f = U.field({ label: label, inline: !!opts.inline, source: src ? { text: src, tone: SOURCE_TONE[src] || 'neutral' } : null,
                           control: { part: 'input', id: id, num: num, unit: unit || null, block: true,
                                      value: typed !== undefined ? typed : shown(value) } });
@@ -1036,6 +1062,13 @@
             w.setAttribute('role', 'alert');
             w.setAttribute('data-czg-step-problem', '');
             row.appendChild(w);
+            // a wait the server refused marks its length field, tied to the sentence
+            var waitIn = step.kind === 'wait' ? row.querySelector('[data-czg-step-length]') : null;
+            if (waitIn) {
+                w.id = 'czg-step-problem-' + where + '-' + k;
+                waitIn.setAttribute('aria-invalid', 'true');
+                waitIn.setAttribute('aria-describedby', w.id);
+            }
         }
         return row;
     }
@@ -1096,6 +1129,8 @@
         if (!st) return;
         newEdited();
         st.length = /^\s*\d+\s*$/.test(t.value) ? parseInt(t.value, 10) : t.value;
+        t.removeAttribute('aria-invalid');
+        t.removeAttribute('aria-describedby');
         // Keep the field and command nodes alive across blur and the following click.
         clearNewMessages();
     }
@@ -1201,7 +1236,8 @@
         slotNames().forEach(function (n) {
             // a line the pair does not have is neither ticked nor offered
             if (!lineOpen(n)) ns.slots[n] = false;
-            var l = U.check(slotWord(n), !!ns.slots[n], ns.busy || !lineOpen(n));
+            var offered = lineOpen(n);
+            var l = U.check(slotWord(n) + (offered ? '' : ' (not offered)'), !!ns.slots[n], ns.busy || !offered);
             var i = l.querySelector('input');
             i.checked = !!ns.slots[n];
             i.setAttribute('data-czg-new-slot', n);
@@ -1953,7 +1989,8 @@
             + (unv.length > 3 ? ' And ' + (unv.length - 3) + ' more.' : '');
         if (!ok.length) {
             alertBox(banner('danger', many ? 'None of the ' + pairs.length + ' pairs can be created yet' : 'Cannot be created yet',
-                no.map(function (x) { return (many ? x.pair + ': ' : '') + reason(x); }).join(' ') + ' Change the inputs and check again.'), 'verdict');
+                no.map(function (x) { return (many ? x.pair + ': ' : '') + reason(x); }).join(' ')
+                + nextStep(no)), 'verdict');
         } else if (no.length) {
             alertBox(banner('danger', no.length + ' of ' + pairs.length + ' cannot be created: ' + no.map(function (x) { return x.pair; }).join(', '),
                 no.map(function (x) { return x.pair + ': ' + reason(x); }).join(' ') + ' The other ' + ok.length
@@ -1998,6 +2035,17 @@
         if (!S || S.nameTouched) return;
         S.nameTouched = true;
         if (S.plan) renderPlan();
+    }
+    /* The closing line of a refused check: when the chip (or a class file it loads) did not
+       load in the lab's code, the gate's inputs are not what to change. */
+    var CHIP_DID_NOT_LOAD = /does not load or build its config with the lab's code/;
+    function nextStep(refused) {
+        var chip = refused.length && refused.every(function (x) {
+            var v = x.verdict || {};
+            return CHIP_DID_NOT_LOAD.test(String(v.headline || '') + ' ' + String(v.reason || ''));
+        });
+        return chip ? ' The gate inputs are not the cause: fix what the lab\'s error names (a class file or the chip), '
+            + 'then press Check again.' : ' Change the inputs and check again.';
     }
     function check() {
         if (!S || S.busy) return Promise.resolve();
@@ -2774,6 +2822,8 @@
             delete S.entered[f][n];
             S.invalid[key] = r.why;
             showFieldError(t, r.why);
+            var srcBadge = t.closest('.ui-field') && t.closest('.ui-field').querySelector('.ui-field-head .ui-badge');
+            if (srcBadge) srcBadge.parentNode.removeChild(srcBadge);
             say(r.why);
         }
         inputsChanged();

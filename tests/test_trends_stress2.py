@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_trends_stress2_client_half():
     if shutil.which("node") is None:
         pytest.skip("node not available")
-    if subprocess.run(["node", "-e", "require('jsdom')"], cwd=ROOT, capture_output=True).returncode:
+    if subprocess.run(["node", "-e", "require('jsdom')"], cwd=ROOT, capture_output=True, timeout=300).returncode:
         pytest.skip("jsdom not installed")
     r = subprocess.run(["node", "tests/trends_stress2_selfcheck.cjs"], cwd=ROOT, capture_output=True,
                        text=True, encoding="utf-8", timeout=120)

@@ -77,10 +77,11 @@ def test_the_manual_reports_the_catalogue_state_and_the_window_is_resizable():
 
 def test_config_manual_selfcheck():
     node = shutil.which("node")
-    if subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT)).returncode != 0:
+    if subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT),
+                      timeout=300).returncode != 0:
         pytest.skip("jsdom not installed for node")
     res = subprocess.run([node, str(_ROOT / "tests" / "config_manual_selfcheck.cjs")],
-                         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
+                         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=300)
     assert res.returncode == 0, res.stdout + "\n" + res.stderr
     assert "ok - an undescribed key says so" in res.stdout
     # QA JT-18: the hover-F1 pins ran (the chain ends in them; a silent early
@@ -175,9 +176,10 @@ def test_a_failed_probe_is_remembered_not_relaunched(tmp_path, monkeypatch):
 def test_tree_help_hover_selfcheck():
     """docs/141 4w: the tree row's ? is a hover tool and sits right of the row's action group."""
     node = shutil.which("node")
-    if subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT)).returncode != 0:
+    if subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT),
+                      timeout=300).returncode != 0:
         pytest.skip("jsdom not installed for node")
     res = subprocess.run([node, str(_ROOT / "tests" / "tree_help_hover_selfcheck.cjs")],
-                         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
+                         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=300)
     assert res.returncode == 0, res.stdout + res.stderr
     assert "ok - the ? FOLLOWS the action group in DOM order" in res.stdout

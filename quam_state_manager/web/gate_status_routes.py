@@ -30,7 +30,7 @@ from flask import current_app, g, jsonify, make_response, render_template, reque
 
 from quam_state_manager.core import cz_gate_build as cgb
 from quam_state_manager.core import cz_gate_create, gate_check, gate_check_log, gate_parts, gate_status
-from quam_state_manager.core import quam_config_save
+from quam_state_manager.core import gate_preview, quam_config_save
 from quam_state_manager.web import routes as R
 from quam_state_manager.web.request_body import json_object, json_text
 from quam_state_manager.web.routes import bp
@@ -443,7 +443,8 @@ def api_cz_gate_make_active():
         python_path = R.config_generator.get_selected_env(R.current_app.instance_path)
     except Exception:  # noqa: BLE001
         python_path = None
-    check = gate_check.check_gates(store, python_path, [(pair, gate)])
+    check = gate_check.check_gates(store, python_path, [(pair, gate)],
+                                   previews=_chip_previews(store, pair, gate))
     entry = gate_check.gate_result(check, pair, gate)
     why = _cannot_run(entry)
     if why or (check.get("checked") and entry is not None and not entry.get("ran")):
@@ -566,7 +567,8 @@ def api_cz_gate_recheck():
         python_path = R.config_generator.get_selected_env(current_app.instance_path)
     except Exception:  # noqa: BLE001
         python_path = None
-    check = gate_check.check_gates(store, python_path, [(pair, gate)])
+    check = gate_check.check_gates(store, python_path, [(pair, gate)],
+                                   previews=_chip_previews(store, pair, gate))
     entry = gate_check.gate_result(check, pair, gate)
     allowed, _state, reason = cz_gate_create.may_create(
         check, entry, gate_class=cls, layout="known", sm_classes=True)
@@ -607,6 +609,17 @@ def api_cz_gate_recheck():
         return _line_response(store, ctx, pair, gate, body, note)
     return jsonify(ok=True, path=path, files=new, tray_html=R._tray_html(),
                    record_error=None if not note else rec.get("error"))
+
+
+def _chip_previews(store, pair: str, gate: str) -> dict:
+    """The preview of a gate already on the chip: SM's drawing of each pulse
+    the lab's code played, read from the chip (``gate_preview``), so a gate of
+    a class SM made is compared like a planned one. Why a played pulse was not
+    drawn travels under ``gate_check.SKIPPED`` so the check names it."""
+    def drawn(found):
+        out, skipped = gate_preview.chip_previews(store, found)
+        return {**out, gate_check.SKIPPED: skipped}
+    return {(pair, gate): drawn}
 
 
 def delete_gate_together(ctx, modifier, body: dict):

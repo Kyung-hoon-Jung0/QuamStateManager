@@ -188,10 +188,10 @@ def test_the_bar_scopes_compact_nav_spacing_to_itself():
 def test_topbar_compact_selfcheck():
     node = shutil.which("node")
     if node is None or subprocess.run([node, "-e", "require('jsdom')"], capture_output=True,
-                                      cwd=str(_ROOT)).returncode != 0:
+                                      cwd=str(_ROOT), timeout=300).returncode != 0:
         pytest.skip("jsdom not installed for node")
     res = subprocess.run([node, str(_ROOT / "tests" / "topbar_compact_selfcheck.cjs")],
-                         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
+                         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=300)
     assert res.returncode == 0, res.stdout + res.stderr
     assert "ok - toggleSidebar: collapsing marks <html> too" in res.stdout
     assert "ok - 1366x768, no stored choice: the band starts folded" in res.stdout

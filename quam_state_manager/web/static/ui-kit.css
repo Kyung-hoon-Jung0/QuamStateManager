@@ -447,6 +447,8 @@
 .ui-check > input:checked::after, .ui-check-box:checked::after { opacity: 1; }
 .ui-check > input:indeterminate::after, .ui-check-box:indeterminate::after { left: 22%; top: 44%; width: 56%; height: 0; border-width: var(--ui-bw-check) 0 0; transform: none; opacity: 1; }
 .ui-check > input:disabled, .ui-check-box:disabled { opacity: .5; cursor: default; }
+/* a disabled box's own label reads as disabled too */
+.ui-check--off { color: var(--ui-text-2); cursor: default; }
 
 /* K9 pill (D-44): a human label (a state, a metric name) -- UI font, round
    ends. A machine name (a key) is a .ui-chip; a long path is a .ui-path. */

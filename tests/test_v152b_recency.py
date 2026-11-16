@@ -21,5 +21,6 @@ def test_sibling_and_container_times(tmp_path):
 
 def test_unknown_age_has_no_freshness_claim():
     root = Path(__file__).resolve().parents[1]
-    result = subprocess.run(["node", str(root / "tests/v152b_recency.cjs")], capture_output=True, text=True)
+    result = subprocess.run(["node", str(root / "tests/v152b_recency.cjs")], capture_output=True, text=True,
+                            timeout=300)
     assert result.returncode == 0, result.stdout + result.stderr

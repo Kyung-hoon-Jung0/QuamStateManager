@@ -16,10 +16,11 @@ def _run(name: str, must: str):
     node = shutil.which("node")
     if node is None:
         pytest.skip("node not available")
-    if subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT)).returncode != 0:
+    if subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT),
+                      timeout=300).returncode != 0:
         pytest.skip("jsdom not installed for node")
     res = subprocess.run([node, str(_ROOT / "tests" / name)], capture_output=True, text=True,
-                         encoding="utf-8", cwd=str(_ROOT))
+                         encoding="utf-8", cwd=str(_ROOT), timeout=300)
     assert res.returncode == 0, res.stdout + "\n" + res.stderr
     assert must in res.stdout
 

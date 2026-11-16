@@ -157,10 +157,11 @@ def test_dataset_apply_to_chip_and_auto_sync_share_the_trigger(live):
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
 def test_live_patch_selfcheck():
     node = shutil.which("node")
-    if subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT)).returncode != 0:
+    if subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT),
+                      timeout=300).returncode != 0:
         pytest.skip("jsdom not installed for node")
     res = subprocess.run([node, str(_ROOT / "tests" / "live_patch_selfcheck.cjs")],
-                         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
+                         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=300)
     assert res.returncode == 0, res.stdout + "\n" + res.stderr
     assert "ok - non-structural sync patches in place" in res.stdout
 

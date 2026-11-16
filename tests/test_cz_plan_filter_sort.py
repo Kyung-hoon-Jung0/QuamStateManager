@@ -11,7 +11,7 @@ from tests.test_cz_plan_page import _client
 def test_the_table_follows_the_map_picker_and_sorts(tmp_path):
     root = Path(__file__).resolve().parents[1]
     probe = subprocess.run(["node", "-e", "require('jsdom')"], cwd=root, env=os.environ.copy(),
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, timeout=300)
     if probe.returncode:
         pytest.skip("jsdom not installed")
     html = _client(tmp_path).get("/cz-plan", headers={"HX-Request": "true"}).get_data(as_text=True)

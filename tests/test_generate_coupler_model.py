@@ -124,7 +124,7 @@ def test_regen_carry_and_edited_model_protection(indirect):
 def test_populate_coupler_model_selfcheck():
     env = dict(os.environ, COUPLER_MODEL_FIELDS=json.dumps(COUPLER_MODEL_FIELDS))
     result = subprocess.run(["node", "tests/generate_coupler_model_selfcheck.cjs"],
-                            capture_output=True, text=True, encoding="utf-8", env=env)
+                            capture_output=True, text=True, encoding="utf-8", env=env, timeout=300)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "all checks passed" in result.stdout
 

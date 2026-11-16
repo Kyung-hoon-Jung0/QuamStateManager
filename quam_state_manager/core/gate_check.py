@@ -98,6 +98,9 @@ from quam_state_manager.core.diagnostics import (
 #: the key of a gate's preview dict that lists the operations the gate must
 #: play (its spectators): ``{REQUIRED: [(element, operation)]}``
 REQUIRED = "required"
+#: the key of a drawn preview (a gate already on the chip) that lists why SM
+#: drew no preview for a played operation: ``{SKIPPED: ["<op> on <el>: why"]}``
+SKIPPED = "skipped"
 
 CHECKS = ("load_config", "ops", "length", "preview", "timeline", "range", "spectator_scale")
 #: SM's own check of a gate's spectator rows; it reads the chip, never the lab's answer
@@ -301,7 +304,8 @@ def evaluate(gates: Iterable, ran: dict, previews: dict | None = None,
 
     *gates*: gate keys (see :func:`gate_key`). *previews*: ``{gate key:
     {(element, operation): samples list or constant}}``, keyed through the
-    same :func:`gate_key`. *merged*: the chip, to read each flux line's
+    same :func:`gate_key`; a value may instead be a function of the gate's
+    played operations (the lab's ``found`` entries) that returns that dict. *merged*: the chip, to read each flux line's
     run-time DC level (:func:`flux_dc.element_dc_levels`); None keeps the
     config's channel offset alone."""
     keys = [gate_key(g) for g in gates]
@@ -413,9 +417,16 @@ def _one_gate_lab(key, data, after, after_err, preview, merged=None, chip=None):
                                    no_cfg)
         found = [o for o in ops if isinstance(o, dict) and o.get("found")]
         checks["length"] = _guard(_length_check, found, no_cfg, g.get("script"), chip)
+        if callable(preview):
+            # a gate already on the chip: drawn from what the lab's code played
+            try:
+                preview = preview(found) or {}
+            except Exception:  # noqa: BLE001 (an undrawn preview is a skipped comparison)
+                preview = {}
         required = [tuple(x) for x in (preview.get(REQUIRED) or ())]
-        preview = {k: v for k, v in preview.items() if k != REQUIRED}
-        checks["preview"] = _guard(_preview_check, found, preview, no_cfg)
+        undrawn = preview.get(SKIPPED)
+        preview = {k: v for k, v in preview.items() if k not in (REQUIRED, SKIPPED)}
+        checks["preview"] = _guard(_preview_check, found, preview, no_cfg, undrawn)
         if required and not no_cfg:
             played = {(o.get("element"), o.get("operation")) for o in ops if isinstance(o, dict)}
             lost = [f"{op} on {el}" for el, op in required if (el, op) not in played]
@@ -595,10 +606,17 @@ def _iq_note(infos) -> str:
     return _IQ_NOTE if any(i.get("iq") for i in infos) else ""
 
 
-def _preview_check(found: list, preview: dict, no_config: bool) -> dict:
+def _preview_check(found: list, preview: dict, no_config: bool,
+                   undrawn: list | None = None) -> dict:
+    """*undrawn*: for a preview SM drew from the chip, why each played pulse
+    it could not draw was skipped (None for a planned preview)."""
     if no_config:
         return _r("skipped", "Not checked: the config was not built.")
+    why_undrawn = (" " + _sentences([str(x).rstrip(".") for x in undrawn])) if undrawn else ""
     if not preview:
+        if undrawn is not None:
+            return _r("skipped", "Not compared: SM could not draw any pulse the gate plays."
+                      + why_undrawn)
         return _r("skipped", "No preview was given to compare.")
     bad, partial, skipped, compared, used = [], [], [], 0, []
     played = {(i["element"], i["operation"]) for i in found}
@@ -646,7 +664,7 @@ def _preview_check(found: list, preview: dict, no_config: bool) -> dict:
     extra = [f"{o} on {e}" for e, o in sorted(preview) if (e, o) not in played]
     cover = ""
     if no_preview:
-        cover += " No preview for: " + ", ".join(no_preview) + "."
+        cover += " No preview for: " + ", ".join(no_preview) + "." + why_undrawn
     if extra:
         cover += " Preview given for operations the gate does not play: " + ", ".join(extra) + "."
     if bad:

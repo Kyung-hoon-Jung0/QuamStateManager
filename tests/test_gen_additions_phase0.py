@@ -22,7 +22,7 @@ def _run(name: str) -> None:
     if shutil.which("node") is None:
         pytest.skip("node not on PATH")
     r = subprocess.run(["node", str(_ROOT / "tests" / name)], capture_output=True, text=True,
-                       encoding="utf-8", cwd=str(_ROOT))
+                       encoding="utf-8", cwd=str(_ROOT), timeout=300)
     if r.returncode == 2 and "jsdom not installed" in r.stderr:
         pytest.skip("jsdom not installed (run `npm install jsdom`)")
     assert r.returncode == 0, r.stdout + r.stderr
@@ -127,7 +127,7 @@ def test_z2_the_wizard_and_the_rebuild_rename_alike(tmp_path):
     p = tmp_path / "cases.json"
     p.write_text(json.dumps(_CASES), encoding="utf-8")
     r = subprocess.run(["node", str(_ROOT / "tests" / "gen_additions_rename_selfcheck.cjs"),
-                        "parity", str(p)], capture_output=True, text=True, encoding="utf-8")
+                        "parity", str(p)], capture_output=True, text=True, encoding="utf-8", timeout=300)
     if r.returncode == 2 and "jsdom not installed" in r.stderr:
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stderr

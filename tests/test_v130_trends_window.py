@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def _node_with_jsdom():
     if shutil.which("node") is None:
         pytest.skip("node not available")
-    r = subprocess.run(["node", "-e", "require('jsdom')"], cwd=ROOT, capture_output=True)
+    r = subprocess.run(["node", "-e", "require('jsdom')"], cwd=ROOT, capture_output=True, timeout=300)
     if r.returncode:
         pytest.skip("jsdom not installed")
 
@@ -26,6 +26,6 @@ def _node_with_jsdom():
 def test_trends_charts_share_one_window():
     _node_with_jsdom()
     r = subprocess.run(["node", "tests/trends_window_selfcheck.cjs"], cwd=ROOT,
-                       capture_output=True, text=True, encoding="utf-8")
+                       capture_output=True, text=True, encoding="utf-8", timeout=300)
     assert r.returncode == 0, r.stdout + r.stderr
     assert re.search(r"ok \(\d+ assertions\)", r.stdout), r.stdout

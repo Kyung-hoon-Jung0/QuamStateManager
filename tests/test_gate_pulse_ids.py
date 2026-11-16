@@ -108,7 +108,8 @@ const attrs = {'data-action': 'fill_gate_ids', 'data-edits': process.argv[1]};
 window.applyDiagFix({getAttribute: k => attrs[k], textContent: 'Fill ids', disabled: false});
 console.log(JSON.stringify(requests));
 '''
-    result = subprocess.run(["node", "-e", script, json.dumps(edits)], capture_output=True, text=True, check=True)
+    result = subprocess.run(["node", "-e", script, json.dumps(edits)], capture_output=True, text=True, check=True,
+                            timeout=300)
     return json.loads(result.stdout)
 
 

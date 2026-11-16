@@ -250,6 +250,11 @@ rows (module docstring, gate_check.py:22-27). Three facts:
   load (`_one_gate`, gate_check.py:370-374; pins `test_the_own_check_is_judged_when_the_lab_code_did_not_run`,
   `test_the_own_check_is_judged_when_the_chip_as_it_is_does_not_load`,
   `test_check_gates_without_an_environment_still_judges_the_write`). A plain-words label exists for it (gate_check.py:233).
+- **Make active and Re-check compare previews for every gate on the chip**, a known-class gate as well as a slot gate.
+  The preview is SM's own drawing of each pulse the lab's code played, read from the chip (`core/gate_preview.py`
+  `chip_previews`); a pulse SM cannot draw is named with its reason in the preview message (`gate_check.SKIPPED`). A
+  differing pulse now refuses a known-class gate too (stricter than before); one whose pulses match is still made
+  active (pins in `tests/test_make_active_preview.py`).
 
 ## 7. Known limits (as the code states them)
 

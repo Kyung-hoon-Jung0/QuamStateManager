@@ -267,7 +267,7 @@ def test_replot_renderer_selfcheck():
     import subprocess
     from pathlib import Path
     proc = subprocess.run(["node", str(Path(__file__).with_name("replot_artists_selfcheck.cjs"))],
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, timeout=300)
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
 

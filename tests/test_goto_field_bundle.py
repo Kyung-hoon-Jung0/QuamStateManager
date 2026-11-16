@@ -15,7 +15,7 @@ def _have_jsdom():
     node = shutil.which("node")
     if not node:
         return False
-    r = subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=HERE)
+    r = subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=HERE, timeout=300)
     return r.returncode == 0
 
 

@@ -126,7 +126,10 @@ const form={dataset:{pair:'q1-q2',createExtras:process.argv[2]},elements:{namedI
     querySelectorAll:()=>inputs,querySelector:()=>({})};
 stageCoupler(form).then(()=>console.log(JSON.stringify(posts)));
 """
-    result = subprocess.run(['node','-e',script,json.dumps(MODEL),'1' if create_extras else '0',json.dumps(COUPLER_MODEL_FIELDS)],capture_output=True,text=True,check=True)
+    result = subprocess.run(['node','-e',script,json.dumps(MODEL),
+                             '1' if create_extras else '0',json.dumps(COUPLER_MODEL_FIELDS)],
+                            capture_output=True,text=True,check=True,
+                            timeout=300)
     return json.loads(result.stdout)
 
 

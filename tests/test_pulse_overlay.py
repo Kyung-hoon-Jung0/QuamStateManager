@@ -121,10 +121,11 @@ def test_view_bar_markup_present(client):
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
 def test_pulse_overlay_selfcheck():
-    if subprocess.run(["node", "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT)).returncode != 0:
+    if subprocess.run(["node", "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT),
+                      timeout=300).returncode != 0:
         pytest.skip("jsdom not installed for node")
     res = subprocess.run(["node", str(_ROOT / "tests" / "pulse_overlay_selfcheck.cjs")],
-                         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
+                         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=300)
     assert res.returncode == 0, res.stdout + "\n" + res.stderr
     assert "ok -" in res.stdout and "FAIL" not in res.stdout + res.stderr
 

@@ -199,7 +199,7 @@ def test_stale_route_reports_progress_and_retries(irb_client, monkeypatch):
 
 
 def test_irb_client_selfcheck():
-    result = subprocess.run(["node", "tests/trends_irb_selfcheck.cjs"], capture_output=True, text=True)
+    result = subprocess.run(["node", "tests/trends_irb_selfcheck.cjs"], capture_output=True, text=True, timeout=300)
     assert result.returncode == 0, result.stdout + result.stderr
 
 

@@ -99,7 +99,10 @@ _DECLARED = {
         "flex": "1 1 100%", "min-width": "0", "font-size": "var(--ui-fs-xs)", "overflow-wrap": "anywhere"},
     (".ui-menu--block > .ui-menu-list", None): {"max-width": "100%"},
     (".ui-segmented.ui-segmented", None): {"row-gap": "var(--ui-gap-1)"},
-    (".czp-map-view", None): {"display": "flex", "flex-wrap": "wrap", "align-items": "flex-start", "gap": "var(--ui-gap-3)"},
+    # the capped height scrolls the map vertically only; the row still wraps
+    (".czp-map-view", None): {"max-height": "var(--ui-czp-map-max-h)", "overflow-y": "auto",
+                              "display": "flex", "flex-wrap": "wrap", "align-items": "flex-start",
+                              "gap": "var(--ui-gap-3)"},
     (".czp-map-view > .czp-map", None): {"flex": "9999 1 var(--ui-czp-map-min-w)", "min-width": "0"},
     (".gate-status-row", None): {"flex-wrap": "wrap"},
     (".gate-status-actions", None): {

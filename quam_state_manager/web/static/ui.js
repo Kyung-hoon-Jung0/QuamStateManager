@@ -40,7 +40,7 @@
     function count(text) { return el("span", "ui-count", text); }
     function note(text, id) { var n = el("p", "ui-note", text); if (id) n.id = id; return n; }
     function check(text, checked, disabled, id, describedby) {
-        var l = el("label", "ui-check");
+        var l = el("label", disabled ? "ui-check ui-check--off" : "ui-check");
         var i = document.createElement("input");
         i.type = "checkbox";
         if (id) i.id = id;

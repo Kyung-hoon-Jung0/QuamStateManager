@@ -247,7 +247,7 @@ def test_entity_grid_selfcheck_passes():
     """
     r = subprocess.run(
         ["node", str(_ROOT / "tests" / "entity_grid_selfcheck.cjs")],
-        capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
+        capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=300)
     if r.returncode == 2:
         pytest.skip("jsdom not installed (run `npm install jsdom`)")
     assert r.returncode == 0, (r.stdout + r.stderr)

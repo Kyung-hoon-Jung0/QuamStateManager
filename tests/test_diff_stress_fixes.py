@@ -133,10 +133,11 @@ class TestReadableLayout:
 
 def test_diff_xscroll_selfcheck():
     node = shutil.which("node")
-    if node is None or subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT)).returncode != 0:
+    if node is None or subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT),
+                                      timeout=300).returncode != 0:
         pytest.skip("jsdom not installed for node")
     res = subprocess.run([node, str(_ROOT / "tests" / "diff_xscroll_selfcheck.cjs")],
-                         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
+                         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=300)
     assert res.returncode == 0, res.stdout + res.stderr
     assert "ok - the hint names the panes out of view" in res.stdout
     assert "ok - but a pane whose header is cut is named as partly out of view" in res.stdout
