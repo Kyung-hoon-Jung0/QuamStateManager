@@ -101,7 +101,7 @@ def test_the_manifest_names_every_lazy_file_once_and_the_page_map_covers_the_rou
     # every page token base.html maps (a dropped token used to pass every pin -- 4l-review)
     assert set(man["pages"]) == {
         "bulk", "table", "pulses", "generate", "regenerate", "instrument", "topology", "trends", "trend",
-        "qubits", "pairs", "resonators", "flux", "couplers", "qdac",
+        "qubits", "pairs", "qubit_detail", "pair_detail", "resonators", "flux", "couplers", "qdac",
         "datasets", "dataset_detail", "dataset_compare", "collections", "fit-audit",
         "scheduler", "autofit", "compare_hub", "diff", "journal", "opx_monitor", "agent_setup", "zline", "czplan",
         "ui_kit", "explorer", "port_play", "pulse_class",  # port_play: the standalone Port play page; explorer: the CodeMirror bundle (D-21); docs/308: the UI kit sample page (a full page load from /help)
@@ -121,7 +121,7 @@ def test_the_manifest_names_every_lazy_file_once_and_the_page_map_covers_the_rou
     # every PATHS regex the loader carries (a removed line used to pass every pin -- 4l-review)
     for rx in ('/^\\/bulk(', '/^\\/table(', '/^\\/pulses?(', '/^\\/(generate|regenerate)(', '/^\\/instrument(',
                '/^\\/topology(', '/^\\/chip-status(', '/^\\/wiring(', '/^\\/trends?(',
-               '/^\\/(qubits|pairs|resonators|flux|couplers|qdac)(', '/^\\/(datasets?|collections|fit-audit)(',
+               '/^\\/(qubits|pairs|resonators|flux|couplers|qdac)(', '/^\/(qubit|pair)\//', '/^\\/(datasets?|collections|fit-audit)(',
                '/^\\/scheduler(', '/^\\/autofit(', '/^\\/(compare-hub|compare|diff)(',
                # docs/173 partial-reached bundle pages (dry-run review round 1: the Agent home's
                # "Setup" link swapped a shell that stayed on "Loading..." -- no entry, no script)

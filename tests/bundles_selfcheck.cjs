@@ -58,7 +58,8 @@ ok(fp("/pulses?rows=1") === "pulses,components,czgate" && fp("/cz-plan") === "cz
 ok(fp("/topology") === "chipstatus,components" && fp("/wiring") === "chipstatus,components", "/topology (+ its /wiring alias) -> chip status + components");
 ok(fp("/qubits") === "components,czgate" && fp("/pairs") === "components,czgate" && fp("/resonators") === "components" && fp("/flux") === "components"
    && fp("/couplers") === "components" && fp("/qdac") === "components", "component pages");
-ok(fp("/qubit/q1") === "" && fp("/pair/q1-2") === "", "the inspector partials need no bundle (4l-review audit)");
+ok(fp("/qubit/q1") === "components,czgate" && fp("/pair/q1-2") === "components,czgate" && fp("/pair/q1-2/edit") === "components,czgate",
+   "the detail pages carry gate rows and kit questions: components + the gate bundle");
 ok(fp("/table") === "grid" && fp("/chip-status") === "chipstatus,components" && fp("/trends") === "chipstatus,datasets" && fp("/trend?x=1") === "chipstatus,datasets",
    "the other route spellings of the same pages");
 ok(fp("/collections") === "datasets" && fp("/fit-audit") === "datasets" && fp("/compare") === "compare", "collections / fit-audit / compare");
