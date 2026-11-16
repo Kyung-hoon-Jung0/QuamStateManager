@@ -9840,6 +9840,9 @@ def explorer_model():
         # the same text json.dumps of the whole dict makes (default separators)
         body = ('{"ok": true, "state": ' + _state_json_text(store)
                 + ', "wiring": ' + json.dumps(store.wiring) + '}')
+        if "NaN" in body or "Infinity" in body:      # a bare token is not JSON: null in its place
+            from quam_state_manager.web.app import finite_json_dumps
+            body = finite_json_dumps({"ok": True, "state": store.state, "wiring": store.wiring})
     return current_app.response_class(body, mimetype="application/json",
                                       headers={"Cache-Control": "no-store"})
 
@@ -11143,7 +11146,8 @@ def bulk_cells():
     payload = {"ok": True, "chip": have_tok or have_chip, "grid": which,
                "cells": cells, "unknown": unknown,
                "seq": getattr(store, "mutation_seq", None)}
-    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    from quam_state_manager.web.app import finite_json_dumps
+    body = finite_json_dumps(payload, ensure_ascii=False).encode("utf-8")
     accepts_gzip = "gzip" in request.headers.get("Accept-Encoding", "")
     if accepts_gzip:
         body = gzip.compress(body, compresslevel=5)
@@ -11262,8 +11266,9 @@ def _all_values_body(store, ctx: dict):
                     continue
                 if ann:
                     row.append({"ty": {"t": ann["type"], "s": ann["source"]}})
-    body = json.dumps({"rows": rows, "summary": summary},
-                      separators=(",", ":")).encode("utf-8")
+    from quam_state_manager.web.app import finite_json_dumps
+    body = finite_json_dumps({"rows": rows, "summary": summary},
+                             separators=(",", ":")).encode("utf-8")
     # L6 = default sweet spot (~6.5x on the shared-prefix paths)
     gz = gzip.compress(body, compresslevel=6)
     return _ramcache.Keyed((etag, gz), etag)

@@ -289,8 +289,8 @@ const q = (w, sel) => w.document.querySelector(sel);
     clean(w, tag);
   }
 
-  // F: focus inside a zone a refresh replaces goes to the same control, else to the first
-  // enabled button, never to the body
+  // F: focus inside a zone a refresh replaces goes to the same control, else (the row is gone) to the next
+  // row's first enabled button, never to the body
   for (const [kind, gate, ans, twin] of [['twin', 'cz_two', FIX.full, true], ['twin gone', 'cz_sq', FIX.list, false]]) {
     const w = await page();
     const tag = 'F ' + kind;
@@ -302,7 +302,7 @@ const q = (w, sel) => w.document.querySelector(sel);
     const a = w.document.activeElement;
     ok(a && a !== w.document.body && !!a.closest('.gate-status-list'), tag + ': focus is in the new zone, not on the body');
     if (twin) ok(a === q(w, btn(gate, 'gate-status-delete')), tag + ': on the same control of the same gate');
-    else ok(a === w.document.querySelector('.gate-status-list button:not([disabled])'), tag + ': on the first enabled button');
+    else ok(a === w.document.querySelector('.gate-status[data-gate="cz_two"] button:not([disabled])'), tag + ': on the first enabled button of the next row');
   }
   {
     const w = await page();
