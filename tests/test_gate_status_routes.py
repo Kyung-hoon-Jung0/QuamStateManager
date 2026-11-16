@@ -944,3 +944,47 @@ def test_a_gate_deleted_from_its_pulse_detail_leaves_no_live_looking_detail(rig,
                        capture_output=True, text=True, timeout=120)
     assert p.returncode == 0, p.stdout + p.stderr
     assert "ALL OK" in p.stdout
+
+
+def test_the_pulse_detail_gate_line_follows_an_apply(rig, tmp_path):
+    """Behaviour under the bundled htmx (tests/gate_line_refresh_selfcheck.cjs) with the real
+    server answers: the status line of an open pulse detail of a gate that is only in the
+    working copy reads itself again after an Apply and says "on the chip"; its own press
+    answer, a press out and an open delete offer hold the read; the pulse fields stay."""
+    import html
+    import os
+    import re
+    import shutil
+    import subprocess
+    from pathlib import Path
+    node = shutil.which("node")
+    if not node or not os.environ.get("NODE_PATH"):
+        pytest.skip("node + jsdom (NODE_PATH) needed")
+    m = _ctx(rig)["modifier"]
+    _, plan = add_gate(_merged(rig), name="cz_new")
+    for path, value in plan["creates"]:
+        m.create_subtree(path, value)
+
+    def ans(r):
+        assert r.status_code == 200, r.data[:400]
+        return {"body": r.get_data(as_text=True), "headers": dict(r.headers)}
+    rows = rig.get("/pulse/cz-gate/list?pair=q1-q2", headers=HX).get_data(as_text=True)
+    row = rows.split('data-gate="cz_new"', 1)[1]
+    url = html.unescape(re.search(r'hx-get="(/pulse/detail\?[^"]+)"', row).group(1))
+    detail = ans(rig.get(url, headers=HX))
+    assert 'data-gate="cz_new"' in detail["body"] and "only in the working copy" in detail["body"]
+    before = ans(rig.get("/pulse/cz-gate/status?pair=q1-q2&gate=cz_new", headers=HX))
+    offer = ans(rig.get("/pulse/cz-gate/delete-offer?pair=q1-q2&gate=cz_new", headers=HX))
+    applied = rig.post("/state/apply-to-live", headers=HX,
+                       data={"seen_changes": str(len(_ctx(rig)["store"].change_log))})
+    assert applied.status_code == 200, applied.data[:400]
+    after = ans(rig.get("/pulse/cz-gate/status?pair=q1-q2&gate=cz_new", headers=HX))
+    assert "on the chip" in after["body"] and "only in the working copy" not in after["body"]
+    fixture = {"pair": "q1-q2", "gate": "cz_new", "detail": detail, "before": before,
+               "after": after, "offer": offer}
+    path = tmp_path / "gate_line_refresh.json"
+    path.write_text(json.dumps(fixture), encoding="utf-8")
+    p = subprocess.run([node, str(Path(__file__).parent / "gate_line_refresh_selfcheck.cjs"), str(path)],
+                       capture_output=True, text=True, timeout=120)
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "ALL OK" in p.stdout

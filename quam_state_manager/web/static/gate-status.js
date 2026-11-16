@@ -28,6 +28,7 @@
         if (slot) slot.innerHTML = '';
         else offer.remove();
         releaseRefresh(zone);
+        releaseLine(row);
         var del = row ? row.querySelector('.gate-status-delete') : null;
         if (del && del.disabled) {
             /* the Cancel press itself holds the other buttons of the zone off until its
@@ -118,17 +119,23 @@
         var zslot = zone.querySelector('[data-gate-zone-slot]');
         if (zslot) Array.prototype.forEach.call(zslot.children, function (n) { if (fresh(n)) out.zone.push(n); });
         Array.prototype.forEach.call(zone.querySelectorAll('.gate-status'), function (row) {
-            var nodes = [];
-            Array.prototype.forEach.call(row.children, function (n) {
-                if (n.classList.contains('gate-status-slot')) {
-                    Array.prototype.forEach.call(n.children, function (m) {
-                        if (!m.classList.contains('gate-delete-offer') && fresh(m)) nodes.push(m);
-                    });
-                } else if (n.hasAttribute(MARK) && fresh(n)) nodes.push(n);
-            });
+            var nodes = rowMessages(row);
             if (nodes.length) out.rows.push({ gate: row.getAttribute('data-gate'), nodes: nodes });
         });
         return out;
+    }
+    /* one row's press messages: its marked answers and what stands in its slot (never an offer) */
+    function rowMessages(row) {
+        var nodes = [];
+        function fresh(n) { return !n.hasAttribute(OLD); }
+        Array.prototype.forEach.call(row.children, function (n) {
+            if (n.classList.contains('gate-status-slot')) {
+                Array.prototype.forEach.call(n.children, function (m) {
+                    if (!m.classList.contains('gate-delete-offer') && fresh(m)) nodes.push(m);
+                });
+            } else if (n.hasAttribute(MARK) && fresh(n)) nodes.push(n);
+        });
+        return nodes;
     }
     function setAside(msgs) {
         msgs.zone.forEach(function (n) { n.setAttribute(OLD, ''); });
@@ -353,13 +360,17 @@
         var t = ev.target;
         if (t && t.classList && t.classList.contains('gate-status-slot') && !t.querySelector('.gate-delete-offer')) {
             releaseRefresh(t.closest('.gate-status-list'));
+            releaseLine(t.closest('.gate-status'));
         }
     });
     document.addEventListener('htmx:afterSettle', function (ev) {
         var t = (ev.detail || {}).target || ev.target;
         if (t && t.closest) t = t.closest('.gate-status-slot');
         if (!t || !t.classList || !t.classList.contains('gate-status-slot')) return;
-        if (!t.querySelector('.gate-delete-offer')) releaseRefresh(t.closest('.gate-status-list'));
+        if (!t.querySelector('.gate-delete-offer')) {
+            releaseRefresh(t.closest('.gate-status-list'));
+            releaseLine(t.closest('.gate-status'));
+        }
         var offer = t.querySelector('.gate-delete-offer');
         if (offer && window.UI) window.UI.focusQuestion(offer, '.gate-delete-cancel');
     });
@@ -465,6 +476,95 @@
                                      { source: pane, target: pane, swap: 'innerHTML' });
         // a later navigation of the pane replaces this request; that is not an error
         if (drawn && drawn.catch) drawn.catch(function () {});
+    });
+
+    /* The status line of a pulse detail (#pulse-detail-root, never a row of a gate zone) is drawn
+       with the detail. It is read again (GET /pulse/cz-gate/status) on the signals the pair's gate
+       zone hears (_gate_status_list.html: pulses-changed, which a clean Apply fires, cellsReverted,
+       stateRestored) and on liveDriftChanged, which every Apply fires (a push of saved values fires
+       only that one), so "only in the working copy" turns into "on the chip" once the chip has the
+       gate. Only the line is replaced, never the pulse fields. The line's own press answer (its
+       pulses-changed comes from inside the line) needs no second read. While a press of the line
+       is out or its delete offer is open the read waits and runs once after; an answer that comes
+       back meanwhile is dropped and owed again. Only a read a press owed carries that press's
+       messages (rowMessages) into the new line, once. Focus on a control of the line goes to the
+       same control of the new one. A fetch, not an htmx request: the line sits in the inspector
+       pane, whose request slot a read must neither take nor abort. */
+    var LINE_EVENTS = ['pulses-changed', 'cellsReverted', 'stateRestored', 'liveDriftChanged'];
+    var line = { seq: 0, timer: null, presses: 0, due: false, carry: false };
+    function lineNow() {
+        var row = document.querySelector('#pulse-detail-root .gate-status[data-gate-pair][data-gate]');
+        return row && !row.closest('.gate-status-list') ? row : null;
+    }
+    function lineOf(elt) {
+        var row = elt && elt.closest ? elt.closest('.gate-status') : null;
+        return row && row === lineNow() ? row : null;
+    }
+    function lineHeld(row) {
+        return line.presses > 0 || !!row.querySelector('.gate-status-slot .gate-delete-offer');
+    }
+    function scheduleLine() {
+        if (line.timer) clearTimeout(line.timer);
+        line.timer = setTimeout(readLine, 30);              // the events of one Apply come together
+    }
+    function releaseLine(row) {
+        if (row && row === lineNow() && line.due && !lineHeld(row)) scheduleLine();
+    }
+    function readLine() {
+        line.timer = null;
+        var row = lineNow();
+        if (!row || !window.fetch) { line.due = false; line.carry = false; return; }
+        if (lineHeld(row)) { line.due = true; return; }
+        var carry = line.carry, seq = ++line.seq;
+        line.due = false;
+        line.carry = false;
+        var pair = row.getAttribute('data-gate-pair'), gate = row.getAttribute('data-gate');
+        window.fetch('/pulse/cz-gate/status?pair=' + encodeURIComponent(pair) + '&gate=' + encodeURIComponent(gate))
+            .then(function (r) { return r.status === 200 ? r.text() : null; })
+            .then(function (html) {
+                if (html === null || seq !== line.seq || lineNow() !== row) return;   // gone, newer, or redrawn
+                if (lineHeld(row)) { line.due = true; line.carry = line.carry || carry; return; }
+                var box = document.createElement('div');
+                box.innerHTML = html;
+                var fresh = box.querySelector('.gate-status');
+                if (!fresh || fresh.getAttribute('data-gate-pair') !== pair
+                    || fresh.getAttribute('data-gate') !== gate) return;
+                var msgs = carry ? rowMessages(row) : [];
+                var key = focusIn(row);
+                row.parentNode.replaceChild(fresh, row);
+                var slot = fresh.querySelector('.gate-status-slot');
+                if (slot && !fresh.querySelector('[' + MARK + ']')) msgs.forEach(function (n) { slot.appendChild(n); });
+                if (window.htmx && window.htmx.process) window.htmx.process(fresh);
+                var to = key && key.action ? fresh.querySelector('.' + key.action) : null;
+                if (key && !to) to = fresh.querySelector('button:not([disabled])');
+                if (to && to.focus && (!document.activeElement || document.activeElement === document.body
+                                       || !document.body.contains(document.activeElement))) to.focus();
+            }).catch(function () { /* the line stays as drawn */ });
+    }
+    LINE_EVENTS.forEach(function (name) {
+        document.addEventListener(name, function (ev) {
+            if (!lineNow() || lineOf(ev.target)) return;         // no line, or the line's own answer
+            scheduleLine();
+        });
+    });
+    // counted when sent (a press refused or dropped before sending never ends with a loadend)
+    document.addEventListener('htmx:beforeSend', function (ev) {
+        var d = ev.detail || {}, elt = d.elt, row = lineOf(elt);
+        if (!row || (elt.classList && elt.classList.contains('gate-status-edit'))) return;
+        setAside({ zone: [], rows: [{ nodes: rowMessages(row) }] });   // an earlier press's messages
+        line.presses++;
+        var done = false;
+        function end() {
+            if (done) return;
+            done = true;
+            line.presses--;
+            if (line.presses || !line.due) return;
+            line.carry = true;
+            var now = lineNow();
+            if (now) releaseLine(now);
+        }
+        if (d.xhr && d.xhr.addEventListener) d.xhr.addEventListener('loadend', end);
+        else end();
     });
 
     window.GateStatus = {
