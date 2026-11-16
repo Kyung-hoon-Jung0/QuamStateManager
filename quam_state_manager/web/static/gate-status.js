@@ -385,6 +385,43 @@
         }, { once: true });
     });
 
+    /* A gate's parameter zone on the pair page (_pair_detail.html, data-detail-zone = the gate
+       name) leaves with the delete answer (its gate-deleted event); the other zones and their
+       folds stay. An undo or redo that adds or removes a whole gate of the pair on screen draws
+       the pair page again (app.js keeps the folds and the scroll of the inspector). */
+    function pairPages(pair) {
+        var out = [];
+        Array.prototype.forEach.call(document.querySelectorAll('.gate-status-list'), function (zone) {
+            var page = pairOf(zone) === pair ? zone.closest('.pair-detail') : null;
+            if (page && out.indexOf(page) < 0) out.push(page);
+        });
+        return out;
+    }
+    document.addEventListener('gate-deleted', function (ev) {
+        var d = ev.detail || {};
+        if (!d.pair || !d.gate) return;
+        pairPages(String(d.pair)).forEach(function (page) {
+            Array.prototype.forEach.call(page.querySelectorAll('details[data-detail-zone]'), function (z) {
+                if (z.getAttribute('data-detail-zone') === String(d.gate)) z.remove();
+            });
+        });
+    });
+    document.addEventListener('cellsReverted', function (ev) {
+        var pane = document.getElementById('inspector-pane');
+        var zone = pane ? pane.querySelector('.pair-detail .gate-status-list') : null;
+        if (!zone || !window.htmx) return;
+        var pair = pairOf(zone), head = 'qubit_pairs.' + pair + '.macros.';
+        var whole = ((ev.detail || {}).entries || []).some(function (e) {
+            var p = e && (e.created || e.deleted) ? String(e.dot_path || '') : '';
+            return p.indexOf(head) === 0 && p.length > head.length && p.indexOf('.', head.length) < 0;
+        });
+        if (!whole) return;
+        var drawn = window.htmx.ajax('GET', '/pair/' + encodeURIComponent(pair),
+                                     { source: pane, target: pane, swap: 'innerHTML' });
+        // a later navigation of the pane replaces this request; that is not an error
+        if (drawn && drawn.catch) drawn.catch(function () {});
+    });
+
     window.GateStatus = {
         busy: function () { return activating.size > 0; }, closeOffer: closeOffer, offerOpen: offerOpen
     };

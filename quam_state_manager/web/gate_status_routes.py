@@ -707,5 +707,8 @@ def delete_gate_together(ctx, modifier, body: dict):
             out = make_response(render_template(
                 "_status.html", level="success", message=done) + R._tray_oob())
         out.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
+        # the pair page drops the gate's parameter zone (static/gate-status.js)
+        out.headers["HX-Trigger-After-Swap"] = current_app.json.dumps(
+            {"gate-deleted": {"pair": pair, "gate": gate}})
         return out
     return say(data.get("error") or "Nothing was deleted.", 400)
