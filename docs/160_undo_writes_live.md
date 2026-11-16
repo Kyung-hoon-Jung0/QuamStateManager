@@ -483,11 +483,15 @@ Apply on them in window B, the step is B's change: B's Ctrl+Z does not ask and
 every other window does (the person consciously took those rows, as with
 Approve). A missing stamp is another window. Before undo or redo mutates that step,
 the existing kit confirmation names the change and whether Ctrl+Z writes
-the chip (ON) or stages only (OFF). No changes nothing; Yes repeats the
-request with `ack_prev_window=<unit id>`. That consent covers only the step
-it was asked about: the next step from another window asks again (the server
-accepts the ack only for the unit it names). A reload creates a new window
-id and asks again, including for that document's earlier edits.
+the chip (ON) or stages only (OFF), with the pressed key (Ctrl+Z for undo,
+Ctrl+Y for redo). No changes nothing and sets no standing yes; Yes repeats the
+request with `ack_prev_window=<unit id>`, and that Yes means this window is
+not asked again, undo or redo: the page keeps a standing
+yes in sessionStorage per tab and chip folder, bound to the document's window
+id, and sends `ack_other_windows=1` on every later /undo and /redo. The server
+never remembers a Yes; it honours either ack only together with a window id.
+A reload creates a new window id and asks once again, including for that
+document's earlier edits; another tab is another window and asks once.
 Same-window steps need no window question. A person without a window header
 gets 409 with the question before any write; consent requires a window id.
 
@@ -508,7 +512,8 @@ id>` for the window reason, `ack_prev_session=<unit id>` for the age reason.
 A Yes to the age question alone is also the tab's standing yes to old edits
 (`ack_old_edits=1` on every later /undo, kept in sessionStorage per chip
 folder, the same lifetime the age yes always had). A Yes to a question naming
-both reasons covers both for that step only. So a Yes to an age question
+both reasons covers the age for that step only (its window part stands, as
+above). So a Yes to an age question
 never lets another window's step through without its question, and a Yes to
 a window question never silences an age question.
 Redo asks only the window question; redo never had the age question (before

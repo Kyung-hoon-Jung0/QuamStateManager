@@ -3885,11 +3885,17 @@ def _unit_age_acked(unit: dict) -> bool:
 
 
 def _unit_window_acked(unit: dict) -> bool:
-    """The presser's yes to the window reason, for this one step only: the
-    page sends the unit id it was asked about, once (docs/160)."""
+    """The presser's yes to the window reason (docs/160): the window's standing
+    yes (``ack_other_windows``, kept by the page per tab and chip folder, sent
+    on every undo and redo once it said yes) or this step's own yes
+    (``ack_prev_window``, the unit id it was asked about). Either one counts
+    only with a journal window id; neither is a yes to the age reason."""
+    if not _journal_window_id():
+        return False
+    if request.values.get("ack_other_windows", "") == "1":
+        return True
     uid = str(unit.get("id") or "")
-    return (bool(_journal_window_id()) and bool(uid)
-            and request.values.get("ack_prev_window", "") == uid)
+    return bool(uid) and request.values.get("ack_prev_window", "") == uid
 
 
 def _unit_age_question(unit: dict) -> str:
@@ -3927,10 +3933,13 @@ def _journal_window_ask(unit: dict, direction: str):
               else "stages only; the chip stays unchanged")
     verb = "Undo" if direction == "/undo" else "Redo"
     resp = make_response(_tray_html(), 200 if _journal_window_id() else 409)
-    message = f"{verb} another window's change: {what}; Ctrl+Z {effect}."
+    key = "Ctrl+Z" if direction == "/undo" else "Ctrl+Y"
+    message = f"{verb} another window's change: {what}; {key} {effect}."
     reasons = ["other_window"]
     # One question names every reason, in the text and in ``reasons``: the
-    # page answers a Yes with the ack of each named reason, for this step.
+    # page answers a Yes with the ack of each named reason (the window yes
+    # then stands for the tab; the age yes of a combined question is this
+    # step's only).
     if (direction == "/undo" and _undo_live_enabled() and _unit_needs_ask(unit)
             and not _unit_age_acked(unit)):
         message += " " + _unit_age_question(unit)
