@@ -660,3 +660,22 @@ def test_recheck_refuses_when_one_of_two_classes_is_not_published_any_more(made_
     assert r.status_code == 409 and "not saved to quam_config any more" in r.get_json()["error"]
     assert calls == [] and GS.sm_class_files(_macro_of(made_two)) == old
     assert len(made_two.store.change_log) == n
+
+
+def test_recheck_names_an_edit_during_the_check_before_its_verdict(made, monkeypatch):
+    from quam_state_manager.core import config_generator
+    monkeypatch.setattr(config_generator, "get_selected_env", lambda inst: "C:/fake/python.exe")
+    old = GS.sm_class_files(_macro_of(made))
+    ctx = next(iter(made.app.config["contexts"].values()))
+
+    def fake(store, py, gates, creates=(), **kw):
+        res = _gate_check(store)
+        res["gates"][0]["checks"]["load_config"] = {"status": "fail", "message": "load failed"}
+        ctx["modifier"].set_value(f"qubit_pairs.{PAIR}.macros.{GATE}.id", "moved")
+        return res
+    monkeypatch.setattr(gate_check, "check_gates", fake)
+    r = made.c.post("/api/pulse/cz-gate/recheck", json={"pair": PAIR, "gate": GATE})
+    err = r.get_json()["error"]
+    assert r.status_code == 409 and "changed while the gate was checked" in err, err
+    assert "load failed" not in err
+    assert GS.sm_class_files(_macro_of(made)) == old
