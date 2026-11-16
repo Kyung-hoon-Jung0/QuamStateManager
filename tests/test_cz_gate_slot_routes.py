@@ -100,6 +100,18 @@ class Env:
     def stored(self):
         return self.files(), self.a.snap()
 
+    def settled(self, max_s=3.0):
+        """stored() once two reads in a row agree: a background write of the earlier steps lands first"""
+        import time
+        deadline, last = time.time() + max_s, self.stored()
+        while time.time() < deadline:
+            time.sleep(0.1)
+            now = self.stored()
+            if now == last:
+                return now
+            last = now
+        return last
+
 
 @pytest.fixture
 def env(monkeypatch):
@@ -796,7 +808,7 @@ def test_a_stepped_older_render_in_use_with_another_carried_field_is_refused(env
 def test_other_posted_steps_on_an_in_use_older_render_are_name_in_use(env):
     # another step list is another class body: the in-use rule answers, nothing is written
     _stepped_draft(env, sgt.render_v1)
-    before = env.stored()
+    before = env.settled()
     r = env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": list(OWN), "spectators": True,
                                      "before": [{"kind": "wait", "length": 32}], "after": []})
     assert r.status_code == 409
