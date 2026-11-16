@@ -76,7 +76,7 @@ const note = () => d.querySelector('.phys-note');
 function lf(v) { return { ok: true, phys: { [AMP]: { kind: 'lf', volts: v, text: (v * 1000) + ' mV', peak: 1 } } }; }
 function revert(dp, committed) {
     // what app.js _revertCell does on cellsReverted, then the event itself
-    if (dp === AMP) { ampInput.value = committed; ampInput.setAttribute('data-committed', committed); }
+    // The page listener can precede app.js: the answer must win over stale DOM.
     d.dispatchEvent(new CustomEvent('cellsReverted', { detail: { message: 'Undone', entries: [
         { dot_path: dp, old_value_str: committed, old_value_disp: committed, old_kind: 'num' }] } }));
 }
@@ -86,6 +86,11 @@ function revert(dp, committed) {
     await sleep(50);
 
     // 1 + 2
+    revert(LEN, '100');
+    ok(lenTile.firstChild.nodeValue === '100', 'undo length uses the answer before the input repaint');
+    revert(LEN, '120');
+    ok(lenTile.firstChild.nodeValue === '120', 'redo length uses the answer before the input repaint');
+    revert(LEN, '40');
     answers.push({ body: lf(0.1), delay: 10 });
     revert(AMP, '0.1');
     await sleep(60);
@@ -120,6 +125,21 @@ function revert(dp, committed) {
     await sleep(60);
     ok(physCalls.length === before && ampTile.firstChild.nodeValue === '0.2',
        "another pulse's undo touches neither tile nor note");
+
+    // 6. a list value: the tile gets the full JSON, as the input repaint does, never the 24-char preview
+    d.dispatchEvent(new CustomEvent('cellsReverted', { detail: { message: 'Undone', entries: [
+        { dot_path: LEN, old_kind: 'list', old_value_disp: '[1, 2, 3, ...', old_value_json: '[1,2,3,4,5,6,7,8,9]' }] } }));
+    ok(lenTile.firstChild.nodeValue === '[1,2,3,4,5,6,7,8,9]', 'a list value repaints the tile from its JSON, not its preview');
+
+    // 7. a missing pulse's answer refreshes the list once: through its header, never also by the swap handler
+    const fired = [];
+    window.htmx.trigger = (el, name) => fired.push(name);
+    const missing = new window.Event('htmx:beforeSwap', { bubbles: true });
+    missing.detail = { target: d.getElementById('inspector-pane'), shouldSwap: false, isError: true,
+                       xhr: { getResponseHeader: (h) => (h === 'X-Pulse-Missing' ? '1' : null) } };
+    d.body.dispatchEvent(missing);
+    ok(missing.detail.shouldSwap === true && missing.detail.isError === false && fired.length === 0,
+       'a missing pulse swaps its note in and leaves the list refresh to the response header');
 
     if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
     console.log('pulses undo key values selfcheck: all ok');

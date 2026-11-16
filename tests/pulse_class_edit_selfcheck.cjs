@@ -492,6 +492,10 @@ function outsideEdit(fields, formula) {
   answer("/pulse-class/save-file", 409, { ok: false, error: "scheduler_running", message: "Locked while a run is in progress." });
   sf.click(); await flush();
   ok(idle(sf), "busy: a refusal returns the button to normal");
+  ok($("[data-pce-status]").textContent === 'Save to file was refused.', 'refused file save does not claim a new save');
+  answer('/pulse-class/poll', 200, { status: 'unchanged', status_line: 'Saved; same as draft' });
+  await win.PulseClassEdit._poll(); await flush();
+  ok($("[data-pce-status]").textContent === 'Save to file was refused.', 'poll cannot contradict the refused save panel');
   answer("/pulse-class/save-file", 409, { ok: false, confirm: firstConfirm });
   sf.click(); await flush();
   ok(idle(sf) && dialogOpen(), "busy: the replace question leaves the button normal while the dialog asks");

@@ -20,6 +20,7 @@ function page() {
         + '<button class="gate-delete-cancel">Cancel</button></div></div></div>'
         + '<input id="other"></body>', { runScripts: 'outside-only' });
     const w = dom.window;
+    w.eval(fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', 'ui.js'), 'utf8'));
     w.__fetches = 0;
     w.fetch = function () { w.__fetches++; return Promise.resolve(); };
     w.XMLHttpRequest = function () { w.__fetches++; this.open = function () {}; this.send = function () {}; };
@@ -28,6 +29,11 @@ function page() {
 }
 
 let w = page();
+let scrolled = false;
+const question = w.document.querySelector('.gate-delete-offer');
+question.scrollIntoView = () => { scrolled = true; };
+question.dispatchEvent(new w.CustomEvent('htmx:afterSettle', { bubbles: true }));
+ok(scrolled && question.contains(w.document.activeElement), 'settled question scrolls into view and takes focus');
 const before = w.document.querySelector('.gate-status-row').outerHTML;
 w.document.querySelector('.gate-delete-cancel').click();
 ok(w.document.querySelector('.gate-status-slot').innerHTML === '', 'Cancel empties the offer slot');

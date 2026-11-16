@@ -259,6 +259,8 @@ def save_class(python, instance, scope, class_name, *, confirmed_folder=None, fo
                     raise D.DraftError("The lab checked different source bytes.")
                 if used and not check.get("chip_loaded") and not old_error:
                     raise D.DraftError("The chip copy was not loaded with the draft class.")
+                if slot and check.get("ok"):
+                    D.record_import(instance, scope, class_name, data)
                 chip_warning = None
                 if old_error:
                     chip_warning = (("The chip copy does not load with the old class file either, so "
