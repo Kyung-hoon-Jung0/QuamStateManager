@@ -281,10 +281,17 @@
     /* the offer takes the focus when it opens, so Esc reaches it at once */
     document.addEventListener('htmx:afterSwap', function (ev) {
         var t = ev.target;
+        if (t && t.classList && t.classList.contains('gate-status-slot') && !t.querySelector('.gate-delete-offer')) {
+            releaseRefresh(t.closest('.gate-status-list'));
+        }
+    });
+    document.addEventListener('htmx:afterSettle', function (ev) {
+        var t = (ev.detail || {}).target || ev.target;
+        if (t && t.closest) t = t.closest('.gate-status-slot');
         if (!t || !t.classList || !t.classList.contains('gate-status-slot')) return;
         if (!t.querySelector('.gate-delete-offer')) releaseRefresh(t.closest('.gate-status-list'));
-        var first = t.querySelector('.gate-delete-cancel');
-        if (first && first.focus) first.focus();
+        var offer = t.querySelector('.gate-delete-offer');
+        if (offer && window.UI) window.UI.focusQuestion(offer);
     });
 
     var activating = new Set();

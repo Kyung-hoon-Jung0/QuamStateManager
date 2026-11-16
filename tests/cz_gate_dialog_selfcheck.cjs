@@ -1441,6 +1441,42 @@ function tableWidths(el, sw, cw) {
         ok(lines('#czg-new-body [data-czg-new-problem]').join('|') === 'The class name must be a Python class name.|A slot gate class needs at least one slot.'
            && kinds(from).join() === 'slot-class' && !$('#czg-new-body [data-czg-new-confirm]') && st().klass === SA['class'],
            'a refused class: the server\'s sentences verbatim, each once; nothing is saved and the picked class stays');
+        const nameAfterError = $('#czg-new-name');
+        nameAfterError.focus();
+        nameAfterError.value = 'MyClass';
+        nameAfterError.setSelectionRange(2, 2);
+        nameAfterError.dispatchEvent(new window.Event('input', { bubbles: true }));
+        ok($('#czg-new-name') === nameAfterError && nameAfterError.selectionStart === 2,
+           'clearing a refusal preserves the name node and mouse-placed caret');
+        const gateName = $('#czg-name');
+        gateName.value = 'cz_'; gateName.focus();
+        ok(gateName.selectionStart === 3, 'keyboard focus starts at the end of the gate prefill');
+        gateName.blur();
+        gateName.dispatchEvent(new window.Event('pointerdown', { bubbles: true }));
+        gateName.focus(); gateName.setSelectionRange(1, 1);
+        gateName.dispatchEvent(new window.Event('pointerup', { bubbles: true }));
+        ok(gateName.selectionStart === 1, 'mouse focus preserves the chosen caret');
+        gateName.blur(); gateName.setSelectionRange(1, 1);
+        gateName.dispatchEvent(new window.Event('pointerdown', { bubbles: true }));
+        gateName.dispatchEvent(new window.Event('pointerup', { bubbles: true }));
+        gateName.focus();
+        ok(gateName.selectionStart === 1, 'touch focus (after the pointer is up) keeps the tapped caret');
+        const ownErrors = [];
+        const originalError = window.console.error;
+        window.console.error = (...args) => ownErrors.push(args);
+        queue['slot-class'].push(() => [409, { ok: false, confirm_replace: true, error: 'A class named MyClass exists; making it again replaces its steps.' }]);
+        $('[data-czg-new-create]').click(); await ready();
+        ok($('[data-czg-new-confirm]') && $('[data-czg-new-confirm-save]').textContent === 'Yes', 'replacement refusal opens the kit confirmation');
+        let refusedAt = sent.filter(x => x.kind === 'slot-class' || x.kind === 'save-config').length;
+        $('[data-czg-new-cancel]').click(); await ready();
+        ok(sent.filter(x => x.kind === 'slot-class' || x.kind === 'save-config').length === refusedAt && $('#czg-new-name').value === 'MyClass', 'Cancel writes nothing and keeps typed values');
+        queue['slot-class'].push(() => [409, { ok: false, confirm_replace: true, error: 'The class exists; making it again replaces its steps.' }]);
+        $('[data-czg-new-create]').click(); await ready();
+        queue['slot-class'].push(() => [400, { ok: false, error: 'Check stopped.' }]);
+        $('[data-czg-new-confirm-save]').click(); await ready();
+        ok(sent.filter(x => x.kind === 'slot-class').slice(-1)[0].body.confirm_replace === true, 'only explicit Yes posts the replacement flag');
+        ok(ownErrors.length === 0, 'expected replacement refusals never log our own console error');
+        window.console.error = originalError;
         // create, then the two-step save
         pick('#czg-new-preset-host', 'only_coupler');
         const spOff = $('#czg-new-body input[data-czg-new-spect]');
@@ -1811,6 +1847,9 @@ function tableWidths(el, sw, cw) {
         ok(!secondField('unit') && second().textContent.includes('0.2 V') && second().textContent.includes('Shared with the spectator row of q1-2.') && !prim().disabled && last().spectators['q1-2'][0].unit === 0.2 && !('unit' in last().spectators['q2-3'][0]), 'shared spectator unit is read-only on later row and sent once without blocking Check');
         type(fld('q4', 'unit'), '0.3'); await ready();
         ok(second().textContent.includes('0.3 V') && second().textContent.includes('Shared with the spectator row of q1-2.') && last().spectators['q1-2'][0].unit === 0.3 && !('unit' in last().spectators['q2-3'][0]), 'an owner unit edited after a later row shares it updates the shared note and is sent once');
+        type(fld('q4', 'unit'), '0.45');
+        ok(second().textContent.includes('0.45 V') && second().textContent.includes('Shared with the spectator row of q1-2.'), 'the shared unit cell follows each keystroke at once, before any answer arrives');
+        type(fld('q4', 'unit'), '0.3'); await ready();
         // Typing in a unit field keeps the focus and the caret, also while the unit is shared and rows redraw.
         {
             const keyIn = (ch) => {

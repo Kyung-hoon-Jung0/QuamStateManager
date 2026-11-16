@@ -527,6 +527,16 @@
         if (hint) f.appendChild(el('p', 'ui-field-hint', hint));
         return f;
     }
+    /* A spectator row that shares this unit shows it read-only: update just those cells while the owner's field is typed in. */
+    function mirrorUnit(q, value) {
+        Array.prototype.forEach.call(document.querySelectorAll('[data-czg-spect-unit-value]'), function (cell) {
+            if (cell.getAttribute('data-czg-spect-unit-value') !== q || !inDialog(cell)) return;
+            var text = value ? value + ' V' : '';
+            var fresh = text ? el('code', 'ui-chip', text) : el('span', 'ui-text-quiet', '');
+            fresh.setAttribute('data-czg-spect-unit-value', q);
+            cell.replaceWith(fresh);
+        });
+    }
     function unitCells(f, c, planned, raw) {
         var box = el('div', 'ui-grid2');
         box.setAttribute('data-czg-spect-unit', c.qubit);
@@ -1122,6 +1132,9 @@
         t.removeAttribute('aria-invalid');
         t.removeAttribute('aria-describedby');
         // Keep the field and command nodes alive across blur and the following click.
+        clearNewMessages();
+    }
+    function clearNewMessages() {
         var host = $('czg-new-body');
         host.querySelectorAll('[data-czg-step-problem], [data-czg-new-problem], [data-czg-new-done], [data-czg-new-confirm], [data-czg-new-save]')
             .forEach(function (n) { n.remove(); });
@@ -1166,6 +1179,7 @@
         var move = !act || act === document.body || $('czg-new-body').contains(act);
         S.newSlot.busy = on; S.newSlot.busyWord = on ? (word || '') : ''; fillNew();
         if (!on && move) focusNew(S.newSlot.confirm ? '[data-czg-new-cancel]' : '[data-czg-new-create]');
+        if (!on && move && S.newSlot.confirm && UIkit()) UIkit().focusQuestion($('czg-new-body').querySelector('[data-czg-new-confirm]'));
     }
     function quietLines(host, lines) {
         lines.filter(Boolean).forEach(function (t) { host.appendChild(el('p', 'ui-text-quiet', t)); });
@@ -1279,14 +1293,14 @@
             box.setAttribute('data-czg-new-confirm', '');
             box.setAttribute('role', 'group');
             box.setAttribute('aria-live', 'polite');
-            box.setAttribute('aria-label', 'Save to quam_config');
-            box.appendChild(el('div', 'ui-field-label', 'Save to quam_config'));
-            quietLines(box, ['File: ' + c.path, 'The environment imports quam_config from: ' + c.env_folder, c.notice, c.warning]);
+            box.setAttribute('aria-label', c.replace ? 'Replace class steps' : 'Save to quam_config');
+            box.appendChild(el('div', 'ui-field-label', c.replace ? 'Replace class steps?' : 'Save to quam_config'));
+            quietLines(box, c.replace ? [c.notice] : ['File: ' + c.path, 'The environment imports quam_config from: ' + c.env_folder, c.notice, c.warning]);
             var gates = (c.gates || []).map(function (g) { return g.pair + ': ' + g.gate + (g.live_active ? ' (live and active)' : ''); });
             if (gates.length) quietLines(box, ['Gates on this chip using this class:'].concat(gates));
-            quietLines(box, ['Confirm folder and save: SM checks the draft in the lab environment, then writes ' + c.path,
+            quietLines(box, [c.replace ? 'Yes: replace the existing steps.' : 'Confirm folder and save: SM checks the draft in the lab environment, then writes ' + c.path,
                              'Cancel: nothing is written']);
-            var ca = U.actions([{ label: 'Cancel', cls: 'btn-sync outline' }, { label: 'Confirm folder and save', cls: 'btn-sync primary' }], 'Save to quam_config');
+            var ca = U.actions([{ label: 'Cancel', cls: 'btn-sync outline' }, { label: c.replace ? 'Yes' : 'Confirm folder and save', cls: 'btn-sync primary' }], 'Class confirmation');
             ca.children[0].setAttribute('data-czg-new-cancel', '');
             ca.children[1].setAttribute('data-czg-new-confirm-save', '');
             box.appendChild(ca);
@@ -1307,7 +1321,7 @@
         (j.problems || []).forEach(function (p) { if (p && out.indexOf(p) < 0) out.push(p); });
         return out.length ? out : ['The app answered HTTP ' + status + '.'];
     }
-    function newCreate() {
+    function newCreate(confirmed) {
         var ns = S.newSlot;
         if (ns.busy) return Promise.resolve();
         var g = S;
@@ -1318,9 +1332,15 @@
         // the pair the dialog is open on: the door checks each xy step against that pair's qubits
         var pairNow = $('czg-pair') ? $('czg-pair').value : '';
         if (pairNow) req.pair = pairNow;
+        if (confirmed === true) req.confirm_replace = true;
         return post('/api/pulse/cz-gate/slot-class', req)
             .then(function (x) {
                 if (S !== g) return null;
+                if (x.r.status === 409 && x.j.confirm_replace) {
+                    ns.confirm = { replace: true, notice: x.j.error };
+                    newBusy(false);
+                    return null;
+                }
                 if (!x.r.ok || !x.j.ok || !x.j.cls) {
                     var all = problemLines(x.j, x.r.status);
                     var at = x.j && x.j.step;
@@ -2635,16 +2655,17 @@
         if (t.closest('[data-czg-new-save]')) { if (!S.newSlot.busy) saveNew(null); return; }
         if (t.closest('[data-czg-new-confirm-save]')) {
             var cf = S.newSlot.confirm;
-            if (S.newSlot.busy || !cf || !cf.folder) return;
+            if (S.newSlot.busy || !cf || (!cf.replace && !cf.folder)) return;
             S.newSlot.confirm = null;
-            saveNew(cf.folder);
+            if (cf.replace) newCreate(true); else saveNew(cf.folder);
             return;
         }
         if (t.closest('[data-czg-new-cancel]')) {
+            var replace = S.newSlot.confirm && S.newSlot.confirm.replace;
             S.newSlot.confirm = null;
-            S.newSlot.done = S.newSlot.done.concat(["Nothing was written to the lab's code. The class stays a draft until its file is saved."]);
+            S.newSlot.done = S.newSlot.done.concat([replace ? 'Nothing was written. Your typed steps are kept.' : "Nothing was written to the lab's code. The class stays a draft until its file is saved."]);
             fillNew();
-            focusNew('[data-czg-new-save]');
+            focusNew(replace ? '[data-czg-new-create]' : '[data-czg-new-save]');
             return;
         }
         if (t.closest('[data-czg-sim]')) { simulate(); return; }
@@ -2762,16 +2783,26 @@
         fillSpect();
         inputsChanged();
     });
+    var pointerFocus = null;
+    document.addEventListener('pointerdown', function (ev) { pointerFocus = ev.target; }, true);
+    document.addEventListener('keydown', function () { pointerFocus = null; }, true);
+    document.addEventListener('focusin', function (ev) {
+        var t = ev.target;
+        if (t && t.id === 'czg-name' && pointerFocus !== t) {
+            t.setSelectionRange(t.value.length, t.value.length);
+        }
+        pointerFocus = null;       // touch focuses after pointerup, so the press is cleared here, not there
+    });
     document.addEventListener('input', function (ev) {
         var t = ev.target;
         if (!t || !inDialog(t) || !S) return;
         if (t.hasAttribute('data-czg-step-length')) { editWait(t); return; }
         if (t.id === 'czg-name') { S.nameTouched = true; inputsChanged(); return; }
         if (t.hasAttribute('data-czg-new-name')) {
-            if (S.newSlot.busy) { t.value = S.newSlot.name; return; }
+            if (S.newSlot.busy) return;
             var made = S.newSlot.cls || S.newSlot.lines.length || S.newSlot.done.length || S.newSlot.confirm;
             S.newSlot.name = t.value;
-            if (made) { newEdited(); fillNew(); }
+            if (made) { newEdited(); clearNewMessages(); }
             return;
         }
         if (!t.hasAttribute('data-czg-field')) return;
@@ -2781,6 +2812,7 @@
         S.entered[f] = S.entered[f] || {};
         S.raw[f] = S.raw[f] || {};
         S.raw[f][n] = t.value;
+        if (isSpectField(f) && n === 'unit') mirrorUnit(f.slice(f.lastIndexOf(':') + 1), t.value);
         var key = fieldKey(f, n);
         if (r.ok) {
             S.entered[f][n] = r.v;
@@ -2793,10 +2825,6 @@
             var srcBadge = t.closest('.ui-field') && t.closest('.ui-field').querySelector('.ui-field-head .ui-badge');
             if (srcBadge) srcBadge.parentNode.removeChild(srcBadge);
             say(r.why);
-        }
-        if (isSpectField(f) && n === 'unit') {
-            var unitCaret = [t.selectionStart, t.selectionEnd];
-            fillSpect(); restoreFocus([f, n], unitCaret);
         }
         inputsChanged();
     });

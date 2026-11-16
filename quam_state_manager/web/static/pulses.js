@@ -340,7 +340,11 @@ window.PulsesPage = (function () {
                 var form = h.closest('form');
                 var input = form && form.querySelector('input[name="value"]');
                 if (!input) return;
-                var text = input.hasAttribute('data-committed') ? input.getAttribute('data-committed') : input.value;
+                // the same rule as the undo repaint in app.js: a list's display text is a preview, its JSON is the value
+                var text = e.old_kind === 'list' && e.old_value_json != null ? e.old_value_json
+                    : e.old_value_disp != null ? e.old_value_disp
+                    : (e.old_value_str != null ? e.old_value_str : '');
+                text = String(text);
                 root.querySelectorAll('.ui-stat[data-stat-path]').forEach(function (tile) {
                     var v = tile.getAttribute('data-stat-path') === dp && tile.querySelector('.ui-stat-value');
                     if (v) _leadText(v, text);
@@ -2346,10 +2350,10 @@ window.PulsesPage = (function () {
 
     document.addEventListener('htmx:beforeSwap', function (evt) {
         var d = evt.detail, xhr = d && d.xhr;
-        if (d && d.target && d.target.id === 'inspector-pane' && xhr && xhr.status === 404
+        if (d && d.target && d.target.id === 'inspector-pane' && xhr
                 && xhr.getResponseHeader('X-Pulse-Missing') === '1') {
             d.shouldSwap = true;
-            d.isError = false;
+            d.isError = false;       // the response's HX-Trigger header refreshes the list once
         }
     });
 

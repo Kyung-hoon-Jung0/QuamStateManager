@@ -53,7 +53,7 @@
 
     // The status line carries only the server's words (where the draft is
     // saved); the separate dirty note says the pane has unsaved changes.
-    function setStatus(line) { if (S) q(S.root, "[data-pce-status]").textContent = line; }
+    function setStatus(line) { if (S) q(S.root, "[data-pce-status]").textContent = S.fileRefused ? 'Save to file was refused.' : line; }
     function markDirty(d) {
         S.dirty = d;
         show(q(S.root, "[data-pce-dirty]"), d ? DIRTY_LINE : "");
@@ -324,6 +324,7 @@
         S.conflictOpen = true;
         d.addEventListener("close", function () { if (S) S.conflictOpen = false; }, { once: true });
         if (d.showModal) d.showModal(); else d.setAttribute("open", "");
+        if (window.UI) window.UI.focusQuestion(d);
     }
     function askConflict(c, mine, action) {
         askChoice({
@@ -367,7 +368,8 @@
                 });
                 return;
             }
-            if (!r.ok) { show(q(S.root, "[data-pce-error]"), r.error); return; }
+            if (!r.ok) { S.fileRefused = true; setStatus('Save to file was refused.'); show(q(S.root, "[data-pce-error]"), r.error); return; }
+            S.fileRefused = false;
             show(q(S.root, "[data-pce-error]"), "");
             S.statusLine = r.status;
             show(q(S.root, "[data-pce-file-note]"),
@@ -411,6 +413,7 @@
                 return;
             }
             if (!r.ok) { show(q(S.root, "[data-pce-error]"), r.message || r.error); return; }
+            S.fileRefused = false;
             show(q(S.root, "[data-pce-error]"), "");
             S.statusLine = r.status;
             setStatus(r.status);
@@ -431,6 +434,7 @@
         return api("GET", "/pulse-class/poll?cls=" + encodeURIComponent(S.cls) + "&dirty=1").then(function (r) {
             mine.polling = false;
             if (S !== mine || !r) return;
+            if (r.status === 'missing') S.fileRefused = false;
             if (r.status_line) { S.statusLine = r.status_line; setStatus(r.status_line); }
             if (r.status !== "changed" || r.sha === S.baseSha) return;
             if (S.dirty) {

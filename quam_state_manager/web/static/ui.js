@@ -527,7 +527,14 @@
         }
     }
 
+    function focusQuestion(root) {
+        if (!root) return;
+        var first = root.querySelector('button:not(:disabled)');
+        if (root.scrollIntoView) root.scrollIntoView({ block: 'nearest' });
+        if (first) first.focus();
+    }
     window.UI = {
+        focusQuestion: focusQuestion,
         button: button, actions: actions, chip: chip, badge: badge, count: count, note: note, check: check, pill: pill, path: path, headFold: headFold,
         head: head, notice: notice, callout: callout, facts: facts, verdict: verdict, table: table, segmented: segmented,
         disclosure: disclosure, item: item, dialog: dialog, render: render,

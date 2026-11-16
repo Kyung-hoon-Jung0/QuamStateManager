@@ -298,7 +298,7 @@
                 {# ☰ collapses the sidebar AND the top bar in one press (customer
                    feedback 2026-08-27 — it used to take two); the floating ☰
                    restores both. #}
-                <li><button class="sidebar-toggle" onclick="cycleChrome()"
+                <li><button class="sidebar-toggle ui-btn-icon" aria-label="Collapse navigation" onclick="cycleChrome()"
                         title="Collapse the sidebar and the top bar — click the floating ☰ to bring everything back">☰</button></li>
                 {# docs/126 r3 — while a main-pane load runs past 400 ms, the
                    brand becomes a blue progress bar + elapsed counter (an
@@ -1402,7 +1402,7 @@
                    heading is collapsed. Hides each page's .table-header-row heading
                    (+ the Chip Status toolbar title). Datasets' Sort/Experiments
                    banners already self-collapse independently. #}
-                <button type="button" id="pageheader-toggle" class="pageheader-toggle"
+                <button type="button" id="pageheader-toggle" class="pageheader-toggle ui-btn-icon"
                         onclick="togglePageHeader()" aria-expanded="true"
                         title="Hide / show the page heading" aria-label="Toggle page heading">&#9650;</button>
                 <div id="table-pane">

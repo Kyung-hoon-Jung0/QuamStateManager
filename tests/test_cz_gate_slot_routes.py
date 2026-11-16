@@ -69,9 +69,9 @@ class Env:
         self.a = App(tmp, state or _state())
         self.c = self.a.c
 
-    def make(self, name=NAME, slots=tuple(sgt.SLOTS), spectators=True, code=200):
+    def make(self, name=NAME, slots=tuple(sgt.SLOTS), spectators=True, code=200, confirmed=False):
         r = self.c.post(SLOT_ROUTE, json={"class_name": name, "slots": list(slots),
-                                          "spectators": spectators})
+                                          "spectators": spectators, "confirm_replace": confirmed})
         assert r.status_code == code, r.get_json()
         return r.get_json()
 
@@ -246,7 +246,9 @@ def test_a_taken_name_is_refused_in_one_sentence(env):
 
 def test_a_slot_draft_is_replaced_only_while_no_gate_uses_it(env):
     _ready(env)
-    env.make(slots=["coupler"])               # unused: replaced
+    env.make(slots=["coupler"], code=409)
+    assert env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": ["coupler"],
+                                      "spectators": True, "confirm_replace": True}).status_code == 200
     assert sgt.parse(D.load_draft(env.a.app.instance_path, env.scope, NAME).decode()).spec.slots == {"coupler"}
     env.save()
     j = _check(env, _slot_body(slots=["coupler"]))
@@ -656,7 +658,7 @@ def test_a_gate_of_a_slot_class_lists_the_class_once(env):
 def test_the_slot_route_adopts_the_draft_it_wrote(env):
     env.make()
     w = W.watch_for(env.a.app.instance_path, env.scope, NAME)   # watching the first draft
-    env.make(spectators=False)                                   # replaced while no gate uses it
+    env.make(spectators=False, confirmed=True)
     assert W.watch_for(env.a.app.instance_path, env.scope, NAME) is w
     src = sgt.render(sgt.SlotSpec(NAME, list(sgt.SLOTS), False))
     assert w.sha == D.sha256_bytes(src.encode("utf-8"))
@@ -685,7 +687,7 @@ def test_an_older_render_draft_is_listed_and_made_again_as_the_current_render(en
     _older_draft(env)
     c = next(c for c in env.dialog()["classes"] if c["layout"] == "slot")
     assert c["class"] == QCLASS and c["older_render"] is True
-    env.make(slots=OWN)
+    env.make(slots=OWN, confirmed=True)
     text = D.load_draft(env.a.app.instance_path, env.scope, NAME).decode("utf-8")
     assert text == sgt.render(sgt.SlotSpec(NAME, frozenset(OWN), True))
     assert sgt.parse(text).version == sgt.TEMPLATE_VERSION
@@ -720,7 +722,7 @@ def test_a_gate_on_an_older_control_or_target_lab_file_says_so(env):
     env.save()
     note = czr.OLDER_RENDER_NOTE.format(file=f"{NAME}.py", name=NAME)
     assert _notes(env, OWN) == ([note], [note])
-    env.make(slots=OWN)
+    env.make(slots=OWN, confirmed=True)
     env.save()
     assert _notes(env, OWN) == ([], [])
 
@@ -906,7 +908,7 @@ def test_posted_steps_on_a_stored_free_draft_replace_it(env):
     # a name not in use: the draft is replaced, as for any other changed body
     env.make(slots=OWN)
     r = env.c.post(SLOT_ROUTE, json={"class_name": NAME, "slots": ["control"], "spectators": True,
-                                     "after": _WAIT})
+                                     "after": _WAIT, "confirm_replace": True})
     assert r.status_code == 200 and r.get_json()["ok"]
     assert _draft_text(env) == sgt.render(sgt.SlotSpec(NAME, ["control"], True, (), _WAIT))
 

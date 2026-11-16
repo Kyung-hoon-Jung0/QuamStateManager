@@ -1384,8 +1384,10 @@ def _name_check(name: str, merged: dict, spec: sgt.SlotSpec | None = None):
 def api_cz_gate_slot_class():
     """Make (or replace, while no gate uses it) a slot gate class draft:
     ``{class_name, slots, spectators, before?, after?}`` -> ``{ok, cls, qclass}`` or
-    ``{ok: false, error, problems, step?}`` (``step`` names the refused step). Writes the draft only; saving it into
-    the lab's code is the class save door's two-step."""
+    ``{ok: false, error, problems, step?}`` (``step`` names the refused step). Replacing an existing draft whose
+    content would change answers 409 ``{confirm_replace: true}`` and writes nothing until the same request is
+    sent again with ``confirm_replace`` true; identical content answers 200 without a write. Writes the draft only;
+    saving it into the lab's code is the class save door's two-step."""
     from quam_state_manager.core import pulse_class_drafts as drafts
     from quam_state_manager.core import pulse_class_watch as watch
     store, err = _store_or_error()
@@ -1425,6 +1427,21 @@ def api_cz_gate_slot_class():
         return jsonify(ok=False, error=taken, problems=[taken]), 409
     if keep is UNCHANGED:
         return jsonify(ok=True, cls=name, qclass=sgp.qclass_of(spec))
+    source = sgt.render(keep or spec).encode("utf-8")
+    previous = drafts.load_draft(current_app.instance_path, _scope(), name)
+    if previous == source:
+        return jsonify(ok=True, cls=name, qclass=sgp.qclass_of(spec))
+    if previous is None:
+        lab = lab_package(_env_python())
+        target = lab / f"{name}.py" if lab else None
+        previous = target.read_bytes() if target is not None and target.is_file() else None
+    if previous is not None and previous != source and keep is None:
+        if _gates_using(store.merged, sgp.qclass_of(spec)):
+            text = NAME_IN_USE.format(name=name, count=_gates_using(store.merged, sgp.qclass_of(spec)))
+            return jsonify(ok=False, error=text, problems=[text]), 409
+        if data.get("confirm_replace") is not True:
+            text = f"A class named {name} exists; making it again replaces its steps."
+            return jsonify(ok=False, error=text, confirm_replace=True), 409
     try:
         src = sgt.render(keep or spec)
         drafts.save_draft(current_app.instance_path, _scope(), name, src)

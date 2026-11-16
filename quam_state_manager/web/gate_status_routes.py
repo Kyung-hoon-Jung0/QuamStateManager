@@ -37,6 +37,22 @@ from quam_state_manager.web.routes import bp
 
 logger = logging.getLogger(__name__)
 
+
+def _previous_alias(ctx, store, pair, gate):
+    """The activation's recorded old value, only while its alias is still current and the gate it names still exists."""
+    entry = (ctx or {}).get("gate_alias_activations", {}).get((pair, gate))
+    with store._lock:
+        current = store.merged.get("qubit_pairs", {}).get(pair, {}).get("macros", {}).get("cz")
+        if entry is not None and not entry.created and current == entry.new_value:
+            old = entry.old_value
+            macros = store.merged.get("qubit_pairs", {}).get(pair, {}).get("macros", {})
+            if isinstance(old, dict):
+                return True, old     # an inline macro names no other gate: nothing can dangle
+            target = old[3:] if isinstance(old, str) and old.startswith("#./") else None
+            if target and target != gate and "/" not in target and target in macros:
+                return True, old
+    return False, None
+
 #: the one refusal of a gate write on a chip that is not the live one
 ARCHIVE_REFUSAL = "This chip is a read-only archive: open the live chip to change it."
 
@@ -302,6 +318,7 @@ def cz_gate_delete_offer():
         return render_template("_status.html", message=bad, level="error"), 404
     with store._lock:
         parts = gate_parts.gate_parts(store.merged, pair, gate)
+        parts["restores_alias"] = _previous_alias(R._active_ctx(), store, pair, gate)[0]
     return render_template("_gate_delete_offer.html", pair=pair, gate=gate, parts=parts,
                            in_list=in_list)
 
@@ -455,9 +472,10 @@ def api_cz_gate_make_active():
             if refusal:
                 return _refuse(str(refusal[0]), 400, **kw)
             if "cz" in store.merged["qubit_pairs"][pair]["macros"]:
-                modifier.set_value(path, value)
+                activation = modifier.set_value(path, value)
             else:
-                modifier.create_subtree(path, value)
+                activation = modifier.create_subtree(path, value)
+            ctx.setdefault("gate_alias_activations", {})[(pair, gate)] = activation
     finally:
         release()
     try:
@@ -632,10 +650,14 @@ def delete_gate_together(ctx, modifier, body: dict):
     if not parts["ok"]:
         return say(" ".join(parts["refusals"]), 409, refusals=parts["refusals"])
     paths = list(parts["paths"])
+    restores, restore = False, None
     if parts["active"]:
+        restores, restore = _previous_alias(ctx, store, pair, gate)
         if str(body.get("confirm_active") or "") != "1":
+            outcome = ("the previous gate alias is restored." if restores else
+                       f"pair {pair} has no active CZ gate and the gate alias is unset.")
             return say(f"{gate} is the active CZ gate of pair {pair}. After the delete "
-                       f"pair {pair} has no active CZ gate. Confirm to delete it with "
+                       f"{outcome} Confirm to delete it with "
                        "the pair's cz name.", 409, needs_confirm=True)
         paths.append(parts["alias"])
     by_name = R._by_name_cut(store, paths)
@@ -646,13 +668,21 @@ def delete_gate_together(ctx, modifier, body: dict):
     payload = {"updates": [{"dot_path": p, "delete": True} for p in paths],
                "group": "new", "expect_chip": body.get("expect_chip") or "",
                "force_chip": body.get("force_chip")}
+    if restores:
+        payload["updates"][-1] = {"dot_path": parts["alias"], "value": restore, "relink": True}
     resp = R._field_edit_batch_impl(payload, pulse_door=True)
-    if not htmx:
-        return resp
     r = resp[0] if isinstance(resp, tuple) else resp
     data = r.get_json(silent=True) or {}
+    alias_note = " The previous gate alias was restored." if restores else " The gate alias is now unset."
+    if not htmx:
+        if data.get("ok") and parts["active"]:
+            data["message"] = (data.get("message") or f"Deleted {gate}.") + alias_note
+            r.set_data(current_app.json.dumps(data))
+        return resp
     if data.get("ok"):
         done = f"Deleted {gate} and {parts_text(len(paths) - 1)}. Ctrl+Z brings them back."
+        if parts["active"]:
+            done += alias_note
         if in_list:
             out = list_answer(store, ctx, pair, notice={
                 "tone": "note", "title": f"{gate} deleted", "text": done})
