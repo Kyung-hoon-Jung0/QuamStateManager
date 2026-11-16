@@ -101,6 +101,13 @@ REQUIRED = "required"
 #: the key of a drawn preview (a gate already on the chip) that lists why SM
 #: drew no preview for a played operation: ``{SKIPPED: ["<op> on <el>: why"]}``
 SKIPPED = "skipped"
+#: the key of a planned preview that lists the operations the gate writes:
+#: ``{WRITTEN: [(element, operation)]}``; a played operation not among them
+#: is one already on the chip (a spectator's unit pulse, a sequence step)
+WRITTEN = "written"
+#: why a played operation the gate does not write has no preview
+NOT_WRITTEN_WHY = ("SM draws a preview only for the pulses this gate writes; {ops} already "
+                   "on the chip and played by the gate, so {it} not compared.")
 
 CHECKS = ("load_config", "ops", "length", "preview", "timeline", "range", "spectator_scale")
 #: SM's own check of a gate's spectator rows; it reads the chip, never the lab's answer
@@ -425,8 +432,10 @@ def _one_gate_lab(key, data, after, after_err, preview, merged=None, chip=None):
                 preview = {}
         required = [tuple(x) for x in (preview.get(REQUIRED) or ())]
         undrawn = preview.get(SKIPPED)
-        preview = {k: v for k, v in preview.items() if k not in (REQUIRED, SKIPPED)}
-        checks["preview"] = _guard(_preview_check, found, preview, no_cfg, undrawn)
+        written = preview.get(WRITTEN)
+        preview = {k: v for k, v in preview.items() if k not in (REQUIRED, SKIPPED, WRITTEN)}
+        checks["preview"] = _guard(_preview_check, found, preview, no_cfg, undrawn,
+                                   None if written is None else {tuple(x) for x in written})
         if required and not no_cfg:
             played = {(o.get("element"), o.get("operation")) for o in ops if isinstance(o, dict)}
             lost = [f"{op} on {el}" for el, op in required if (el, op) not in played]
@@ -607,9 +616,12 @@ def _iq_note(infos) -> str:
 
 
 def _preview_check(found: list, preview: dict, no_config: bool,
-                   undrawn: list | None = None) -> dict:
+                   undrawn: list | None = None, written: set | None = None) -> dict:
     """*undrawn*: for a preview SM drew from the chip, why each played pulse
-    it could not draw was skipped (None for a planned preview)."""
+    it could not draw was skipped (None for a planned preview). *written*:
+    for a planned preview, the ``(element, operation)`` pairs the gate
+    writes; a played operation without a preview that is not among them is
+    named with why (it is on the chip already)."""
     if no_config:
         return _r("skipped", "Not checked: the config was not built.")
     why_undrawn = (" " + _sentences([str(x).rstrip(".") for x in undrawn])) if undrawn else ""
@@ -665,6 +677,13 @@ def _preview_check(found: list, preview: dict, no_config: bool,
     cover = ""
     if no_preview:
         cover += " No preview for: " + ", ".join(no_preview) + "." + why_undrawn
+        kept = [f"{o} on {e}" for e, o in sorted(played)
+                if (e, o) not in preview and written is not None and (e, o) not in written]
+        if kept:
+            one = len(kept) == 1
+            cover += " " + NOT_WRITTEN_WHY.format(
+                ops=(kept[0] + " is an operation") if one else (", ".join(kept) + " are operations"),
+                it="it was" if one else "they were")
     if extra:
         cover += " Preview given for operations the gate does not play: " + ", ".join(extra) + "."
     if bad:

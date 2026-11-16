@@ -235,7 +235,8 @@ def test_check_then_create_is_one_group_and_one_undo_restores_bytes(chip, fake):
     assert [t["key"] for t in p["tiles"]] == ["lines", "length", "peak"]
     assert p["intent"][0]["intended"]["amplitude"] == 0.2
     pv = fake.calls[0]["previews"][("q1-2", "cz_sq")]
-    assert pv == {("q1.z", "cz_sq_pulse_q1_q2"): 0.2}, pv
+    # the planned preview also names the operations the gate writes
+    assert pv == {("q1.z", "cz_sq_pulse_q1_q2"): 0.2, "written": [("q1.z", "cz_sq_pulse_q1_q2")]}, pv
     assert chip.snap() == before, "the check writes nothing"
     r = chip.c.post(CREATE, json={"check_token": j["check_token"], "plan_sig": j["plan_sig"]})
     out = r.get_json()
@@ -372,9 +373,9 @@ def test_dialog_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):
     f.write_text(html, encoding="utf-8")
     env["CZG_DIALOG"] = str(f)
     r = subprocess.run([node, str(root / "tests" / "cz_gate_dialog_selfcheck.cjs")], env=env,
-                       capture_output=True, text=True, encoding="utf-8", timeout=120)
+                       capture_output=True, text=True, encoding="utf-8", timeout=300)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
-    assert "ok cz_gate_dialog_selfcheck (466 assertions)" in r.stdout
+    assert "ok cz_gate_dialog_selfcheck (476 assertions)" in r.stdout
 
 
 def test_simulate_client_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):

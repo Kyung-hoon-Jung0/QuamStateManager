@@ -89,6 +89,7 @@ STEP_TYPE_PROBLEM = "Sequence step {number} {where} the gate must be a mapping w
 STEP_KIND_PROBLEM = "Sequence step {number} {where} the gate has the unknown kind {value}; use align, wait or xy."
 STEP_KEY_PROBLEM = ("Sequence step {number} {where} the gate has the key {value}, which a step of kind {kind}"
                     " does not use.")
+WAIT_EMPTY_PROBLEM = "Sequence step {number} {where} the gate needs a wait length in ns."
 WAIT_PROBLEM = ("Sequence step {number} {where} the gate waits {value} ns, which must be an integer, a multiple of "
                 + str(LENGTH_STEP_NS) + " ns, at least " + str(MIN_LENGTH_NS) + " ns and at most " + str(MAX_WAIT_NS)
                 + " ns.")
@@ -198,7 +199,7 @@ def sequence_steps_problem(steps, where="before") -> str | None:
                 return STEP_KEY_PROBLEM.format(number=number, where=where, value=unused[0], kind=kind)
             if kind == "wait" and _wait_length_bad(step.get("length")):
                 if step.get("length") in (None, ""):
-                    return f"Sequence step {number} {where} the gate needs a wait length in ns."
+                    return WAIT_EMPTY_PROBLEM.format(number=number, where=where)
                 return WAIT_PROBLEM.format(number=number, where=where, value=_shown(step.get("length")))
             if kind == "xy":
                 role, operation = step.get("qubit"), step.get("operation")

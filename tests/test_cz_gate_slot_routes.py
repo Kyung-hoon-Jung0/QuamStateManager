@@ -149,6 +149,11 @@ def test_only_readable_slot_drafts_are_listed_with_presets_and_names(env):
     assert all(s["required"] and s["pulse_classes"] for s in c["slots"])
     assert c["spectators"] == {"offered": True, "method": "unit", "why": ""}
     assert data["slot_names"] == list(sgt.SLOTS)
+    # the dialog marks a bad wait while typed by the same rule and sentences as the server
+    assert data["wait_rule"] == {"step": sgt.LENGTH_STEP_NS, "min": sgt.MIN_LENGTH_NS, "max": sgt.MAX_WAIT_NS,
+                                 "problem": sgt.WAIT_PROBLEM, "empty": sgt.WAIT_EMPTY_PROBLEM}
+    assert sgt.sequence_steps_problem([{"kind": "wait", "length": 5}]) == sgt.WAIT_PROBLEM.format(
+        number=1, where="before", value="5")
     assert [(p["key"], p["slots"]) for p in data["slot_presets"]] == [
         (k, [s for s in sgt.SLOTS if s in v]) for k, v in sgt.PRESETS.items()]
     assert not any("FlatPulse" in str(x["class"]) or "Broken" in str(x["class"])
