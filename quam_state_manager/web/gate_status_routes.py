@@ -366,6 +366,21 @@ def _body_scope() -> str:
         return ""
 
 
+STALE_ACTIVATE = ("The chip changed while the gate was checked. Nothing was written; "
+                  "press Make active again.")
+STALE_RECHECK = ("The chip changed while the gate was checked. Nothing was written; "
+                 "press Re-check again.")
+
+
+def _moved_since(store, seq0: int, check: dict) -> bool:
+    """True when the store moved after *seq0* or is no longer the one the
+    check read (``chip_copy.store_at_seq``). Asked before any verdict of the
+    check is told: a check of a state that is gone says nothing about the
+    gate as it is now."""
+    return store.mutation_seq != seq0 or (
+        check.get("seq") is not None and not gate_check.chip_copy.store_at_seq(store, check))
+
+
 def _cannot_run(entry: dict | None) -> str | None:
     """The check's own message when the gate ran and failed."""
     if not entry:
@@ -445,11 +460,14 @@ def api_cz_gate_make_active():
         python_path = None
     check = gate_check.check_gates(store, python_path, [(pair, gate)],
                                    previews=_chip_previews(store, pair, gate))
+    if _moved_since(store, seq0, check):
+        # the check saw a gate that is not on the chip any more: its verdict is not this gate's
+        return _refuse(STALE_ACTIVATE, 409, **kw, stale=True)
     entry = gate_check.gate_result(check, pair, gate)
     why = _cannot_run(entry)
     if why or (check.get("checked") and entry is not None and not entry.get("ran")):
-        return _refuse(f"The gate does not run with the lab's code: "
-                       f"{why or check.get('why_not_checked') or 'it did not run'}. "
+        cause = (why or check.get("why_not_checked") or "it did not run").rstrip(" .")
+        return _refuse(f"The gate does not run with the lab's code: {cause}. "
                        "It was not made active.", 400, **kw, check=check)
     if not check.get("all_checked") and cls not in cgb.GATE_CLASSES:
         return _refuse("The lab's code could not check this gate "
@@ -462,12 +480,8 @@ def api_cz_gate_make_active():
     release = R._lab_hold(store, [path])
     try:
         with store._lock:
-            moved = store.mutation_seq != seq0 or (
-                check.get("seq") is not None
-                and not gate_check.chip_copy.store_at_seq(store, check))
-            if moved:
-                return _refuse("The chip changed while the gate was checked. Nothing was "
-                               "written; press Make active again.", 409, **kw, stale=True)
+            if _moved_since(store, seq0, check):
+                return _refuse(STALE_ACTIVATE, 409, **kw, stale=True)
             refusal = R._lab_write_refusal(store, [(path, value)], info=info)
             if refusal:
                 return _refuse(str(refusal[0]), 400, **kw)
@@ -569,6 +583,8 @@ def api_cz_gate_recheck():
         python_path = None
     check = gate_check.check_gates(store, python_path, [(pair, gate)],
                                    previews=_chip_previews(store, pair, gate))
+    if _moved_since(store, seq0, check):
+        return _refuse(STALE_RECHECK, 409, **kw, stale=True)
     entry = gate_check.gate_result(check, pair, gate)
     allowed, _state, reason = cz_gate_create.may_create(
         check, entry, gate_class=cls, layout="known", sm_classes=True)
@@ -584,12 +600,8 @@ def api_cz_gate_recheck():
     release = R._lab_hold(store, [path])
     try:
         with store._lock:
-            moved = store.mutation_seq != seq0 or (
-                check.get("seq") is not None
-                and not gate_check.chip_copy.store_at_seq(store, check))
-            if moved:
-                return _refuse("The chip changed while the gate was checked. Nothing was "
-                               "written; press Re-check again.", 409, **kw, stale=True)
+            if _moved_since(store, seq0, check):
+                return _refuse(STALE_RECHECK, 409, **kw, stale=True)
             refusal = R._lab_write_refusal(store, [(path, new)], info=info)
             if refusal:
                 return _refuse(str(refusal[0]), 400, **kw)

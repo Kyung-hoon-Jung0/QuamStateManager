@@ -711,12 +711,19 @@ def test_a_press_and_the_zone_refresh_both_reach_the_server_under_real_htmx(rig,
     with monkeypatch.context() as m:
         _state_notices(m)
         noticed = ans(rig.get("/pulse/cz-gate/list?pair=q1-q2", headers=HX))
+    row = ans(rig.get("/pulse/cz-gate/status?pair=q1-q2&gate=cz_sq", headers=HX))
+    ANSWER["fn"] = _edit_during_check(rig, lambda store: _check(store, fail="The preview differs."))
+    stale = ans(rig.post("/api/pulse/cz-gate/make-active", headers=HX, data={**ma, "gate": "cz_sq"}))
+    stale_row = ans(rig.post("/api/pulse/cz-gate/make-active", headers=HX,
+                             data={"pair": "q1-q2", "gate": "cz_sq"}))
+    assert all("changed while the gate was checked" in a["body"] for a in (stale, stale_row))
+    ANSWER["fn"] = lambda store: _check(store)
     deleted = ans(_del_list(rig, "cz_sq"))       # another window deletes cz_sq
     assert "cz_sq deleted" in deleted["body"]
     listed = rig.get("/pulse/cz-gate/list?pair=q1-q2", headers=HX)
     gone = rig.get("/pulse/cz-gate/delete-offer?pair=q1-q2&gate=cz_sq&scope=list", headers=HX)
     assert "This gate is gone." in gone.get_data(as_text=True)
-    fixture = {"zone": zone, "activate": activate,
+    fixture = {"zone": zone, "activate": activate, "row": row, "stale": stale, "stale_row": stale_row,
                "list": {"body": listed.get_data(as_text=True), "headers": dict(listed.headers)},
                "gone": {"body": gone.get_data(as_text=True), "headers": dict(gone.headers)},
                "refuse": refuse, "warn": warn, "delrefuse": delrefuse, "offer": offer,
@@ -767,3 +774,48 @@ def test_only_press_answers_carry_the_press_answer_mark(rig, monkeypatch):
     marked(_del_list(rig, "cz_sq").get_data(as_text=True), "cz_sq deleted")
     marked(rig.get("/pulse/cz-gate/delete-offer?pair=q1-q2&gate=cz_sq&scope=list",
                    headers=HX).get_data(as_text=True), "This gate is gone.")
+
+
+def _edit_during_check(rig, check_answer):
+    """A check whose answer is *check_answer*, with an edit landing while it runs."""
+    def moving(store):
+        res = check_answer(store)
+        _ctx(rig)["modifier"].set_value("qubits.q2.z.operations.const.amplitude", 0.2)
+        return res
+    return moving
+
+
+def test_an_edit_during_the_check_is_named_before_the_checks_verdict(rig):
+    """The check saw the gate as it was before the edit: its failure is not this gate's."""
+    msg = "The preview differs from the config. 136 preview samples, 120 in the config."
+    ANSWER["fn"] = _edit_during_check(rig, lambda store: _check(store, fail=msg))
+    r = _ma(rig)
+    err = r.get_json()["error"]
+    assert r.status_code == 409 and r.get_json().get("stale"), err
+    assert "changed while the gate was checked" in err and "lab's code" not in err
+    assert _merged(rig)["qubit_pairs"]["q1-q2"]["macros"]["cz"] == "#./cz_two"
+
+
+def test_an_edit_during_an_unrun_check_is_named_before_the_not_checked_refusal(rig):
+    _ctx(rig)["modifier"].set_value("qubit_pairs.q1-q2.macros.cz_sq.__class__", "lab.g.MyCZ")
+    ANSWER["fn"] = _edit_during_check(
+        rig, lambda store: _check(store, all_checked=False, status="no-env"))
+    r = _ma(rig)
+    assert r.status_code == 409 and "changed while the gate was checked" in r.get_json()["error"]
+
+
+def test_an_unchanged_chip_still_names_the_lab_code_cause_once(rig):
+    msg = "The preview differs from the config. 136 preview samples, 120 in the config."
+    ANSWER["fn"] = lambda store: _check(store, fail=msg)
+    r = _ma(rig)
+    err = r.get_json()["error"]
+    assert r.status_code == 400 and err.startswith("The gate does not run with the lab's code: ")
+    assert "120 in the config. It was not made active." in err and ".." not in err
+
+
+def test_htmx_an_edit_during_the_check_shows_the_stale_note_on_the_line(rig):
+    ANSWER["fn"] = _edit_during_check(rig, lambda store: _check(store, fail="The preview differs."))
+    r = rig.post("/api/pulse/cz-gate/make-active", headers=HX, data={"pair": "q1-q2", "gate": "cz_sq"})
+    body = r.get_data(as_text=True)
+    assert r.status_code == 200 and "changed while the gate was checked" in body
+    assert "does not run with" not in body

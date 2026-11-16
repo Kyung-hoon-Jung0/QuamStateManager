@@ -12,6 +12,8 @@
  *      new zone, or in the zone-level slot when the row is gone
  *   D  the press answer arrives after its zone was replaced: one refresh; the zone rendered
  *      during the press is disabled and restored at the settle
+ *   R  a refusal arriving after its zone or its single row was rendered again is shown in the
+ *      live zone or row (never swapped into the detached one), and stands after the owed refresh
  *   F  focus inside a replaced zone goes to the same control, else the first enabled button
  *   Q  a refresh trigger while a refresh is out runs once more after the first answers
  *   B  a refresh trigger while a press is out: one refresh in total after the press
@@ -80,10 +82,10 @@ function hx(headers) {
   return out;
 }
 
-async function page() {
+async function page(inner) {
   const html = '<!doctype html><html><head></head><body>'
     + '<a id="nav" hx-get="/pair/q1-q2" hx-target="#inspector-pane" hx-sync="#inspector-pane:queue last">nav</a>'
-    + '<div id="inspector-pane" hx-sync="this:replace">' + FIX.zone + '</div></body></html>';
+    + '<div id="inspector-pane" hx-sync="this:replace">' + (inner || FIX.zone) + '</div></body></html>';
   const dom = new JSDOM(html, { runScripts: 'outside-only', url: 'http://localhost/' });
   const w = dom.window;
   w.eval(XPATH_SHIM);
@@ -651,6 +653,47 @@ const q = (w, sel) => w.document.querySelector(sel);
     ok(times(w, 'could not be saved') === 0, tag + ': a later refresh nobody owed carries nothing');
     clean(w, tag);
   }
+  // R: the answer of a press whose target was rendered again while it was out reaches the page
+  {
+    const w = await page();
+    const tag = 'R zone';
+    const says = 'changed while the gate was checked';
+    q(w, btn('cz_sq', 'gate-status-activate')).click();
+    await until(w, '__reqs.length === 1', 'the press');
+    w.__b = FIX.full.body;
+    w.eval('htmx.swap(document.querySelector(".gate-status-list"), window.__b, {swapStyle: "outerHTML"})');
+    await drain(w);
+    answer(w, 0, FIX.stale);
+    await drain(w);
+    ok(w.document.body.textContent.includes(says), tag + ': the refusal is shown in the live zone');
+    ok(w.document.querySelectorAll('.gate-status-list').length === 1, tag + ': one zone');
+    await until(w, '__reqs.length === 2', 'the refresh the replaced zone owes');
+    ok(lists(w) === 1, tag + ': one refresh');
+    answer(w, 1, FIX.full);
+    await drain(w);
+    ok(w.eval('__reqs.length') === 2, tag + ': and only one');
+    const slot = q(w, '.gate-status[data-gate="cz_sq"] .gate-status-slot');
+    ok(slot && slot.textContent.includes(says), tag + ': the refusal stands in the row of the refreshed zone');
+    clean(w, tag);
+  }
+  {
+    const w = await page(FIX.row.body);
+    const tag = 'R row';
+    const says = 'changed while the gate was checked';
+    ok(!q(w, '.gate-status-list') && !!q(w, '.gate-status'), tag + ': a single status line, no zone');
+    q(w, '.gate-status-activate').click();
+    await until(w, '__reqs.length === 1', 'the press');
+    w.__b = FIX.row.body;
+    w.eval('htmx.swap(document.querySelector(".gate-status"), window.__b, {swapStyle: "outerHTML"})');
+    await drain(w);
+    answer(w, 0, FIX.stale_row);
+    await drain(w);
+    ok(w.document.body.textContent.includes(says), tag + ': the refusal is shown in the live row');
+    ok(w.document.querySelectorAll('.gate-status').length === 1, tag + ': one row');
+    ok(w.eval('__reqs.length') === 1, tag + ': no other request');
+    clean(w, tag);
+  }
+
   console.log('ALL OK (' + n + ' assertions)');
   process.exit(0);
 })().catch((e) => { console.error('FAIL - ' + (e && e.stack || e)); process.exit(1); });

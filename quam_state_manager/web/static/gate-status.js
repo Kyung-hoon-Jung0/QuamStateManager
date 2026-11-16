@@ -232,6 +232,55 @@
         if (d.xhr && d.xhr.addEventListener) d.xhr.addEventListener('loadend', end);
         else end();
     });
+    /* A press answer whose target left the page while the press was out (the row or the zone
+       was rendered again, e.g. after an edit landed) goes to the same place on the page now:
+       the live zone of the pair, the live row of the same gate (in a zone or not, as the old
+       one was), or that row's slot. Without this the answer, a refusal included, is swapped
+       into a detached node and nobody sees it. htmx raises beforeSwap on the target itself,
+       so a target that left the page is heard only by a listener on it, set when the press
+       is sent. The press still owes its refresh (rec.painted stays false) and that refresh
+       carries the answer over. */
+    function rowLike(old) {
+        var pair = old.getAttribute('data-gate-pair'), gate = old.getAttribute('data-gate');
+        var listed = !!old.closest('.gate-status-list');
+        var rows = document.querySelectorAll('.gate-status');
+        for (var i = 0; i < rows.length; i++) {
+            var r = rows[i];
+            if (r.getAttribute('data-gate-pair') === pair && r.getAttribute('data-gate') === gate
+                && !!r.closest('.gate-status-list') === listed) return r;
+        }
+        return null;
+    }
+    function liveTwin(tgt) {
+        if (!tgt || !tgt.classList) return null;
+        if (isZone(tgt)) return zoneOf(pairOf(tgt));
+        if (tgt.classList.contains('gate-status')) return rowLike(tgt);
+        if (tgt.classList.contains('gate-status-slot')) {
+            var row = tgt.closest('.gate-status'), live = row && rowLike(row);
+            return live ? live.querySelector('.gate-status-slot') : null;
+        }
+        return null;
+    }
+    function isPress(elt) {
+        if (!elt || !elt.classList) return false;
+        for (var i = 0; i < ACTIONS.length; i++) if (elt.classList.contains(ACTIONS[i])) return true;
+        return false;
+    }
+    document.addEventListener('htmx:beforeSend', function (ev) {
+        var d = ev.detail || {}, elt = d.elt, tgt = d.target;
+        if (!isPress(elt) || elt.classList.contains('gate-status-edit') || !tgt || !tgt.addEventListener) return;
+        function retarget(e) {
+            var sd = e.detail || {};
+            if (e.target !== tgt || !sd.shouldSwap || (sd.requestConfig && sd.requestConfig.elt) !== elt) return;
+            if (document.body.contains(tgt)) return;
+            var live = liveTwin(tgt);
+            if (live) sd.target = live;
+        }
+        tgt.addEventListener('htmx:beforeSwap', retarget);
+        if (d.xhr && d.xhr.addEventListener) {
+            d.xhr.addEventListener('loadend', function () { tgt.removeEventListener('htmx:beforeSwap', retarget); });
+        }
+    });
     document.addEventListener('htmx:beforeSwap', function (ev) {
         var d = ev.detail || {}, tgt = d.target;
         var elt = d.requestConfig && d.requestConfig.elt;
