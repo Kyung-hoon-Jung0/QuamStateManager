@@ -736,6 +736,66 @@ def test_a_press_and_the_zone_refresh_both_reach_the_server_under_real_htmx(rig,
     assert "ALL OK" in p.stdout
 
 
+def _after_swap_events(r):
+    raw = r.headers.get("HX-Trigger-After-Swap")
+    return json.loads(raw) if raw else {}
+
+
+def test_a_delete_names_its_gate_for_the_pair_page_and_a_refusal_does_not(rig):
+    """The delete answer (gate list and single row) carries the event the pair page drops the
+    gate's parameter zone on; a refused delete carries none."""
+    refused = _del_list(rig, "cz_two")
+    assert "is the active CZ gate of pair" in refused.get_data(as_text=True)
+    assert "gate-deleted" not in _after_swap_events(refused)
+    r = _del_list(rig, "cz_sq")
+    assert "cz_sq deleted" in r.get_data(as_text=True)
+    assert _after_swap_events(r) == {"gate-deleted": {"pair": "q1-q2", "gate": "cz_sq"}}
+    assert rig.post("/undo").status_code == 200
+    r = rig.post("/api/pulse/delete-together", headers=HX, data={"pair": "q1-q2", "gate": "cz_sq"})
+    assert r.status_code == 200 and "Deleted cz_sq" in r.get_data(as_text=True)
+    assert _after_swap_events(r) == {"gate-deleted": {"pair": "q1-q2", "gate": "cz_sq"}}
+
+
+def test_a_deleted_gate_zone_leaves_the_pair_page_and_its_undo_brings_it_back(rig, tmp_path):
+    """Behaviour under the bundled htmx (tests/gate_delete_zone_selfcheck.cjs) with the real
+    server answers: a delete takes its gate's zone off the pair page and only that one, a
+    refusal leaves every zone, the undo of the delete draws the page with the zone again."""
+    import os
+    import re
+    import shutil
+    import subprocess
+    from pathlib import Path
+    node = shutil.which("node")
+    if not node or not os.environ.get("NODE_PATH"):
+        pytest.skip("node + jsdom (NODE_PATH) needed")
+
+    def ans(r):
+        assert r.status_code == 200
+        return {"body": r.get_data(as_text=True), "headers": dict(r.headers)}
+    page = ans(rig.get("/pair/q1-q2", headers=HX))
+    assert re.findall(r'data-detail-zone="([^"]+)"', page["body"]) == ["cz_sq", "cz_two"]
+    offer = ans(rig.get("/pulse/cz-gate/delete-offer?pair=q1-q2&gate=cz_sq&scope=list", headers=HX))
+    offer_other = ans(rig.get("/pulse/cz-gate/delete-offer?pair=q1-q2&gate=cz_two&scope=list",
+                              headers=HX))
+    refused_text = "is the active CZ gate of pair"
+    refused = ans(_del_list(rig, "cz_two"))
+    assert refused_text in refused["body"]
+    deleted = ans(_del_list(rig, "cz_sq"))
+    undo = rig.post("/undo", headers=HX)
+    assert undo.status_code == 200
+    after = ans(rig.get("/pair/q1-q2", headers=HX))
+    fixture = {"pair": "q1-q2", "gates": ["cz_sq", "cz_two"], "page": page, "offer": offer,
+               "offer_other": offer_other, "refused": refused, "refused_text": refused_text,
+               "deleted": deleted, "after": after,
+               "undo": json.loads(undo.headers["HX-Trigger"])["cellsReverted"]}
+    path = tmp_path / "gate_delete_zone.json"
+    path.write_text(json.dumps(fixture), encoding="utf-8")
+    p = subprocess.run([node, str(Path(__file__).parent / "gate_delete_zone_selfcheck.cjs"), str(path)],
+                       capture_output=True, text=True, timeout=120)
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "ALL OK" in p.stdout
+
+
 def _state_notices(m):
     """Every render of the zone shows the chip-state notices: the Re-check notice and a
     row's class-file line."""
