@@ -578,6 +578,12 @@ def test_preview_coverage_is_stated():
     res = gate_check.evaluate([GATE], _ran(script=script, cfg=cfg), PREVIEW)
     assert "1 of 2 played" in _msg(res, "preview") and "No preview for: other on q2.z" in \
         _msg(res, "preview")
+    # a planned preview that names what the gate writes says why the other one has none
+    written = {**PREVIEW[GATE], gate_check.WRITTEN: [("q1.z", "cz_pulse")]}
+    res = gate_check.evaluate([GATE], _ran(script=script, cfg=cfg), {GATE: written})
+    msg = _msg(res, "preview")
+    assert "No preview for: other on q2.z." in msg and "only for the pulses this gate writes" in msg
+    assert "other on q2.z is an operation already on the chip" in msg
 
 
 @pytest.mark.parametrize("bad", [None, [float("nan")] * N, ["x"] * N, {"a": 1}])

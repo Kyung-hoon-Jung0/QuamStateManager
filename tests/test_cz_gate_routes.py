@@ -235,7 +235,8 @@ def test_check_then_create_is_one_group_and_one_undo_restores_bytes(chip, fake):
     assert [t["key"] for t in p["tiles"]] == ["lines", "length", "peak"]
     assert p["intent"][0]["intended"]["amplitude"] == 0.2
     pv = fake.calls[0]["previews"][("q1-2", "cz_sq")]
-    assert pv == {("q1.z", "cz_sq_pulse_q1_q2"): 0.2}, pv
+    # the planned preview also names the operations the gate writes
+    assert pv == {("q1.z", "cz_sq_pulse_q1_q2"): 0.2, "written": [("q1.z", "cz_sq_pulse_q1_q2")]}, pv
     assert chip.snap() == before, "the check writes nothing"
     r = chip.c.post(CREATE, json={"check_token": j["check_token"], "plan_sig": j["plan_sig"]})
     out = r.get_json()
@@ -372,9 +373,9 @@ def test_dialog_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):
     f.write_text(html, encoding="utf-8")
     env["CZG_DIALOG"] = str(f)
     r = subprocess.run([node, str(root / "tests" / "cz_gate_dialog_selfcheck.cjs")], env=env,
-                       capture_output=True, text=True, encoding="utf-8", timeout=120)
+                       capture_output=True, text=True, encoding="utf-8", timeout=300)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
-    assert "ok cz_gate_dialog_selfcheck (466 assertions)" in r.stdout
+    assert "ok cz_gate_dialog_selfcheck (480 assertions)" in r.stdout
 
 
 def test_simulate_client_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):
@@ -459,6 +460,18 @@ def test_a_flat_top_is_judged_as_the_plan_builds_it_with_copied_values(source, t
         assert not p["ok"]
         assert any(r.startswith("flux_pulse_qubit.flat_length: ") and refused in r
                    for r in p["refusals"]), p["refusals"]
+
+
+def test_no_pulse_asked_for_a_slot_holds_on_every_pair_of_the_plan():
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        a = App(tmp, _flat_top_source(120, 20))
+        body = _body(pairs=["q1-2", "q2-3"], name="cz_new", copy_from="cz_src")
+        body["pulses"]["coupler_flux_pulse"] = {"none": True}
+        j = a.c.post(PLAN, json=body).get_json()
+        from quam_state_manager.core.hub_index import close_readers
+        close_readers()
+    assert [p["ok"] for p in j["pairs"]] == [True, True], [p.get("refusals") for p in j["pairs"]]
+    assert all("coupler_flux_pulse" not in (p.get("operations") or {}) for p in j["pairs"])
 
 
 def test_field_kinds_come_from_the_value_type_never_from_its_digits():

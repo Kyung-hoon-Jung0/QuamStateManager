@@ -940,7 +940,12 @@ def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
     ``pulses`` maps a gate pulse field (``flux_pulse_qubit``,
     ``coupler_flux_pulse``, ...) to ``{"class": <pulse __class__>,
     "fields": {...}}``. For a table class an optional slot left out is not
-    built. A copied layout always builds exactly the model's pulse slots
+    built. With ``copy_from``, a table-class slot sent with no class (left
+    out, or ``"class": None``) copies the source gate's pulse class and
+    values, so an agent or older client that sends nothing keeps the copy;
+    ``{"none": True}`` asks for no pulse on that slot: nothing is copied or
+    built there, the plan's ``"notes"`` say so when the source has a pulse
+    there, and a required slot sent so is refused. A copied layout always builds exactly the model's pulse slots
     and keeps the model's pulse classes; its ``pulses`` entries only give
     field values. ``copy_from`` is another gate of the same pair whose
     matching field values seed the pulses. ``model_gate`` is ``(pair,
@@ -1178,6 +1183,16 @@ def _plan_known(merged, pair_id, p, gate_name, gate_class, pulses, lines,
                            f"fields are {have}). Remove that pulse.")
     for s in desc["slots"]:
         spec = pulses.get(s.field)
+        if isinstance(spec, dict) and spec.get("none") is True:
+            # the person removed this line's pulse: nothing is copied or built there
+            pulses.pop(s.field)
+            if not s.required:
+                src = copy_source(s.field)
+                if isinstance(src, dict) and src.get("__class__"):
+                    notes.append(f"No pulse is built for {s.field}: it is set to no pulse, so "
+                                 f"the pulse the gate {copy_source.raw(s.field)[0]} has there "
+                                 "is not copied.")
+            continue
         if isinstance(spec, dict) and isinstance(spec.get("class"), str) and spec["class"]:
             continue
         src = copy_source(s.field)

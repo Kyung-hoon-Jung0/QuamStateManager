@@ -375,6 +375,9 @@ def _plan_all(merged: dict, body: dict, slot: SlotClass | None = None) -> list[t
         if i > 0 and first is not None and "error" not in first:
             pulses = {}
             for f, spec in body["pulses"].items():
+                if isinstance(spec, dict) and spec.get("none") is True:
+                    pulses[f] = {"none": True}      # no pulse on that line, on every pair
+                    continue
                 pp = gate_intent.planned_pulse(first, f)
                 cls = (spec or {}).get("class") if isinstance(spec, dict) else None
                 pulses[f] = {"class": cls or (pp or {}).get("__class__"),
@@ -831,7 +834,17 @@ def _previews(plan: dict, merged: dict | None = None,
             for op in (plan.get("operations") or {}).values() if op.get("group") == "spectator"]
     if must:
         out[gate_check.REQUIRED] = must
+    # the operations the gate writes: a played one outside this list is on the chip already
+    out[gate_check.WRITTEN] = [(_element(op, merged, pair), op.get("key"))
+                               for op in (plan.get("operations") or {}).values()]
     return out, skipped
+
+
+def wait_rule() -> dict:
+    """The rule a sequence wait step's length follows, for the dialog to mark a bad wait while
+    it is typed: the same constants and sentences ``sequence_steps_problem`` uses."""
+    return {"step": sgt.LENGTH_STEP_NS, "min": sgt.MIN_LENGTH_NS, "max": sgt.MAX_WAIT_NS,
+            "problem": sgt.WAIT_PROBLEM, "empty": sgt.WAIT_EMPTY_PROBLEM}
 
 
 def sync_now() -> dict:
@@ -957,7 +970,8 @@ def cz_gate_dialog():
     from quam_state_manager.web import diagram_remove_routes as DR
     data = {"pairs": pairs, "selected": selected, "classes": classes, "fit": fit,
             "env": DR.env_name(_env_python()), "sync": sync_now(),
-            "slot_presets": _slot_presets(), "slot_names": list(sgt.SLOTS)}
+            "slot_presets": _slot_presets(), "slot_names": list(sgt.SLOTS),
+            "wait_rule": wait_rule()}
     return render_template("_cz_gate_dialog.html", data=data, selected=selected,
                            unknown_pair=want if want and not selected else "")
 

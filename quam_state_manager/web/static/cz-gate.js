@@ -67,8 +67,18 @@
         if (slotted(c)) {
             (c.slots || []).forEach(function (s) {
                 var cls = S.cls[s.field];
-                if (!cls) return;
-                pulses[s.field] = { 'class': cls, fields: Object.assign({}, S.entered[s.field] || {}) };
+                var given = Object.assign({}, S.entered[s.field] || {});
+                // as the copied gate: no class is sent, so the server takes the source pulse's class
+                if (cls === AS_COPIED) {
+                    if (Object.keys(given).length) pulses[s.field] = { 'class': null, fields: given };
+                    return;
+                }
+                // no pulse picked by hand while copying: say so, or the server copies the source pulse
+                if (!cls) {
+                    if (cls === '' && copiedFrom() && (S.clsHand || {})[s.field]) pulses[s.field] = { none: true };
+                    return;
+                }
+                pulses[s.field] = { 'class': cls, fields: given };
             });
         } else {
             Object.keys(S.entered).forEach(function (f) {
@@ -129,6 +139,20 @@
         var fp = firstPlan();
         b.disabled = S.busy || !fp || !fp.ok || hasInvalid();
         changedAlert();
+        markedFooter(b.disabled);
+    }
+    /* Check is held back by a field the form marks: the status line under the buttons says so,
+       and the line goes once nothing is marked. */
+    var MARKED_FOOTER = 'Fix the marked field, then press Check.';
+    function markedFooter(held) {
+        var s = $('czg-status');
+        if (!s || S.busy) return;
+        var nb = $('czg-new-body');
+        var marks = document.querySelectorAll('#czg-form [aria-invalid="true"]');
+        var marked = held && (hasInvalid() || Array.prototype.some.call(marks,
+            function (n) { return !(nb && nb.contains(n)); }));
+        if (marked && !s.textContent) say(MARKED_FOOTER);
+        else if (!marked && s.textContent === MARKED_FOOTER) say('');
     }
     /* After a check, an input change says the result is for the earlier inputs; it names the
        Check press only while Check can follow (a field the form marks must be fixed first). */
@@ -551,7 +575,8 @@
         } else if (asked) box.appendChild(fieldInput(f, 'unit', 'Unit amplitude', 'V', 'float', raw.unit, null, { hint: NO_UNIT_OP }));
         else box.appendChild(readCell('Unit amplitude', fmt(c.unit) + ' V', 'data-czg-spect-unit-value', c.qubit, ''));
         box.appendChild(readCell('Allowed range', reach === null ? '' : '|level| < ' + fmt(reach) + ' V',
-                                 'data-czg-spect-allowed', c.qubit, ''));
+                                 'data-czg-spect-allowed', c.qubit,
+                                 reach === null ? 'Shown once the plan with this level can be made.' : ''));
         return box;
     }
     /* The server's level-range sentence for spectator *q* in *list*, with the
@@ -778,6 +803,65 @@
     }
     /* An optional pulse on a line the pair does not have is not offered at all. */
     function slotOffered(s) { return !!s.required || !(s.line === 'coupler' && !lineOpen('coupler')); }
+    /* Start from a gate: a slot whose class was not picked by hand takes the source gate's
+       pulse class and values (the server copies them when no class is sent). */
+    var AS_COPIED = '@copied';
+    function copiedFrom() { return $('czg-from') ? $('czg-from').value : ''; }
+    function memoKey(pair, from, field) { return pair + '\u0000' + from + '\u0000' + field; }
+    /* Recorded when a plan answer arrives, for the pair and source that plan was made for
+       (*b* is the request it answers): what it used for each slot copied from that source,
+       the source pulse's class and, per field, its value and whether it was copied or the
+       class default. */
+    function rememberCopied(c, fp, b) {
+        var from = b.copy_from || '';
+        if (!from || !slotted(c) || !fp || !fp.ok) return;
+        S.copyMemo = S.copyMemo || {};
+        (c.slots || []).forEach(function (s) {
+            var sent = (b.pulses || {})[s.field];
+            if (sent && sent.none) return;
+            var planned = fp.pulses ? fp.pulses[s.field] : null;
+            var key = memoKey(b.pairs[0], from, s.field);
+            var m = S.copyMemo[key] || { cls: undefined, vals: {} };
+            if (!sent || !sent['class']) m.cls = planned ? planned.__class__ || null : null;
+            Object.keys(planned || {}).forEach(function (k) {
+                var src = sourceOf(fp, s.field, k);
+                if (k === '__class__' || k === 'id' || src === 'entered') return;
+                m.vals[k] = { v: planned[k], copied: src === 'copied' };
+            });
+            S.copyMemo[key] = m;
+        });
+    }
+    function classLabel(s, cls) {
+        var pc = (s.pulse_classes || []).filter(function (x) { return x['class'] === cls; })[0];
+        return pc ? pc.label : String(cls || '').split('.').pop();
+    }
+    /* The value a slot field shows when no plan could be made: what the server would use
+       (entered, else copied, else the class default); blank when that is not known yet. */
+    function unplannedValue(field, f, from) {
+        var given = S.entered[field] || {};
+        if (given.hasOwnProperty(f.name)) return [given[f.name], 'entered'];
+        if (!from) return [f['default'], 'default'];
+        var m = (S.copyMemo || {})[memoKey(selectedPairs()[0] || '', from, field)];
+        var x = m && m.vals[f.name];
+        if (!x) return ['', null];
+        return x.copied ? [x.v, 'copied'] : [f['default'], 'default'];
+    }
+    /* A value typed into a pulse or setting field is the entered one at once, before any plan. */
+    function enteredBadge(input) {
+        var head = input.closest('.ui-field') && input.closest('.ui-field').querySelector('.ui-field-head');
+        if (!head) return;
+        var old = head.querySelector('.ui-badge');
+        var fresh = UIkit().badge('entered', SOURCE_TONE.entered);
+        if (old) head.replaceChild(fresh, old); else head.appendChild(fresh);
+    }
+    /* A slot's entered and typed values, marks and field places start over. */
+    function dropSlotValues(f) {
+        S.entered[f] = {};
+        S.raw[f] = {};
+        [S.invalid, S.placed || {}].forEach(function (m) {
+            Object.keys(m).forEach(function (k) { if (k.indexOf(f + '\u0000') === 0) delete m[k]; });
+        });
+    }
     function fillSlots() {
         var host = clear($('czg-slots'));
         var c = klass();
@@ -793,8 +877,13 @@
         var sum = $('czg-pulses-sum');
         if (sum) { var nl = S.slotChannels.length; sum.textContent = nl === 1 ? '1 line' : nl + ' lines'; }
         if (slotted(c)) {
+            var from = copiedFrom();
+            // a plan made for another pair or source is not this form's plan (its answer is on the way)
+            var pf = S.planFor || {};
+            if (fp && (pf.pair !== (selectedPairs()[0] || '') || pf.from !== from)) fp = null;
             (c.slots || []).forEach(function (s) {
                 if (!slotOffered(s)) return;
+                if (S.cls[s.field] === AS_COPIED && !from) S.cls[s.field] = undefined;
                 var b = slotBlock(s.field, slotChannel(s.field, s.line, fp), '');
                 var l = el('div', 'ui-field');
                 var lh = el('div', 'ui-field-head');
@@ -809,18 +898,39 @@
                     o.value = pc['class'];
                     sel.appendChild(o);
                 });
-                if (S.cls[s.field] === undefined) S.cls[s.field] = s.required ? ((s.pulse_classes || [])[0] || {})['class'] || '' : '';
+                if (S.cls[s.field] === undefined) {
+                    var first = ((s.pulse_classes || [])[0] || {})['class'] || '';
+                    S.cls[s.field] = from ? AS_COPIED : s.required ? first : '';
+                }
+                var planned = fp && fp.ok && fp.pulses ? fp.pulses[s.field] : null;
+                var memo = (S.copyMemo || {})[memoKey(selectedPairs()[0] || '', from, s.field)];
+                // the class the plan builds for this slot: picked by hand, else the source pulse's
+                var copiedCls = !from ? undefined : fp && fp.ok ? (planned ? planned.__class__ || null : null)
+                    : memo ? memo.cls : undefined;
+                if (from) {
+                    var co = el('option', null, 'As the gate ' + from + (copiedCls === undefined ? ''
+                        : copiedCls === null ? ' (no pulse there)' : ' (' + classLabel(s, copiedCls) + ')'));
+                    co.value = AS_COPIED;
+                    sel.insertBefore(co, sel.firstChild);
+                }
                 sel.value = S.cls[s.field] || '';
                 l.appendChild(sel);
                 b.appendChild(l);
-                var spec = (s.pulse_classes || []).filter(function (pc) { return pc['class'] === S.cls[s.field]; })[0];
+                var shownCls = S.cls[s.field] === AS_COPIED ? copiedCls : S.cls[s.field];
+                var spec = (s.pulse_classes || []).filter(function (pc) { return pc['class'] === shownCls; })[0];
+                if (S.cls[s.field] === AS_COPIED && copiedCls === undefined) {
+                    b.appendChild(note('The class and values come from the gate ' + from + ' once the plan is made.'));
+                } else if (shownCls && !spec) {
+                    b.appendChild(note('Class ' + classLabel(s, shownCls) + ', copied from the gate ' + from
+                        + '. This form offers no fields for that class.'));
+                }
                 if (spec) {
                     var grid = el('div', 'ui-grid2');
-                    var planned = fp && fp.ok && fp.pulses ? fp.pulses[s.field] : null;
                     spec.fields.forEach(function (f) {
-                        var v = planned && planned[f.name] !== undefined ? planned[f.name] : f['default'];
-                        grid.appendChild(fieldInput(s.field, f.name, f.label, f.unit,
-                            f.kind, v, sourceOf(fp, s.field, f.name) || 'default'));
+                        var vs = planned ? [planned[f.name] !== undefined ? planned[f.name] : f['default'],
+                                            sourceOf(fp, s.field, f.name) || 'default']
+                            : unplannedValue(s.field, f, from);
+                        grid.appendChild(fieldInput(s.field, f.name, f.label, f.unit, f.kind, vs[0], vs[1]));
                     });
                     b.appendChild(grid);
                 }
@@ -961,8 +1071,8 @@
         ns.stepProblem = null;
     }
     /* ---- sequence steps of the new class: two ordered lists, Before and After.
-       The client holds no step rule: the server's one check answers, and its
-       sentence is shown beside the row it names. */
+       The server's one check answers on Create class, and its sentence is shown beside the
+       row it names; a wait length is also marked while typed, from the server's own rule. */
     var STEP_WHERE = [['before', 'Before the gate pulses'], ['after', 'After the gate pulses']];
     var STEP_KIND_WORDS = { align: 'Align', wait: 'Wait', xy: 'xy pulse' };
     function copySteps(list) {
@@ -1057,18 +1167,12 @@
         });
         row.appendChild(moves);
         var pr = S.newSlot.stepProblem;
+        var waitIn = step.kind === 'wait' ? row.querySelector('[data-czg-step-length]') : null;
         if (pr && pr.where === where && pr.index === k) {
-            var w = el('p', 'ui-field-error', pr.text);
-            w.setAttribute('role', 'alert');
-            w.setAttribute('data-czg-step-problem', '');
-            row.appendChild(w);
             // a wait the server refused marks its length field, tied to the sentence
-            var waitIn = step.kind === 'wait' ? row.querySelector('[data-czg-step-length]') : null;
-            if (waitIn) {
-                w.id = 'czg-step-problem-' + where + '-' + k;
-                waitIn.setAttribute('aria-invalid', 'true');
-                waitIn.setAttribute('aria-describedby', w.id);
-            }
+            row.appendChild(markWait(waitIn, pr.text, where, k));
+        } else if (waitIn && waitProblem(where, k, step.length)) {
+            row.appendChild(markWait(waitIn, waitProblem(where, k, step.length), where, k, true));
         }
         return row;
     }
@@ -1132,14 +1236,68 @@
         t.removeAttribute('aria-invalid');
         t.removeAttribute('aria-describedby');
         // Keep the field and command nodes alive across blur and the following click.
+        var row = t.closest('[data-czg-step-row]');
+        if (row) row.querySelectorAll('[data-czg-step-local]').forEach(function (n) { n.remove(); });
         clearNewMessages();
+        var where = t.getAttribute('data-czg-step-length'), k = +t.getAttribute('data-czg-step-index');
+        var why = waitProblem(where, k, st.length);
+        if (why && row) row.appendChild(markWait(t, why, where, k, true));
+    }
+    /* The server's wait rule (dialog data), so a wait it would refuse is marked while typed;
+       the server still checks it on Create class. */
+    function waitProblem(where, k, value) {
+        var r = S.data.wait_rule;
+        if (!r) return null;
+        if (value === undefined || value === null || String(value).trim() === '') {
+            return r.empty.replace('{number}', k + 1).replace('{where}', where);
+        }
+        var ok = typeof value === 'number' && value % 1 === 0 && value % r.step === 0
+            && value >= r.min && value <= r.max;
+        return ok ? null : r.problem.replace('{number}', k + 1).replace('{where}', where)
+            .replace('{value}', shownValue(value));
+    }
+    /* A value in a message as the server's sentence shows it: text quoted, ASCII only. */
+    function shownValue(value) {
+        if (typeof value !== 'string') return String(value);
+        var q = value.indexOf("'") >= 0 && value.indexOf('"') < 0 ? '"' : "'";
+        return q + value.replace(/[\\]/g, '\\\\').replace(q === "'" ? /'/g : /"/g, '\\' + q)
+            .replace(/[^\x20-\x7e]/g, function (ch) {
+                var c = ch.charCodeAt(0), h = c.toString(16);
+                if (ch === '\n') return '\\n';
+                if (ch === '\t') return '\\t';
+                if (ch === '\r') return '\\r';
+                return c < 256 ? '\\x' + ('0' + h).slice(-2) : '\\u' + ('000' + h).slice(-4);
+            }) + q;
+    }
+    function badWaits() {
+        var ns = S.newSlot;
+        return STEP_WHERE.some(function (w) {
+            return (ns[w[0]] || []).some(function (st, k) {
+                return st.kind === 'wait' && waitProblem(w[0], k, st.length);
+            });
+        });
+    }
+    /* The error line under a wait step, tied to its length field. */
+    function markWait(input, text, where, k, local) {
+        var w = el('p', 'ui-field-error', text);
+        w.setAttribute('role', 'alert');
+        w.setAttribute('data-czg-step-problem', '');
+        if (local) w.setAttribute('data-czg-step-local', '');
+        w.id = 'czg-step-problem-' + where + '-' + k;
+        if (input) {
+            input.setAttribute('aria-invalid', 'true');
+            input.setAttribute('aria-describedby', w.id);
+        }
+        return w;
     }
     function clearNewMessages() {
         var host = $('czg-new-body');
-        host.querySelectorAll('[data-czg-step-problem], [data-czg-new-problem], [data-czg-new-done], [data-czg-new-confirm], [data-czg-new-save]')
+        // a wait marked while typed stays marked until its own length changes
+        host.querySelectorAll('[data-czg-step-problem]:not([data-czg-step-local]), [data-czg-new-problem], '
+                              + '[data-czg-new-done], [data-czg-new-confirm], [data-czg-new-save]')
             .forEach(function (n) { n.remove(); });
         var create = host.querySelector('[data-czg-new-create]');
-        if (create) create.disabled = false;
+        if (create) create.disabled = badWaits();
     }
     /* Prefill: the picked slot class's own slots, else the first preset. */
     function prefillNew() {
@@ -1261,7 +1419,7 @@
         var acts = U.actions([{ label: 'Create class', cls: 'btn-sync outline' }], 'New slot gate class');
         var cb = acts.children[0];
         cb.setAttribute('data-czg-new-create', '');
-        cb.disabled = ns.busy || !!ns.confirm;
+        cb.disabled = ns.busy || !!ns.confirm || badWaits();
         if (ns.cls && !ns.confirm && !ns.saved) {
             var sb = U.actions([{ label: 'Save the class file', cls: 'btn-sync outline' }]).children[0];
             sb.setAttribute('data-czg-new-save', '');
@@ -1450,7 +1608,8 @@
                 if (S.klass !== before) {
                     var hadTicks = anyTicked();
                     shareUnits(function () {
-                        S.entered = {}; S.raw = {}; S.cls = {}; S.placed = {}; S.invalid = {}; S.spectOn = {};
+                        S.entered = {}; S.raw = {}; S.cls = {}; S.clsHand = {};
+                        S.placed = {}; S.invalid = {}; S.spectOn = {};
                     });
                     S.spectNote = hadTicks ? SPECT_CLASS_NOTE : '';
                     S.classNote = moved;
@@ -1507,6 +1666,8 @@
             }
             S.plan = x.j;
             S.planSig = x.j.plan_sig;
+            S.planFor = { pair: b.pairs[0], from: b.copy_from || '' };
+            rememberCopied(klass(), firstPlan(), b);
             renderPlan();
         }).catch(function (e) {
             if (S !== g) return;
@@ -2038,7 +2199,8 @@
     }
     /* The closing line of a refused check: when the chip (or a class file it loads) did not
        load in the lab's code, the gate's inputs are not what to change. */
-    var CHIP_DID_NOT_LOAD = /does not load or build its config with the lab's code/;
+    var CHIP_DID_NOT_LOAD = new RegExp([/does not load or build its config with the lab's code/.source,
+        /does not load with the lab's code\. The lab's error: (ImportError|ModuleNotFoundError)\b/.source].join('|'));
     function nextStep(refused) {
         var chip = refused.length && refused.every(function (x) {
             var v = x.verdict || {};
@@ -2719,7 +2881,10 @@
             var had = anyTicked();
             shareUnits(function () { S.spectOn = {}; dropSpect(null); });
             S.spectNote = had ? 'The spectator choices were cleared: ' + (t.value || 'the new pair') + ' has other neighbouring lines. Tick them again.' : '';
-            if (fillClasses()) { S.entered = {}; S.raw = {}; S.cls = {}; S.placed = {}; S.invalid = {}; fillSlots(); }
+            if (fillClasses()) {
+                S.entered = {}; S.raw = {}; S.cls = {}; S.clsHand = {}; S.placed = {}; S.invalid = {};
+                fillSlots();
+            }
             fillPairLine(); fillFrom(); fillModel(); fillMore(); fillSpect();
             if (slotted(klass())) fillSlots();     // a line the new pair lacks is not offered
             if (!S.newSlot.busy) {
@@ -2734,17 +2899,26 @@
         else if (t.hasAttribute('data-czg-slot')) {
             var f = t.getAttribute('data-czg-slot');
             S.cls[f] = t.value;
-            S.entered[f] = {};
-            S.raw[f] = {};
-            [S.invalid, S.placed || {}].forEach(function (m) {
-                Object.keys(m).forEach(function (k) { if (k.indexOf(f + '\u0000') === 0) delete m[k]; });
-            });
+            S.clsHand = S.clsHand || {};
+            S.clsHand[f] = t.value !== AS_COPIED;
+            dropSlotValues(f);
         } else if (t.hasAttribute('data-czg-more')) {
             shareUnits(function () {
                 if (!t.checked && S.spectOn) { delete S.spectOn[t.value]; dropSpect(t.value); }
             });
             fillSpect();
-        } else if (t.id !== 'czg-from') { return; }
+        } else if (t.id === 'czg-from') {
+            // a slot whose class was not picked by hand starts over from the new source
+            var kc = klass();
+            if (slotted(kc)) {
+                (kc.slots || []).forEach(function (s) {
+                    if ((S.clsHand || {})[s.field]) return;
+                    S.cls[s.field] = undefined;
+                    dropSlotValues(s.field);
+                });
+                fillSlots();
+            }
+        } else { return; }
         if (t.hasAttribute('data-czg-slot')) fillSlots();
         inputsChanged();
     });
@@ -2757,7 +2931,7 @@
             S.klass = v; S.klassByHand = true; S.classNote = ''; renderClassWhy([]); markClassTrigger();
             var hadTicks = anyTicked();
             shareUnits(function () {
-                S.entered = {}; S.raw = {}; S.cls = {}; S.placed = {}; S.invalid = {}; S.spectOn = {};
+                S.entered = {}; S.raw = {}; S.cls = {}; S.clsHand = {}; S.placed = {}; S.invalid = {}; S.spectOn = {};
             });
             S.spectNote = hadTicks ? SPECT_CLASS_NOTE : '';
             fillModel();
@@ -2818,6 +2992,7 @@
             S.entered[f][n] = r.v;
             if (S.invalid[key]) { delete S.invalid[key]; say(''); }
             showFieldError(t, null);
+            if (!isSpectField(f)) enteredBadge(t);
         } else {
             delete S.entered[f][n];
             S.invalid[key] = r.why;
