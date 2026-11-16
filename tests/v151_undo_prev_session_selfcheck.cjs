@@ -182,6 +182,12 @@ function ask(unit) {
     askWindow('h-1', '/undo', ['other_window']);
     await clickConfirm(false);
     ok(SESSION.getItem(WIN_KEY) === null, 'H1: a Cancel sets no standing yes');
+    const toastsWas = toasts.length;
+    askWindow('h-0', '/redo', ['other_window']);
+    await clickConfirm(false);
+    ok(toasts.slice(toastsWas).some((t) => t === 'Not redone; nothing was written.')
+       && !toasts.slice(toastsWas).some((t) => /Not undone/.test(t)),
+       'H1b: a Cancel on a redo question says "Not redone"');
     askWindow('h-1', '/undo', ['other_window']);
     await clickConfirm(true);
     window.UndoQueue.push('/redo');

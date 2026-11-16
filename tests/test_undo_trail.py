@@ -130,6 +130,18 @@ def test_pulses_undo_selfcheck():
     _run("pulses_undo_selfcheck.cjs", "ok - undo back to an already-drawn state costs NO synth request (cache)")
 
 
+def test_pulses_key_values_follow_undo():
+    """The inspector's key-value tiles and the physical-output note follow an
+    in-place undo / redo; the tiles carry their field's dot path so the client
+    can find them."""
+    _run("pulses_undo_key_values_selfcheck.cjs", "ok - a slow older answer never lands over a newer one")
+    tpl = _ROOT / "quam_state_manager" / "web" / "templates"
+    ui = (tpl / "_ui.html").read_text(encoding="utf-8")
+    assert '{%- if t.path %} data-stat-path="{{ t.path }}"{% endif %}' in ui
+    sec = (tpl / "_pulse_params_section.html").read_text(encoding="utf-8")
+    assert "'path': p.dot_path}" in sec
+
+
 def test_burst_contract_ships():
     app = (_STATIC / "app.js").read_text(encoding="utf-8")
     assert "if (evt.repeat) { evt.preventDefault(); return; }" in app, "a held key is not a burst"

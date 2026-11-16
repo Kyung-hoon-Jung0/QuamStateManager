@@ -10276,7 +10276,8 @@ document.addEventListener("undoAskPrevSession", function (evt) {
             if (other && window.UndoQueue.rememberWindowYes) window.UndoQueue.rememberWindowYes();
             window.UndoQueue.push(d.direction === "/redo" ? "/redo" : "/undo");
         } else if (!yes && window.showToast) {
-            window.showToast("Not undone; nothing was written.", "info");
+            window.showToast((d.direction === "/redo" ? "Not redone" : "Not undone")
+                + "; nothing was written.", "info");
         }
     });
 });

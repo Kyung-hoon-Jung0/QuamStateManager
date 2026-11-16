@@ -127,6 +127,18 @@
         b.textContent = 'Check';
         var fp = firstPlan();
         b.disabled = S.busy || !fp || !fp.ok || hasInvalid();
+        changedAlert();
+    }
+    /* After a check, an input change says the result is for the earlier inputs; it names the
+       Check press only while Check can follow (a field the form marks must be fixed first). */
+    function changedAlert() {
+        if (!S.check || S.alertKind !== 'changed') return;
+        var marked = hasInvalid() || !!document.querySelector('#czg-form [aria-invalid="true"]');
+        var head = marked ? 'Inputs changed: fix the marked field, then press Check.'
+            : 'Inputs changed: press Check again.';
+        if (S.changedHead === head && $('czg-alert') && $('czg-alert').firstChild) return;
+        alertBox(callout('note', head, 'The result below is for the earlier inputs.'), 'changed');
+        S.changedHead = head;
     }
     /* A field keeps the group (main or folded) it was first shown in, so it
        never moves while the person types in it; a new class or model resets it. */
@@ -1179,7 +1191,8 @@
         if (S.check) {
             var ev = $('czg-evidence');
             if (ev) ev.classList.add('czg-stale');
-            if (S.alertKind !== 'changed') alertBox(callout('note', 'Inputs changed: press Check again.', 'The result below is for the earlier inputs.'), 'changed');
+            if (S.alertKind !== 'changed') S.changedHead = null;
+            S.alertKind = 'changed';
             say('Inputs changed, check again.');
         }
         S.phase = 'check';
@@ -1747,17 +1760,43 @@
             alertBox(callout('danger', 'The check did not run', 'The app did not answer (' + e + '). Press Check to try again.'));
         }).then(function () { if (S === g) keepCheckFocus(); });
     }
+    /* The level field of the line the shown pair's check found over its port's range: the
+       slot whose chip names that line, else the first slot; its amplitude or level input. */
+    function overRangeInput() {
+        var p = ((S.check && S.check.pairs) || [])[S.pairIdx];
+        var over = ((p && p.timeline && p.timeline.lanes) || []).filter(function (ln) {
+            return (ln.segments || []).some(function (sg) { return (sg.flags || []).indexOf('over_range') >= 0; });
+        }).map(function (ln) { return String(ln.key).replace(/^coupler /, ''); });
+        if (!over.length) return null;
+        var slots = Array.prototype.slice.call(document.querySelectorAll('#czg-slots .ui-slot'));
+        var hit = slots.filter(function (sl) {
+            var chip = sl.querySelector('.ui-slot-chip');
+            return chip && over.indexOf(chip.textContent) >= 0;
+        });
+        var pick = null;
+        (hit.length ? hit : slots).some(function (sl) {
+            var ins = Array.prototype.slice.call(sl.querySelectorAll('input[data-czg-field]:not([disabled])'));
+            pick = ins.filter(function (i) {
+                return /amp|level/i.test(i.getAttribute('data-czg-name') || '');
+            })[0] || null;
+            return !!pick;
+        });
+        return pick;
+    }
     /* The inert form and the busy button drop the focus to the page while a check runs: give it
        back inside the dialog, on Create when it can be pressed, else on the first field the
-       check names, else on the primary button or Name. A focus still in the dialog stays. */
+       check names (a level over the port's range names its field), else on the primary button
+       or Name. A focus still in the dialog stays, except on Check when the check named a field. */
     function keepCheckFocus() {
         var d = $('czg-dialog');
         if (!d) return;
         var a = document.activeElement;
-        if (a && a !== document.body && d.contains(a) && !a.disabled) return;
         var b = $('czg-primary');
+        var rng = S.phase !== 'create' ? overRangeInput() : null;
+        if (a && a !== document.body && d.contains(a) && !a.disabled && !(rng && a === b)) return;
         var live = b && !b.disabled ? b : null;
-        var t = (S.phase === 'create' && live) || d.querySelector('#czg-form [aria-invalid="true"]:not([disabled])')
+        var t = (S.phase === 'create' && live) || rng
+            || d.querySelector('#czg-form [aria-invalid="true"]:not([disabled])')
             || live || $('czg-name');
         if (t) { try { t.focus(); } catch (e) { /* not focusable */ } }
     }

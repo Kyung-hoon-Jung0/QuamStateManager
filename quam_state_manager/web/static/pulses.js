@@ -297,6 +297,77 @@ window.PulsesPage = (function () {
         var main = (bar && bar.getAttribute('data-view-main')) || root.getAttribute('data-pulse-path');
         return window.htmx.ajax('GET', viewUrl(main, viewPathsOf(bar)), { target: '#inspector-pane', swap: 'innerHTML' });
     }
+    /* An undo or redo patches the inspector fields in place (app.js
+       _revertCell). The key-value tiles and an amplitude's physical-output
+       note read the same stored value, so they follow it: a tile takes its
+       field's new committed text, the note the server's annotation of the
+       value stored now (/bulk/phys, the one amp_annotation the render uses).
+       A newer press's answer wins; an unreadable answer leaves the note. */
+    var _physSeq = 0;
+    function _leadText(el, text) {
+        var node = el.firstChild;
+        if (node && node.nodeType === 3) node.nodeValue = text;
+        else el.insertBefore(document.createTextNode(text), node);
+    }
+    function _paintNote(span, ann, blank) {
+        if (ann) {
+            if (ann.kind === 'mw') {
+                span.setAttribute('data-dbm', String(ann.dbm));
+                span.textContent = '\u2248 ' + ann.text;
+                if (span.title) span.title = span.title.replace(/FSP \([^)]*dBm\)/, 'FSP (' + ann.fsp + ' dBm)');
+                if (window.PhysAmp && window.PhysAmp.applyAll) window.PhysAmp.applyAll(span.parentNode);
+            } else {
+                span.removeAttribute('data-dbm');
+                span.textContent = '\u2248 ' + ann.text;
+            }
+            return;
+        }
+        span.removeAttribute('data-dbm');
+        if (blank) {
+            span.textContent = blank.mark;
+            span.title = blank.text;
+        } else {
+            span.textContent = '';
+        }
+    }
+    function repaintKeyValues(root, entries) {
+        var notes = {};
+        entries.forEach(function (e) {
+            var dp = e && e.dot_path;
+            if (!dp || e.created || e.deleted) return;
+            root.querySelectorAll('form.pulse-edit-form input[name="dot_path"]').forEach(function (h) {
+                if (h.value !== dp) return;
+                var form = h.closest('form');
+                var input = form && form.querySelector('input[name="value"]');
+                if (!input) return;
+                var text = input.hasAttribute('data-committed') ? input.getAttribute('data-committed') : input.value;
+                root.querySelectorAll('.ui-stat[data-stat-path]').forEach(function (tile) {
+                    var v = tile.getAttribute('data-stat-path') === dp && tile.querySelector('.ui-stat-value');
+                    if (v) _leadText(v, text);
+                });
+                var span = form.parentNode && form.parentNode.querySelector('.phys-note');
+                if (span) (notes[dp] = notes[dp] || []).push(span);
+            });
+        });
+        var paths = Object.keys(notes);
+        if (!paths.length || !window.fetch) return null;
+        var my = ++_physSeq;
+        return fetch('/bulk/phys', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paths: paths })
+        }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+            if (!d || !d.ok || my !== _physSeq) return;
+            var phys = d.phys || {}, blank = d.blank || {};
+            paths.forEach(function (dp) {
+                if (!Object.prototype.hasOwnProperty.call(phys, dp)) return;
+                notes[dp].forEach(function (span) {
+                    if (document.body.contains(span)) _paintNote(span, phys[dp], blank[dp] || null);
+                });
+            });
+        }).catch(function () { return null; });
+    }
+    window.PulsesKeyValues = { repaint: repaintKeyValues };
     document.addEventListener('cellsReverted', function (evt) {
         var root = detailRoot();
         if (!root) return;
@@ -327,6 +398,7 @@ window.PulsesPage = (function () {
             if (mine) touched.push(sec);
         });
         if (!touched.length) return;
+        if (inPlace) repaintKeyValues(root, entries);
         // a refresh is due: the stale committed plot must not be drawn
         // meanwhile (a flag until the debounce fires, then the count of the
         // sections still fetching -- never accumulated per press, a burst
