@@ -319,7 +319,7 @@ def cz_gate_deleted_detail():
     paths = [p.strip() for p in request.args.getlist("paths") if p and p.strip()]
     return render_template(
         "_gate_deleted_detail.html", pair=pair, gate=gate,
-        message=f"{gate} is no longer on the chip. Ctrl+Z brings it back.",
+        message=f"{gate} is deleted. Ctrl+Z brings it back.",
         reopen=_reopen_url(paths) if paths else "")
 
 
