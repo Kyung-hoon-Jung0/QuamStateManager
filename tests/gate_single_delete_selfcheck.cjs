@@ -4,6 +4,8 @@
  *      no Edit values / Make active / Delete of the gone gate is left on screen
  *   U  an undo that does not bring the gate back draws nothing; the undo of the delete (its real
  *      cellsReverted detail) asks for the gate's pulse detail once and the detail is back
+ *   R  the redo of the delete (its real answer) puts the same "deleted" detail back, a redo of
+ *      another gate or of one field does not; a further undo reopens the pulse detail
  * Run: node tests/gate_single_delete_selfcheck.cjs <fixture.json>
  *      (driven by tests/test_gate_status_routes.py, which renders the detail and the answers)
  */
@@ -136,6 +138,31 @@ const detailGets = () => reqs().filter((r) => r.url === FIX.url).length;
   ok(detailGets() === 1, 'U: the undo of the delete asks for the pulse detail once');
   ok(!!pane().querySelector('#pulse-detail-root') && !!row(), 'U: the pulse detail and its status line are back');
   ok(fields() > 0, 'U: its fields are back');
+
+  // R: the redo of the delete puts the same "deleted" detail back; a further undo reopens it
+  const goneGets = () => reqs().filter((r) => /\/pulse\/cz-gate\/deleted-detail/.test(r.url)).length;
+  fire({ entries: [{ dot_path: 'qubit_pairs.' + PAIR + '.macros.other_gate', created: true, deleted: false }] });
+  fire({ entries: [{ dot_path: 'qubit_pairs.' + PAIR + '.macros.' + GNAME + '.phase_shift_control',
+                     created: true, deleted: false }] });
+  await drain();
+  ok(goneGets() === 0 && !!pane().querySelector('#pulse-detail-root'),
+     'R: a redo of another gate or of one field leaves the detail alone');
+  fire(FIX.redo);
+  await answerNext((u) => u === FIX.gone_url, FIX.gone, 'the deleted detail');
+  ok(goneGets() === 1, 'R: the redo of the delete asks for the deleted detail once');
+  const text2 = pane().textContent;
+  ok(text2.includes(GNAME) && text2.includes('Ctrl+Z brings it back'),
+     'R: the detail says the gate is gone and how to bring it back');
+  ok(!pane().querySelector('#pulse-detail-root') && !row(), 'R: the pulse detail of the gone gate is not shown');
+  ok(fields() === 0, 'R: no field of the gone gate is left to edit');
+  const reopenGets = () => reqs().filter((r) => r.url === FIX.reopen).length;
+  const before = reopenGets();
+  fire(FIX.undo2);
+  await answerNext((u) => u === FIX.reopen, FIX.again2, 'the pulse detail once more');
+  ok(!!pane().querySelector('#pulse-detail-root') && !!row() && fields() > 0,
+     'R: a further undo reopens the pulse detail with its fields');
+  ok(reopenGets() === before + 1,
+     'R: the further undo asks for the pulse detail once');
 
   console.log('ALL OK (' + n + ' assertions)');
   process.exit(0);

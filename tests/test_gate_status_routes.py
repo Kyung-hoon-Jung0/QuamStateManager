@@ -292,6 +292,7 @@ def test_gate_status_selfcheck():
     import shutil
     import subprocess
     from pathlib import Path
+    from urllib.parse import quote
     node = shutil.which("node")
     if not node or not os.environ.get("NODE_PATH"):
         pytest.skip("node + jsdom (NODE_PATH) needed")
@@ -885,13 +886,15 @@ def test_a_gate_deleted_from_its_pulse_detail_leaves_no_live_looking_detail(rig,
     """Behaviour under the bundled htmx (tests/gate_single_delete_selfcheck.cjs) with the real
     server answers: a gate deleted from the status line of its pulse detail leaves a detail
     that says the gate was deleted and offers nothing to edit; the undo of the delete draws
-    the gate's pulses again, an undo that does not bring the gate back draws nothing."""
+    the gate's pulses again, an undo that does not bring the gate back draws nothing; the
+    redo of the delete puts the "deleted" detail back and a further undo reopens it."""
     import html
     import os
     import re
     import shutil
     import subprocess
     from pathlib import Path
+    from urllib.parse import quote
     node = shutil.which("node")
     if not node or not os.environ.get("NODE_PATH"):
         pytest.skip("node + jsdom (NODE_PATH) needed")
@@ -912,9 +915,29 @@ def test_a_gate_deleted_from_its_pulse_detail_leaves_no_live_looking_detail(rig,
     undo = rig.post("/undo", headers=HX)
     assert undo.status_code == 200
     again = ans(rig.get(url, headers=HX))
+    # the redo takes the gate away again: its answer names the macro path, flagged as gone now
+    redo = rig.post("/redo", headers=HX)
+    assert redo.status_code == 200
+    redo_rev = json.loads(redo.headers["HX-Trigger"])["cellsReverted"]
+    macro = "qubit_pairs.q1-q2.macros.cz_sq"
+    assert any(e["dot_path"] == macro and e["created"] for e in redo_rev["entries"]), redo_rev
+    view = json.loads(html.unescape(re.search(r"data-view-paths='([^']*)'", again["body"]).group(1)))
+    assert view
+    gone_url = ("/pulse/cz-gate/deleted-detail?pair=q1-q2&gate=cz_sq"
+                + "".join("&paths=" + quote(p, safe="") for p in view))
+    gone = ans(rig.get(gone_url, headers=HX))
+    assert "cz_sq" in gone["body"] and "data-gate-gone" in gone["body"]
+    reopen = html.unescape(re.search(r'data-reopen="([^"]*)"', gone["body"]).group(1))
+    undo2 = rig.post("/undo", headers=HX)
+    assert undo2.status_code == 200
+    again2 = ans(rig.get(reopen, headers=HX))
+    # while the gate is on the chip the gone detail answers nothing to swap
+    assert rig.get(gone_url, headers=HX).status_code == 204
     fixture = {"pair": "q1-q2", "gate": "cz_sq", "url": url, "detail": detail, "offer": offer,
                "deleted": deleted, "again": again,
-               "undo": json.loads(undo.headers["HX-Trigger"])["cellsReverted"]}
+               "undo": json.loads(undo.headers["HX-Trigger"])["cellsReverted"],
+               "redo": redo_rev, "gone_url": gone_url, "gone": gone, "reopen": reopen,
+               "undo2": json.loads(undo2.headers["HX-Trigger"])["cellsReverted"], "again2": again2}
     path = tmp_path / "gate_single_delete.json"
     path.write_text(json.dumps(fixture), encoding="utf-8")
     p = subprocess.run([node, str(Path(__file__).parent / "gate_single_delete_selfcheck.cjs"), str(path)],

@@ -1,5 +1,6 @@
 {# The pulse detail of a gate deleted from its own status line (web/gate_status_routes.py,
-   delete_gate_together): the gate and its pulses are gone, so the detail says so and offers
+   delete_gate_together; after a redo of the delete, cz_gate_deleted_detail): the gate and
+   its pulses are gone, so the detail says so and offers
    nothing to edit. A Ctrl+Z that brings the gate back draws its pulses again
    (static/gate-status.js reads data-reopen). #}
 {% import "_ui.html" as ui %}
