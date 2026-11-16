@@ -154,7 +154,10 @@ class TestSnapshotManifest:
         d.mkdir(parents=True, exist_ok=True)
         meta = {"timestamp": ts, "trigger": "manual",
                 "diff_summary": {"added": 0, "removed": 0, "modified": 0, "total": 0},
-                "new_experiments": [], "source_path": "x"}
+                "new_experiments": [],
+                # the chip folder these snapshots were captured from: a history
+                # dir with no recorded owner belongs to that folder
+                "source_path": str(chip_dir.parent.parent.parent / "quam_state")}
         if label:
             meta["label"] = label
         (d / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
