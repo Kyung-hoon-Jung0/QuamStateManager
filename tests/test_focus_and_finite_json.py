@@ -85,3 +85,31 @@ def test_all_values_answer_has_no_bare_nan(client):
     resp = client.get("/bulk/all-values")
     assert resp.status_code == 200
     _strict(resp.get_data())
+
+
+def test_event_header_json_never_carries_a_bare_nan():
+    from flask import Response
+    from quam_state_manager.web.app import _finite_trigger_headers
+    resp = Response("")
+    resp.headers["HX-Trigger"] = json.dumps(
+        {"stateRestored": {"changes": [{"path": "a.b", "value": float("nan")},
+                                       {"path": "a.c", "value": float("-inf")},
+                                       {"path": "a.d", "value": 2.5}]}})
+    resp.headers["HX-Trigger-After-Settle"] = "NaN-named-event, other"   # a plain list stays as written
+    _finite_trigger_headers(resp)
+    events = json.loads(resp.headers["HX-Trigger"], parse_constant=lambda c: pytest.fail("bare " + c))
+    values = [c["value"] for c in events["stateRestored"]["changes"]]
+    assert values == [None, None, 2.5]
+    assert resp.headers["HX-Trigger-After-Settle"] == "NaN-named-event, other"
+
+
+def test_the_app_runs_the_event_header_door(client):
+    funcs = client.application.after_request_funcs.get(None, [])
+    assert any(f.__name__ == "_finite_trigger_headers" for f in funcs)
+
+
+@pytest.mark.parametrize("page", ["pair_detail", "qubit_detail"])
+def test_detail_pages_load_the_scripts_of_their_list_page(page):
+    base = (Path(__file__).resolve().parents[1] / "quam_state_manager" / "web" / "templates"
+            / "base.html").read_text(encoding="utf-8")
+    assert f"'{page}': ['components', 'czgate']" in base

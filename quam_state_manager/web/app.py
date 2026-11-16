@@ -631,6 +631,27 @@ def finite_json_dumps(obj, **kwargs):
     return _dump_finite(json.dumps, obj, kwargs)
 
 
+_TRIGGER_HEADERS = ("HX-Trigger", "HX-Trigger-After-Swap", "HX-Trigger-After-Settle")
+
+
+def _finite_trigger_headers(resp):
+    """An event header that carries JSON never holds a bare NaN / Infinity token:
+    htmx parses it strictly and would drop every event of the answer. Routes build
+    these headers with plain ``json.dumps``; this is the one door they all pass.
+    A header that is a plain event-name list, or holds no such token, is untouched."""
+    for name in _TRIGGER_HEADERS:
+        value = resp.headers.get(name)
+        if not value or not value.lstrip().startswith("{"):
+            continue
+        if "NaN" not in value and "Infinity" not in value:
+            continue
+        try:
+            resp.headers[name] = finite_json_dumps(json.loads(value))
+        except ValueError:
+            pass
+    return resp
+
+
 class FiniteJSONProvider(DefaultJSONProvider):
     """The app's JSON provider: never a bare NaN / Infinity token (D-NF1).
 
@@ -1124,6 +1145,7 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     app.before_request(_csrf_origin_check)
     app.before_request(_record_own_port)
     app.after_request(_add_security_headers)
+    app.after_request(_finite_trigger_headers)
 
     # docs/155 F3' — one directory listing per request, shared by the two
     # staleness walkers that were sweeping the same date directories twice
