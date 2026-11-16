@@ -236,7 +236,7 @@ window.CoreRecommend = (function () {
         return '<div data-core-rec>'
             + '<div class="ui-actions ui-actions--start"><button type="button" class="btn-sync" data-core-rec-open>'
             + 'Recommend core layout</button></div>'
-            + '<div data-core-rec-preview hidden>' + previewHtml(p)
+            + '<div class="ui-core-rec-stack" data-core-rec-preview hidden>' + previewHtml(p)
             + '<p class="ui-callout-text" data-core-rec-note hidden></p>'
             + '<div class="ui-actions ui-actions--start">'
             + '<button type="button" class="btn-sync" data-core-rec-apply disabled data-items="' + esc(items) + '">'

@@ -580,3 +580,33 @@ def test_diff_drop_selfcheck():
     assert proc.returncode == 0, (
         f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}")
 
+
+
+def test_two_way_counts_say_none_for_an_empty_side(env):
+    """Only values changed: the strip says 'none added' / 'none removed', never '+0' / '-0'.
+    A side with rows keeps its count form."""
+    html = _get(env, _url(env, three=False))
+    assert "none added" in html and "none removed" in html
+    assert "+0 added" not in html and "0 removed" not in html
+    one = env["root"] / "oneside"
+    for name, doc in (("s1", {"qubits": {"q1": {"T1": 1}}}),
+                      ("s2", {"qubits": {"q1": {"T1": 1, "extra": 3}}})):
+        qs = one / name / "quam_state"
+        qs.mkdir(parents=True)
+        (qs / "state.json").write_text(json.dumps(doc))
+        (qs / "wiring.json").write_text("{}")
+    refs = [f"run:{one / n / 'quam_state'}" for n in ("s1", "s2")]
+    url = f"/diff?a={quote(refs[0])}&b={quote(refs[1])}&tab=state&view=list"
+    h2 = _get(env, url)
+    assert "+1 added" in h2 and "none removed" in h2
+
+
+def test_p3_layout_rules_are_in_the_kit():
+    """Core preview blocks are stacked with a gap, the CZ frequency map is height-capped
+    with scroll, a compact run diff has a minimum width (the xscroll wrapper scrolls it)."""
+    root = Path(__file__).resolve().parent.parent / "quam_state_manager" / "web" / "static"
+    css = (root / "ui-kit.css").read_text(encoding="utf8")
+    assert re.search(r"\.ui-core-rec-stack \{[^}]*gap: var\(--ui-gap-3\)", css)
+    assert re.search(r"\.czp-map-view \{[^}]*max-height: var\(--ui-czp-map-max-h\)[^}]*overflow-y: auto", css)
+    assert re.search(r"\.ui-run-diff-compact:not\(\.ui-run-diff-phone\) \{ min-width: var\(--ui-run-diff-min-w\)", css)
+    assert 'class="ui-core-rec-stack" data-core-rec-preview' in (root / "load_check.js").read_text(encoding="utf8")

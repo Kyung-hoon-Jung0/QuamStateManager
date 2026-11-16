@@ -21,6 +21,8 @@
     --ui-cz-minimap-width: 16rem;
     --ui-cz-minimap-max: 25%;
     --ui-czp-map-min-w: 24rem;
+    --ui-czp-map-max-h: 36rem;       /* the frequency map scrolls inside this height */
+    --ui-run-diff-min-w: 40rem;      /* a compact run diff scrolls sideways below this width */
     --ui-cz-card-columns: minmax(0, 1fr) minmax(0, 1fr);
     --ui-coupler-field-flex: 1fr;
     --ui-coupler-field-min: 15rem;
@@ -877,6 +879,7 @@
 .ui-dpanes .dp-pane-head .dp-slot { position: sticky; left: calc(var(--dp-keys-w, 0px) + 0.3rem); align-self: flex-start; }
 .ui-xscroll-both { max-height: max(18rem, calc(100vh - var(--topbar-height, 56px) - 5rem)); overflow: auto; }
 .ui-xscroll { overflow-x: auto; max-width: 100%; }
+.ui-core-rec-stack { display: flex; flex-direction: column; gap: var(--ui-gap-3); }
 /* a table in a scrolling wrapper keeps a number with its unit on one line and scrolls instead of cutting */
 .ui-xscroll-table { min-width: 0; }
 .ui-xscroll-table > .ui-table .ui-table-num { white-space: nowrap; }
@@ -1326,6 +1329,7 @@
 .ui-generate.ui-run-diff-compact .gen-review-table th { white-space: normal; overflow-wrap: anywhere; }
 .ui-generate.ui-run-diff-compact .ui-dot-name { display: block; min-width: 0; max-width: 100%; }
 .ui-run-diff.ui-run-diff-compact { table-layout: fixed; width: 100%; }
+.ui-run-diff.ui-run-diff-compact:not(.ui-run-diff-phone) { min-width: var(--ui-run-diff-min-w); }
 .ui-run-diff-compact .ui-dot-name { overflow-wrap: anywhere; }
 .ui-run-diff-compact th:nth-child(3), .ui-run-diff-compact .diff-list-arrow { width: 2ch; }
 .ui-run-diff-compact .diff-list-delta, .ui-run-diff-compact .diff-list-delta .val-delta { white-space: normal; overflow-wrap: anywhere; }
@@ -1645,7 +1649,7 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 .cm-lit-ring[data-role="coupler"] { stroke: var(--ui-feature-role-coupler-color); }
 /* The chip layout card sits beside the map while the row holds both (the map keeps
    --ui-czp-map-min-w); otherwise the card takes the full row above the map instead of being squeezed. */
-.czp-map-view { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--ui-gap-3); }
+.czp-map-view { max-height: var(--ui-czp-map-max-h); overflow-y: auto; display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--ui-gap-3); }
 .czp-map-view > .cmap { flex: 1 0 min(var(--ui-cz-minimap-width), var(--ui-cz-minimap-max)); }
 .czp-map-view > .czp-map { flex: 9999 1 var(--ui-czp-map-min-w); min-width: 0; }
 .czp-map-view .cm-svg { max-width: var(--ui-opxmon-full-width); height: auto; }

@@ -189,8 +189,8 @@
       {% if view == 'panes' %}{% if c.get('one_sided', 0) %}
       <span class="diff-count diff-count-added">{{ '{:,}'.format(c.get('one_sided', 0)) }} on some sources only</span>{% endif %}
       {% else %}
-      <span class="diff-count diff-count-added">+{{ '{:,}'.format(c.added) }} added</span>
-      <span class="diff-count diff-count-removed">&minus;{{ '{:,}'.format(c.removed) }} removed</span>
+      {% if c.added %}<span class="diff-count diff-count-added">+{{ '{:,}'.format(c.added) }} added</span>{% else %}<span class="muted">none added</span>{% endif %}
+      {% if c.removed %}<span class="diff-count diff-count-removed">&minus;{{ '{:,}'.format(c.removed) }} removed</span>{% else %}<span class="muted">none removed</span>{% endif %}
       {% endif %}
       <span class="muted">{{ '{:,}'.format(c.same) }} identical</span>
       {% if payload.truncated %}<span class="warn" title="the row list stops at the cap; the counts above are the whole diff">· capped</span>{% endif %}
