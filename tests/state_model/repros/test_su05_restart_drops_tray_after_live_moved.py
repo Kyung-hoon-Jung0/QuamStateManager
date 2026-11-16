@@ -37,7 +37,8 @@ def test_rows_survive_a_restart_while_an_experiment_wrote_the_chip(tmp_path, cha
     rows = [e.dot_path for e in ctx["store"].change_log]
     bring = c.post("/state/take-live/restore")
     assert rows == ["qubits.q1.T1"], (rows, "could not be recovered" in page, bring.headers.get("HX-Trigger"))
-    assert [asdict(e) for e in ctx["store"].change_log] == originals
+    # the window id is never stored: a recovered row carries the restoring window's id (none here)
+    assert [asdict(e) for e in ctx["store"].change_log] == [dict(o, window_id=None) for o in originals]
     assert ctx["store"].get_value("qubits.q1.T1") == 3.1e-05
     assert ctx["live_diverged"] is True
     assert "may collide" in page
