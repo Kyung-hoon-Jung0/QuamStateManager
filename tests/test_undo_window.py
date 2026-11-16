@@ -393,3 +393,44 @@ def test_an_age_yes_drops_the_age_from_the_window_question(env, monkeypatch, con
     assert snapshot(env) == before and _live_off(env) == 0.1
     t = _trig(c.post("/undo", headers=A, data={**age_yes, "ack_prev_window": q["unit_id"]}))
     assert t["cellsReverted"]["live"] is True and _live_off(env) == start
+
+
+@pytest.mark.parametrize("on", [True, False])
+def test_one_yes_per_window_covers_its_redo_and_older_undo(env, on):
+    """One Yes in a window: the page then sends the window's standing yes on
+    every press, so its redo and an older step's undo ask nothing more; a new
+    window still asks once, and the standing yes needs a window id."""
+    _set_setting(env, on)
+    capture(env, 0.1)
+    capture(env, 0.12)
+    c = env["client"]
+    standing = {"ack_other_windows": "1"}
+    asked = []
+
+    def press(direction, data):
+        t = _trig(c.post(direction, headers=B, data=data))
+        if "undoAskPrevSession" in t:
+            asked.append(t["undoAskPrevSession"])
+            # the page's Yes: this step's yes, and the window's yes from now on
+            t = _trig(c.post(direction, headers=B, data={
+                "ack_prev_window": asked[-1]["unit_id"], **standing}))
+        assert "cellsReverted" in t, t
+        return standing
+
+    data = press("/undo", {})
+    assert _work_off(env) == 0.1
+    press("/redo", data)
+    assert _work_off(env) == 0.12
+    press("/undo", data)
+    press("/undo", data)
+    assert _work_off(env) == 0.08 and _live_off(env) == (0.08 if on else 0.12)
+    assert len(asked) == 1 and asked[0]["direction"] == "/undo"
+    assert "Ctrl+Z" in asked[0]["message"]
+    # a new window still asks once; the standing yes without a window id does not count
+    q = _trig(c.post("/redo", headers={"X-SM-Window-ID": "window-c"}))["undoAskPrevSession"]
+    assert q["direction"] == "/redo" and "Ctrl+Y" in q["message"] and "Ctrl+Z" not in q["message"]
+    before = snapshot(env)
+    c.environ_base.pop("HTTP_X_SM_WINDOW_ID", None)
+    r = c.post("/redo", data=standing)
+    assert r.status_code == 409 and "undoAskPrevSession" in _trig(r)
+    assert snapshot(env) == before

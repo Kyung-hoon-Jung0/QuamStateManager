@@ -430,8 +430,12 @@ function tableWidths(el, sw, cw) {
     type($('input[data-czg-name="amplitude"]'), '0.25');
     await settle();
     queue.check.push((b) => checkOk(b, { unchecked: true }));
+    // the busy form drops the focus to the page (Chrome): the answer gives it back to Create
+    if (doc.activeElement && doc.activeElement.blur) doc.activeElement.blur();
     prim().click();
     await settle();
+    ok(doc.activeElement === prim() && /^Create/.test(prim().textContent),
+       'after Check the focus is back in the dialog, on Create');
     ok(/without the lab check/.test(prim().textContent) && /Create 2 gates, 2 without the lab check/.test(prim().textContent) && $('#czg-alert .ui-verdict--strong.ui-verdict--warn'), 'not checked: warn banner and the button counts what it will create');
 
     // create

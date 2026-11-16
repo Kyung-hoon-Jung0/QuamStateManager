@@ -8,9 +8,14 @@
  *     WINDOW's yes to old edits (R2 MINOR 4: kept per window in
  *     sessionStorage, keyed by the chip folder; not per chip context on the
  *     server), and never a yes to another window's step;
- *  F  a Yes to another window's step covers that one step (undo or redo)
- *     and is never a yes to old edits;
- *  G  a question naming both reasons: its Yes covers both, for that step only;
+ *  F  a Yes to another window's step is sent with that step and then stands
+ *     for this window (undo and redo, per tab and chip folder, bound to the
+ *     document's window id); it is never a yes to old edits;
+ *  G  a question naming both reasons: its Yes covers the age for that step
+ *     only, the window part stands;
+ *  H  one Yes, then redo, then an older undo: every later press carries the
+ *     window's standing yes, so the server asks once; a Cancel sets none and
+ *     a new document (reload) has none;
  *  E  presses queued behind the asked one are dropped when it asks (R2
  *     MINOR 4: a Cancel used to be asked again for each of them);
  *  C  the Undo / Redo panel names the edit's age;
@@ -63,6 +68,7 @@ window.htmx = { ajax: (m, u, o) => { ajaxCalls.push({ m: m, u: u, o: o });
 global.htmx = window.htmx;
 
 window.__chipKey = 'chip_k-0123abcd';
+const WIN_KEY = 'sm.undoOtherWindowOk.chip_k-0123abcd';
 window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
 window.eval(fs.readFileSync(path.join(STATIC, 'undo-trail.js'), 'utf8'));
 const d = window.document;
@@ -107,7 +113,7 @@ function ask(unit) {
     ok(undo.length === 1 && undo[0].o && undo[0].o.values
        && undo[0].o.values.ack_prev_session === 'u-old-1',
        'A2: OK sends one /undo with that unit\'s yes; ' + JSON.stringify(undo.map((c) => c.o && c.o.values)));
-    ok(undo[0].o.values.ack_prev_window === '',
+    ok(undo[0].o.values.ack_prev_window === '' && undo[0].o.values.ack_other_windows === '',
        'A2b: a Yes to the age question is not a yes to another window\'s step; ' + JSON.stringify(undo[0].o.values));
     /* B */
     window.UndoQueue.push('/undo');
@@ -117,7 +123,7 @@ function ask(unit) {
        'B1: the next press does not carry the yes again; ' + JSON.stringify(undo2[1] && undo2[1].o.values));
     ok(undo2[1].o.values.ack_old_edits === '1' && SESSION.getItem('sm.undoOldOk.chip_k-0123abcd') === '1',
        'B2: ...it carries the yes of THIS window to old edits, kept per window; ' + JSON.stringify(undo2[1].o.values));
-    ok(undo2[1].o.values.ack_prev_window === '',
+    ok(undo2[1].o.values.ack_prev_window === '' && undo2[1].o.values.ack_other_windows === '',
        'B2b: ...and never a yes to another window\'s step; ' + JSON.stringify(undo2[1].o.values));
     SESSION._m.clear();
     window.UndoQueue.push('/undo');
@@ -141,18 +147,22 @@ function ask(unit) {
        'F1: a Yes to the window question sends only the window yes, for that step; ' + JSON.stringify(last().o.values));
     ok(SESSION.getItem('sm.undoOldOk.chip_k-0123abcd') === null,
        'F2: ...and never stands for a yes to old edits');
+    ok(!!window.__smWindowId && SESSION.getItem(WIN_KEY) === window.__smWindowId,
+       'F2b: ...it stands for this window, kept per tab and chip folder with the window id');
     window.UndoQueue.push('/undo');
     await tick(80);
-    ok(last().o.values.ack_prev_window === '' && last().o.values.ack_old_edits === '',
-       'F3: the next step carries no consent, so the server asks again; ' + JSON.stringify(last().o.values));
+    ok(last().o.values.ack_prev_window === '' && last().o.values.ack_old_edits === ''
+       && last().o.values.ack_other_windows === '1',
+       'F3: the next step carries the standing yes of this window only; ' + JSON.stringify(last().o.values));
     askWindow('r-1', '/redo', ['other_window']);
     await clickConfirm(true);
     ok(last().u === '/redo' && last().o.values.ack_prev_window === 'r-1',
        'F4: a redo question Yes repeats the redo with that step\'s yes; ' + JSON.stringify(last().o.values));
     window.UndoQueue.push('/redo');
     await tick(80);
-    ok(last().u === '/redo' && last().o.values.ack_prev_window === '',
-       'F5: the next redo carries no consent; ' + JSON.stringify(last().o.values));
+    ok(last().u === '/redo' && last().o.values.ack_prev_window === '' && last().o.values.ack_other_windows === '1',
+       'F5: the next redo carries the standing yes, not a step yes; ' + JSON.stringify(last().o.values));
+    SESSION._m.clear();
 
     /* G: one question naming both reasons; its Yes covers both, for that step only */
     askWindow('c-1', '/undo', ['other_window', 'age']);
@@ -163,8 +173,34 @@ function ask(unit) {
     window.UndoQueue.push('/undo');
     await tick(80);
     ok(last().o.values.ack_prev_window === '' && last().o.values.ack_prev_session === ''
-       && last().o.values.ack_old_edits === '' && SESSION.getItem('sm.undoOldOk.chip_k-0123abcd') === null,
-       'G2: ...and nothing for the next step; ' + JSON.stringify(last().o.values));
+       && last().o.values.ack_old_edits === '' && SESSION.getItem('sm.undoOldOk.chip_k-0123abcd') === null
+       && last().o.values.ack_other_windows === '1',
+       'G2: ...and for the next step only the window part stands; ' + JSON.stringify(last().o.values));
+
+    /* H: one Yes per window, then redo and an older undo ride on it */
+    SESSION._m.clear();
+    askWindow('h-1', '/undo', ['other_window']);
+    await clickConfirm(false);
+    ok(SESSION.getItem(WIN_KEY) === null, 'H1: a Cancel sets no standing yes');
+    askWindow('h-1', '/undo', ['other_window']);
+    await clickConfirm(true);
+    window.UndoQueue.push('/redo');
+    await tick(80);
+    const hRedo = last();
+    window.UndoQueue.push('/undo');
+    await tick(80);
+    const hUndo = last();
+    ok(hRedo.u === '/redo' && hRedo.o.values.ack_other_windows === '1'
+       && hUndo.u === '/undo' && hUndo.o.values.ack_other_windows === '1',
+       'H2: after one Yes the redo and the older undo both carry the yes of this window; '
+       + JSON.stringify([hRedo.o.values, hUndo.o.values]));
+    const realId = window.__smWindowId;
+    window.__smWindowId = 'another-document';
+    window.UndoQueue.push('/undo');
+    await tick(80);
+    ok(last().o.values.ack_other_windows === '', 'H3: a new document (reload) has no standing yes');
+    window.__smWindowId = realId;
+    SESSION._m.clear();
 
     d.body.focus();
     d.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'y', ctrlKey: true, bubbles: true }));

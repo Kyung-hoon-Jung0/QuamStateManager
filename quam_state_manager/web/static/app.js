@@ -4,6 +4,8 @@
     var winId = window.crypto && window.crypto.randomUUID
         ? window.crypto.randomUUID()
         : Date.now().toString(36) + Math.random().toString(36).slice(2);
+    // read by the undo queue: a standing yes belongs to this document only
+    window.__smWindowId = winId;
     document.addEventListener("htmx:configRequest", function (evt) {
         evt.detail.headers["X-SM-Window-ID"] = winId;
     });
@@ -10016,8 +10018,8 @@ window.UndoQueue = (function () {
     var MAX = 20;
     var q = [], busy = false, waiting = false, _fullToastAt = 0;
     var _ackPrev = "";        // T1-F2: the earlier-session unit the user said yes to
-    // docs/160: one consent per reason. The yes to another window's step
-    // covers that one step only (its unit id, sent on the next press).
+    // docs/160: one consent per reason. The yes to another window's step is
+    // sent on the next press (its unit id) and then stands for this window.
     var _ackWindow = "";
     /* R2 MINOR 4: the yes to undoing an old edit on the live chip belongs to
        THIS window (sessionStorage, per chip folder) -- it was kept per chip
@@ -10025,6 +10027,15 @@ window.UndoQueue = (function () {
     function _yesKey() { return "sm.undoOldOk." + String(window.__chipKey || ""); }
     function _oldEditsSaidYes() {
         try { return window.sessionStorage.getItem(_yesKey()) === "1"; } catch (e) { return false; }
+    }
+    /* docs/160: one Yes to undoing or redoing another window's step means
+       THIS window is not asked again (kept per tab and chip folder, bound to
+       this document's window id: a reload is a new window and asks once).
+       It is never a yes to old edits. */
+    function _winYesKey() { return "sm.undoOtherWindowOk." + String(window.__chipKey || ""); }
+    function _otherWindowsSaidYes() {
+        var id = String(window.__smWindowId || "");
+        try { return !!id && window.sessionStorage.getItem(_winYesKey()) === id; } catch (e) { return false; }
     }
     /* The queue's OWN htmx sync source (docs/124 M-11). It must NOT be the
        tray: htmx 2.0.4's per-element sync (default strategy "last") lives on
@@ -10149,6 +10160,8 @@ window.UndoQueue = (function () {
                               _ackWindow = "";
                               return a;
                           })(),
+                          // docs/160: this window already said yes to another window's step
+                          ack_other_windows: _otherWindowsSaidYes() ? "1" : "",
                           // R2 MINOR 4: this window already said yes to an old edit
                           ack_old_edits: (item.path === "/undo" && _oldEditsSaidYes()) ? "1" : "" },
             });
@@ -10209,6 +10222,11 @@ window.UndoQueue = (function () {
         rememberPrevSessionYes: function () {
             try { window.sessionStorage.setItem(_yesKey(), "1"); } catch (e) {}
         },
+        /* docs/160: remember this window's yes to other windows' steps */
+        rememberWindowYes: function () {
+            var id = String(window.__smWindowId || "");
+            try { if (id) window.sessionStorage.setItem(_winYesKey(), id); } catch (e) {}
+        },
         /* R2 MINOR 4: drop the presses queued behind one the server asked
            about -- they were pressed before the answer; a Cancel must not
            ask again for each of them. Returns how many were dropped. */
@@ -10246,7 +10264,8 @@ document.addEventListener("undoAskPrevSession", function (evt) {
         if (yes && window.UndoQueue) {
             // docs/160: a Yes answers only the reasons this question named.
             // An age-only Yes is also the tab's standing yes to old edits
-            // (as before); a combined Yes covers both for this step only.
+            // (as before). A window Yes is the tab's standing yes to other
+            // windows' steps; the age part of a combined Yes is this step's only.
             var reasons = Array.isArray(d.reasons) ? d.reasons : [];
             var age = reasons.indexOf("age") >= 0;
             var other = reasons.indexOf("other_window") >= 0;
@@ -10254,6 +10273,7 @@ document.addEventListener("undoAskPrevSession", function (evt) {
             if (age && !other && window.UndoQueue.rememberPrevSessionYes)
                 window.UndoQueue.rememberPrevSessionYes();
             if (other && window.UndoQueue.ackWindow) window.UndoQueue.ackWindow(d.unit_id);
+            if (other && window.UndoQueue.rememberWindowYes) window.UndoQueue.rememberWindowYes();
             window.UndoQueue.push(d.direction === "/redo" ? "/redo" : "/undo");
         } else if (!yes && window.showToast) {
             window.showToast("Not undone; nothing was written.", "info");

@@ -10,7 +10,9 @@ the live chip with an EARLIER session's edit, or one older than 8 h, asks once
 first, in the pressing window too; a step from another document asks once
 whatever the setting (nothing staged or written while either asks; one
 question names every reason, in its text and in ``reasons``; each reason has
-its own yes: ``ack_prev_window`` for another window's step, that step only;
+its own yes: ``ack_prev_window`` for another window's step, then
+``ack_other_windows`` once the window said yes to one, after which that
+window is not asked about other windows' steps again;
 ``ack_prev_session`` for this step's age, and ``ack_old_edits`` once the tab
 said yes to an old edit, after which that tab is not asked about age again);
 the page side
@@ -285,4 +287,4 @@ def test_the_page_asks_and_shows_the_age_selfcheck():
     if r.returncode == 2:
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
-    assert r.stdout.count("ok - ") >= 13, r.stdout
+    assert r.stdout.count("ok - ") >= 27, r.stdout

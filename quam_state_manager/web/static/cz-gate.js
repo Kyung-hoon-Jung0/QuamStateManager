@@ -1734,7 +1734,21 @@
             if (S !== g) return;
             setBusy(false, '');
             alertBox(callout('danger', 'The check did not run', 'The app did not answer (' + e + '). Press Check to try again.'));
-        });
+        }).then(function () { if (S === g) keepCheckFocus(); });
+    }
+    /* The inert form and the busy button drop the focus to the page while a check runs: give it
+       back inside the dialog, on Create when it can be pressed, else on the first field the
+       check names, else on the primary button or Name. A focus still in the dialog stays. */
+    function keepCheckFocus() {
+        var d = $('czg-dialog');
+        if (!d) return;
+        var a = document.activeElement;
+        if (a && a !== document.body && d.contains(a) && !a.disabled) return;
+        var b = $('czg-primary');
+        var live = b && !b.disabled ? b : null;
+        var t = (S.phase === 'create' && live) || d.querySelector('#czg-form [aria-invalid="true"]:not([disabled])')
+            || live || $('czg-name');
+        if (t) { try { t.focus(); } catch (e) { /* not focusable */ } }
     }
 
     /* ---- simulate -------------------------------------------------------- */
