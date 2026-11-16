@@ -588,6 +588,9 @@ function tableWidths(el, sw, cw) {
     ok(/fix what the lab's error names \(a class file or the chip\), then press Check again\./.test(alertText())
        && !/Change the inputs/.test(alertText()),
        'a chip or class file that does not load: the verdict never asks to change the inputs');
+    ok(/fix what the lab's error names/.test($('#czg-status').textContent)
+       && !/Change the inputs/.test($('#czg-status').textContent),
+       'a chip or class file that does not load: the footer says the same next step as the alert');
     window.CzGate.close();
 
     // the created banner follows the app's sync state read after the create's entries were counted
