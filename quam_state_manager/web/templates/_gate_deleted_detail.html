@@ -1,0 +1,13 @@
+{# The pulse detail of a gate deleted from its own status line (web/gate_status_routes.py,
+   delete_gate_together): the gate and its pulses are gone, so the detail says so and offers
+   nothing to edit. A Ctrl+Z that brings the gate back draws its pulses again
+   (static/gate-status.js reads data-reopen). #}
+{% import "_ui.html" as ui %}
+<div data-gate-gone-pair="{{ pair }}" data-gate-gone="{{ gate }}"
+     data-reopen="{{ reopen }}">
+{% set inspector_type = "pulse" %}
+{% set inspector_label = gate ~ " on pair " ~ pair %}
+{% set inspector_sub = "deleted" %}
+{% include '_inspector_header.html' %}
+<div role="status">{{ ui.ui_callout('note', gate ~ ' deleted', message) }}</div>
+</div>

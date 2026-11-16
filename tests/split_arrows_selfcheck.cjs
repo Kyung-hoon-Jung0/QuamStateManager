@@ -32,6 +32,9 @@
  *     table_first  -- R4-TP-1: on Pulses with no choice the table keeps 35 %, a
  *                     remembered choice wins, and the clicked row is scrolled
  *                     back into the shrunken pane
+ *     keeps_scroll: a table-pane refresh (an undo answer re-lists the page) re-creates
+ *                     the split; the inspector's reader stays at their scroll (the real
+ *                     Split destroy clears the pane height, which clamps it to the top)
  *     trend_chart  -- fix/trends-stress T7: a run opened from a trend chart's
  *                     point leaves the table pane room for the whole chart and
  *                     scrolls it into view (SM's own move: the user's choice
@@ -608,6 +611,28 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     s.swap('inspector-pane', QUBIT);
     assert.ok(!s.docked(), 'the next inspector opens undocked');
     eq(s.sizes(), [30, 70], 'at the remembered split');
+} else if (mode === 'keeps_scroll') {
+    const s = await boot();
+    s.swap('inspector-pane', '<div class="pair-detail">pair page</div>');
+    const ins = s.d.getElementById('inspector-pane');
+    let top = 0;
+    Object.defineProperty(ins, 'scrollTop', { configurable: true, get: () => top, set: v => { top = v; } });
+    // the real destroy clears the pane height, and the browser clamps the scroll to 0
+    const realSplit = s.w.Split;
+    s.w.Split = (selectors, options) => {
+        const inst = realSplit(selectors, options);
+        inst.destroy = () => { top = 0; };
+        return inst;
+    };
+    s.swap('inspector-pane');
+    top = 700;
+    s.swap('table-pane', 'the page re-listed by an undo');
+    assert.equal(top, 700, 'a table-pane refresh keeps the inspector scroll');
+    s.swap('table-pane', 'and again');
+    assert.equal(top, 700, 'every time');
+    top = 0;
+    s.swap('table-pane', 'at the top');
+    assert.equal(top, 0, 'a reader at the top stays at the top');
 } else if (mode === 'heading') {
     // compact D-2: with no choice, the page keeps only the top half of its title
     const s = await boot();

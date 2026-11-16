@@ -2103,7 +2103,13 @@
                 applySizes(fitClickedChart(openSizes()));
                 keepClickedRowInView();
             } else if (tid === "table-pane") {
+                // A table-pane refresh (an undo answer re-lists the page) re-creates the
+                // split; Split's destroy clears the inspector height, which clamps its
+                // scroll to the top. The reader stays where they were.
+                var ins = document.getElementById("inspector-pane");
+                var keepTop = ins ? ins.scrollTop : 0;
                 initSplit();
+                if (ins && keepTop && ins.scrollTop !== keepTop) ins.scrollTop = keepTop;
             }
         });
 

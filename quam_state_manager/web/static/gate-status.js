@@ -406,6 +406,24 @@
             });
         });
     });
+    /* A gate deleted from its own row in a pulse detail leaves a "deleted" detail
+       (_gate_deleted_detail.html); an undo of that whole gate brings it back and draws its pulses
+       again. */
+    document.addEventListener('cellsReverted', function (ev) {
+        var pane = document.getElementById('inspector-pane');
+        var gone = pane ? pane.querySelector('[data-gate-gone][data-reopen]') : null;
+        if (!gone || !window.htmx) return;
+        var macro = 'qubit_pairs.' + gone.getAttribute('data-gate-gone-pair') + '.macros.'
+            + gone.getAttribute('data-gate-gone');
+        var back = ((ev.detail || {}).entries || []).some(function (e) {
+            // an undo entry names the change it undid (the delete): the whole gate came back
+            return e && (e.created || e.deleted) && String(e.dot_path || '') === macro;
+        });
+        if (!back) return;
+        var drawn = window.htmx.ajax('GET', gone.getAttribute('data-reopen'),
+                                     { source: pane, target: pane, swap: 'innerHTML' });
+        if (drawn && drawn.catch) drawn.catch(function () {});
+    });
     document.addEventListener('cellsReverted', function (ev) {
         var pane = document.getElementById('inspector-pane');
         var zone = pane ? pane.querySelector('.pair-detail .gate-status-list') : null;

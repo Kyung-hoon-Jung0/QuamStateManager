@@ -13,6 +13,9 @@
  *            (#inspector-pane carries hx-sync="this:replace")
  *        F4  it never lands over a pulse the reader opened meanwhile
  *        F5  a window with a user in it waits, then follows once idle
+ *        F7  a pair page follows it too: its CZ gate zones are drawn again (a gate brought
+ *            back, a changed value), folds and scroll kept, never over another page or a
+ *            busy reader
  *  P3  a lab-refused Delete (hx-target #inspector-pane, HX-Retarget into
  *      #pulse-delete-result) must not purge the waveform plot: htmx 2.0.4
  *      raises beforeSwap on the ORIGINAL target
@@ -241,6 +244,60 @@ function passive(T) {
         await tick(2300);
         ok(!U.xhrs.some((x) => x.url.indexOf('/pulse/detail') === 0),
            'F5 a pane re-rendered meanwhile is not fetched again');
+    }
+
+    // F7: a pair page follows a foreign edit: its gate zones are drawn again
+    {
+        const pairPage = (pair, zones, len) => '<div class="inspector-header inspector-header-pair">'
+            + '<span class="inspector-badge inspector-badge-pair">Pair</span></div>'
+            + '<div class="pair-detail"><section class="gate-status-list" data-gate-pair="' + pair + '"></section>'
+            + zones.map((z) => '<details class="detail-section" data-detail-zone="' + z + '"><summary>' + z
+                + '</summary><p class="zlen">Length: ' + len + ' ns</p></details>').join('') + '</div>';
+        const zonesOn = (T) => Array.from(T.d.querySelectorAll('#inspector-pane details[data-detail-zone]'))
+            .map((z) => z.getAttribute('data-detail-zone'));
+        const pairGets = (T) => T.xhrs.filter((x) => x.url === '/pair/q1-q2' && x.sent);
+        const T = world(TRAY0 + '<div id="inspector-pane" hx-sync="this:replace">'
+            + pairPage('q1-q2', ['cz_a'], 120) + '</div>');
+        await tick();
+        passive(T);
+        const pane = T.d.getElementById('inspector-pane');
+        let top = 0;
+        Object.defineProperty(pane, 'scrollTop', { configurable: true, get: () => top, set: (v) => { top = v; } });
+        // a browser may put a replaced pane back at the top; the inspector's own swap restores it
+        pane.addEventListener('htmx:afterSwap', () => { top = 0; });
+        T.d.querySelector('details[data-detail-zone="cz_a"]').open = true;
+        top = 700;
+        T.w._refreshAfterForeignEdit(FOREIGN);
+        ok(pairGets(T).length === 1 && pairGets(T)[0].reqHeaders['X-SM-Follow-Pair'] === 'q1-q2',
+           'F7 another window\'s edit asks for the pair page on screen once');
+        pairGets(T)[0].answer(200, pairPage('q1-q2', ['cz_a', 'cz_b'], 128));
+        await tick(60);
+        ok(zonesOn(T).join() === 'cz_a,cz_b',
+           'F7 a gate the other window brought back gets its zone (' + zonesOn(T) + ')');
+        ok(T.d.querySelector('.zlen').textContent === 'Length: 128 ns', 'F7 a zone shows the other window\'s value');
+        ok(T.d.querySelector('details[data-detail-zone="cz_a"]').open, 'F7 the open fold stays open');
+        ok(top === 700, 'F7 the scroll stays (' + top + ')');
+        // ...never over another page opened meanwhile, never while the reader is busy
+        T.open().filter((x) => x.url.indexOf('/state/tray') === 0).forEach((x) => x.answer(200, TRAY0));
+        await tick(60);                                  // the first refresh is over
+        const n0 = T.xhrs.length;
+        T.w._refreshAfterForeignEdit(FOREIGN);
+        const g = T.xhrs.slice(n0).find((x) => x.url === '/pair/q1-q2');
+        ok(!!g, 'F7 setup: a second follow is out');
+        if (!g) { console.log('fatal'); process.exit(1); }
+        pane.innerHTML = pairPage('q3-q4', ['cz_c'], 100);
+        g.answer(200, pairPage('q1-q2', ['cz_a'], 120));
+        await tick(60);
+        ok(zonesOn(T).join() === 'cz_c', 'F7 the follow never lands over another pair opened meanwhile');
+        const U = world(TRAY0 + '<div id="inspector-pane" hx-sync="this:replace">'
+            + pairPage('q1-q2', ['cz_a'], 120) + '</div>');
+        await tick();
+        passive(U);
+        U.w.__lastUserAct = Date.now() - 1500;
+        U.w._refreshAfterForeignEdit(FOREIGN);
+        ok(!pairGets(U).length, 'F7 a busy window keeps its pair page at the poll');
+        await tick(2300);
+        ok(pairGets(U).length === 1, 'F7 ...and follows once it has been idle');
     }
 
     // ── T: a lab-refused delete keeps the waveform plot ──────────────────────

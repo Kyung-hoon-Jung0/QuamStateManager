@@ -25,6 +25,7 @@ Apply.
 from __future__ import annotations
 
 import logging
+from urllib.parse import quote
 
 from flask import current_app, g, jsonify, make_response, render_template, request
 
@@ -704,8 +705,15 @@ def delete_gate_together(ctx, modifier, body: dict):
                 "tone": "note", "title": f"{gate} deleted", "text": done})
             out.set_data(out.get_data(as_text=True) + R._tray_oob())
         else:
+            # the pulse detail the row sits in shows a gate that is gone: it says so,
+            # with nothing left to edit; a Ctrl+Z draws the gate's pulses again
+            reopen = "/pulse/detail?" + "&".join(
+                "paths=" + quote(p, safe="") for p in (parts["pulses"] or parts["operations"])[:4])
             out = make_response(render_template(
-                "_status.html", level="success", message=done) + R._tray_oob())
+                "_gate_deleted_detail.html", pair=pair, gate=gate, message=done,
+                reopen=reopen) + R._tray_oob())
+            out.headers["HX-Retarget"] = "closest #pulse-detail-root"
+            out.headers["HX-Reswap"] = "outerHTML"
         out.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
         # the pair page drops the gate's parameter zone (static/gate-status.js)
         out.headers["HX-Trigger-After-Swap"] = current_app.json.dumps(

@@ -879,3 +879,45 @@ def test_htmx_an_edit_during_the_check_shows_the_stale_note_on_the_line(rig):
     body = r.get_data(as_text=True)
     assert r.status_code == 200 and "changed while the gate was checked" in body
     assert "does not run with" not in body
+
+
+def test_a_gate_deleted_from_its_pulse_detail_leaves_no_live_looking_detail(rig, tmp_path):
+    """Behaviour under the bundled htmx (tests/gate_single_delete_selfcheck.cjs) with the real
+    server answers: a gate deleted from the status line of its pulse detail leaves a detail
+    that says the gate was deleted and offers nothing to edit; the undo of the delete draws
+    the gate's pulses again, an undo that does not bring the gate back draws nothing."""
+    import html
+    import os
+    import re
+    import shutil
+    import subprocess
+    from pathlib import Path
+    node = shutil.which("node")
+    if not node or not os.environ.get("NODE_PATH"):
+        pytest.skip("node + jsdom (NODE_PATH) needed")
+
+    def ans(r):
+        assert r.status_code == 200
+        return {"body": r.get_data(as_text=True), "headers": dict(r.headers)}
+    rows = rig.get("/pulse/cz-gate/list?pair=q1-q2", headers=HX).get_data(as_text=True)
+    row = rows.split('data-gate="cz_sq"', 1)[1]
+    url = html.unescape(re.search(r'hx-get="(/pulse/detail\?[^"]+)"', row).group(1))
+    detail = ans(rig.get(url, headers=HX))
+    assert 'class="gate-status" data-gate-pair="q1-q2" data-gate="cz_sq"' in detail["body"]
+    offer = ans(rig.get("/pulse/cz-gate/delete-offer?pair=q1-q2&gate=cz_sq", headers=HX))
+    deleted = ans(rig.post("/api/pulse/delete-together", headers=HX,
+                           data={"pair": "q1-q2", "gate": "cz_sq"}))
+    assert deleted["headers"]["HX-Retarget"] == "closest #pulse-detail-root"
+    assert deleted["headers"]["HX-Reswap"] == "outerHTML"
+    undo = rig.post("/undo", headers=HX)
+    assert undo.status_code == 200
+    again = ans(rig.get(url, headers=HX))
+    fixture = {"pair": "q1-q2", "gate": "cz_sq", "url": url, "detail": detail, "offer": offer,
+               "deleted": deleted, "again": again,
+               "undo": json.loads(undo.headers["HX-Trigger"])["cellsReverted"]}
+    path = tmp_path / "gate_single_delete.json"
+    path.write_text(json.dumps(fixture), encoding="utf-8")
+    p = subprocess.run([node, str(Path(__file__).parent / "gate_single_delete_selfcheck.cjs"), str(path)],
+                       capture_output=True, text=True, timeout=120)
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "ALL OK" in p.stdout
