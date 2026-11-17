@@ -645,8 +645,17 @@ class History:
             self._append(events)
 
     def table(self, limit: int = 500) -> list[dict]:
+        """One row per job; a QM's own row only when it adds something: no
+        job of it was seen, or it is still open while every job row is gone."""
         with self._lock:
-            rows = sorted(self.rows.values(), key=lambda r: r.get("first_seen") or "", reverse=True)
+            jobs_open: dict = {}
+            for r in self.rows.values():
+                if r.get("job_id"):
+                    jobs_open[r.get("qm_id")] = jobs_open.get(r.get("qm_id"), False) or bool(r.get("open"))
+            rows = [r for r in self.rows.values()
+                    if r.get("job_id") or r.get("qm_id") not in jobs_open
+                    or (r.get("open") and not jobs_open[r.get("qm_id")])]
+            rows.sort(key=lambda r: r.get("first_seen") or "", reverse=True)
             return [dict(r) for r in rows[:limit]]
 
     def recent_actions(self, limit: int = 50) -> list[dict]:

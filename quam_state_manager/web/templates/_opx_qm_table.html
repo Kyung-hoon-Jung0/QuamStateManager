@@ -11,7 +11,7 @@
       <td data-label="Owner" class="ui-table-cell">{{ owner_cell(owners[q.id], pc_names, this_tag) }}</td>
       <td data-label="FEMs" class="ui-table-cell">{{ (q.ports or []) | join(', ') or 'unknown' }}</td>
       {%- if actions %}
-      <td data-label="" class="ui-table-cell"><button type="button" class="btn-sm outline ui-opxmon-close" data-last-job="{{ last_job(q) }}" data-basis="{{ idle_states[q.id].basis }}" data-qm-id="{{ q.id }}" data-owner="{{ owner_text(owners[q.id], pc_names, this_tag) }}" {% if st.state != 'ok' %}disabled{% endif %} data-ports="{{ (q.ports or []) | join(', ') }}" data-jobs="{{ 'unknown' if q.jobs is none else ((q.jobs or []) | map(attribute='status') | join(', ')) }}">Close&hellip;</button></td>
+      <td data-label="" class="ui-table-cell"><button type="button" class="btn-sm outline ui-opxmon-close" data-last-job="{{ last_job(q) }}" data-basis="{{ idle_states[q.id].basis }}" data-qm-id="{{ q.id }}" data-owner="{{ owner_text(owners[q.id], pc_names, this_tag) }}" {% if st.state != 'ok' %}disabled{% endif %} data-ports="{{ (q.ports or []) | join(', ') }}" data-jobs="{{ 'unknown' if q.jobs is none else ((q.jobs or []) | map(attribute='status') | join(', ')) }}">Close</button></td>
       {%- endif %}
     </tr>{% endfor %}</tbody>
 </table>
