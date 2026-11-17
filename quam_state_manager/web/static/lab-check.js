@@ -159,7 +159,7 @@
         document.body.appendChild(b);
         b._anchor = anchor;
         _place(b, anchor);
-        var onScroll = function () { _place(b, anchor); };
+        var onScroll = function () { _place(b, b._placeAt || anchor); };
         window.addEventListener('scroll', onScroll, true);
         b._unbind = function () { window.removeEventListener('scroll', onScroll, true); };
         return b;
@@ -178,7 +178,7 @@
             // slot, tree chip); the badge says WHO refused and the class's own
             // first words, and must not bury the cell the user is fixing.
             var full = String(j.error || 'refused by your pulse class');
-            var why = full.replace(/^.*?nothing was written:\s*/, '');
+            var why = full.replace(/^.*?nothing was written\s*[:\u2014-]\s*/i, '');
             if (why.length > 110) why = why.slice(0, 107) + '\u2026';
             badge.classList.add('lab-check-refused');
             badge.textContent = '\u2717 refused by your ' + (/^Your gate /.test(full) ? 'gate' : 'pulse class') + ' \u2014 nothing written: ' + why;
@@ -223,7 +223,23 @@
             }
             // the surface's own error markup can move the cell: re-anchor
             var raf = window.requestAnimationFrame || function (f) { return setTimeout(f, 16); };
-            raf(function () { raf(function () { _place(badge, badge._anchor); }); });
+            // a field's own refusal row (Pulses property table) sits right under the cell:
+            // the badge goes under that row so it never hides the field's own line
+            raf(function () { raf(function () {
+                var a = badge._anchor;
+                var tr = a && a.closest ? a.closest('tr') : null;
+                var nx = tr && tr.nextElementSibling;
+                badge._placeAt = nx && nx.hasAttribute('data-refused-row') ? nx : a;
+                _place(badge, badge._placeAt);
+            }); });
+            // typing again in the refused cell dismisses the badge (the offer button keeps it)
+            var a0 = badge._anchor;
+            if (a0 && a0.addEventListener) {
+                a0.addEventListener('input', function gone() {
+                    a0.removeEventListener('input', gone);
+                    if (!badge._keep) done();
+                });
+            }
             setTimeout(function () { if (!badge._keep) done(); }, REFUSED_LIFE_MS);
         }, done);
     }
