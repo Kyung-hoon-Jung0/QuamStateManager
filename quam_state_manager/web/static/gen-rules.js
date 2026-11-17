@@ -327,7 +327,9 @@
     // Exception to D-50 (commands show no selected look): the lit option says the ticks
     // below are exactly that preset, which would otherwise mean counting rows; the
     // same state is already in aria-pressed for assistive tech.
-    var seg = el("div", { className: "ui-segmented" });
+    // Manual activation: each option is a command (it re-ticks the pairs below or opens
+    // the feedline menu), so an arrow key only moves focus here.
+    var seg = el("div", { className: "ui-segmented", "data-seg-manual": "" });
     var ready = ((d.answer && d.answer.pairs) || []).filter(function (r) { return r.status === G_READY; })
       .map(function (r) { return r.pair; });
     var ticked = tickedPids(d);

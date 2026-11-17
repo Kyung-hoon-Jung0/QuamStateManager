@@ -15,12 +15,14 @@ try { ({ JSDOM } = require('jsdom')); } catch (e) { console.log('skip: jsdom not
 const STATIC = path.join(__dirname, '..', 'quam_state_manager', 'web', 'static');
 const src = fs.readFileSync(path.join(STATIC, 'gate-timeline.js'), 'utf8');
 const themeSrc = fs.readFileSync(path.join(STATIC, 'plot-theme.js'), 'utf8');
+const menuSrc = fs.readFileSync(path.join(STATIC, 'ui-menu.js'), 'utf8');   // the kit's one segmented key handler
 
 const dom = new JSDOM('<!doctype html><html><body><div id="host"></div></body></html>',
     { url: 'http://localhost/', pretendToBeVisual: true, runScripts: 'outside-only' });
 const { window } = dom;
 const doc = window.document;
 window.eval(themeSrc);
+window.eval(menuSrc);
 window.eval(`
   window.__renders = []; window.__host = { observe: 0, unobserve: 0, purge: 0 };
   window._plotlyRender = function (el, data, layout, config) {
@@ -609,6 +611,25 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
     bar.querySelector('[data-view="lanes"]').click();
     ok(yAxes(last().layout).length === 4 && !bar.querySelector('[aria-label="Vertical scale"]').hidden &&
        bar.querySelector('[aria-label="Line height"]').hidden && bar.querySelector('[data-height-label]').hidden, 'Lanes view comes back with its own scale control only');
+    // the keyboard selects as it moves: ArrowRight on Lanes shows Overlay, the same change the click makes
+    {
+        const vb = () => [...bar.querySelectorAll('[aria-label="View"] .ui-segmented-opt')];
+        const arrow = (k) => doc.activeElement.dispatchEvent(
+            new window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+        const pressed = () => vb()
+            .filter((b) => b.getAttribute('aria-pressed') === 'true' && b.classList.contains('ui-segmented-on'))
+            .map((b) => b.getAttribute('data-view')).join();
+        const vScale = () => bar.querySelector('[aria-label="Vertical scale"]');
+        const hScale = () => bar.querySelector('[aria-label="Line height"]');
+        const n0 = window.__renders.length;
+        vb()[0].focus(); arrow('ArrowRight');
+        ok(doc.activeElement === vb()[1] && pressed() === 'overlay' && window.__renders.length > n0
+           && vScale().hidden && !hScale().hidden,
+           'ArrowRight on Lanes selects Overlay: focus, one pressed option and the redraw follow the key');
+        arrow('ArrowLeft');
+        ok(doc.activeElement === vb()[0] && pressed() === 'lanes' && !vScale().hidden,
+           'ArrowLeft selects Lanes again');
+    }
     ho.destroy();
 
     // overlap, meet, three lines and more than three

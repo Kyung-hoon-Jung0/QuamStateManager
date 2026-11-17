@@ -267,30 +267,53 @@ for (const mods of [{ altKey: true }, { metaKey: true }, { ctrlKey: true }]) {
     box.remove();
 }
 
-// button options (a view or a statistic switch): arrows, Home and End move focus inside the
-// control and wrap round; they never press an option, so nothing a press writes runs
+// button options (a view or a statistic switch): arrows, Home and End move inside the control,
+// wrap round and press the option they land on, the same click a mouse press fires
 {
     const box = doc.createElement("div");
     host.appendChild(box);
     const seg = window.UI.segmented([{ label: "P", selected: true }, { label: "Q" }, { label: "R" }], "Buttons");
     box.appendChild(seg);
     const o = [...seg.querySelectorAll(".ui-segmented-opt")];
-    let presses = 0;
-    o.forEach((b) => b.addEventListener("click", () => { presses += 1; }));
+    const presses = [];
+    // the page's own click handler keeps exactly one option pressed, as a real user of the part does
+    o.forEach((b) => b.addEventListener("click", () => {
+        presses.push(b.textContent);
+        o.forEach((x) => {
+            x.setAttribute("aria-pressed", x === b ? "true" : "false");
+            x.classList.toggle("ui-segmented-on", x === b);
+        });
+    }));
+    const onNow = () => o.filter((b) => b.getAttribute("aria-pressed") === "true").map((b) => b.textContent).join();
     o[0].focus();
     let ev = keyMod("ArrowRight", {});
     ok(ev.defaultPrevented && act_() === o[1], "button segmented: ArrowRight moves focus to the next option");
+    ok(presses.join() === "Q" && onNow() === "Q" && seg.querySelectorAll(".ui-segmented-on").length === 1,
+       "button segmented: ArrowRight selects the next option through its click, exactly one selected");
     keyMod("ArrowRight", {}); keyMod("ArrowRight", {});
-    ok(act_() === o[0], "button segmented: ArrowRight on the last option wraps to the first");
+    ok(act_() === o[0] && onNow() === "P",
+       "button segmented: ArrowRight on the last option wraps to the first and selects it");
     keyMod("ArrowLeft", {});
-    ok(act_() === o[2], "button segmented: ArrowLeft on the first option wraps to the last");
+    ok(act_() === o[2] && onNow() === "R",
+       "button segmented: ArrowLeft on the first option wraps to the last and selects it");
     keyMod("Home", {});
-    ok(act_() === o[0], "button segmented: Home goes to the first option");
+    ok(act_() === o[0] && onNow() === "P", "button segmented: Home goes to the first option and selects it");
     keyMod("End", {});
-    ok(act_() === o[2], "button segmented: End goes to the last option");
-    ok(presses === 0 && o[0].getAttribute("aria-pressed") === "true" && o[2].getAttribute("aria-pressed") === "false",
-       "button segmented: an arrow key never presses or selects an option");
-    ok(!keyMod("ArrowRight", { ctrlKey: true }).defaultPrevented && act_() === o[2], "button segmented: Ctrl+ArrowRight is left to the browser");
+    ok(act_() === o[2] && onNow() === "R", "button segmented: End goes to the last option and selects it");
+    ok(presses.join() === "Q,R,P,R,P,R", "button segmented: one click per key, never a second press");
+    ok(!keyMod("ArrowRight", { ctrlKey: true }).defaultPrevented && act_() === o[2] && presses.length === 6,
+       "button segmented: Ctrl+ArrowRight is left to the browser");
+    // manual activation: a group marked data-seg-manual and a command option only take focus
+    const man = window.UI.segmented([{ label: "M1", selected: true }, { label: "M2" }], "Manual");
+    man.setAttribute("data-seg-manual", "");
+    const cmd = window.UI.segmented([{ label: "C1", command: true }, { label: "C2", command: true }], "Commands");
+    box.appendChild(man); box.appendChild(cmd);
+    let manPress = 0;
+    [...man.children, ...cmd.children].forEach((b) => b.addEventListener("click", () => { manPress += 1; }));
+    man.children[0].focus(); keyMod("ArrowRight", {});
+    cmd.children[0].focus(); keyMod("End", {});
+    ok(act_() === cmd.children[1] && manPress === 0 && man.children[0].getAttribute("aria-pressed") === "true",
+       "manual segmented: a data-seg-manual group and command options move focus only, nothing is pressed");
     o[1].disabled = true; o[0].focus(); keyMod("ArrowRight", {});
     ok(act_() === o[2], "button segmented: a disabled option is skipped");
     o[1].disabled = false;

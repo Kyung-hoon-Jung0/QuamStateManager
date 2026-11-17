@@ -313,6 +313,30 @@ function stored(win) { return win.localStorage.getItem('quam_overview_tiles_v1')
     ok(!win.document.getElementById('ov-settings-pop'), 'C7: the button toggles the panel closed');
   }
 
+  // C7b: the kit's segmented key handler selects as it moves: ArrowRight on a tile's stat
+  // presses the next stat (the same change a click makes) and focus survives the re-render
+  {
+    const win = makeWorld();
+    win.eval(read('ui-menu.js'));
+    mount(win);
+    win._ovOpenSettings(win.document.getElementById('ov-settings-btn'));
+    const pop = win.document.getElementById('ov-settings-pop');
+    const t1 = () => [...pop.querySelectorAll('[data-tile-id="t1"][data-tile-stat]')];
+    const on = () => t1()
+      .filter((b) => b.classList.contains('ui-segmented-on') && b.getAttribute('aria-pressed') === 'true')
+      .map((b) => b.getAttribute('data-tile-stat')).join();
+    ok(on() === 'avg', 'C7b: T1 starts on avg');
+    t1()[0].focus();
+    win.document.activeElement.dispatchEvent(
+      new win.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+    ok(on() === 'median' && /20\.0/.test(tileById(win, 't1').querySelector('.topo-card-value').textContent)
+       && /"t1":"median"/.test(stored(win) || ''),
+       'C7b: ArrowRight selects median for T1, the tile and storage follow');
+    const a = win.document.activeElement;
+    ok(a && a.getAttribute('data-tile-id') === 't1' && a.getAttribute('data-tile-stat') === 'median',
+       'C7b: focus stays on the selected option after the re-render');
+  }
+
   // C8 (docs/153): drag-reorder -- live DOM move, order persisted on
   // dragend, default order never stored, survives a re-mount, reset clears.
   {
