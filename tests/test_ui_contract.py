@@ -1057,6 +1057,8 @@ _STAGE6_SELECTORS = {
     '#pulse-detail-root .pulse-overlay-chips', '#pulse-detail-root .pulse-overlay-chip',
     '#pulse-detail-root .pulse-overlay-chip > .pulse-sec-role', '#pulse-detail-root .pulse-overlay-pick',
     '#pulse-detail-root .inspector-title > strong',
+    '#pulse-detail-root .inspector-title', '#pulse-detail-root .inspector-title > small',
+    '#pulse-detail-root table.prop-table td.col-val',
     '.gate-status-details[open]', '.gate-status-details .ui-disclosure-summary',
     '.gate-status-details-list', '.gate-status-details-list dd', '.gate-status-actions',
     '.gate-status-edit', '.gate-status-activate', '.gate-status-recheck', '.gate-status-delete',
@@ -1330,6 +1332,32 @@ def test_a_narrow_pulse_detail_neither_scrolls_nor_squeezes_its_header_tag_or_pi
         if ".inspector-title strong" in [p.strip() for p in sel.split(",")]:
             style.update(dict(_decls(body)))
     assert style.get("white-space") == "nowrap", style
+
+
+def test_a_narrow_pulse_detail_header_puts_the_class_label_below_the_name():
+    # The title row wraps: the name keeps a basis beside the badge and the class label (small) goes to the
+    # next line when the row is too narrow for all three, so the name is not squeezed into a thin column.
+    # No at-rule: a wide pane fits everything on one line exactly as before (basis capped at max-content).
+    title = _kit_rule("#pulse-detail-root .inspector-title")
+    assert title.get("flex-wrap") == "wrap", title
+    head = _kit_rule("#pulse-detail-root .inspector-title > strong")
+    assert head.get("flex") == "1 1 var(--ui-pulse-name-basis)", head
+    assert head.get("max-width") == "max-content", head
+    assert head.get("overflow-wrap") == "anywhere" and head.get("min-width") == "0", head
+    assert "--ui-pulse-name-basis:" in _read(_UI_KIT)
+    sub = _kit_rule("#pulse-detail-root .inspector-title > small")
+    assert sub.get("overflow-wrap") == "anywhere" and sub.get("min-width") == "0", sub
+    assert '<small class="muted"' in _read(_TPL / "_inspector_header.html")
+
+
+def test_a_pulse_field_value_column_wraps_a_long_refusal_instead_of_widening_the_pane():
+    # The refused-edit note and long dotted paths break inside the value column, so the property table
+    # never grows past the inspector pane and the pane does not scroll sideways.
+    val = _kit_rule("#pulse-detail-root table.prop-table td.col-val")
+    assert val.get("overflow-wrap") == "anywhere", val
+    section = _read(_TPL / "_pulse_params_section.html")
+    assert '<table class="prop-table">' in section and '<td class="col-val">' in section
+    assert "note.className = 'ui-field-error';" in _read(_STATIC / "pulses.js")
 
 
 def test_the_apply_to_other_pairs_why_column_keeps_a_readable_width():
