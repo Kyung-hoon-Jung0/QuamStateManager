@@ -2370,14 +2370,30 @@ window.PulsesPage = (function () {
         // The typed text stays, so the field must also say what is stored: the
         // refused value was not written and the old one still holds.
         var kept = input.getAttribute('data-committed') || '';
-        var note = form.querySelector('[data-refused-note]');
+        // In a property table the line gets its own full-width row under the field,
+        // so a narrow value column does not squeeze it into a ribbon.
+        var row = form.closest ? form.closest('tr') : null;
+        var below = row && row.nextElementSibling && row.nextElementSibling.hasAttribute('data-refused-row')
+            ? row.nextElementSibling : null;
+        var note = below ? below.querySelector('[data-refused-note]') : form.querySelector('[data-refused-note]');
         if (!note) {
             note = document.createElement('small');
             note.className = 'ui-field-error';
             note.setAttribute('data-refused-note', '1');
             note.setAttribute('role', 'status');
-            input.insertAdjacentElement('afterend', note);
+            if (row) {
+                below = document.createElement('tr');
+                below.setAttribute('data-refused-row', '1');
+                var cell = document.createElement('td');
+                cell.colSpan = Math.max(1, row.cells ? row.cells.length : 1);
+                cell.appendChild(note);
+                below.appendChild(cell);
+                row.insertAdjacentElement('afterend', below);
+            } else {
+                input.insertAdjacentElement('afterend', note);
+            }
         }
+        var holder = below || note;
         // The server's reason goes on this line too (app.js shows no toast over the
         // field for it); its own "Nothing was written" lead repeats "Not saved".
         var xhr = evt.detail && evt.detail.xhr;
@@ -2387,7 +2403,7 @@ window.PulsesPage = (function () {
             + (why ? ' ' + why : '');
         input.addEventListener('input', function clear() {
             input.removeAttribute('aria-invalid');
-            if (note.parentNode) note.parentNode.removeChild(note);
+            if (holder.parentNode) holder.parentNode.removeChild(holder);
             input.removeEventListener('input', clear);
         });
     });
