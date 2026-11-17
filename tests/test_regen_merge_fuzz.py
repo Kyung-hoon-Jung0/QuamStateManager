@@ -117,14 +117,16 @@ def chip(seed, count=None):
 def merge(old, new, **kwargs):
     wiring = {"wiring": deepcopy(new["wiring"])}
     graft_wiring_values({"wiring": old["wiring"]}, wiring)
-    start = time.perf_counter()
+    # CPU time of this process: a busy machine (parallel suites) cannot
+    # stretch it, while a pathological merge still blows the bound.
+    start = time.process_time()
     # Production stores state and wiring separately; assemble their document
     # only for resolution, just as the merge's _merged_doc helper does.
     old_state = {key: value for key, value in old.items() if key != "wiring"}
     new_state = {key: value for key, value in new.items() if key != "wiring"}
     result = merge_states(old_state, new_state, old_wiring={"wiring": old["wiring"]},
                           new_wiring=wiring, keep_classes=KEEP, class_schemas={}, **kwargs)
-    assert time.perf_counter() - start < 2.0
+    assert time.process_time() - start < 2.0
     result.merged["wiring"] = wiring["wiring"]
     return result
 
