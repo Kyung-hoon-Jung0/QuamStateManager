@@ -6,6 +6,7 @@ A saved Monitor settings target wins. No chip and no settings is today's sentenc
 from __future__ import annotations
 
 import sys
+from html import unescape as html_unescape
 from types import SimpleNamespace
 
 import pytest
@@ -181,6 +182,30 @@ def test_use_default_clears_the_override(rig):
     assert m.settings()["target"]["host"] == "10.9.8.7"
 
 
+def test_a_host_typed_into_admin_url_is_refused_and_named(rig):
+    app, m, started = rig
+    _open(app, "c1", _ctx("10.9.8.7"))
+    r = app.test_client().post("/opx-monitor/settings", headers=ORIGIN,
+                               data={"host": "", "admin_url": "127.0.0.1", "interval_s": "5", "idle_minutes": "120"})
+    html = html_unescape(r.get_data(as_text=True))
+    assert "this looks like a host; put it in Host" in html
+    assert not (app.instance_path and om.load_settings(app.instance_path).get("admin_url"))
+    assert m.settings()["target"]["host"] == "10.9.8.7"
+    r = app.test_client().post("/opx-monitor/settings", headers=ORIGIN,
+                               data={"admin_url": "http://10.9.8.7:80/", "interval_s": "5", "idle_minutes": "120"})
+    assert om.load_settings(app.instance_path)["admin_url"] == "http://10.9.8.7:80/"
+
+
+def test_connection_fields_come_first_and_admin_url_sits_in_advanced(rig):
+    app, m, started = rig
+    _open(app, "c1", _ctx("10.9.8.7"))
+    html = _body(app, "settings")
+    host, admin = html.index('name="host"'), html.index('name="admin_url"')
+    fold = html.rindex('<details class="ui-disclosure"', 0, admin)
+    assert host < fold < admin and 'Advanced</summary>' in html[fold:admin]
+    assert "<details" not in html[host:fold] and " open>" not in html[fold:admin].split(">")[0] + ">"
+
+
 def test_a_monitor_without_a_default_source_is_unchanged(tmp_path):
     m = om.Monitor(tmp_path, worker_factory=lambda *a: pytest.fail("spawned"))
     s = m.settings()
@@ -204,3 +229,12 @@ def test_a_monitor_without_a_default_source_is_unchanged(tmp_path):
 ])
 def test_chip_target_reads_the_network_block(net, want):
     assert om.chip_target(net) == want
+
+
+@pytest.mark.parametrize("url,ok", [
+    ("http://10.0.0.1", True), ("https://opx.example:8443/", True), ("127.0.0.1", False),
+    ("10.0.0.1:80", False), ("ftp://h", False), ("http://h/api", False), ("http://u@h", False),
+    ("http://h?x=1", False), ("http://", False),
+])
+def test_admin_origin_ok_accepts_only_an_http_origin(url, ok):
+    assert om.admin_origin_ok(url) is ok

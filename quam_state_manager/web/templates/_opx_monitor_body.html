@@ -223,13 +223,16 @@
           <input class="ui-input ui-input--num" id="ui-opxmon-f-port" name="port" value="{{ ps.get('port', '') if ps is not none else (st_saved.port or '') }}"{% if dflt_target and dflt_target.port and not st_saved %} placeholder="{{ dflt_target.port }}"{% endif %} inputmode="numeric" autocomplete="off"></div>
         <div class="ui-field"><div class="ui-field-head"><label class="ui-field-label" for="ui-opxmon-f-cluster">Cluster name</label></div>
           <input class="ui-input ui-input--block" id="ui-opxmon-f-cluster" name="cluster_name" placeholder="{{ (dflt_target.cluster_name ~ ' (open chip)') if dflt_target and dflt_target.cluster_name and not st_saved else ('auto: ' ~ (st.admin.cluster.name if st.admin.cluster else ans.cluster_name) if st.admin.cluster or ans.cluster_name else 'auto: detected cluster') }}" value="{{ ps.get('cluster_name', '') if ps is not none else (st_saved.cluster_name or '') }}" autocomplete="off"></div>
-        <div class="ui-field"><div class="ui-field-head"><label class="ui-field-label" for="ui-opxmon-f-admin">Admin URL</label></div>
-          <input class="ui-input ui-input--block" id="ui-opxmon-f-admin" name="admin_url" value="{{ ps.get('admin_url', '') if ps is not none else (settings.admin_url or '') }}" placeholder="HTTP(S) origin" autocomplete="off"></div>
         <div class="ui-field ui-field-wide"><label class="ui-check"><input type="checkbox" name="tls" value="1"{% if (ps.get('tls') if ps is not none else st_saved.tls) %} checked{% endif %}>TLS</label></div>
         <div class="ui-field ui-field-wide"><div class="ui-field-head"><label class="ui-field-label" for="ui-opxmon-f-headers">Connection headers (JSON, stored under this SM's instance folder, never shown again)</label></div>
           <textarea class="ui-textarea" id="ui-opxmon-f-headers" name="headers" rows="2" placeholder="{{ 'stored, leave empty to keep' if has_headers else 'optional' }}" autocomplete="off"></textarea></div>
         {% if has_headers %}<div class="ui-field ui-field-wide"><label class="ui-check"><input type="checkbox" name="clear_headers" value="1"{% if ps is not none and ps.get('clear_headers') %} checked{% endif %}>Remove the stored headers</label></div>{% endif %}
       </div>
+      <details class="ui-disclosure"{% if ps is not none and ps.get('admin_url') or settings.admin_url %} open{% endif %}><summary class="ui-disclosure-summary">Advanced</summary><div class="ui-disclosure-body ui-field-stack ui-field-stack--dense">
+        <p class="ui-note">Admin URL: the web address of the OPX admin panel (for example http://host:port), read for cluster and device details. Optional; the OPX host goes in Host above.</p>
+        <div class="ui-field"><div class="ui-field-head"><label class="ui-field-label" for="ui-opxmon-f-admin">Admin URL</label></div>
+          <input class="ui-input ui-input--block" id="ui-opxmon-f-admin" name="admin_url" value="{{ ps.get('admin_url', '') if ps is not none else (settings.admin_url or '') }}" placeholder="http://host:port (optional)" autocomplete="off"></div>
+      </div></details>
     </div></section>
     <section class="ui-zone" aria-label="Python environment with the QM SDK"><div class="ui-zone-head"><h3 class="ui-zone-title">Python environment with the QM SDK</h3><span class="ui-zone-sum">{% if settings.python_source == 'chip' %}{{ env_label(settings.python) }} &middot; the open chip's project env{% elif settings.python %}{{ env_label(settings.python) }} &middot; from Monitor settings{% else %}not set{% endif %}</span></div>
     <div class="ui-zone-body ui-field-stack ui-field-stack--dense">

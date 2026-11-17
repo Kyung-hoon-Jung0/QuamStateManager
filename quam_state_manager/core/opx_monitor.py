@@ -947,6 +947,16 @@ def failure_summary(errors):
                 'No data call answered.')
 
 
+def admin_origin_ok(url) -> bool:
+    """An Admin URL is an HTTP(S) origin: scheme, host and nothing after it."""
+    try:
+        parsed = urlsplit(str(url))
+        return (parsed.scheme in ('http', 'https') and bool(parsed.netloc) and parsed.path in ('', '/')
+                and not parsed.query and not parsed.fragment and not parsed.username)
+    except ValueError:
+        return False
+
+
 def read_admin(url, cluster_name=None, clock=time.time):
     """Only the two documented read routes, no redirects or connection headers.
 
@@ -959,7 +969,7 @@ def read_admin(url, cluster_name=None, clock=time.time):
     try:
         parsed = urlsplit(url)
         admin_host = parsed.hostname
-        if parsed.scheme not in ('http', 'https') or not parsed.netloc or parsed.path not in ('', '/') or parsed.query or parsed.fragment or parsed.username:
+        if not admin_origin_ok(url):
             raise ValueError('Admin URL must be an HTTP(S) origin')
         opener = urllib.request.build_opener(_NoRedirect)
         answers = []

@@ -341,6 +341,12 @@ def opx_monitor_save_settings():
     py = (f.get("python") or "").strip() or None
     if py and not Path(py).is_file():
         return refuse("That Python interpreter does not exist.")
+    admin_url = (f.get("admin_url") or "").strip()
+    if admin_url and not om.admin_origin_ok(admin_url):
+        if "://" not in admin_url:
+            return refuse("The Admin URL must start with http:// or https://; this looks like a host; put it in Host. "
+                          "The Admin URL is only for the optional admin panel.")
+        return refuse("The Admin URL must be an http:// or https:// address with nothing after the host and port.")
     # a limit for a metric the server does not report right now is kept
     th = dict(s.get("thresholds") or {})
     for k, v in f.items():
@@ -365,7 +371,7 @@ def opx_monitor_save_settings():
         except ValueError:
             return refuse("Connection headers must be a JSON object.")
     new = {"target": target, "python": py, "interval_s": om.clamp_interval(f.get("interval_s")),
-           "admin_url": (f.get("admin_url") or "").strip(), "idle_minutes": _idle_minutes(f.get("idle_minutes"), s["idle_minutes"]), "thresholds": th, "alarms_armed": _form_bool("alarms_armed")}
+           "admin_url": admin_url, "idle_minutes": _idle_minutes(f.get("idle_minutes"), s["idle_minutes"]), "thresholds": th, "alarms_armed": _form_bool("alarms_armed")}
     changed_conn = (new["target"] != s.get("target")) or (new["python"] != s.get("python")) or new["admin_url"] != s.get("admin_url")
     om.save_settings(m.instance, new)
     if target is not None:
