@@ -1834,6 +1834,9 @@ dialog.ui-dialog:not(.gen-rule-dlg)::backdrop { background: var(--ui-backdrop); 
 .gate-status-row > .ui-chip, .gate-status-details { flex: 0 0 auto; }
 /* a long gate name wraps inside the row instead of running past it */
 .gate-status-row > .ui-chip { flex-shrink: 1; min-width: 0; max-width: 100%; }
+/* a gate line standing alone in a pulse detail wraps its pills like a long name; a list row keeps clipping them */
+#pulse-detail-root .gate-status-items { flex-wrap: wrap; overflow: visible; }
+#pulse-detail-root .gate-status-items > .ui-pill { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .gate-status-details { margin: 0; }
 .gate-status-details[open] { flex-basis: 100%; order: 10; }
 .gate-status-details .ui-disclosure-summary { font-weight: var(--ui-fw-normal); font-size: var(--ui-fs-xs); color: var(--ui-text-2); }
