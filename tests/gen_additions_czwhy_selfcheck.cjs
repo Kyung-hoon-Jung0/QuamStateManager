@@ -26,14 +26,17 @@ const READ = (pulses) => ({ ok: true, versions: {}, qubit_fields: [], pulses: pu
 async function world(roles) {
   const dom = new JSDOM('<!doctype html><div id="host"></div><div id="pt"></div>', { runScripts: 'outside-only' });
   const w = dom.window;
-  w.fetch = (url) => Promise.resolve({ json: () => Promise.resolve(/lint/.test(String(url)) ? { ok: true, results: [] } : roles) });
+  w.fetch = (url) => Promise.resolve({
+    json: () => Promise.resolve(/lint/.test(String(url)) ? { ok: true, results: [] } : roles),
+  });
   require('./gate_action_fetch.cjs').install(w);
   w.eval(JS);
   const spec = { qubits: ['q1', 'q2'], qubit_pairs: [['q1', 'q2']], pair_gate: 'cz_tunable',
     lines: [{ element: 'q1', line: 'flux' }, { element: 'q2', line: 'flux' }, { element: 'q1-q2', line: 'coupler' }],
     populate: { pairs: { 'q1-q2': { cz_variant: 'unipolar' } } } };
   const ctx = { spec: () => spec, changed: () => {} };
-  w.document.getElementById('pt').innerHTML = '<table id="gen-pop-tbl-pairs"><thead><tr><th>Pair</th><th>x</th></tr></thead>' +
+  w.document.getElementById('pt').innerHTML =
+    '<table id="gen-pop-tbl-pairs"><thead><tr><th>Pair</th><th>x</th></tr></thead>' +
     '<tbody><tr data-group="pairs" data-rid="q1-q2"><td>q1-q2</td><td></td></tr></tbody></table>';
   w.GenAdditions.mount(w.document.getElementById('host'), ctx);
   w.GenAdditions.decoratePairTable(w.document.getElementById('gen-pop-tbl-pairs'), ctx);
@@ -46,7 +49,8 @@ async function world(roles) {
   let btn = w.document.querySelector('.gen-add-czbtn');
   let why = w.document.querySelector('tr[data-rid="q1-q2"] .gen-add-czwhy');
   ok(btn && btn.disabled, 'W1 + CZ is disabled before the classes are read');
-  ok(why && /not been read yet/.test(why.textContent) && !why.hidden, 'W1 the row names why: ' + (why && why.textContent));
+  ok(why && /not been read yet/.test(why.textContent) && !why.hidden,
+    'W1 the row names why: ' + (why && why.textContent));
 
   w = await world(READ({ 'pkg.pulses.FlatTopGaussianPulse': { origin: 'official', fields: {} } }));
   btn = w.document.querySelector('.gen-add-czbtn');
@@ -61,6 +65,7 @@ async function world(roles) {
   const count2 = w.document.querySelector('.gen-add-count').textContent;
   ok(/^1 official and 1 lab pulse classes/.test(count2), 'W4 a found lab class is counted: ' + count2);
 
-  console.log((fails ? 'FAILED' : 'OK') + ' gen_additions_czwhy_selfcheck: ' + asserts + ' assertions, ' + fails + ' failed');
+  console.log((fails ? 'FAILED' : 'OK') + ' gen_additions_czwhy_selfcheck: ' + asserts + ' assertions, ' +
+    fails + ' failed');
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.error(e && e.stack || e); process.exit(1); });

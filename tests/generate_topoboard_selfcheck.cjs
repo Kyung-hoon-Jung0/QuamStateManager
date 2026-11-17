@@ -542,7 +542,8 @@ function stone(win, qid) {
     const w = freshChip();
     const cap = w.document.getElementById('gen-topo-caption').textContent;
     ok(w.QuamGen.state.spec.qubit_pairs.length === 5, 'count 6 auto-chains 5 pairs');
-    ok(/^0\/6 qubits placed \D*5 pairs \(automatic chain\)/.test(cap) && /5 not drawn until both qubits are placed/.test(cap),
+    ok(/^0\/6 qubits placed \D*5 pairs \(automatic chain\)/.test(cap) &&
+      /5 not drawn until both qubits are placed/.test(cap),
        'caption names the automatic chain and the undrawn pairs (got "' + cap + '")');
     w.WiringGrid.preset('chain');
     const cap2 = w.document.getElementById('gen-topo-caption').textContent;
@@ -559,7 +560,8 @@ function stone(win, qid) {
     G.preset('chain');
     ok(QS.every(function (q, i) { const c = G._cellOf(q); return c && c.row === 0 && c.col === i; }),
        'chain on the default board is one straight row');
-    ok(/Your 1 pair is replaced by the 5 chain pairs\./.test(asked), 'the confirm names the replaced pairs (got "' + asked + '")');
+    ok(/Your 1 pair is replaced by the 5 chain pairs\./.test(asked),
+      'the confirm names the replaced pairs (got "' + asked + '")');
   }
 
   if (fails) { console.error(fails + ' check(s) FAILED'); process.exit(1); }
