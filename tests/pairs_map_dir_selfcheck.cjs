@@ -132,6 +132,18 @@ ok(!!legend && /control/.test(legend.textContent) && /target/.test(legend.textCo
   ok(ovc.count === 0, 'coupler fixture: overlaps == 0 (' + JSON.stringify(ovc.pairs.slice(0, 4)) + ')');
 }
 
+// A vertical coupler edge names its pair on one line beside the ring, like a
+// level coupler edge, and the name clears the ring.
+{
+  const hv = win.document.createElement('div'); win.document.body.appendChild(hv);
+  win.TopoGraph.renderLayout(hv, {nodes: [{id: 'q4', grid_location: '0,0'}, {id: 'q5', grid_location: '0,1'}],
+    edges: [{source: 'q4', target: 'q5', pair_id: 'q4-5', has_coupler: true}], highlight: 'pairs', cell: 120});
+  const vl = hv.querySelector('.cm-pair-label');
+  ok(!!vl && !vl.hasAttribute('data-stack') && vl.textContent === 'q4-5',
+     'vertical coupler edge reads its one-line pair name: ' + (vl && vl.textContent));
+  ok(win.TopoGraph.labelOverlaps(hv.querySelector('svg.cm-svg')).count === 0,
+     'vertical coupler edge: the name clears the ring and the stones');
+}
 // Non-level edges, abbreviated display ids and endpoint names with punctuation.
 function fixture(source, target, pair, dx, dy, cell = 120) {
   const host = win.document.createElement('div'); win.document.body.appendChild(host);
