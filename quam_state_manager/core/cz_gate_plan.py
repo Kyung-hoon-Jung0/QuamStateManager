@@ -939,6 +939,74 @@ def waveform_sign_lobes(samples):
             for i, a in enumerate(runs)]
 
 
+def lobe_windows(lobes, samples=None, length_ns=None, period_ns=1.0):
+    """``{lobe name: (start_ns, end_ns)}`` when the played time of every lobe is known, else None.
+
+    From samples: each run of same-sign non-zero samples is one lobe, in the order
+    waveform_sign_lobes and pulse_lobes name them (zeros inside a run do not split it); a run
+    count that differs from the lobe count leaves the times unknown. A single-lobe pulse with
+    a stated length plays that lobe from 0 to its length. Both pulses of a two-flux gate start
+    together, so these windows share one time origin [derived].
+    """
+    names = [lb["name"] for lb in lobes or []]
+    if not names:
+        return None
+    if samples is not None:
+        if period_ns is None or period_ns <= 0:
+            return None
+        runs = []
+        for i, v in enumerate(samples):
+            if isinstance(v, (bool, np.bool_)) or not isinstance(v, (numbers.Real, np.floating, np.integer)):
+                return None
+            if v == 0:
+                continue
+            if runs and (runs[-1][2] > 0) == (v > 0):
+                runs[-1][1] = i + 1
+            else:
+                runs.append([i, i + 1, v])
+        if len(runs) != len(names):
+            return None
+        return {n: (r[0] * period_ns, r[1] * period_ns) for n, r in zip(names, runs)}
+    if length_ns is not None and len(names) == 1:
+        return {names[0]: (0.0, float(length_ns))}
+    return None
+
+
+def time_paired_lobes(lines, windows, idle_points):
+    """``(stages, notes)``: the lobe pairs that play at the same instant, in time order.
+
+    A crossing check compares the two qubits' frequencies at the same instant, so each
+    stretch of time between lobe edges pairs the lobe each line plays then (its idle point
+    when it plays none). ``stages`` is ``[(label, [point per line])]``, one entry per distinct
+    pair; the label is the lobe name when both lines play the same lobe. A lobe that overlaps
+    no lobe of the other line is named in ``notes`` [derived].
+    """
+    edges = sorted({t for w in windows for span in w.values() for t in span})
+    stages, seen, alone = [], set(), []
+    for a, b in zip(edges, edges[1:]):
+        mid = (a + b) / 2
+        playing = [next((n for n, (s, e) in w.items() if s <= mid < e), None) for w in windows]
+        if all(p is None for p in playing) or tuple(playing) in seen:
+            continue
+        seen.add(tuple(playing))
+        points = [next(lb["point"] for lb in ln["lobes"] if lb["name"] == p) if p else idle
+                  for ln, p, idle in zip(lines, playing, idle_points)]
+        if playing[0] == playing[1]:
+            label = playing[0]
+        else:
+            label = ", ".join(f"{ln['role']} {p or 'idle'}" for ln, p in zip(lines, playing))
+        stages.append((label, points))
+    notes = []
+    for i, (ln, w) in enumerate(zip(lines, windows)):
+        other, ow = lines[1 - i], windows[1 - i]
+        for name, (s, e) in w.items():
+            if not any(s < oe and os_ < e for os_, oe in ow.values()):
+                notes.append(f"two-flux lobes paired by time: {ln['role']} {ln['name']} {name} "
+                             f"({s:g} to {e:g} ns) overlaps no lobe of {other['role']} {other['name']}, "
+                             f"which idles then")
+    return stages, notes
+
+
 #: QuamMacro's default ``duration``: a runtime property, not a stored number
 INFERRED_DURATION = "#./inferred_duration"
 
@@ -1554,6 +1622,7 @@ def operations(doc, conversions=None, unavailable=None):
             for ln in lines:
                 _amplitude_view(doc, ln)
             two_flux_lengths = None
+            windows = None
             if kind == "two-flux" and raw_duration is None:
                 from .waveform_synth import LAB_WAVEFORMS, lab_waveform, resolved_lab_pulse
                 pulses = [resolved_lab_pulse(doc, ln["pulse_path"]) for ln in lines]
@@ -1626,6 +1695,21 @@ def operations(doc, conversions=None, unavailable=None):
                                         if macro_duration is not None else
                                         "the macro's own duration reads the control pulse label on the moving "
                                         "qubit, which is not the control here"))
+                if len(lines) == 2:
+                    windows = []
+                    for ln, p, s, n in zip(lines, pulses, samples, stated):
+                        wave = p.get("waveform_I") if ln.get("waveform_lobes") and isinstance(p, dict) else None
+                        src = s if s is not None else wave if isinstance(wave, list) else None
+                        if s is None and src is not None:
+                            # a sample-array pulse states its own sample period
+                            period = number(ln.get("waveform_length_ns"))
+                            period = period / len(src) if period and src else None
+                        else:
+                            rate = rate_state.get(ln["role"], (1e9, True))[0]
+                            period = None if rate is None else 1e9 / rate
+                        windows.append(lobe_windows(ln["lobes"], src, n, period))
+                    if None in windows:
+                        windows = None
             if raw_duration is None and duration_ns is None:
                 # a sample-array pulse states its own length: samples x sample period
                 lens = [ln["waveform_length_ns"] for ln in lines
@@ -1641,6 +1725,7 @@ def operations(doc, conversions=None, unavailable=None):
             alphas = [number(roles[k]["qubit"].get("anharmonicity")) for k in ("control", "target")]
             res = [] if any(ln["refusal"] for ln in lines) else resonances(fq[0], fq[1], alphas[0], alphas[1])
             lobe_resonances = []
+            stage_points = []
             # every played lobe, in order: parametric (mirror, third) and sample-array
             # (second, third, ...) names alike
             stages = ["first lobe"]
@@ -1648,15 +1733,25 @@ def operations(doc, conversions=None, unavailable=None):
                 for l in ln["lobes"]:
                     if l["name"] not in stages:
                         stages.append(l["name"])
-            if None not in fq:
+            if windows is not None:
+                # both lines' lobe times are known: pair what plays at the same instant
+                idle = [conversions[ln["qubit_path"]].point(0) if ln["qubit_path"] in conversions
+                        else {"frequency_hz": None} for ln in lines]
+                stage_points, overlap_notes = time_paired_lobes(lines, windows, idle)
+                notes.extend(overlap_notes)
+            elif None not in fq:
+                stage_points = []
                 for stage in stages:
-                    frequencies = []
+                    pts = []
                     for ln in lines:
                         lobe = next((l for l in ln["lobes"] if l["name"] == stage), None)
                         # A unipolar line holds A through both halves; its partner idles during lobe 3.
-                        p = (lobe["point"] if lobe else conversions[ln["qubit_path"]].point(0)
-                             if stage == "third lobe" else ln["point"])
-                        frequencies.append(p.get("frequency_hz"))
+                        pts.append(lobe["point"] if lobe else conversions[ln["qubit_path"]].point(0)
+                                   if stage == "third lobe" else ln["point"])
+                    stage_points.append((stage, pts))
+            if None not in fq:
+                for stage, pts in stage_points:
+                    frequencies = [p.get("frequency_hz") for p in pts]
                     lobe_resonances.extend({**r, "lobe": stage} for r in
                                            resonances(*frequencies, *alphas))
             known = [r for r in lobe_resonances if r["distance_hz"] is not None]
@@ -1695,9 +1790,8 @@ def operations(doc, conversions=None, unavailable=None):
                 shifted_res = coupler_points(lines, model, None, alphas)
             if model and None not in fq and not any(ln["refusal"] for ln in lines):
                 shifted_res = []
-                for stage in stages:
-                    stage_lines = [{**ln, "point": next((l["point"] for l in ln["lobes"] if l["name"] == stage),
-                                   conversions[ln["qubit_path"]].point(0) if stage == "third lobe" else ln["point"])} for ln in lines]
+                for stage, pts in stage_points:
+                    stage_lines = [{**ln, "point": p} for ln, p in zip(lines, pts)]
                     shifted_res.extend({**r, "lobe": stage} for r in coupler_points(stage_lines, model,
                         coupler["amplitude_v"] if coupler and not coupler["refusal"] else None if coupler else 0.0, alphas))
             if not model and has_coupler:
