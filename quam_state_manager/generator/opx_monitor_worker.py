@@ -164,12 +164,14 @@ class QmmTarget:
                         ports = call(f"qm.get_config({qid})", lambda: _used_fems(cfg))
                         markers = call(f"qm.get_config({qid})", lambda: _marker_names(cfg))
                         port_map = call(f"qm.get_config({qid})", lambda: _port_map(cfg))
+                        if port_map is None:  # read, but the map failed: not "not read"
+                            port_map = {"error": "the configuration could not be drawn"}
                         cache[str(qid)] = {'ports': ports, 'markers': markers, 'port_map': port_map,
                                            'jobs': job_ids, 'at': time.monotonic()}
                 row['ports'] = (cache.get(str(qid)) or {}).get('ports')
                 # None = the config could not be read; [] = read, no marker-shaped element
                 row['markers'] = (cache.get(str(qid)) or {}).get('markers')
-                # None = the config could not be read (or the map failed); see _port_map
+                # None = the config could not be read; {"error": ...} = read, the map failed
                 row['port_map'] = (cache.get(str(qid)) or {}).get('port_map')
             qms.append(row)
         ans["open_qms"] = qms if qm_ids is not None else None
@@ -289,7 +291,7 @@ _PORT_KINDS = ("analog_outputs", "analog_inputs", "digital_outputs", "digital_in
 #   "iq":     {"I": ref, "Q": ref, ...}       (mixInputs)
 #   "named":  {name: ref}                     (outputs)
 #   "inputs": {"inputs": {name: ref}}         (singleInputCollection, multipleInputs)
-#   "digital": {name: ref or {"port": ref}}   (digitalInputs)
+#   "digital": {name: ref or {"port": ref}}   (digitalInputs, digitalOutputs)
 _ELEMENT_REFS = (
     ("singleInput", "analog_outputs", "port"),
     ("mixInputs", "analog_outputs", "iq"),
@@ -301,7 +303,11 @@ _ELEMENT_REFS = (
     ("MWOutput", "analog_inputs", "port"),
     ("RF_outputs", "analog_inputs", "port"),
     ("digitalInputs", "digital_outputs", "digital"),
+    # an element's digital output is read on a controller digital input
+    ("digitalOutputs", "digital_inputs", "digital"),
 )
+# Element keys whose references may name an Octave rather than an OPX controller.
+_OCTAVE_KEYS = ("RF_inputs", "RF_outputs")
 
 
 def _port_key(p):
@@ -315,6 +321,25 @@ def _port_key(p):
     return None
 
 
+def _port_shaped(v):
+    """True for a (controller, port) or (controller, fem, port) value."""
+    return (isinstance(v, (list, tuple)) and len(v) in (2, 3) and isinstance(v[0], str)
+            and all(_port_key(x) is not None for x in v[1:]))
+
+
+def _count_port_shaped(v, depth=0):
+    """How many port-shaped values sit in ``v`` (nested dicts/lists, bounded depth)."""
+    if _port_shaped(v):
+        return 1
+    if depth >= 4:
+        return 0
+    if isinstance(v, dict):
+        return sum(_count_port_shaped(x, depth + 1) for x in v.values())
+    if isinstance(v, (list, tuple)):
+        return sum(_count_port_shaped(x, depth + 1) for x in v)
+    return 0
+
+
 def _port_map(cfg):
     """The ports a QM's configuration declares, per controller/FEM, and the elements on each.
 
@@ -324,16 +349,21 @@ def _port_map(cfg):
                    "type": "LF" | None,
                    "ports": [{"kind": "analog_outputs", "port": "1",
                               "elements": ["q1"], "declared": True}, ...]}, ...],
-         "unparsed": n}
+         "unparsed": n, "octave": m}
 
     A reference is (controller, fem, port) on an OPX1000 or (controller, port) on a
-    controller without FEMs (OPX+), as a tuple or a JSON list. A reference this map
-    cannot place (an Octave port, a 2-tuple on a FEM controller, an unknown
-    controller or a malformed value) is skipped and counted in ``unparsed``.
-    Config-declared only: not proof that a running program plays on a port.
+    controller without FEMs (OPX+), as a tuple or a JSON list. An ``RF_inputs`` /
+    ``RF_outputs`` reference naming something that is not an OPX controller of this
+    config is an Octave port: counted in ``octave`` and not attributed (the OPX ports
+    an Octave drives are in its own connectivity). Any other reference this map
+    cannot place (a 2-tuple on a FEM controller, an unknown controller, a malformed
+    value, or a port-shaped value under an element key the map does not know) is
+    skipped and counted in ``unparsed``. FEM slot keys are normalised, so "01" and 1
+    are one slot. Config-declared only: not proof that a running program plays on a port.
     """
     blocks = {}
     unparsed = 0
+    octave = 0
 
     def block(cname, slot, body):
         key = f"{cname}/{slot}" if slot is not None else str(cname)
@@ -349,12 +379,21 @@ def _port_map(cfg):
     controllers = cfg.get("controllers") if isinstance(cfg, dict) else None
     controllers = controllers if isinstance(controllers, dict) else {}
     has_fems = {}
+    fem_bodies = {}  # controller -> {normalised slot: fem body}
     for cname, c in controllers.items():
         if not isinstance(c, dict):
             continue
         fems = c.get("fems")
         has_fems[str(cname)] = isinstance(fems, dict) and bool(fems)
-        bodies = ([(str(k), v) for k, v in fems.items()] if has_fems[str(cname)] else [(None, c)])
+        if has_fems[str(cname)]:
+            norm = {}
+            for k, v in fems.items():
+                nk = _port_key(k)
+                norm.setdefault(nk if nk is not None else str(k), v)
+            fem_bodies[str(cname)] = norm
+            bodies = list(norm.items())
+        else:
+            bodies = [(None, c)]
         for slot, body in bodies:
             if not isinstance(body, dict):
                 continue
@@ -368,8 +407,8 @@ def _port_map(cfg):
                     if pk is not None:
                         b["ports"].setdefault((kind, pk), {"elements": set(), "declared": True})
 
-    def place(ref, kind, element):
-        nonlocal unparsed
+    def place(ref, kind, element, key):
+        nonlocal unparsed, octave
         if isinstance(ref, dict) and "port" in ref:
             ref = ref.get("port")
         if not isinstance(ref, (list, tuple)) or len(ref) not in (2, 3):
@@ -377,15 +416,17 @@ def _port_map(cfg):
             return
         cname = ref[0]
         if not isinstance(cname, str) or cname not in has_fems:
-            unparsed += 1
+            if key in _OCTAVE_KEYS and isinstance(cname, str):
+                octave += 1
+            else:
+                unparsed += 1
             return
         if len(ref) == 3:
             slot, pk = _port_key(ref[1]), _port_key(ref[2])
             if not has_fems[cname] or slot is None or pk is None:
                 unparsed += 1
                 return
-            body = (controllers[cname].get("fems") or {})
-            body = body.get(slot, body.get(int(slot)) if slot.isdigit() else None)
+            body = fem_bodies.get(cname, {}).get(slot)
             b = block(cname, slot, body if isinstance(body, dict) else {})
         else:
             pk = _port_key(ref[1])
@@ -396,36 +437,40 @@ def _port_map(cfg):
         entry = b["ports"].setdefault((kind, pk), {"elements": set(), "declared": False})
         entry["elements"].add(str(element))
 
+    known = {key for key, _, _ in _ELEMENT_REFS}
     elements = cfg.get("elements") if isinstance(cfg, dict) else None
     for ename, el in (elements.items() if isinstance(elements, dict) else ()):
         if not isinstance(el, dict):
             continue
+        for key, v in el.items():
+            if key not in known and v is not None:
+                unparsed += _count_port_shaped(v)
         for key, kind, form in _ELEMENT_REFS:
             if key not in el or el[key] is None:
                 continue
             v = el[key]
             if form == "port":
-                place(v.get("port") if isinstance(v, dict) else v, kind, ename)
+                place(v.get("port") if isinstance(v, dict) else v, kind, ename, key)
             elif form == "iq":
                 if not isinstance(v, dict):
                     unparsed += 1
                     continue
                 for side in ("I", "Q"):
                     if side in v:
-                        place(v[side], kind, ename)
+                        place(v[side], kind, ename, key)
             elif form == "inputs":
                 ins = v.get("inputs") if isinstance(v, dict) else None
                 if not isinstance(ins, dict):
                     unparsed += 1
                     continue
                 for ref in ins.values():
-                    place(ref, kind, ename)
+                    place(ref, kind, ename, key)
             else:  # "named" and "digital"
                 if not isinstance(v, dict):
                     unparsed += 1
                     continue
                 for ref in v.values():
-                    place(ref, kind, ename)
+                    place(ref, kind, ename, key)
 
     def sort_key(item):
         (kind, pk), _ = item
@@ -440,7 +485,7 @@ def _port_map(cfg):
                        "declared": e["declared"]}
                       for (kind, pk), e in sorted(b["ports"].items(), key=sort_key)]
         fems.append(b)
-    return {"fems": fems, "unparsed": unparsed}
+    return {"fems": fems, "unparsed": unparsed, "octave": octave}
 
 
 
