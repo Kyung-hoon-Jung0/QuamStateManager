@@ -76,7 +76,9 @@ function makeWorld() {
     window.__ajax = [];
     window.__trig = [];
     window.htmx = {
-        ajax: function (verb, url, opts) { window.__ajax.push({ verb, url, opts }); return Promise.resolve(); },
+        // the request stays in flight (a pending promise): an answer that leaves the
+        // placeholder in place re-opens the group to a new ask, which is not this file's subject
+        ajax: function (verb, url, opts) { window.__ajax.push({ verb, url, opts }); return new Promise(function () {}); },
         trigger: function (el, name) { window.__trig.push({ el, name }); }, process: function () {},
     };
     global.htmx = window.htmx;

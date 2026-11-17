@@ -842,6 +842,47 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     if (sidebar) _sidebarSticky.scrollTop = sidebar.scrollTop;
 });
 
+/* Ask a lazy date group for its runs, with the element's OWN declared config
+ * (hx-get / hx-vals read off the markup, so the request cannot drift from it).
+ *
+ * `source: g` is load-bearing. Without a source htmx uses document.body, and
+ * while body has a request in flight htmx queues further ones with strategy
+ * "last": every queued ask except the last is DROPPED. Measured: three open
+ * groups restored after a tree refresh -> requests for the first and the last
+ * only, the middle one "loading..." forever. With the group as its source each
+ * group has its own queue, shared with its own `lazy-open` trigger.
+ *
+ * The "asked" mark is cleared again when the ask did not fill the group (see
+ * the htmx:afterRequest listener below, and the settle check here for an ask
+ * that never reached the wire), so the next open or restore asks again. */
+function _askLazyGroup(g) {
+    var url = g.getAttribute('hx-get');
+    var box = g.querySelector('ul.tree-entries');
+    if (!url || !box || !window.htmx) return false;
+    var vals = {};
+    try { vals = JSON.parse(g.getAttribute('hx-vals') || '{}'); } catch (e2) {}
+    g.__lazyAsked = true;
+    var p = window.htmx.ajax('GET', url,
+                             { source: g, target: box, swap: 'innerHTML', values: vals });
+    var settle = function () {
+        setTimeout(function () {
+            if (g.isConnected && g.querySelector('.tree-lazy-hint')) g.__lazyAsked = false;
+        }, 0);
+    };
+    if (p && p.then) p.then(settle, settle);
+    return true;
+}
+window._askLazyGroup = _askLazyGroup;
+
+/* A lazy group's request ended (loaded, failed, aborted or timed out -- htmx
+ * fires afterRequest on its source for all four). If the group still shows its
+ * placeholder, nothing filled it: clear the mark so it can be asked again. */
+document.addEventListener('htmx:afterRequest', function (evt) {
+    var g = evt.target;
+    if (!g || !g.matches || !g.matches('details[data-lazy-group]')) return;
+    if (g.querySelector('.tree-lazy-hint')) g.__lazyAsked = false;
+});
+
 document.addEventListener('htmx:afterSwap', function(evt) {
     if (!evt.detail || !evt.detail.target) return;
     if (evt.detail.target.id !== 'sidebar-tree') return;
@@ -890,31 +931,22 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     // (A person's open rings `lazy-open` -- the listener below this handler.)
     tree.querySelectorAll('details[data-lazy-group][open]').forEach(function (g) {
         if (!g.querySelector('.tree-lazy-hint')) return;   // it has its runs
-        if (g.__lazyAsked) return;                         // one ask per element
+        if (g.__lazyAsked) return;                         // one ask in flight per element
         g.__lazyAsked = true;
-        // A PLAIN Event, which is what the browser itself fires on a
-        // <details>. `htmx.trigger` sends a CustomEvent and, measured, does
-        // NOT reach this trigger -- the group stayed stuck with `__lazyAsked`
-        // already true, which is how that attempt was caught rather than
-        // shipped.
-        // Ask with the element's OWN declared config, not by simulating a
-        // toggle. Three toggle-based attempts were measured and none reached
-        // the trigger from here (htmx.trigger's CustomEvent, a native Event
-        // inside afterSwap, and the same deferred a task) -- `__lazyAsked`
-        // came back true on a still-stuck group every time. The request is
-        // read OFF the element, so it cannot drift from what the markup says.
+        // Ask with the element's OWN declared config (_askLazyGroup), not by
+        // simulating a toggle. Three toggle-based attempts were measured and
+        // none reached the trigger from here (htmx.trigger's CustomEvent, a
+        // native Event inside afterSwap, and the same deferred a task) --
+        // `__lazyAsked` came back true on a still-stuck group every time.
         setTimeout(function () {
             try {
-                if (!g.isConnected || !g.open) return;             // closed meanwhile
-                if (!g.querySelector('.tree-lazy-hint')) return;   // filled meanwhile
-                var url = g.getAttribute('hx-get');
-                var box = g.querySelector('ul.tree-entries');
-                if (!url || !box || !window.htmx) return;
-                var vals = {};
-                try { vals = JSON.parse(g.getAttribute('hx-vals') || '{}'); } catch (e2) {}
-                window.htmx.ajax('GET', url,
-                                 { target: box, swap: 'innerHTML', values: vals });
-            } catch (e) { /* torn down mid-swap -- the next swap re-asks */ }
+                if (!g.isConnected || !g.open ||                   // closed meanwhile
+                        !g.querySelector('.tree-lazy-hint')) {     // filled meanwhile
+                    g.__lazyAsked = false;
+                    return;
+                }
+                if (!_askLazyGroup(g)) g.__lazyAsked = false;
+            } catch (e) { g.__lazyAsked = false; /* torn down mid-swap -- the next swap re-asks */ }
         }, 0);
     });
 
@@ -935,13 +967,18 @@ document.addEventListener('htmx:afterSwap', function(evt) {
  * group still loaded only because its first toggle happens to be the opening).
  * The filter now lives here: a person opening a lazy group that still shows its
  * placeholder rings the group's own `lazy-open once` trigger. The restore path
- * above asks on its own and marks `__lazyAsked`, so the two never both ask. */
+ * above asks on its own and marks `__lazyAsked`, so the two never both ask.
+ * A `once` trigger cannot fire twice on one element, so when an earlier ask did
+ * not fill the group (its mark was cleared), the open asks with _askLazyGroup. */
 document.addEventListener('toggle', function (evt) {
     var d = evt.target;
     if (!d || !d.matches || !d.matches('details[data-lazy-group]') || !d.open) return;
     if (d.__lazyAsked || !d.querySelector('.tree-lazy-hint')) return;
+    if (!window.htmx) return;
+    if (d.__lazyRung) { _askLazyGroup(d); return; }
     d.__lazyAsked = true;
-    if (window.htmx) window.htmx.trigger(d, 'lazy-open');
+    d.__lazyRung = true;
+    window.htmx.trigger(d, 'lazy-open');
 }, true);   // capture: `toggle` does not bubble
 
 /* Below-the-fold result reveal (audit P0-2/P0-3). The State-History "Compare 2
