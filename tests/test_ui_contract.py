@@ -1111,7 +1111,6 @@ _STAGE6_SELECTORS = {
     '.cf-name',
     '.cf-off',
     '.cf-pop',
-    '.cf-pop-head',
     '.cf-pop[hidden]',
     '.cm-add-hint',
     '.cm-check',

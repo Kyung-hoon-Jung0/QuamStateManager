@@ -251,7 +251,18 @@ function rule(selector) {
   boxes(win)[0].value = '/w/long_run/quam_state'; click(win, boxes(win)[0]);
   $(win, 'sidebar-tree').innerHTML = treeHtml(8, [1, 2]); win.syncCompareCount();
   const name = win.document.querySelector('.cf-name');
-  ok(name.nextElementSibling.matches('.cf-x') && /long_run/.test(name.textContent), 'D-5 remove follows run name even off-view');
+  const row = name.closest('.cf-item');
+  ok(row.firstElementChild.matches('button.cf-x') && row.firstElementChild.nextElementSibling.matches('.cf-id')
+     && /long_run/.test(name.textContent), 'remove X is the first child of the row, before the id and the name');
+  ok(row.querySelector('.cf-off') && row.title === '/w/long_run/quam_state',
+     'off-view row keeps its marker and full path title');
+  ok(!win.document.getElementById('cf-pop-head') && !/of up to/.test($(win, 'cf-pop').textContent),
+     'the list carries no "N of up to" head text');
+  ok(/flex: none/.test(rule('.cf-items .cf-x')) && /width: 28px/.test(rule('.cf-items .cf-x')),
+     'remove X keeps the kit icon size and never shrinks');
+  ok(/min-width: 0/.test(rule('.cf-items .cf-item')), 'a row can shrink below its long name so the X stays in view');
+  ok(/display: block/.test(rule('.cf-pop')),
+     'the list is a block, not the role=group inline-flex, so long names ellipsize');
   ok(/flex: 0 1 auto/.test(rule('.cf-name')) && /min-width: 0/.test(rule('.cf-name')) && /text-overflow: ellipsis/.test(rule('.cf-name')), 'D-5 names shrink and ellipsize without stretching');
   ok(['.compare-float-anchor', '.compare-float', '.cf-pop'].every(s => /width: fit-content/.test(rule(s)) && /max-width: 100%/.test(rule(s))), 'D-5 bar and list fit content within sidebar'); win.close();
 }
