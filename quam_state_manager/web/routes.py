@@ -9533,6 +9533,9 @@ def qualibrate_open_project():
     # _active_ctx() after it would cross-wire the pin onto whatever a
     # concurrent /load activated meanwhile (the _active_wc_lock bug class).
     _acquire_project_scope(opened, explicit=name)
+    # the activation above set the code root from the DERIVED scope (another
+    # project sharing this state_path, or none): follow the pin
+    _set_scope_code_root(opened)
 
     # dataset roots from the project's storage location (read-only scan)
     added = 0

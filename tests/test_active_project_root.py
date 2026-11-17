@@ -86,3 +86,52 @@ def test_scope_activation_sets_root(tmp_path, monkeypatch):
         assert len(warmed) == 1           # same root: no re-warm
         routes._set_scope_code_root({"store": object()})
         assert cg.active_project_root() is None
+
+
+def test_explicit_open_of_a_shared_state_sets_the_opened_projects_root(tmp_path, monkeypatch):
+    """Two projects share one state_path; qualibrate names alpha active, so the
+    activation-time derive picks alpha. Opening beta explicitly pins beta:
+    the code root must follow the pin, not the derive."""
+    import json
+
+    from quam_state_manager.core import qualibrate_config as qc
+    from quam_state_manager.core import project_env
+    from quam_state_manager.web import routes
+    from quam_state_manager.web.app import create_app
+
+    chip = tmp_path / "chip"
+    chip.mkdir()
+    (chip / "state.json").write_text(json.dumps(
+        {"qubits": {"q1": {"id": "q1"}}, "qubit_pairs": {},
+         "active_qubit_names": ["q1"]}), encoding="utf-8")
+    (chip / "wiring.json").write_text(json.dumps({"network": {}}), encoding="utf-8")
+    roots = {}
+    for name in ("alpha", "beta"):
+        repo = tmp_path / ("repo_" + name)
+        repo.mkdir()
+        roots[name] = repo
+        cal = _tree(repo)
+        p = tmp_path / ".qualibrate" / "projects" / name / "config.toml"
+        p.parent.mkdir(parents=True)
+        p.write_text(f'[qualibrate.calibration_library]\nfolder = "{cal.as_posix()}"\n',
+                     encoding="utf-8")
+    (tmp_path / ".qualibrate" / "config.toml").write_text(
+        f'[qualibrate]\nproject = "alpha"\nversion = 5\n'
+        f'[quam]\nstate_path = "{chip.as_posix()}"\nversion = 3\n', encoding="utf-8")
+    monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(tmp_path / ".qualibrate"))
+    monkeypatch.delenv("QUALIBRATE_CONFIG_DIR", raising=False)
+    qc._state_index_cache.clear()
+    monkeypatch.setattr(routes, "_warm_state_schema_async", lambda *a, **k: None)
+    monkeypatch.setattr(cg, "probe_capabilities", lambda *a, **k: {})
+    monkeypatch.setattr(cg, "discover_envs", lambda *a, **k: [])
+    monkeypatch.setattr(cg, "probe_envs", lambda *a, **k: {})
+    py = tmp_path / "env" / ("python.exe" if os.name == "nt" else "python")
+    py.parent.mkdir()
+    py.write_bytes(b"")
+    inst = tmp_path / "_inst"
+    app = create_app(testing=True, instance_path=str(inst))
+    project_env.remember(str(inst), "beta", str(py))
+    r = app.test_client().post("/qualibrate/open", data={"project": "beta"})
+    assert r.status_code < 400, r.get_data(as_text=True)
+    assert os.path.normcase(cg.active_project_root() or "") == \
+        os.path.normcase(str(roots["beta"]))
