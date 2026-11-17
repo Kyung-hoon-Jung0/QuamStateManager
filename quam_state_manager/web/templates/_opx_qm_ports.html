@@ -34,7 +34,7 @@
 {%- endif %}
 {%- for f in pm.fems or [] %}
 <dl class="ui-facts" aria-label="Ports of {{ f.key }}">
-<div class="ui-facts-row"><dt class="ui-facts-label ui-text-strong">{{ f.controller }}{% if f.slot is not none %} / slot {{ f.slot }}{% endif %}</dt><dd class="ui-facts-value ui-text-strong">{{ f.type or 'type not given' }}{% if not f.ports %} &middot; no ports declared{% endif %}</dd></div>
+<div class="ui-facts-row"><dt class="ui-facts-label ui-text-strong">{{ f.controller }}{% if f.slot is not none %} / slot {{ f.slot }}{% endif %}</dt><dd class="ui-facts-value ui-text-strong">{{ {'opx1': 'OPX+ (opx1)', 'opx1000': 'OPX1000'}.get(f.type, f.type) or 'type not given' }}{% if not f.ports %} &middot; no ports declared{% endif %}</dd></div>
 {%- if f.ports %}
 {%- for kind in ['analog_outputs', 'analog_inputs', 'digital_outputs', 'digital_inputs'] %}{% set rows = f.ports|selectattr('kind', 'equalto', kind)|list %}{% if rows %}
 {%- set label = _mw_label.get(kind, _kind_label[kind]) if f.type == 'MW' else _kind_label[kind] %}
