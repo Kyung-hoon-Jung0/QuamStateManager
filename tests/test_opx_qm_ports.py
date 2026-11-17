@@ -186,9 +186,9 @@ def test_live_tab_shows_each_qms_own_ports_and_element_names(app_with):
     html = _page(app_with(_two_qms()), "live")
     a, b = _disclosure(html, "QM-a"), _disclosure(html, "QM-b")
     assert "Ports in this QM&#39;s configuration" in a or "Ports in this QM's configuration" in a
-    assert 'ui-pill ui-pill--accent">1</span> flux_a' in a
+    assert 'ui-pill ui-pill--accent">1: flux_a</span>' in a
     assert "flux_b" not in a and "flux_a" not in b  # two QMs on one FEM: each shows its own
-    assert 'ui-pill ui-pill--accent">3</span> flux_b' in b
+    assert 'ui-pill ui-pill--accent">3: flux_b</span>' in b
     assert "1 reference to an Octave port not shown" in unescape(b) and "not shown" not in a
     assert "ports driven through an Octave are not attributed to elements" in unescape(b)
     assert "Octave" not in a  # a config with no Octave reference says nothing about one
@@ -201,7 +201,7 @@ def test_absent_field_and_unread_config_draw_no_diagram(app_with):
     ans = _two_qms(port_map_b=False)
     html = _page(app_with(ans), "live")
     assert 'id="opxmon-ports-QM-b"' not in html
-    assert "ports unknown</div>" in html
+    assert "ports unknown: the running monitor does not report them" in html
     ans = _two_qms(port_map_b=False)
     ans["open_qms"][1]["port_map"] = None
     ans["open_qms"][1]["ports"] = None

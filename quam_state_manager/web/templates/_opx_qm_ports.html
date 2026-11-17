@@ -17,7 +17,7 @@
 {%- elif q is mapping and 'port_map' in q -%}
 <span class="ui-text-quiet">ports unknown: the configuration was not read</span>
 {%- else -%}
-<span class="ui-text-quiet">ports unknown</span>
+<span class="ui-text-quiet">ports unknown: the running monitor does not report them (restart it to see ports)</span>
 {%- endif -%}
 {%- endmacro -%}
 {%- macro ports_disclosure(q) -%}
@@ -34,13 +34,13 @@
 {%- endif %}
 {%- for f in pm.fems or [] %}
 <dl class="ui-facts" aria-label="Ports of {{ f.key }}">
-<div class="ui-facts-row"><dt class="ui-facts-label ui-text-strong">{{ f.controller }}{% if f.slot is not none %} / slot {{ f.slot }}{% endif %}</dt><dd class="ui-facts-value ui-text-strong">{{ f.type or 'type not given' }}{% if not f.ports %} &middot; no ports declared{% endif %}</dd></div>
+<div class="ui-facts-row"><dt class="ui-facts-label ui-text-strong">{{ f.controller }}{% if f.slot is not none %} / slot {{ f.slot }}{% endif %}</dt><dd class="ui-facts-value ui-text-strong">{{ {'opx1': 'OPX+ (opx1)', 'opx1000': 'OPX1000'}.get(f.type, f.type) or 'type not given' }}{% if not f.ports %} &middot; no ports declared{% endif %}</dd></div>
 {%- if f.ports %}
 {%- for kind in ['analog_outputs', 'analog_inputs', 'digital_outputs', 'digital_inputs'] %}{% set rows = f.ports|selectattr('kind', 'equalto', kind)|list %}{% if rows %}
 {%- set label = _mw_label.get(kind, _kind_label[kind]) if f.type == 'MW' else _kind_label[kind] %}
 <div class="ui-facts-row"><dt class="ui-facts-label">{{ label }}</dt><dd class="ui-facts-value">
 {%- for p in rows %}
-{%- if p.elements %}<span title="{{ label }} {{ p.port }}: {{ p.elements|join(', ') }}{% if not p.declared %} (not declared under the controller){% endif %}"><span class="ui-pill ui-pill--accent">{{ p.port }}</span> {{ p.elements[:3]|join(', ') }}{% if p.elements|length > 3 %} +{{ p.elements|length - 3 }}{% endif %}</span>{% else %}<span class="ui-pill" title="{{ label }} {{ p.port }}: declared, no element references it directly">{{ p.port }}</span>{% endif %}{% if not loop.last %} {% endif %}
+{%- if p.elements %}<span title="{{ label }} {{ p.port }}: {{ p.elements|join(', ') }}{% if not p.declared %} (not declared under the controller){% endif %}"><span class="ui-pill ui-pill--accent">{{ p.port }}: {{ p.elements[:3]|join(', ') }}{% if p.elements|length > 3 %} +{{ p.elements|length - 3 }}{% endif %}</span></span>{% else %}<span class="ui-pill" title="{{ label }} {{ p.port }}: declared, no element references it directly">{{ p.port }}</span>{% endif %}{% if not loop.last %} {% endif %}
 {%- endfor %}</dd></div>{% endif %}
 {%- endfor %}
 {%- endif %}
@@ -58,6 +58,6 @@
 {%- elif q is mapping and 'port_map' in q -%}
 <div class="ui-text-quiet">ports unknown: the configuration was not read</div>
 {%- else -%}
-<div class="ui-text-quiet">ports unknown</div>
+<div class="ui-text-quiet">ports unknown: the running monitor does not report them (restart it to see ports)</div>
 {%- endif -%}
 {%- endmacro -%}
