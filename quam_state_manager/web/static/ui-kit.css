@@ -19,6 +19,7 @@
     --ui-rule-names-width: 16rem;
     --ui-rule-tick-width: 1.6rem;
     --ui-rule-why-min: 12rem;
+    --ui-pulse-name-basis: 10rem;
     --ui-cz-minimap-width: 16rem;
     --ui-cz-minimap-max: 25%;
     --ui-czp-map-min-w: 24rem;
@@ -1847,8 +1848,14 @@ dialog.ui-dialog:not(.gen-rule-dlg)::backdrop { background: var(--ui-backdrop); 
 #pulse-detail-root .pulse-overlay-chip > .pulse-sec-role { flex-shrink: 0; white-space: nowrap; overflow-wrap: normal; }
 /* the add-pulse picker is as wide as its longest option: capped to the pane */
 #pulse-detail-root .pulse-overlay-pick { max-width: 100%; min-width: 0; }
-/* the pulse detail's header name wraps like the operation name instead of clipping */
-#pulse-detail-root .inspector-title > strong { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+/* the pulse detail's header name wraps like the operation name instead of clipping; in a narrow pane
+   the class label moves to its own line so the name keeps the row (a wide pane stays on one line) */
+#pulse-detail-root .inspector-title { flex-wrap: wrap; }
+#pulse-detail-root .inspector-title > strong { flex: 1 1 var(--ui-pulse-name-basis); max-width: max-content;
+    min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+#pulse-detail-root .inspector-title > small { min-width: 0; overflow-wrap: anywhere; }
+/* a field's value column (a refused-edit note, a long dotted path) wraps inside the pane */
+#pulse-detail-root table.prop-table td.col-val { overflow-wrap: anywhere; }
 .gate-status-details { margin: 0; }
 .gate-status-details[open] { flex-basis: 100%; order: 10; }
 .gate-status-details .ui-disclosure-summary { font-weight: var(--ui-fw-normal); font-size: var(--ui-fs-xs); color: var(--ui-text-2); }
