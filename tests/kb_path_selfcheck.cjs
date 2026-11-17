@@ -190,15 +190,21 @@ function key(k, target, opts) {
   await sleep(30);
   ok(evS.defaultPrevented && edits.indexOf('a=5') >= 0, 'Ctrl+Enter on typing not staged yet stages it: ' + edits);
   ok(topApplies === top0, 'and does not press Apply in the same stroke');
-  ok(doc.activeElement === ed && ed.value === ed.defaultValue, 'the value is staged, the editor stays');
-  key('Enter', ed);
-  ok(topApplies === top0, 'plain Enter on a staged value never applies');
-  const evA = key('Enter', ed, { ctrlKey: true });
-  ok(topApplies === top0 + 1 && evA.defaultPrevented, 'Ctrl+Enter on a staged value presses the top-bar Apply');
-  key('Enter', ed, { metaKey: true });
-  ok(topApplies === top0 + 2, 'Cmd+Enter does the same');
-  key('Enter', ed, { ctrlKey: true, altKey: true });
-  ok(topApplies === top0 + 2, 'Ctrl+Alt+Enter is not the chord');
+  const rowA = xrow('a');
+  ok(doc.activeElement === rowA, 'the value is staged, the editor closes and focus stays on its row');
+  const evR = key('Enter', rowA, { ctrlKey: true });
+  ok(topApplies === top0 + 1 && evR.defaultPrevented, 'Ctrl+Enter on the staged row presses the top-bar Apply');
+  key('Enter', rowA);
+  await sleep(30);
+  const ed2 = doc.activeElement;
+  ok(topApplies === top0 + 1 && ed2 && ed2.classList.contains('ui-tree-editor'),
+     'plain Enter on the row reopens the editor and never applies');
+  const evA = key('Enter', ed2, { ctrlKey: true });
+  ok(topApplies === top0 + 2 && evA.defaultPrevented, 'Ctrl+Enter in an editor on a staged value presses Apply');
+  key('Enter', ed2, { metaKey: true });
+  ok(topApplies === top0 + 3, 'Cmd+Enter does the same');
+  key('Enter', ed2, { ctrlKey: true, altKey: true });
+  ok(topApplies === top0 + 3, 'Ctrl+Alt+Enter is not the chord');
 
   console.log(fails ? ('FAILURES: ' + fails) : 'ALL OK');
   process.exit(fails ? 1 : 0);
