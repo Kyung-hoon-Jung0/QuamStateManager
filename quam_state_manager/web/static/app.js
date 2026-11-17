@@ -8439,6 +8439,8 @@ window.PhysAmp = (function () {
             ['/', 'focus the page search'],
             ['?', 'this cheat sheet'],
             ['Alt+C', 'calculator'],
+            ['Ctrl+Enter / Cmd+Enter', 'Apply: presses the top-bar Apply (same confirm); a Json tree value'
+                + ' not staged yet is staged first'],
             // v1.5.1 (U P1-5): say what the setting makes Ctrl+Z do now
             ['Ctrl+Z / Ctrl+Shift+Z', (function () {
                 var t = document.getElementById('undo-live-toggle');
@@ -8552,7 +8554,10 @@ window.PhysAmp = (function () {
             // Ctrl+Enter works FROM a grid cell too — that is where the user is
             if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
                 var a0 = document.activeElement;
-                _ctrlEnterApply(ev, !!(a0 && a0.classList && a0.classList.contains('bulk-cell')));
+                // a grid cell, or a Json tree value whose edit is staged (its
+                // editor lets the chord through only then)
+                _ctrlEnterApply(ev, !!(a0 && a0.classList && (a0.classList.contains('bulk-cell')
+                                                              || a0.classList.contains('ui-tree-editor'))));
             }
             return;
         }
@@ -8574,6 +8579,56 @@ window.PhysAmp = (function () {
             window._kbToggleCheatsheet();
         }
     });
+})();
+
+/* P1-7 (UX round): a quick-filter chip strip (.bulk-chipbar: Live Edit's grid
+   and the Json tree) is ONE tab stop (roving tabindex): Tab walked ~30 chips
+   to reach the grid or the tree. Left / Right / Home / End move inside it; the
+   chip that last had focus is the strip's stop. Core, not the grid bundle: the
+   Json tree page never loads bulk-edit.js. */
+(function () {
+    function chips(bar) {
+        return Array.prototype.filter.call(bar.querySelectorAll('.bulk-chip'),
+            function (c) { return !c.hidden; });
+    }
+    function rove(bar, active) {
+        chips(bar).forEach(function (c) { c.setAttribute('tabindex', c === active ? '0' : '-1'); });
+    }
+    function barOf(t) {
+        var c = t && t.closest && t.closest('.bulk-chip');
+        return c ? { chip: c, bar: c.closest('.bulk-chipbar') } : null;
+    }
+    document.addEventListener('focusin', function (e) {
+        var o = barOf(e.target);
+        if (o && o.bar) rove(o.bar, o.chip);
+    });
+    document.addEventListener('keydown', function (e) {
+        var o = barOf(e.target);
+        if (!o || !o.bar || e.ctrlKey || e.metaKey || e.altKey) return;
+        var list = chips(o.bar), i = list.indexOf(o.chip), j = -1;
+        if (e.key === 'ArrowRight') j = Math.min(i + 1, list.length - 1);
+        else if (e.key === 'ArrowLeft') j = Math.max(i - 1, 0);
+        else if (e.key === 'Home') j = 0;
+        else if (e.key === 'End') j = list.length - 1;
+        if (j < 0) return;
+        e.preventDefault();
+        rove(o.bar, list[j]);
+        list[j].focus();
+    });
+    function initBar(bar) {
+        var list = chips(bar);
+        var stops = list.filter(function (c) { return c.getAttribute('tabindex') !== '-1'; });
+        if (list.length && stops.length !== 1) rove(bar, stops[0] || list[0]);
+    }
+    /* bar: one strip (a script that re-renders its chips calls this), else every strip */
+    function init(bar) {
+        if (bar && bar.nodeType === 1) { initBar(bar); return; }
+        Array.prototype.forEach.call(document.querySelectorAll('.bulk-chipbar'), initBar);
+    }
+    window._bulkChipRoveInit = init;
+    document.addEventListener('htmx:afterSettle', function () { init(); });
+    if (document.readyState !== 'loading') init();
+    else document.addEventListener('DOMContentLoaded', function () { init(); });
 })();
 
 
@@ -13429,6 +13484,11 @@ window.clearDetailPanelSearch = function(btnEl) {
         input.addEventListener("input", function () { clearRefusal(); dirty(); });
         input.addEventListener("keydown", function (e) {
             if (e.key !== "Escape") state.escaped = false;
+            // Ctrl/Cmd+Enter on a value already staged is the Apply chord: let it
+            // reach the document handler (the top bar's Apply, as a click). With
+            // typing not staged yet it stages first, like the grid's Apply all.
+            if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.altKey
+                    && input.value === input.defaultValue && !state.pending) return;
             if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); flush(); }
             if (e.key === "Escape") {
                 e.preventDefault(); e.stopPropagation();
@@ -31494,6 +31554,8 @@ window.ExplorerChips = (function () {
         add.title = 'Save your own filter word as a patch (shared with Live Edit)';
         add.textContent = '+';
         bar.appendChild(add);
+        // one tab stop for the whole strip (the shared roving model)
+        if (window._bulkChipRoveInit) window._bulkChipRoveInit(bar);
     }
     function mount(barId, docsArr) {
         var bar = document.getElementById(barId);

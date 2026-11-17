@@ -6,7 +6,10 @@
  *      Left / Right / Home / End move the stop and the focus;
  *   C. Ctrl+Enter is Apply: the grid's Apply all when it has un-applied
  *      cells, else the top bar's Apply (a click), never from another field;
- *   D. "Skip to content" focuses the page pane.
+ *   D. "Skip to content" focuses the page pane;
+ *   E. the Json tree's chip strip is one tab stop too (no grid bundle there);
+ *   F. Ctrl+Enter from a Json tree value: not staged yet -> stages it only;
+ *      staged -> the top bar's Apply (a click); plain Enter never applies.
  *
  * Run: node tests/kb_path_selfcheck.cjs   (driven by tests/test_v151_ux_keyboard_path.py)
  */
@@ -64,12 +67,23 @@ const HTML = '<!doctype html><html><body>' +
   row('q1', '5,100,000,000', '0.000021') +
   row('q2', '5,200,000,000', '0.000034') +
   row('q10', '6,000,000,000', '0.000055') +
-  '</tbody></table></div></div></div></body></html>';
+  '</tbody></table></div></div>' +
+  '<input type="search" id="explorer-search">' +
+  '<div class="bulk-chipbar explorer-chipbar" id="explorer-chipbar"></div>' +
+  '<div id="xtree"></div></div></body></html>';
 
 const dom = new JSDOM(HTML, { runScripts: 'outside-only', url: 'http://localhost/bulk', pretendToBeVisual: true });
 const w = dom.window;
 w.htmx = { ajax: () => Promise.resolve(), trigger: () => {}, process: () => {} };
-w.fetch = () => new Promise(() => {});
+const edits = [];
+w.fetch = (url, opts) => {
+  if (String(url) !== '/field/edit') return new Promise(() => {});
+  const b = new w.URLSearchParams(opts && opts.body);
+  let v = b.get('value');
+  try { v = JSON.parse(v); } catch (e) {}
+  edits.push(b.get('dot_path') + '=' + JSON.stringify(v));
+  return Promise.resolve({ ok: true, json: async () => ({ ok: true, stored: v, stored_kind: typeof v }) });
+};
 w.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
 w.eval(fs.readFileSync(path.join(STATIC, 'bulk-edit.js'), 'utf8'));
 
@@ -149,6 +163,42 @@ function key(k, target, opts) {
   // D. skip link
   doc.getElementById('skip-link').dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true }));
   ok(doc.activeElement === doc.getElementById('table-pane'), 'Skip to content focuses the page pane');
+
+  // E. the Json tree's chip strip (rendered by ExplorerChips, no grid bundle)
+  w.ExplorerChips.mount('explorer-chipbar', [{ freq: 1, flux: 2, amp: 3 }]);
+  const xstrip = () => Array.from(doc.querySelectorAll('#explorer-chipbar .bulk-chip')).filter((c) => !c.hidden);
+  const xstops = () => xstrip().filter((c) => c.getAttribute('tabindex') !== '-1');
+  ok(xstrip().length >= 4 && xstops().length === 1 && xstops()[0] === xstrip()[0],
+     'the Json tree chip strip is one tab stop: ' + xstops().length + ' of ' + xstrip().length);
+  xstrip()[0].focus();
+  key('ArrowRight', xstrip()[0]);
+  ok(doc.activeElement === xstrip()[1] && xstops().length === 1 && xstops()[0] === xstrip()[1],
+     'Right moves focus and the stop in the Json tree strip');
+  key('End', doc.activeElement);
+  ok(doc.activeElement === xstrip()[xstrip().length - 1] && xstops().length === 1, 'End in the Json tree strip');
+
+  // F. Ctrl+Enter from a Json tree value
+  w.renderJsonTree('xtree', { a: 1, b: 2 }, { defaultDepth: 1, crud: true });
+  const xrow = (p) => doc.querySelector('#xtree .tree-node[data-path="' + p + '"] > .tree-row');
+  xrow('a').focus();
+  const ed = doc.activeElement;
+  ok(ed && ed.classList.contains('ui-tree-editor'), 'focusing a tree value mounts its editor');
+  const top0 = topApplies;
+  ed.value = '5';
+  ed.dispatchEvent(new w.Event('input', { bubbles: true }));
+  const evS = key('Enter', ed, { ctrlKey: true });
+  await sleep(30);
+  ok(evS.defaultPrevented && edits.indexOf('a=5') >= 0, 'Ctrl+Enter on typing not staged yet stages it: ' + edits);
+  ok(topApplies === top0, 'and does not press Apply in the same stroke');
+  ok(doc.activeElement === ed && ed.value === ed.defaultValue, 'the value is staged, the editor stays');
+  key('Enter', ed);
+  ok(topApplies === top0, 'plain Enter on a staged value never applies');
+  const evA = key('Enter', ed, { ctrlKey: true });
+  ok(topApplies === top0 + 1 && evA.defaultPrevented, 'Ctrl+Enter on a staged value presses the top-bar Apply');
+  key('Enter', ed, { metaKey: true });
+  ok(topApplies === top0 + 2, 'Cmd+Enter does the same');
+  key('Enter', ed, { ctrlKey: true, altKey: true });
+  ok(topApplies === top0 + 2, 'Ctrl+Alt+Enter is not the chord');
 
   console.log(fails ? ('FAILURES: ' + fails) : 'ALL OK');
   process.exit(fails ? 1 : 0);
