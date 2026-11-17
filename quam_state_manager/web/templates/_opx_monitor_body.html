@@ -191,7 +191,7 @@
   <details class="ui-zone ui-zone--danger ui-zone--fold ui-opxmon-danger" aria-label="Danger" data-fold="danger"><summary class="ui-zone-head"><h3 class="ui-zone-title">Danger</h3><span class="ui-zone-sum">close every open QM</span></summary>
   <div class="ui-zone-body">
   <p class="ui-text-quiet">Stops every running job, for everyone. Asks you to type the count first.</p>
-  <p><button type="button" class="btn-sm outline ui-opxmon-close-all" data-qm-ids="{{ ans.open_qms | map(attribute='id') | join(', ') }}" {% if st.state != 'ok' %}disabled{% endif %}>Close all {{ ans.open_qms|length }}&hellip;</button></p>
+  <p><button type="button" class="btn-sm outline ui-opxmon-close-all" data-qm-ids="{{ ans.open_qms | map(attribute='id') | join(', ') }}" {% if st.state != 'ok' %}disabled{% endif %}>Close all ({{ ans.open_qms|length }})</button></p>
   </div></details>
   {%- endif %}
   {%- endif %}

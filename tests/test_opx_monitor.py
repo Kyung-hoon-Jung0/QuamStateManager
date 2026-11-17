@@ -361,8 +361,26 @@ def test_history_dedup_and_gone(env):
     assert rows["j1"]["status"] == "Done" and rows["j1"]["open"] is False
     # a restart rebuilds the same rows from the file
     h2 = om.History(h.path)
-    assert {r["job_id"]: (r["status"], r["open"]) for r in h2.table()} == {None: (None, False), "j1": ("Done", False)}
+    assert {r["job_id"]: (r["status"], r["open"]) for r in h2.table()} == {"j1": ("Done", False)}
     assert "gone" in page(app, "history")
+
+
+def test_history_shows_a_qm_once_beside_its_jobs(env):
+    """A QM's own row repeats its job row; it is shown only when no job of it
+    was seen, or while it is still open after every job row is gone."""
+    app, m, w, clock, _ = env
+    w.script[:] = [answer(qms=(("QM-a", [("j1", "Running")], ["con1/1"]),
+                               ("QM-b", [], ["con1/2"])))]
+    m.poll_once()
+    clock.t += 5
+    rows = [(r["qm_id"], r["job_id"]) for r in m.history().table()]
+    assert sorted(rows, key=str) == sorted([("QM-a", "j1"), ("QM-b", None)], key=str)
+    html = page(app, "history")
+    assert html.count("QM-a") == 1 and html.count("QM-b") == 1
+    w.script[:] = [answer(qms=(("QM-a", [], ["con1/1"]),))]
+    m.poll_once()
+    rows = {(r["qm_id"], r["job_id"]): r["open"] for r in m.history().table()}
+    assert rows[("QM-a", None)] is True and rows[("QM-a", "j1")] is False
 
 
 def test_history_survives_a_torn_line(env, tmp_path):
