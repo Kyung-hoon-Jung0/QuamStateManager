@@ -139,10 +139,42 @@ function resp(status, body) {
     const said = (b.textContent.match(/nothing (was )?written/gi) || []).length;
     ok(said === 1 && /flat_length must be even/.test(b.textContent),
        'the refusal is named once (' + b.textContent + ')');
-    await until(() => b._placeAt === row, 1000);
-    ok(b._placeAt === row, 'the badge goes under the field\'s own refusal row');
+    await until(() => !W.w.document.querySelector('.lab-check-badge'), 1000);
+    ok(!W.w.document.querySelector('.lab-check-badge'),
+       'the field\'s own refusal row names it: the badge leaves instead of covering the field');
+  }
+
+  // 2c: without a refusal row the badge stays until the user types again in the cell
+  {
+    const W = world([LAB]);
+    const cell = W.w.document.querySelector('[data-dot-path="' + LAB + '"]');
+    const p = W.w.fetch('/field/edit', { method: 'POST', body: 'dot_path=' + encodeURIComponent(LAB) + '&value=5' });
+    await until(() => W.w.document.querySelector('.lab-check-badge'));
+    W.pending[0](resp(400, { ok: false, lab_refused: true, error: 'Nothing was written: odd.' }));
+    await p;
+    await until(() => W.w.document.querySelector('.lab-check-refused'));
+    await tick(60);
+    ok(W.w.document.querySelector('.lab-check-refused'), 'no refusal row: the badge names the refusal');
     cell.dispatchEvent(new W.w.Event('input', { bubbles: true }));
     ok(!W.w.document.querySelector('.lab-check-badge'), 'typing again in the cell dismisses the badge');
+  }
+
+  // 2d: a cell below the window bottom: the badge is pinned inside the window, never past its edge
+  {
+    const W = world([LAB]);
+    Object.defineProperty(W.w, 'innerHeight', { value: 300, configurable: true });
+    Object.defineProperty(W.w.HTMLElement.prototype, 'offsetHeight', { get() { return 40; }, configurable: true });
+    W.w.Element.prototype.getBoundingClientRect = function () {
+      return { left: 20, top: 320, bottom: 340, right: 90, width: 70, height: 20 };
+    };
+    const p = W.w.fetch('/field/edit', { method: 'POST', body: 'dot_path=' + encodeURIComponent(LAB) + '&value=5' });
+    await until(() => W.w.document.querySelector('.lab-check-badge'));
+    W.pending[0](resp(400, { ok: false, lab_refused: true, error: 'Nothing was written: odd.' }));
+    await p;
+    await until(() => W.w.document.querySelector('.lab-check-refused'));
+    await tick(60);
+    const top = parseFloat(W.w.document.querySelector('.lab-check-badge').style.top);
+    ok(top + 40 <= 300 - 4, 'the badge ends inside the window (top ' + top + ')');
   }
 
   // 3: non-lab edit -> no badge ever
