@@ -238,6 +238,19 @@ function click(W, sel) { W.d.querySelector(sel).dispatchEvent(new W.w.MouseEvent
     ok(b.textContent === 'Use this' && /quam 0\.6\.0/.test(row.querySelector('.landing-env-status').textContent),
        'Check runs the probe and then offers Use this');
     ok(W.posts.length === 0, 'Check saves nothing');
+    // 10: a card Confirm re-reads the picker open for that project
+    const card = W.d.querySelector('.landing-card-env[data-project="alpha"]');
+    card.innerHTML = 'env <button data-env-change="alpha" data-env-current="C:\\alpha\\.venv\\Scripts\\python.exe" ' +
+                     'data-env-state="remembered">Change</button>';
+    const conf = W.d.createElement('button'); conf.className = 'landing-env-confirm';
+    W.d.dispatchEvent(new W.w.CustomEvent('htmx:afterSwap', { detail: { target: card, requestConfig: { elt: conf } } }));
+    await until(() => {
+      const r = W.d.querySelectorAll('.landing-env-row')[0];
+      return r && r.querySelector('button').textContent === 'In use';
+    });
+    const r0 = W.d.querySelectorAll('.landing-env-row')[0];
+    ok(r0.querySelector('button').textContent === 'In use' && !/not checked yet/.test(r0.querySelector('.landing-env-status').textContent),
+       'after a card Confirm the picker row shows the env in use');
   }
   if (fails) { console.error(fails + ' FAIL'); process.exit(1); }
   console.log('all ok');
