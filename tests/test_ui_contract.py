@@ -1055,6 +1055,8 @@ _STAGE6_SELECTORS = {
     '#pulse-detail-root .gate-status-items', '#pulse-detail-root .gate-status-items > .ui-pill',
     '#pulse-detail-root .pulse-sec-op', '#pulse-detail-root .pulse-sec-op code',
     '#pulse-detail-root .pulse-overlay-chips', '#pulse-detail-root .pulse-overlay-chip',
+    '#pulse-detail-root .pulse-overlay-chip > .pulse-sec-role', '#pulse-detail-root .pulse-overlay-pick',
+    '#pulse-detail-root .inspector-title > strong',
     '.gate-status-details[open]', '.gate-status-details .ui-disclosure-summary',
     '.gate-status-details-list', '.gate-status-details-list dd', '.gate-status-actions',
     '.gate-status-edit', '.gate-status-activate', '.gate-status-recheck', '.gate-status-delete',
@@ -1093,6 +1095,7 @@ _STAGE6_SELECTORS = {
     '.gen-rule-tbl .gen-rule-c-names',
     '.gen-rule-tbl .gen-rule-c-on',
     '.gen-rule-tbl .gen-rule-c-tick',
+    '.gen-rule-tbl .gen-rule-c-why',
 
     '#sidebar',
     '.cf-arrow',
@@ -1303,6 +1306,42 @@ def test_a_long_operation_name_in_a_pulse_detail_wraps_instead_of_scrolling_the_
     section = _read(_TPL / "_pulse_params_section.html")
     assert 'id="pulse-detail-root"' in detail and 'class="pulse-overlay-chips"' in detail
     assert 'class="pulse-overlay-chip on"' in detail and 'class="pulse-sec-op"><code>' in section
+
+
+def test_a_narrow_pulse_detail_neither_scrolls_nor_squeezes_its_header_tag_or_picker():
+    # The add-pulse picker is as wide as its longest option; capped to the pane it cannot push it sideways.
+    pick = _kit_rule("#pulse-detail-root .pulse-overlay-pick")
+    assert pick.get("max-width") == "100%" and pick.get("min-width") == "0", pick
+    # The role tag beside a long name stays one word; only the name wraps.
+    tag = _kit_rule("#pulse-detail-root .pulse-overlay-chip > .pulse-sec-role")
+    assert tag.get("flex-shrink") == "0" and tag.get("white-space") == "nowrap", tag
+    assert tag.get("overflow-wrap") == "normal", tag
+    # The header name wraps instead of clipping with no way to read the rest.
+    head = _kit_rule("#pulse-detail-root .inspector-title > strong")
+    assert head.get("white-space") == "normal" and head.get("overflow-wrap") == "anywhere", head
+    assert head.get("min-width") == "0", head
+    detail = _read(_TPL / "_pulse_detail.html")
+    assert 'class="pulse-overlay-pick"' in detail and 'class="pulse-sec-role"' in detail
+    assert "{% include '_inspector_header.html' %}" in detail
+    assert "<strong>{{ inspector_label }}</strong>" in _read(_TPL / "_inspector_header.html")
+    # every other inspector keeps its one-line clipped title
+    style = {}
+    for sel, body, _stack in _blocks(_strip_comments(_read(_STATIC / "style.css"))):
+        if ".inspector-title strong" in [p.strip() for p in sel.split(",")]:
+            style.update(dict(_decls(body)))
+    assert style.get("white-space") == "nowrap", style
+
+
+def test_the_apply_to_other_pairs_why_column_keeps_a_readable_width():
+    why = _kit_rule(".gen-rule-tbl .gen-rule-c-why")
+    assert why.get("min-width") == "var(--ui-rule-why-min)", why
+    assert "--ui-rule-why-min:" in _read(_UI_KIT)
+    js = _read(_STATIC / "gen-rules.js")
+    # the table sits in the kit's sideways-scroll wrapper, so the wider column never widens the dialog
+    assert 'var scroller = el("div", { className: "ui-xscroll ui-xscroll-table" });' in js
+    assert "scroller.appendChild(groupTable(d, list));" in js and "det.appendChild(scroller);" in js
+    assert "det.appendChild(groupTable(" not in js
+    assert '"ui-table-muted gen-rule-c-why"' in js
 
 
 def test_stage6_feature_selectors_are_reviewed_and_tokenized():

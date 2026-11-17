@@ -38,5 +38,31 @@ check(() => assert.equal(input.hasAttribute('aria-invalid'), false, 'and the mar
 refuse(blank);
 check(() => assert.equal(blank.querySelector('[data-refused-note]').textContent, 'Not saved.',
     'an empty stored value invents nothing'));
+
+// The server's reason goes on the field's own line; app.js shows no toast over the field for it.
+const app = fs.readFileSync(path.join(__dirname, '../quam_state_manager/web/static/app.js'), 'utf8');
+const a0 = app.indexOf('window.htmxErrorText = function');
+const a1 = app.indexOf('// Network-level failure', a0);
+check(() => assert.ok(a0 > 0 && a1 > a0, 'the shared error-text helper and the toast listener are in app.js'));
+const toasts = [];
+w.showToast = (msg) => { toasts.push(msg); return null; };
+w.eval(app.slice(a0, a1));
+const reason = 'This pulse would not run: SNZPulse at q.z.op \u2014 flat_length must be even. Every node would fail.';
+const xhr = (status) => ({ status, responseText: '<div><p>Nothing was written \u2014 ' + reason + '</p></div>',
+    getResponseHeader: () => null });
+const refuseWith = (el, status) => el.dispatchEvent(new w.CustomEvent('htmx:responseError',
+    { bubbles: true, detail: { xhr: xhr(status), elt: el, target: w.document.getElementById('inspector-pane') } }));
+input.value = '45';
+refuseWith(form, 400);
+check(() => assert.equal(form.querySelector('[data-refused-note]').textContent,
+    'Not saved: the stored value is still 44. ' + reason, 'the field line carries the reason, said once'));
+check(() => assert.deepEqual(toasts, [], 'no toast covers the field'));
+const other = w.document.createElement('form');
+w.document.body.appendChild(other);
+refuseWith(other, 400);
+check(() => assert.deepEqual(toasts, ['Nothing was written \u2014 ' + reason], 'any other refusal still toasts'));
+toasts.length = 0;
+refuseWith(form, 500);
+check(() => assert.equal(toasts.length, 1, 'a server failure on the field still toasts'));
 console.log(n + ' assertions passed');
 w.close();

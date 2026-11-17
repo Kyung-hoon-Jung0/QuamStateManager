@@ -547,7 +547,10 @@
           det.appendChild(line);
         });
       } else {
-        det.appendChild(groupTable(d, list));
+        // a narrow dialog scrolls the table sideways instead of squeezing the Why column
+        var scroller = el("div", { className: "ui-xscroll ui-xscroll-table" });
+        scroller.appendChild(groupTable(d, list));
+        det.appendChild(scroller);
       }
       wrap.appendChild(det);
       frag.appendChild(wrap);

@@ -27769,7 +27769,7 @@ def _synth_write_refusal(store, writes):
                    if after.get("rule_violation") else
                    "QOP would refuse every program on the chip")
             found.append((f"{leaf} at {op}" + (f" ({fields})" if fields else "")
-                          + f" — {problem}. {why}", op))
+                          + f" — {problem.rstrip('.')}. {why}", op))
         if found:
             # every pulse a rule breaks is refused (an independent batch skips
             # each one's rows); one pulse keeps the single-pulse sentence
