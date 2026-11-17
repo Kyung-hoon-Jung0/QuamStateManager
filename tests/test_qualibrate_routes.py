@@ -119,7 +119,7 @@ class TestListingAndPage:
         assert "<textarea" not in frag
 
     def test_sidebar_and_subnav(self, env):
-        home = env["client"].get("/").get_data(as_text=True)
+        home = env["client"].get("/", follow_redirects=True).get_data(as_text=True)
         assert 'hx-get="/qualibrate/subnav"' in home     # lazy submenu
         sub = env["client"].get("/qualibrate/subnav").get_data(as_text=True)
         assert "beta" in sub
@@ -156,7 +156,7 @@ class TestOpenInSM:
         assert by["beta"]["loaded_in_sm"] is True
         assert by["alpha"]["loaded_in_sm"] is False
         # the chip is actually active in SM
-        assert "qA1" in c.get("/").get_data(as_text=True)
+        assert "qA1" in c.get("/", follow_redirects=True).get_data(as_text=True)
 
     def test_open_htmx_gets_hx_redirect(self, env):
         r = env["client"].post("/qualibrate/open", data={"project": "beta"},
@@ -179,7 +179,7 @@ class TestReadOnlyGuarantee:
         c.post("/qualibrate/open", data={"project": "nope"})
         c.post("/qualibrate/open", data={"project": "alpha"})
         c.post("/qualibrate/open", data={"project": "beta"})
-        c.get("/")
+        c.get("/", follow_redirects=True)
         c.get("/workbench/match")
         # docs/63 project lens — a full SCOPED session (landing cards, scoped
         # history + datasets + trends, a project-stamped snapshot) must also
@@ -219,7 +219,7 @@ class TestProjectConfigPopup:
 
 class TestTrayBadge:
     def test_dangling_active_is_red(self, env):
-        body = env["client"].get("/").get_data(as_text=True)
+        body = env["client"].get("/", follow_redirects=True).get_data(as_text=True)
         assert "qualibrate-tray-badge" in body
         assert "qualibrate-tray-danger" in body          # alpha dangling
         assert ">alpha<" not in body                     # rendered inline, not a row
@@ -236,25 +236,25 @@ class TestTrayBadge:
         c = app.test_client()
 
         # no chip loaded → neutral badge (match unknown)
-        body = c.get("/").get_data(as_text=True)
+        body = c.get("/", follow_redirects=True).get_data(as_text=True)
         assert "qualibrate-tray-badge" in body
         assert "qualibrate-tray-danger" not in body
         assert "qualibrate-tray-warn" not in body
 
         # SM opens the SAME chip qualibrate writes → still neutral
         c.post("/qualibrate/open", data={"project": "beta"})
-        body = c.get("/").get_data(as_text=True)
+        body = c.get("/", follow_redirects=True).get_data(as_text=True)
         assert "qualibrate-tray-warn" not in body
 
         # SM switches to a DIFFERENT chip → amber mismatch
         c.post("/load", data={"folder": str(paths["other"])})
-        body = c.get("/").get_data(as_text=True)
+        body = c.get("/", follow_redirects=True).get_data(as_text=True)
         assert "qualibrate-tray-warn" in body
 
     def test_no_config_hides_badge(self, tmp_path, monkeypatch):
         monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(tmp_path / "ghost"))
         app = create_app(testing=True, instance_path=str(tmp_path / "_i3"))
-        body = app.test_client().get("/").get_data(as_text=True)
+        body = app.test_client().get("/", follow_redirects=True).get_data(as_text=True)
         assert "qualibrate-tray-badge" not in body
 
 

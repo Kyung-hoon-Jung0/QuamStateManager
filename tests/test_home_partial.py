@@ -41,10 +41,10 @@ def chip_client(client, tmp_path):
     return client
 
 
-def test_with_a_chip_open_an_htmx_request_gets_the_agent_home_partial(chip_client):
+def test_with_a_chip_open_an_htmx_request_gets_the_chip_status_partial(chip_client):
     html = chip_client.get("/", headers=HX).get_data(as_text=True)
     assert not _shell(html), "a second app shell inside the pane"
-    assert 'id="agent-home"' in html
+    assert 'id="topo-overview-tiles"' in html and 'id="agent-home"' not in html
 
 
 def test_the_landing_answers_an_htmx_request_with_its_partial(client):
@@ -55,5 +55,7 @@ def test_the_landing_answers_an_htmx_request_with_its_partial(client):
 
 def test_a_full_load_and_a_history_restore_still_get_the_whole_page(chip_client):
     for headers in ({}, RESTORE):
-        html = chip_client.get("/", headers=headers).get_data(as_text=True)
-        assert _shell(html) and 'id="agent-home"' in html, headers
+        r = chip_client.get("/", headers=headers)
+        assert r.status_code == 302 and r.headers["Location"].endswith("/topology?view=overview"), headers
+        html = chip_client.get("/", headers=headers, follow_redirects=True).get_data(as_text=True)
+        assert _shell(html) and 'id="topo-overview-tiles"' in html, headers

@@ -282,14 +282,16 @@ class TestPlans:
 # ------------------------------------------------------------------ home
 
 class TestHome:
-    def test_home_is_the_agent_home_when_a_chip_is_open(self, c):
-        html = c.get("/").get_data(as_text=True)
+    def test_agent_is_the_agent_home_when_a_chip_is_open(self, c):
+        # bare "/" with a chip open is Chip Status; the Agent home lives at /agent
+        assert c.get("/").headers.get("Location", "").endswith("/topology?view=overview")
+        html = c.get("/agent").get_data(as_text=True)
         assert 'id="agent-home"' in html and 'id="agent-popover"' in html
         # customer feedback 2026-09-08: no tool-row Agent button any more -- the Agent is a
         # nav entry (id nav-agent, above the Calibration log) that opens /agent in the pane
         assert 'class="sidebar-tool agent-btn"' not in html and 'id="nav-agent"' in html
         assert re.search(r'href="/agent"[^>]*hx-get="/agent"[^>]*hx-target="#table-pane"', html)
-        assert re.search(r'id="nav-agent" class="active"', html), "with a chip open, / IS the Agent home: the entry is active"
+        assert re.search(r'id="nav-agent" class="active"', html), "on /agent the Agent entry is active"
         assert "agent.js" in html and '"label": "Agent home"' in html and '"url": "/agent"' in html
 
     def test_agent_is_a_page_in_the_pane_and_a_full_page(self, c):
@@ -320,9 +322,9 @@ class TestHome:
         """review R2-8: the Agent home is a full page, so the float's 'home' is a
         plain href -- an hx-get into #table-pane put the landing INSIDE a pane."""
         import re
-        html = c.get("/").get_data(as_text=True)
+        html = c.get("/", follow_redirects=True).get_data(as_text=True)
         m = re.search(r'<a class="agent-home-link"[^>]*>', html)
-        assert m and 'href="/"' in m.group(0) and "hx-get" not in m.group(0) and "hx-target" not in m.group(0)
+        assert m and 'href="/agent"' in m.group(0) and "hx-get" not in m.group(0) and "hx-target" not in m.group(0)
 
     def test_the_setup_page_is_wired(self, c):
         """docs/173 S7: /agent/setup renders the shell inside the shell page with

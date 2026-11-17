@@ -129,7 +129,7 @@ def test_an_identical_copy_is_still_hidden(app_client, tmp_path):
 def test_the_full_page_tray_carries_the_newest_live_undo(app_client):
     app, c = app_client
     _ctx(app)["last_live_undo"] = {"seq": 3, "message": "Undone → live: qubits.q1.f_01"}
-    page = c.get("/").get_data(as_text=True)
+    page = c.get("/", follow_redirects=True).get_data(as_text=True)
     m = re.search(r'<div id="pending-tray"[^>]*>', page, flags=re.S)
     assert m, "no tray on the page"
     assert 'data-live-undo-seq="3"' in m.group(0)

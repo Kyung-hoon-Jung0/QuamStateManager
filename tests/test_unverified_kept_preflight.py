@@ -114,10 +114,10 @@ def test_after_a_restart_the_control_and_the_poll_still_say_not_verified(tmp_pat
     case, _, _ = _refused_first(tmp_path, monkeypatch, "unknown", False)
     tip = "the write may have reached the live chip; take live to see what it holds."
     assert "Apply not verified: check the chip" in _sync_control_text(case[1])
-    assert tip in case[1].get("/").get_data(as_text=True)
+    assert tip in case[1].get("/", follow_redirects=True).get_data(as_text=True)
     _, client = _restarted(case)
     assert "Apply not verified: check the chip" in _sync_control_text(client)
-    assert tip in client.get("/").get_data(as_text=True)
+    assert tip in client.get("/", follow_redirects=True).get_data(as_text=True)
     sync = client.get("/state/drift").get_json()["sync"]
     assert sync["state"] == "refused" and sync["unverified"] is True
 

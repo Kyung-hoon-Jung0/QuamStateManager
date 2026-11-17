@@ -229,7 +229,7 @@ class TestStandaloneBadge:
     """
 
     def _page(self, scoped) -> str:
-        return scoped["client"].get("/").get_data(as_text=True)
+        return scoped["client"].get("/", follow_redirects=True).get_data(as_text=True)
 
     def test_standalone_chip_says_so(self, scoped):
         scoped["client"].post("/load", data={"folder": str(scoped["standalone"])})
@@ -721,10 +721,10 @@ class TestLanding:
         # fresh instance, no session history at all → manual starts expanded
         body = c.get("/").get_data(as_text=True)
         assert '<details class="landing-gs" open>' in body
-        # with a chip OPEN the home is the Agent home (docs/173 §1.2) ...
+        # with a chip OPEN the home is Chip Status ...
         c.post("/load", data={"folder": str(scoped["chip_a"])})
-        body = c.get("/").get_data(as_text=True)
-        assert 'id="agent-home"' in body and "landing-gs" not in body
+        body = c.get("/", follow_redirects=True).get_data(as_text=True)
+        assert 'id="topo-overview-tiles"' in body and "landing-gs" not in body
         # ... and any history (a load) collapses the manual on the next LANDING
         # render -- the landing shows again once no chip is open
         c.application.config["active_context"] = None
@@ -767,8 +767,8 @@ class TestLanding:
     def test_resume_card_after_a_session(self, scoped):
         c = scoped["client"]
         c.post("/load", data={"folder": str(scoped["chip_a"])})
-        # the chip is open: the home is the Agent home, not the landing (docs/173 §1.2)
-        assert 'id="agent-home"' in c.get("/").get_data(as_text=True)
+        # the chip is open: the home is Chip Status, not the landing
+        assert c.get("/").headers.get("Location", "").endswith("/topology?view=overview")
         # with no chip open (e.g. the next morning) the landing offers to resume it
         c.application.config["active_context"] = None
         body = c.get("/").get_data(as_text=True)
@@ -793,9 +793,9 @@ class TestTitleLinkIsTheLanding:
     """Customer report (2026-09-07, on-site): clicking the top-left
     'QUAM State Manager' title used to show the initial screen; with a chip
     open it landed on the Claude/Codex chat, because the title is href="/" and
-    docs/173 §1.2 makes bare "/" the Agent home once a chip is open. The title
-    promises 'Projects landing' in its own tooltip -- ?landing=1 keeps that
-    promise; bare "/" keeps §1.2 (the sidebar Agent button relies on it)."""
+    bare "/" was the Agent home once a chip was open. The title promises
+    'Projects landing' in its own tooltip -- ?landing=1 keeps that promise.
+    Bare "/" with a chip open is now Chip Status; the Agent home is /agent."""
 
     def test_landing_flag_renders_the_landing_with_a_chip_open(self, scoped):
         c = scoped["client"]
@@ -804,13 +804,37 @@ class TestTitleLinkIsTheLanding:
         assert "landing-gs" in body, "the projects landing did not render"
         assert 'id="agent-home"' not in body, "the Agent chat leaked into the title's landing"
 
-    def test_bare_root_keeps_the_agent_home(self, scoped):
+    def test_bare_root_with_a_chip_is_chip_status(self, scoped):
         c = scoped["client"]
         c.post("/load", data={"folder": str(scoped["chip_a"])})
-        assert 'id="agent-home"' in c.get("/").get_data(as_text=True)
+        r = c.get("/")
+        assert r.status_code == 302
+        assert r.headers["Location"].endswith("/topology?view=overview")
+        body = c.get("/", follow_redirects=True).get_data(as_text=True)
+        assert 'id="topo-overview-tiles"' in body and 'id="agent-home"' not in body
+
+    def test_bare_root_htmx_is_the_chip_status_pane_not_a_shell(self, scoped):
+        c = scoped["client"]
+        c.post("/load", data={"folder": str(scoped["chip_a"])})
+        r = c.get("/", headers={"HX-Request": "true"})
+        assert r.status_code == 200
+        body = r.get_data(as_text=True)
+        want = c.get("/topology?view=overview",
+                     headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert 'id="topo-overview-tiles"' in body
+        assert "<html" not in body.lower() and 'class="app-title-link"' not in body
+        assert body == want
+
+    def test_agent_home_is_at_agent(self, scoped):
+        c = scoped["client"]
+        c.post("/load", data={"folder": str(scoped["chip_a"])})
+        assert 'id="agent-home"' in c.get("/agent").get_data(as_text=True)
+        body = c.get("/agent").get_data(as_text=True)
+        assert 'class="agent-home-link" href="/agent"' in body
+        assert 'class="agent-home-link" href="/"' not in body
 
     def test_the_title_links_to_the_landing_flag(self, scoped):
         c = scoped["client"]
         c.post("/load", data={"folder": str(scoped["chip_a"])})
-        body = c.get("/").get_data(as_text=True)
+        body = c.get("/", follow_redirects=True).get_data(as_text=True)
         assert 'href="/?landing=1" class="app-title-link"' in body

@@ -50,7 +50,7 @@ def _sha(folder: Path) -> str:
 
 
 def _page_key(c) -> str:
-    html = c.get("/").get_data(as_text=True)
+    html = c.get("/", follow_redirects=True).get_data(as_text=True)
     m = re.search(r"window\.__chipKey = (\"[^\"]*\");", html)
     assert m, "the page does not carry window.__chipKey"
     return json.loads(m.group(1))
@@ -83,7 +83,7 @@ def env(tmp_path):
 
 
 def routes_mod_token(app, c) -> str:
-    html = c.get("/").get_data(as_text=True)
+    html = c.get("/", follow_redirects=True).get_data(as_text=True)
     m = re.search(r"window\.__chipToken = (\"[^\"]*\");", html)
     return json.loads(m.group(1)) if m else ""
 

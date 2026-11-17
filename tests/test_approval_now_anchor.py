@@ -1147,7 +1147,7 @@ def test_the_unverified_write_mark_is_saved_beside_the_working_copy(tmp_path, mo
 
 
 def _sync_control_text(client):
-    html = client.get("/").get_data(as_text=True)
+    html = client.get("/", follow_redirects=True).get_data(as_text=True)
     start = html.index('data-sync-state="')
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html[start:start + 1200]))
 

@@ -7978,28 +7978,24 @@ def home():
     page is the Projects landing (shell renders instantly; the cards are a
     lazy fragment so GET / never pays the TOML/doctor I/O — it is the
     workbench iframe's entry and the most-hit route). Without a config the
-    Welcome renders with the time-zone picker inline (docs/263)."""
+    Welcome renders with the time-zone picker inline (docs/263).
+
+    With a chip open, home IS Chip Status (its Overview): a full load is
+    redirected to ``/topology?view=overview``; an htmx re-fetch gets the
+    Chip Status pane fragment. The Agent home lives at ``/agent``."""
     config_exists = bool(qualibrate_config.tray_status().get("config_exists"))
     # The top-left title link promises "Projects landing" (its own title=):
     # ?landing=1 keeps that promise even with a chip open (customer report:
-    # the title click landed on the Agent chat). Bare "/" keeps docs/173 §1.2
-    # -- with a chip open, home IS the Agent home; the sidebar Agent button
-    # and the float panel's home link rely on it.
+    # the title click landed on the Agent chat).
     want_landing = (request.args.get("landing") or "") in ("1", "true", "yes")
     if (not want_landing and _active_path()
             and (_active_ctx() or {}).get("type") == "quam"):
-        # docs/173 §1.2: with a chip open the home IS the Agent home.
-        # agent_dry_run: the Runner's global_simulate for this chip -- the
-        # agent's run_node stamps every run with it, and the Runner page that
-        # shows the checkbox is hidden since docs/172, so the home says it.
         if _is_htmx():
             # docs/294: PaneState re-fetches the URL INTO #table-pane after a Back it
-            # could not restore; the whole page here nested a second app shell
-            return render_template("_agent_home.html", agent_dry_run=_agent_dry_run(),
-                                   agent_wiring=_agent_wiring())
-        return render_template("base.html", **_ctx(page="agent_home", landing_config_exists=config_exists,
-                                                   agent_dry_run=_agent_dry_run(),
-                                                   agent_wiring=_agent_wiring()))
+            # could not restore; a whole page here would nest a second app shell, so
+            # answer with the same pane fragment /topology gives an htmx request
+            return wiring_view(view="overview")
+        return redirect(url_for("main.wiring_view", view="overview"))
     session = _load_session()
     return _home_landing(config_exists, session)
 
@@ -8010,7 +8006,8 @@ def agent_page():
     entry right above the Calibration log opens the Agent home in the pane
     like every other page, instead of a floating panel off the tool row. A
     full load of /agent renders what `/` renders with a chip open; without a
-    chip the pane says so (the Agent works on the open chip)."""
+    chip the pane says so (the Agent works on the open chip). Every "Agent
+    home" link points here; bare "/" with a chip open is Chip Status."""
     chip_open = bool(_active_path() and (_active_ctx() or {}).get("type") == "quam")
     if _is_htmx():
         if not chip_open:
@@ -19390,7 +19387,10 @@ _REPORT_BUILDERS: dict[str, Any] = {
 
 @bp.route("/wiring")
 @bp.route("/topology")
-def wiring_view():
+def wiring_view(view: str | None = None):
+    """Chip Status. ``view`` lets bare "/" (home with a chip open) render the
+    Overview pane fragment for an htmx re-fetch without a redirect round trip;
+    a request otherwise picks the sub-view with ``?view=``."""
     engine = _engine()
     if not engine:
         return _no_chip("the chip topology", "topology")
@@ -19432,7 +19432,7 @@ def wiring_view():
     _CHIP_VIEWS = {"topology", "overview", "health", "gate", "fidelity",
                    "fidelity2q", "fidelity1q", "readout",
                    "coherence", "frequencies", "calibration", "trends", "full"}
-    chip_view = request.args.get("view", "").strip().lower()
+    chip_view = (view if view is not None else request.args.get("view", "")).strip().lower()
     if chip_view not in _CHIP_VIEWS:
         chip_view = ""
 
