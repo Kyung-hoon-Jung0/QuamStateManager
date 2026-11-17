@@ -148,7 +148,7 @@ class QmmTarget:
         self._config_cache = cache
         qms = []
         for qid in qm_ids or []:
-            row = {"id": str(qid), "jobs": None, "ports": None, "markers": None}
+            row = {"id": str(qid), "jobs": None, "ports": None, "markers": None, "port_map": None}
             qm = call(f"get_qm({qid})", lambda: self.qmm.get_qm(qid))
             if qm is not None:
                 row['jobs'] = call(f"qm.get_jobs({qid})", lambda: [_job_row(j) for j in qm.get_jobs()])
@@ -163,11 +163,16 @@ class QmmTarget:
                     if isinstance(cfg, dict):
                         ports = call(f"qm.get_config({qid})", lambda: _used_fems(cfg))
                         markers = call(f"qm.get_config({qid})", lambda: _marker_names(cfg))
-                        cache[str(qid)] = {'ports': ports, 'markers': markers, 'jobs': job_ids,
-                                           'at': time.monotonic()}
+                        port_map = call(f"qm.get_config({qid})", lambda: _port_map(cfg))
+                        if port_map is None:  # read, but the map failed: not "not read"
+                            port_map = {"error": "the configuration could not be drawn"}
+                        cache[str(qid)] = {'ports': ports, 'markers': markers, 'port_map': port_map,
+                                           'jobs': job_ids, 'at': time.monotonic()}
                 row['ports'] = (cache.get(str(qid)) or {}).get('ports')
                 # None = the config could not be read; [] = read, no marker-shaped element
                 row['markers'] = (cache.get(str(qid)) or {}).get('markers')
+                # None = the config could not be read; {"error": ...} = read, the map failed
+                row['port_map'] = (cache.get(str(qid)) or {}).get('port_map')
             qms.append(row)
         ans["open_qms"] = qms if qm_ids is not None else None
         jobs = call("get_jobs", lambda: [_job_row(j) for j in self.qmm.get_jobs()]) if include_jobs else None
@@ -277,6 +282,210 @@ def _used_fems(cfg):
         if not fems and any(c.get(k) for k in ("analog_outputs", "analog_inputs")):
             used.add(f"{cname}/1")
     return sorted(used)
+
+
+# Controller port groups, and which group each element input/output key points at.
+_PORT_KINDS = ("analog_outputs", "analog_inputs", "digital_outputs", "digital_inputs")
+# element key -> (port kind, how the key holds its references)
+#   "port":   {"port": ref}                   (singleInput, MWInput, MWOutput, RF_*)
+#   "iq":     {"I": ref, "Q": ref, ...}       (mixInputs)
+#   "named":  {name: ref}                     (outputs)
+#   "inputs": {"inputs": {name: ref}}         (singleInputCollection, multipleInputs)
+#   "digital": {name: ref or {"port": ref}}   (digitalInputs, digitalOutputs)
+_ELEMENT_REFS = (
+    ("singleInput", "analog_outputs", "port"),
+    ("mixInputs", "analog_outputs", "iq"),
+    ("singleInputCollection", "analog_outputs", "inputs"),
+    ("multipleInputs", "analog_outputs", "inputs"),
+    ("MWInput", "analog_outputs", "port"),
+    ("RF_inputs", "analog_outputs", "port"),
+    ("outputs", "analog_inputs", "named"),
+    ("MWOutput", "analog_inputs", "port"),
+    ("RF_outputs", "analog_inputs", "port"),
+    ("digitalInputs", "digital_outputs", "digital"),
+    # an element's digital output is read on a controller digital input
+    ("digitalOutputs", "digital_inputs", "digital"),
+)
+# Element keys whose references may name an Octave rather than an OPX controller.
+_OCTAVE_KEYS = ("RF_inputs", "RF_outputs")
+
+
+def _port_key(p):
+    """A port number as a string, or None when it is not an integer-like value."""
+    if isinstance(p, bool):
+        return None
+    if isinstance(p, int):
+        return str(p)
+    if isinstance(p, str) and p.strip().isdigit():
+        return str(int(p.strip()))
+    return None
+
+
+def _port_shaped(v):
+    """True for a (controller, port) or (controller, fem, port) value."""
+    return (isinstance(v, (list, tuple)) and len(v) in (2, 3) and isinstance(v[0], str)
+            and all(_port_key(x) is not None for x in v[1:]))
+
+
+def _count_port_shaped(v, depth=0):
+    """How many port-shaped values sit in ``v`` (nested dicts/lists, bounded depth)."""
+    if _port_shaped(v):
+        return 1
+    if depth >= 4:
+        return 0
+    if isinstance(v, dict):
+        return sum(_count_port_shaped(x, depth + 1) for x in v.values())
+    if isinstance(v, (list, tuple)):
+        return sum(_count_port_shaped(x, depth + 1) for x in v)
+    return 0
+
+
+def _port_map(cfg):
+    """The ports a QM's configuration declares, per controller/FEM, and the elements on each.
+
+    Pure dict -> dict (JSON-safe, no qm import). Shape::
+
+        {"fems": [{"key": "con1/1", "controller": "con1", "slot": "1" | None,
+                   "type": "LF" | None,
+                   "ports": [{"kind": "analog_outputs", "port": "1",
+                              "elements": ["q1"], "declared": True}, ...]}, ...],
+         "unparsed": n, "octave": m}
+
+    A reference is (controller, fem, port) on an OPX1000 or (controller, port) on a
+    controller without FEMs (OPX+), as a tuple or a JSON list. An ``RF_inputs`` /
+    ``RF_outputs`` reference naming something that is not an OPX controller of this
+    config is an Octave port: counted in ``octave`` and not attributed (the OPX ports
+    an Octave drives are in its own connectivity). Any other reference this map
+    cannot place (a 2-tuple on a FEM controller, an unknown controller, a malformed
+    value, or a port-shaped value under an element key the map does not know) is
+    skipped and counted in ``unparsed``. FEM slot keys are normalised, so "01" and 1
+    are one slot. Config-declared only: not proof that a running program plays on a port.
+    """
+    blocks = {}
+    unparsed = 0
+    octave = 0
+
+    def block(cname, slot, body):
+        key = f"{cname}/{slot}" if slot is not None else str(cname)
+        b = blocks.get(key)
+        if b is None:
+            ftype = body.get("type") if isinstance(body, dict) else None
+            b = blocks[key] = {"key": key, "controller": str(cname),
+                               "slot": None if slot is None else str(slot),
+                               "type": str(ftype) if isinstance(ftype, (str, int)) and ftype != "" else None,
+                               "ports": {}}
+        return b
+
+    controllers = cfg.get("controllers") if isinstance(cfg, dict) else None
+    controllers = controllers if isinstance(controllers, dict) else {}
+    has_fems = {}
+    fem_bodies = {}  # controller -> {normalised slot: fem body}
+    for cname, c in controllers.items():
+        if not isinstance(c, dict):
+            continue
+        fems = c.get("fems")
+        has_fems[str(cname)] = isinstance(fems, dict) and bool(fems)
+        if has_fems[str(cname)]:
+            norm = {}
+            for k, v in fems.items():
+                nk = _port_key(k)
+                norm.setdefault(nk if nk is not None else str(k), v)
+            fem_bodies[str(cname)] = norm
+            bodies = list(norm.items())
+        else:
+            bodies = [(None, c)]
+        for slot, body in bodies:
+            if not isinstance(body, dict):
+                continue
+            b = block(cname, slot, body)
+            for kind in _PORT_KINDS:
+                ports = body.get(kind)
+                if not isinstance(ports, dict):
+                    continue
+                for p in ports:
+                    pk = _port_key(p)
+                    if pk is not None:
+                        b["ports"].setdefault((kind, pk), {"elements": set(), "declared": True})
+
+    def place(ref, kind, element, key):
+        nonlocal unparsed, octave
+        if isinstance(ref, dict) and "port" in ref:
+            ref = ref.get("port")
+        if not isinstance(ref, (list, tuple)) or len(ref) not in (2, 3):
+            unparsed += 1
+            return
+        cname = ref[0]
+        if not isinstance(cname, str) or cname not in has_fems:
+            if key in _OCTAVE_KEYS and isinstance(cname, str):
+                octave += 1
+            else:
+                unparsed += 1
+            return
+        if len(ref) == 3:
+            slot, pk = _port_key(ref[1]), _port_key(ref[2])
+            if not has_fems[cname] or slot is None or pk is None:
+                unparsed += 1
+                return
+            body = fem_bodies.get(cname, {}).get(slot)
+            b = block(cname, slot, body if isinstance(body, dict) else {})
+        else:
+            pk = _port_key(ref[1])
+            if has_fems[cname] or pk is None:
+                unparsed += 1
+                return
+            b = block(cname, None, controllers[cname])
+        entry = b["ports"].setdefault((kind, pk), {"elements": set(), "declared": False})
+        entry["elements"].add(str(element))
+
+    known = {key for key, _, _ in _ELEMENT_REFS}
+    elements = cfg.get("elements") if isinstance(cfg, dict) else None
+    for ename, el in (elements.items() if isinstance(elements, dict) else ()):
+        if not isinstance(el, dict):
+            continue
+        for key, v in el.items():
+            if key not in known and v is not None:
+                unparsed += _count_port_shaped(v)
+        for key, kind, form in _ELEMENT_REFS:
+            if key not in el or el[key] is None:
+                continue
+            v = el[key]
+            if form == "port":
+                place(v.get("port") if isinstance(v, dict) else v, kind, ename, key)
+            elif form == "iq":
+                if not isinstance(v, dict):
+                    unparsed += 1
+                    continue
+                for side in ("I", "Q"):
+                    if side in v:
+                        place(v[side], kind, ename, key)
+            elif form == "inputs":
+                ins = v.get("inputs") if isinstance(v, dict) else None
+                if not isinstance(ins, dict):
+                    unparsed += 1
+                    continue
+                for ref in ins.values():
+                    place(ref, kind, ename, key)
+            else:  # "named" and "digital"
+                if not isinstance(v, dict):
+                    unparsed += 1
+                    continue
+                for ref in v.values():
+                    place(ref, kind, ename, key)
+
+    def sort_key(item):
+        (kind, pk), _ = item
+        return (_PORT_KINDS.index(kind), int(pk))
+
+    fems = []
+    for key in sorted(blocks, key=lambda k: (blocks[k]["controller"],
+                                              int(blocks[k]["slot"]) if (blocks[k]["slot"] or "").isdigit() else -1,
+                                              blocks[k]["slot"] or "")):
+        b = blocks[key]
+        b["ports"] = [{"kind": kind, "port": pk, "elements": sorted(e["elements"]),
+                       "declared": e["declared"]}
+                      for (kind, pk), e in sorted(b["ports"].items(), key=sort_key)]
+        fems.append(b)
+    return {"fems": fems, "unparsed": unparsed, "octave": octave}
 
 
 
