@@ -2298,9 +2298,6 @@ window.setFontSize = function(size) {
                    : 'Open the diff of these ' + n + ' runs');
         }
         if (tr) { tr.disabled = n < 2; tr.title = why || 'Plot these ' + n + ' runs over time'; }
-        var head = document.getElementById('cf-pop-head');
-        if (head) head.textContent = n + ' of up to ' + MAX_DIFF + ' selected'
-            + (n < 2 ? ' — tick one more to compare' : '');
         var ul = document.getElementById('cf-items');
         if (!ul) { updateFloatTop(); return; }
         while (ul.firstChild) ul.removeChild(ul.firstChild);
@@ -2312,14 +2309,15 @@ window.setFontSize = function(size) {
             li.setAttribute('data-path', v);
             li.title = v;
             var L = runLabel(v);
-            var id = document.createElement('span'); id.className = 'cf-id'; id.textContent = L.id;
-            var nm = document.createElement('span'); nm.className = 'cf-name'; nm.textContent = L.name;
-            li.appendChild(id); li.appendChild(nm);
+            // The remove X leads the row so a long name can never push it out of view.
             var x = document.createElement('button');
-            x.type = 'button'; x.className = 'cf-x'; x.textContent = '\u2715';
+            x.type = 'button'; x.className = 'ui-btn-icon cf-x'; x.textContent = '\u2715';
             x.setAttribute('aria-label', 'Remove ' + (L.id ? L.id + ' ' : '') + L.name + ' from the selection');
             x.onclick = function(ev) { ev.stopPropagation(); removeOne(v); };
             li.appendChild(x);
+            var id = document.createElement('span'); id.className = 'cf-id'; id.textContent = L.id;
+            var nm = document.createElement('span'); nm.className = 'cf-name'; nm.textContent = L.name;
+            li.appendChild(id); li.appendChild(nm);
             if (!present[v]) {
                 var ov = document.createElement('span'); ov.className = 'cf-off'; ov.textContent = 'not in view';
                 li.appendChild(ov);
