@@ -1090,24 +1090,31 @@ window.ChipStatus.mount = function (opts) {
     // reads the time its own row records (time_ms, server side), never the
     // pair's cz_fidelity time, which may belong to another key (Bell, SRB). ms is
     // null when that row records none; leaf then names where it would be.
+    // shown is false when the badge shows no number for e: no age to state.
     function _edge2QAt(e) {
         if (_e2qSrc === undefined) _edge2Q({});
         var src = _e2qSrc;
         if (!src || src.key === 'bell_state' || src.key === 'cr_channel') {
+            var p = typeof e.cz_fidelity_path === 'string' ? e.cz_fidelity_path : '';
+            var cut = p.lastIndexOf('.fidelity.');
             return { ms: typeof e.cz_fidelity_updated_at === 'number' ? e.cz_fidelity_updated_at : null,
-                     leaf: null };
+                     leaf: cut < 0 ? null
+                         : p.slice(0, cut + 10) + p.slice(cut + 10).split('.')[0] + '_updated_at',
+                     shown: _edge2Q(e) != null };
         }
         var v = src.val(e, 'best'), hit = null;
-        if (v == null) return { ms: null, leaf: null };
+        if (v == null) return { ms: null, leaf: null, shown: false };
         window.ChipStatus._opRows(e).forEach(function(gf) {
+            // the value _edgeBest2Q reads for this row (value, else average_gate_fidelity)
             var gv = src.key === 'rb2q_standard_gate' ? gf.derived_gate_fidelity
-                   : (src.match(gf.metric) ? gf.value : null);
+                   : (!src.match(gf.metric) ? null : typeof gf.value === 'number' ? gf.value
+                      : typeof gf.average_gate_fidelity === 'number' ? gf.average_gate_fidelity : null);
             if (hit == null && gv === v) hit = gf;
         });
-        if (!hit) return { ms: null, leaf: null };
+        if (!hit) return { ms: null, leaf: null, shown: true };
         return { ms: typeof hit.time_ms === 'number' ? hit.time_ms : null,
                  leaf: 'qubit_pairs.' + e.pair_id + '.macros.' + hit.gate + '.fidelity.'
-                       + hit.metric + '_updated_at' };
+                       + hit.metric + '_updated_at', shown: true };
     }
     function default2QSource(edges) {
         var order = ['rb2q_interleaved', 'bell_state', 'rb2q_standard_gate', 'rb2q_standard'];
@@ -2754,13 +2761,16 @@ window.ChipStatus.mount = function (opts) {
                 // The time of the number the 2Q badge shows, read where the
                 // badge title reads it (_edge2QAt: that key's own time), never
                 // the pair's cz_fidelity time, which may be another key's.
+                // No badge number (e.g. the operating gate holds none): no age line.
+                // Each line names the value it dates, so it never reads as the
+                // age of the pair's "newest value" row below.
                 var tq = _edge2QAt(e);
                 if (typeof tq.ms === 'number') {
                     html += '<div class="topo-popup-recency"><span class="topo-recency '
                          + _ageClass(tq.ms) + '">' + _esc(_edge2QLabel()) + ' measured '
                          + _ageLabel(tq.ms) + '</span></div>';
-                } else {
-                    html += '<div class="topo-popup-recency">age unknown'
+                } else if (tq.shown !== false) {
+                    html += '<div class="topo-popup-recency">' + _esc(_edge2QLabel()) + ' age unknown'
                          + (tq.leaf ? ': no time recorded at ' + _esc(tq.leaf) : '') + '</div>';
                 }
                 // Which run set the number: only when the run recorded its own
@@ -2818,7 +2828,8 @@ window.ChipStatus.mount = function (opts) {
             }
             if (typeof e.last_calibrated === 'number') {
                 html += '<div class="topo-popup-section">'
-                     + row('last calibrated', '<span class="topo-recency ' + _ageClass(e.last_calibrated) + '">'
+                     + row('newest value on this pair',
+                           '<span class="topo-recency ' + _ageClass(e.last_calibrated) + '">'
                            + _ageLabel(e.last_calibrated) + '</span>') + '</div>';
             }
             var pidQ = encodeURIComponent(e.pair_id);

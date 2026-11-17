@@ -29,18 +29,21 @@ win.Function(`
  function _isIRBName(m) { return m === 'InterleavedRB' || m === 'IRB'; }
  function _edge2Q(e) { return null; }
  function _edge2QLabel() { return '2Q gate (IRB)'; }
+ ${slice('function _edgeBest2Q(', '\n    function _edgeBestDerived')}
  var _e2qSrc = { key: 'rb2q_interleaved', match: _isIRBName,
-   val: function(e) { var r = window.ChipStatus._opRows(e).filter(function(g){ return _isIRBName(g.metric); })[0];
-                      return r ? r.value : null; } };
+   val: function(e, g) { return _edgeBest2Q(e, _isIRBName, g); } };
  ${slice('function _edge2QAt(e)', '\n    function default2QSource')}
  ${slice('function openPairPopup(', '\n        // Hand the ONE popup')}
  window.openPairPopup = openPairPopup;
 `).call(win);
 let n = 0;
-function recency(edge) {
+function popup(edge) {
   win.openPairPopup(edge, win.document.getElementById('anchor'));
   const all = win.document.querySelectorAll('.topo-pair-popup');
-  const r = all[all.length - 1].querySelector('.topo-popup-recency');
+  return all[all.length - 1];
+}
+function recency(edge) {
+  const r = popup(edge).querySelector('.topo-popup-recency');
   return r ? r.textContent : null;
 }
 // the pair's cz_fidelity time is 69 days old (a Bell / SRB key); the IRB number shown was measured 2 days ago
@@ -52,8 +55,26 @@ assert(!/69 days/.test(t)); n++;
 // the key records no time: an honest blank naming the leaf, never the pair's time
 delete edge.gate_fidelities[0].time_ms;
 t = recency(edge); n++;
-assert.strictEqual(t, 'age unknown: no time recorded at qubit_pairs.p.macros.cz.fidelity.InterleavedRB_updated_at', t);
-// no time anywhere: still the plain honest line
+assert.strictEqual(t, '2Q gate (IRB) age unknown: no time recorded at '
+  + 'qubit_pairs.p.macros.cz.fidelity.InterleavedRB_updated_at', t);
+// no time anywhere: still the honest line, naming the value and its leaf
 t = recency({pair_id: 'p', gate_fidelities: [{gate: 'cz', metric: 'InterleavedRB', value: .97}]}); n++;
-assert(/^age unknown/.test(t), t);
+assert(/^2Q gate \(IRB\) age unknown: no time recorded at qubit_pairs\.p\./.test(t), t);
+// a row that stores only average_gate_fidelity: the badge reads it, so the line names its leaf
+t = recency({pair_id: 'p', gate_fidelities: [{gate: 'cz', metric: 'InterleavedRB', average_gate_fidelity: .97}]});
+n++;
+assert.strictEqual(t, '2Q gate (IRB) age unknown: no time recorded at '
+  + 'qubit_pairs.p.macros.cz.fidelity.InterleavedRB_updated_at', t);
+// the operating gate holds no IRB number (another macro does): the badge shows none, so no age
+// line; the pair's newest-value row is named as such and is the one age on the popup
+const opEdge = {pair_id: 'p', op_gate: 'cz_b', best_gate: 'cz_b', last_calibrated: NOW - 69 * DAY,
+  gate_fidelities: [{gate: 'cz_a', metric: 'InterleavedRB', value: .975}]};
+const pop = popup(opEdge);
+t = recency(opEdge); n++;
+assert.strictEqual(t, null, t);
+n++;
+assert(!/age unknown/.test(pop.textContent), pop.textContent);
+n++;
+assert(/newest value on this pair/.test(pop.textContent) && !/last calibrated/.test(pop.textContent),
+  pop.textContent);
 console.log('pair popup age checks passed (' + n + ' assertions)');

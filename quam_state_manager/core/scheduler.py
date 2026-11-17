@@ -1615,7 +1615,11 @@ def failed_target_writes(outcomes, patches) -> dict | None:
             "untied": untied}
 
 
-def _short(v) -> str:
+def value_text(v) -> str:
+    """A written value as every runner surface shows it (the row note, the
+    revert button's tooltip, the revert refusals): its full repr, so a float
+    keeps every digit (5987654000.0) and a tiny one its exponent (3.6e-05);
+    cut to 40 characters."""
     r = repr(v)
     return r if len(r) <= 40 else r[:37] + "..."
 
@@ -1626,9 +1630,9 @@ def failed_targets_note(info: dict) -> str:
     by_t: dict[str, list[str]] = {}
     no_old: list[str] = []
     for w in info["writes"]:
-        old = _short(w.get("old")) if w.get("has_old", True) else "not recorded"
+        old = value_text(w.get("old")) if w.get("has_old", True) else "not recorded"
         by_t.setdefault(w["target"], []).append(
-            f"{w['dotted']} ({old} -> {_short(w.get('value'))})")
+            f"{w['dotted']} ({old} -> {value_text(w.get('value'))})")
         if not w.get("has_old", True):
             no_old.append(w["dotted"])
     parts = []
