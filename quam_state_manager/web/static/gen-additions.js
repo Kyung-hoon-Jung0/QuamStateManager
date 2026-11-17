@@ -1328,9 +1328,15 @@
     row.appendChild(dl);
     var cz = el("button", { type: "button", className: "btn-sm secondary gen-add-czbtn",
                             title: "A CZ gate class, the flux pulse(s) it plays, and the gate pointing at them" }, "+ CZ…");
-    if (!(roles && roles.ok)) { cz.disabled = true; cz.title = rolesWhyOff(); }
+    var czWhy = null;
+    if (!(roles && roles.ok)) {
+      cz.disabled = true; cz.title = rolesWhyOff();
+      // Said on the row, not only on hover: a disabled button shows no tooltip on touch or keyboard.
+      czWhy = el("span", { className: "muted gen-add-czwhy" }, rolesWhyOff());
+    }
     cz.addEventListener("click", function () { openForm(tr, pid, long, ctx, null); });
     row.appendChild(cz);
+    if (czWhy) row.appendChild(czWhy);
     td.appendChild(row);
   }
 
@@ -1617,8 +1623,11 @@
       var nLab = 0, nOff = 0;
       Object.keys(roles.pulses || {}).forEach(function (p) { if (roles.pulses[p].origin === "lab") nLab++; else nOff++; });
       var nMac = Object.keys(roles.macros_pair || {}).length + Object.keys(roles.macros_qubit || {}).length;
+      // No lab module read and none found: say so instead of counting "0 lab" classes.
+      var labPart = (nLab || readModules.length) ? " and " + nLab + " lab pulse classes, "
+        : " pulse classes (no lab module read: name one and press Read classes), ";
       bar.appendChild(el("span", { className: "muted gen-add-count" },
-        nOff + " official and " + nLab + " lab pulse classes, " + nMac + " macro classes" +
+        nOff + " official" + labPart + nMac + " macro classes" +
         (roles.versions && roles.versions.quam_builder ? " (quam_builder " + roles.versions.quam_builder + ")" : "")));
       if (readModules.length) bar.appendChild(el("span", { className: "muted gen-add-readfrom" },
         "read from: " + readModules.join(", ")));
