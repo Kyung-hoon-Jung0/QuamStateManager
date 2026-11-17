@@ -120,6 +120,31 @@ function resp(status, body) {
     ok(!W.w.document.querySelector('.lab-check-badge'), 'a click dismisses the refusal');
   }
 
+  // 2b: the server's own "Nothing was written \u2014" lead is said once; the badge sits under
+  // the field's refusal row; typing again in the cell dismisses it
+  {
+    const W = world([LAB]);
+    const cell = W.w.document.querySelector('[data-dot-path="' + LAB + '"]');
+    const row = W.w.document.createElement('tr');
+    row.setAttribute('data-refused-row', '1');
+    row.innerHTML = '<td colspan="2"><small data-refused-note="1">Not saved.</small></td>';
+    cell.closest('tr').insertAdjacentElement('afterend', row);
+    const p = W.w.fetch('/field/edit', { method: 'POST', body: 'dot_path=' + encodeURIComponent(LAB) + '&value=5' });
+    await until(() => W.w.document.querySelector('.lab-check-badge'));
+    W.pending[0](resp(400, { ok: false, lab_refused: true,
+      error: 'Nothing was written \u2014 This pulse would not run: flat_length must be even.' }));
+    await p;
+    await until(() => W.w.document.querySelector('.lab-check-refused'));
+    const b = W.w.document.querySelector('.lab-check-badge');
+    const said = (b.textContent.match(/nothing (was )?written/gi) || []).length;
+    ok(said === 1 && /flat_length must be even/.test(b.textContent),
+       'the refusal is named once (' + b.textContent + ')');
+    await until(() => b._placeAt === row, 1000);
+    ok(b._placeAt === row, 'the badge goes under the field\'s own refusal row');
+    cell.dispatchEvent(new W.w.Event('input', { bubbles: true }));
+    ok(!W.w.document.querySelector('.lab-check-badge'), 'typing again in the cell dismisses the badge');
+  }
+
   // 3: non-lab edit -> no badge ever
   {
     const W = world([LAB]);
