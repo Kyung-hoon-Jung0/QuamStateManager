@@ -39,6 +39,11 @@ def _config(cfg: Path, project: str, state_path: Path, *, with_folder: bool):
     if with_folder:
         (cfg / "projects" / project).mkdir(parents=True, exist_ok=True)
         (cfg / "projects" / project / "config.toml").write_text("", encoding="utf-8")
+    elif with_folder is False:
+        # a projects/ tree that lacks the named project: the root names an
+        # orphan. (No projects/ tree at all is a flat config, one implicit
+        # project; with_folder=None builds that.)
+        (cfg / "projects" / "other").mkdir(parents=True, exist_ok=True)
 
 
 @pytest.fixture
@@ -96,3 +101,20 @@ def test_current_chip_answers_even_when_load_fails(client, tmp_path):
     r = c.post("/load", data={"folder": str(chip / "missing")},
                headers={"HX-Request": "true", "HX-Target": "table-pane"})
     assert r.status_code == 400 and b"load-failed-panel" in r.data
+
+
+def test_a_flat_config_offers_its_one_project_and_it_opens(client, tmp_path):
+    chip = _chip(tmp_path / "chips" / "chip_k")
+    c = client("flat", chip, with_folder=None)
+    html = c.get("/").get_data(as_text=True)
+    assert _project_button(html) and _project_button(html).group(1) == "flat"
+    r = c.post("/qualibrate/open", data={"project": "flat", "from": "landing"},
+               headers={"HX-Request": "true"})
+    assert r.status_code == 200, (r.status_code, r.data[:300])
+
+
+def test_a_flat_config_without_a_built_state_says_build_it_first(client, tmp_path):
+    c = client("flat", tmp_path / "nowhere", with_folder=None)
+    r = c.post("/qualibrate/open", data={"project": "flat", "from": "landing"},
+               headers={"HX-Request": "true"})
+    assert r.status_code == 409 and b"Build one first" in r.data, (r.status_code, r.data[:300])
