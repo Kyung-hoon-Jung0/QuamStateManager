@@ -1086,6 +1086,29 @@ window.ChipStatus.mount = function (opts) {
         });
         return gate;
     }
+    // The time of the number _edge2Q shows for e: { ms, leaf }. A per-gate source
+    // reads the time its own row records (time_ms, server side), never the
+    // pair's cz_fidelity time, which may belong to another key (Bell, SRB). ms is
+    // null when that row records none; leaf then names where it would be.
+    function _edge2QAt(e) {
+        if (_e2qSrc === undefined) _edge2Q({});
+        var src = _e2qSrc;
+        if (!src || src.key === 'bell_state' || src.key === 'cr_channel') {
+            return { ms: typeof e.cz_fidelity_updated_at === 'number' ? e.cz_fidelity_updated_at : null,
+                     leaf: null };
+        }
+        var v = src.val(e, 'best'), hit = null;
+        if (v == null) return { ms: null, leaf: null };
+        window.ChipStatus._opRows(e).forEach(function(gf) {
+            var gv = src.key === 'rb2q_standard_gate' ? gf.derived_gate_fidelity
+                   : (src.match(gf.metric) ? gf.value : null);
+            if (hit == null && gv === v) hit = gf;
+        });
+        if (!hit) return { ms: null, leaf: null };
+        return { ms: typeof hit.time_ms === 'number' ? hit.time_ms : null,
+                 leaf: 'qubit_pairs.' + e.pair_id + '.macros.' + hit.gate + '.fidelity.'
+                       + hit.metric + '_updated_at' };
+    }
     function default2QSource(edges) {
         var order = ['rb2q_interleaved', 'bell_state', 'rb2q_standard_gate', 'rb2q_standard'];
         for (var i = 0; i < order.length; i++) {
@@ -3216,9 +3239,10 @@ window.ChipStatus.mount = function (opts) {
             topo.edges.forEach(function(e) {
                 var a = lay.positions[e.source], b = lay.positions[e.target];
                 if (!a || !b) return;
+                var tq = _edge2QAt(e);
                 var pst = TG.pairState({ cz_fidelity: _edge2Q(e), has_cz: e.has_cz,
                                          gate_kind: e.gate_kind,
-                                         cz_fidelity_updated_at: e.cz_fidelity_updated_at }, _pairStale);
+                                         cz_fidelity_updated_at: tq.ms }, _pairStale);
                 var oA = offsets[e.source] || { dx: 0, dy: 0 }, oB = offsets[e.target] || { dx: 0, dy: 0 };
                 var x1 = cx(a) + oA.dx, y1 = cy(a) + oA.dy, x2 = cx(b) + oB.dx, y2 = cy(b) + oB.dy;
                 var bKey = _pairKey(e);
@@ -3240,8 +3264,9 @@ window.ChipStatus.mount = function (opts) {
                     var bTitle = e.pair_id + (e.active === false ? ' (off)' : '')
                         + (pst.value != null ? ' \u2014 ' + _edge2QLabel() + ' ' + fmtPct(pst.value, 2) + '%'
                            : (pst.state === 'pending' ? ' \u2014 2Q gate defined, not measured' : ''))
-                        + (pst.age === 'unknown' && pst.value != null ? ' (age unknown)'
-                           : (pst.stale ? ' (measured ' + _ageLabel(e.cz_fidelity_updated_at) + ')' : ''));
+                        + (pst.age === 'unknown' && pst.value != null
+                           ? ' (age unknown' + (tq.leaf ? ': no time recorded at ' + tq.leaf : '') + ')'
+                           : (pst.stale ? ' (measured ' + _ageLabel(tq.ms) + ')' : ''));
                     var badge = TG.pairBadgeSvg({
                         x: (x1 + x2) / 2 + (e.directed ? -(y2 - y1) / (bL || 1) * 18 : 0),
                         y: (y1 + y2) / 2 + (e.directed ? (x2 - x1) / (bL || 1) * 18 : 0),
@@ -3265,7 +3290,7 @@ window.ChipStatus.mount = function (opts) {
                 if (!a || !b) return;
                 var pst = TG.pairState({ cz_fidelity: _edge2Q(e), has_cz: e.has_cz,
                                          gate_kind: e.gate_kind,
-                                         cz_fidelity_updated_at: e.cz_fidelity_updated_at }, _pairStale);
+                                         cz_fidelity_updated_at: _edge2QAt(e).ms }, _pairStale);
                 var oA = offsets[e.source] || { dx: 0, dy: 0 }, oB = offsets[e.target] || { dx: 0, dy: 0 };
                 var x1 = cx(a) + oA.dx, y1 = cy(a) + oA.dy, x2 = cx(b) + oB.dx, y2 = cy(b) + oB.dy;
                 if (!edgeMode && mCur.edgeDelta) {

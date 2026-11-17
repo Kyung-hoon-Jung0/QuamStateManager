@@ -1806,11 +1806,39 @@ def gate_pick_basis_text(res: dict | None) -> str:
     if not res:
         return ""
     if res.get("basis") == "only number":
+        nn = list(res.get("no_number") or ())
         return ("picked: the only entry that is a number ("
-                + ", ".join(res.get("no_number") or ()) + " holds no number)")
+                + ", ".join(nn) + (" hold" if len(nn) > 1 else " holds") + " no number)")
     if len(res.get("keys") or ()) < 2:
         return ""
     return _BASIS_TEXT.get(res.get("basis"), "")
+
+
+def gate_pick_reason_text(res: dict | None) -> str:
+    """Why this key was read, for a surface that names one key per pulse (the CZ
+    plan): :func:`gate_pick_basis_text`, or, when the block holds one per-gate
+    key and nothing else, that it is the only one. "" for no pick."""
+    if not res:
+        return ""
+    text = gate_pick_basis_text(res)
+    if text:
+        return text
+    if len(res.get("keys") or ()) == 1 and not res.get("no_number"):
+        return "the only per-gate entry"
+    return ""
+
+
+def gate_no_number_text(res: dict | None) -> str:
+    """``"1 more key holds no number: IRB"`` for per-gate keys whose value is no
+    measurement (NaN, infinite, text) beside a pick made between numbers; ""
+    when there are none or the pick's own reason already names them."""
+    if not res or res.get("basis") == "only number":
+        return ""
+    keys = list(res.get("no_number") or ())
+    if not keys:
+        return ""
+    return (f"{len(keys)} more key{'s' if len(keys) > 1 else ''} "
+            f"hold{'' if len(keys) > 1 else 's'} no number: " + ", ".join(keys))
 
 
 def gate_conflict_text(conflict: list) -> str:
@@ -2064,6 +2092,11 @@ def _extract_pair_gate_fidelities(macros: dict) -> list[dict]:
                         row["inferred_source"] = "shared RB source"
                 results.append(_gate_fidelity_row(row))
         _mark_gate_pick(results[first_row:], fid)
+        for r in results[first_row:]:
+            # The time THIS key records (its nested updated_at or <key>_updated_at),
+            # epoch ms, or None: never a sibling's or the block's, so a surface
+            # that shows this row's age shows its own.
+            r["time_ms"] = _gate_key_time(fid, r["metric"])
     return results
 
 

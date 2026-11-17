@@ -24735,6 +24735,7 @@ def _cz_plan_table(rows) -> list[dict]:
             "irb_key": (r["fidelity"].get("InterleavedRB") or {}).get("key"),
             "irb_conflict": gate_conflict_text((r["fidelity"].get("InterleavedRB") or {}).get("conflict") or []),
             "irb_basis": (r["fidelity"].get("InterleavedRB") or {}).get("basis_text") or "",
+            "irb_no_number": (r["fidelity"].get("InterleavedRB") or {}).get("no_number_text") or "",
         })
     return out
 
