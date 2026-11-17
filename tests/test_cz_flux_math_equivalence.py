@@ -208,8 +208,28 @@ def test_pre_extraction_fixture_outputs_are_identical():
                     if mismatch:
                         length_notes.add(mismatch)
                     got_notes = list(got_row.get("notes") or [])
+                    # a lobe that overlaps no lobe of the other line is named too
+                    length_notes |= {n for n in got_notes if n.startswith("two-flux lobes paired by time: ")}
                     if not set(exp_row["notes"]) & length_notes and                             [n for n in got_notes if n not in length_notes] == exp_row["notes"]:
                         exp_row["notes"] = got_notes
+                # A two-flux row whose lobe times are known pairs lobes by time, not
+                # by order (meaning pinned in test_cz_plan_lobe_time_pairing). Every
+                # captured resonance must still be found, with its exact distance; the
+                # only new entries are time-paired ones (named per line). The nearest
+                # keeps its name and distance; only its lobe label may name the pair.
+                got_res = got_row.get("lobe_resonances") or []
+                if exp_row.get("kind") == "two-flux" and exp_row.get("lobe_resonances") != got_res:
+                    pairs = [(r["name"], r["distance_hz"]) for r in got_res]
+                    for r in exp_row["lobe_resonances"]:
+                        assert (r["name"], r["distance_hz"]) in pairs, (exp_row["path"], r)
+                    old_stages = {r["lobe"] for r in exp_row["lobe_resonances"]}
+                    assert all(r["lobe"] in old_stages or ", " in r["lobe"] for r in got_res), exp_row["path"]
+                    exp_row["lobe_resonances"] = got_res
+                    exp_near, got_near = exp_row.get("nearest"), got_row.get("nearest")
+                    if isinstance(exp_near, dict) and isinstance(got_near, dict):
+                        assert (exp_near["name"], exp_near["distance_hz"]) == (
+                            got_near["name"], got_near["distance_hz"]), exp_row["path"]
+                        exp_near["lobe"] = got_near["lobe"]
                 exp_near = exp_row.get("nearest")
                 if isinstance(exp_near, dict):
                     movers = [ln["role"] for ln in exp_row["lines"] if ln.get("moves")]

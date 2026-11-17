@@ -2367,8 +2367,21 @@ window.PulsesPage = (function () {
         var input = form.querySelector('input[data-param]');
         if (!input) return;
         input.setAttribute('aria-invalid', 'true');
+        // The typed text stays, so the field must also say what is stored: the
+        // refused value was not written and the old one still holds.
+        var kept = input.getAttribute('data-committed') || '';
+        var note = form.querySelector('[data-refused-note]');
+        if (!note) {
+            note = document.createElement('small');
+            note.className = 'ui-field-error';
+            note.setAttribute('data-refused-note', '1');
+            note.setAttribute('role', 'status');
+            input.insertAdjacentElement('afterend', note);
+        }
+        note.textContent = kept === '' ? 'Not saved.' : 'Not saved: the stored value is still ' + kept + '.';
         input.addEventListener('input', function clear() {
             input.removeAttribute('aria-invalid');
+            if (note.parentNode) note.parentNode.removeChild(note);
             input.removeEventListener('input', clear);
         });
     });
