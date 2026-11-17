@@ -8,4 +8,4 @@ def test_pulses_refused_edit_selfcheck():
     proc = subprocess.run(["node", str(root / "tests/pulses_refused_edit_selfcheck.cjs")],
                           cwd=root, capture_output=True, text=True, encoding="utf-8", timeout=60)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "9 assertions passed" in proc.stdout
+    assert "14 assertions passed" in proc.stdout

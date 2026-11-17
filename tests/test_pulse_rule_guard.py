@@ -117,6 +117,17 @@ class TestFieldEdit:
         assert body["lab_refused"] is True and "must be even" in body["error"]
         assert _peek(client, f"{Z}.snz.flat_length") == 20
 
+    def test_the_refusal_ends_each_sentence_once(self, client):
+        # the class's own message ends with a period; the refusal must not add a second one
+        for url, data in (("/field/edit", {"dot_path": f"{Z}.snz.flat_length", "value": "45"}),
+                          ("/pulse/edit", {"path": f"{Z}.snz", "dot_path": f"{Z}.snz.flat_length",
+                                           "value": "45"})):
+            r = client.post(url, data=data)
+            assert r.status_code == 400, (url, r.data[:300])
+            text = r.get_data(as_text=True)
+            assert "must be even" in text and "halves. " in text, (url, text[:600])
+            assert ".." not in text.replace("...", ""), (url, text[:600])
+
     def test_field_edit_stages_an_even_flat_length(self, client):
         r = client.post("/field/edit", data={"dot_path": f"{Z}.snz.flat_length",
                                               "value": "44"})

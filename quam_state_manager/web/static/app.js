@@ -511,6 +511,19 @@ document.addEventListener('htmx:beforeSwap', function (evt) {
    locked by a running experiment) used to swap nothing → the click looked dead
    ("sometimes doesn't work"). Skip the targets that render their own error body
    (handled in beforeSwap above) to avoid a double-report. */
+/* The sentence an htmx error response carries: the text of its first <p>
+   (the _status.html body), '' when it has none. */
+window.htmxErrorText = function (xhr) {
+    if (!xhr || !xhr.responseText) return '';
+    var m = xhr.responseText.match(/<p[^>]*>([\s\S]*?)<\/p>/);
+    if (!m) return '';
+    // docs/190 F30: the body is Jinja-autoescaped; textContent of a
+    // parsed element decodes &#39; / &#34; / &amp; back to characters
+    var ta = document.createElement('textarea');
+    ta.innerHTML = m[1].replace(/<[^>]+>/g, '');
+    return ta.value.trim();
+};
+
 document.addEventListener('htmx:responseError', function(evt) {
     var t = evt.detail && evt.detail.target;
     var xhr = evt.detail && evt.detail.xhr;
@@ -532,15 +545,9 @@ document.addEventListener('htmx:responseError', function(evt) {
     var _tabChip = (xhr && xhr.getResponseHeader) ? xhr.getResponseHeader("X-SM-Chip-Mismatch") : null;
     var msg = "That action didn't go through — please try again.";
     if (xhr && xhr.responseText) {
-        var m = xhr.responseText.match(/<p[^>]*>([\s\S]*?)<\/p>/);
-        if (m) {
-            // docs/190 F30: the body is Jinja-autoescaped; textContent of a
-            // parsed element decodes &#39; / &#34; / &amp; back to characters
-            var ta = document.createElement('textarea');
-            ta.innerHTML = m[1].replace(/<[^>]+>/g, '');
-            var clean = ta.value.trim();
-            if (clean) msg = clean;
-        } else if (_tabChip) {
+        var clean = window.htmxErrorText(xhr);
+        if (clean) msg = clean;
+        else if (_tabChip && !/<p[^>]*>/.test(xhr.responseText)) {
             try { msg = JSON.parse(xhr.responseText).message || msg; } catch (e) {}
         }
     }
@@ -548,6 +555,10 @@ document.addEventListener('htmx:responseError', function(evt) {
         if (window.showToast) window.showToast(msg, "error", -1);
         return;
     }
+    // A refused Pulses field edit is said on the field itself (pulses.js puts
+    // the reason in the field's error line); a toast would cover that field.
+    var _elt = evt.detail && evt.detail.elt;
+    if (!_code && xhr && xhr.status === 400 && _elt && _elt.closest && _elt.closest('form.pulse-edit-form')) return;
     if (_code) {
         // v1.5.1 (SA-F2): a failed live write stays on screen, and the tray
         // re-reads (the failure may have raised the read-only pill)

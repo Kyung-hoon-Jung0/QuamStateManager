@@ -2378,7 +2378,13 @@ window.PulsesPage = (function () {
             note.setAttribute('role', 'status');
             input.insertAdjacentElement('afterend', note);
         }
-        note.textContent = kept === '' ? 'Not saved.' : 'Not saved: the stored value is still ' + kept + '.';
+        // The server's reason goes on this line too (app.js shows no toast over the
+        // field for it); its own "Nothing was written" lead repeats "Not saved".
+        var xhr = evt.detail && evt.detail.xhr;
+        var why = (xhr && window.htmxErrorText) ? window.htmxErrorText(xhr) : '';
+        why = why.replace(/^Nothing was written\s*\u2014\s*/, '');
+        note.textContent = (kept === '' ? 'Not saved.' : 'Not saved: the stored value is still ' + kept + '.')
+            + (why ? ' ' + why : '');
         input.addEventListener('input', function clear() {
             input.removeAttribute('aria-invalid');
             if (note.parentNode) note.parentNode.removeChild(note);

@@ -18,6 +18,7 @@
     --ui-rule-choice-padding: 0 1.4rem 0 var(--ui-gap-1);
     --ui-rule-names-width: 16rem;
     --ui-rule-tick-width: 1.6rem;
+    --ui-rule-why-min: 12rem;
     --ui-cz-minimap-width: 16rem;
     --ui-cz-minimap-max: 25%;
     --ui-czp-map-min-w: 24rem;
@@ -1740,6 +1741,8 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 .gen-rule-tbl .gen-rule-c-tick { width: var(--ui-rule-tick-width); }
 .gen-rule-tbl .gen-rule-c-names { max-width: var(--ui-rule-names-width); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gen-rule-tbl .gen-rule-c-on { white-space: nowrap; }
+/* the Why sentence keeps a readable width; a narrow dialog scrolls the table (ui-xscroll) */
+.gen-rule-tbl .gen-rule-c-why { min-width: var(--ui-rule-why-min); }
 .gen-rule-choice { width: auto; margin: 0; padding: var(--ui-rule-choice-padding); height: auto; font-size: var(--ui-fs-sm); }
 .gen-rule-cant { display: flex; gap: var(--ui-gap-3); font-size: var(--ui-fs-sm); padding: var(--ui-gap-1) 0; }
 .gen-rule-cant-pairs { color: var(--ui-text-2); }
@@ -1840,6 +1843,12 @@ dialog.ui-dialog:not(.gen-rule-dlg)::backdrop { background: var(--ui-backdrop); 
 /* a long operation name in a pulse detail (section header, in-view chips) wraps like the gate pills */
 #pulse-detail-root .pulse-sec-op, #pulse-detail-root .pulse-sec-op code, #pulse-detail-root .pulse-overlay-chips,
 #pulse-detail-root .pulse-overlay-chip { max-width: 100%; min-width: 0; overflow-wrap: anywhere; }
+/* the role tag of an in-view chip stays one word; the name beside it wraps */
+#pulse-detail-root .pulse-overlay-chip > .pulse-sec-role { flex-shrink: 0; white-space: nowrap; overflow-wrap: normal; }
+/* the add-pulse picker is as wide as its longest option: capped to the pane */
+#pulse-detail-root .pulse-overlay-pick { max-width: 100%; min-width: 0; }
+/* the pulse detail's header name wraps like the operation name instead of clipping */
+#pulse-detail-root .inspector-title > strong { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .gate-status-details { margin: 0; }
 .gate-status-details[open] { flex-basis: 100%; order: 10; }
 .gate-status-details .ui-disclosure-summary { font-weight: var(--ui-fw-normal); font-size: var(--ui-fs-xs); color: var(--ui-text-2); }

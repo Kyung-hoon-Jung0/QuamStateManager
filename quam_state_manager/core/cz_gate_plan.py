@@ -1101,6 +1101,25 @@ def _stated_length_ns(pulse):
     return int(raw) if raw > 0 else None
 
 
+def _own_length_ns(doc, ln, pulse):
+    """``(ns, inferred)``: the length a pulse with no transcribed waveform plays.
+
+    A stored positive whole number of ns first (``_stated_length_ns``); else, for a class
+    whose ``length`` is a runtime property, the same ``inferred_length`` the Pulses page and
+    ``pulse_length_ns`` read. ``(None, False)`` when neither gives a length.
+    """
+    n = _stated_length_ns(pulse)
+    if n is not None or not isinstance(pulse, dict):
+        return n, False
+    from .waveform_synth import LAB_WAVEFORMS
+    if str(pulse.get("__class__", "")).rsplit(".", 1)[-1] in LAB_WAVEFORMS:
+        return None, False
+    got, how = pulse_length_ns(doc, ln.get("pulse_path"), ln.get("pulse_field") or "flux_pulse_qubit")
+    if got is None or not how.startswith("inferred_length of "):
+        return None, False
+    return got, True
+
+
 def _raw_at(doc, path):
     """The value stored at *path*, no pointer followed (None when absent)."""
     node = doc
@@ -1631,7 +1650,9 @@ def operations(doc, conversions=None, unavailable=None):
                 # its ``length`` goes to the pulse config as it is, in ns at any port rate
                 # [derived from the pulse library's config writer]. A transcribed class whose
                 # samples cannot be built stays unknown: its ``length`` is not what it plays.
-                stated = [None if s is not None else _stated_length_ns(p) for p, s in zip(pulses, samples)]
+                own = [(None, False) if s is not None else _own_length_ns(doc, ln, p)
+                       for ln, p, s in zip(lines, pulses, samples)]
+                stated = [n for n, _inf in own]
                 known = [s is not None or n is not None for s, n in zip(samples, stated)]
                 if not all(known):
                     missing = [ln["name"] for ln, ok in zip(lines, known) if not ok]
@@ -1669,9 +1690,11 @@ def operations(doc, conversions=None, unavailable=None):
                         return n if s is None else len(s) * 1e9 / rate_state[ln["role"]][0]
                     line_lengths = {ln["role"]: played_ns(ln, s, n) for ln, s, n in zip(lines, samples, stated)}
                     duration_ns = max(line_lengths.values())
+                    self_len = ("the pulse's own or inferred length" if any(inf for _n, inf in own)
+                                else "the stored pulse length")
                     made_of = ("flat length, edges and padding" if all(n is None for n in stated)
-                               else "the stored pulse length" if all(s is None for s in samples)
-                               else "the played waveform or the stored pulse length")
+                               else self_len if all(s is None for s in samples)
+                               else "the played waveform or " + self_len)
                     for ln in lines:
                         ln["played_length_ns"] = line_lengths[ln["role"]]
                     # The two-flux gate inherits CZGate.inferred_duration, which reads

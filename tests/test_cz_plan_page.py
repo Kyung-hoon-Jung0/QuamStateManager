@@ -502,6 +502,43 @@ def test_two_flux_standard_pulse_without_a_usable_length_is_not_checked(tmp_path
     assert not (r.get("two_flux_lengths") or {}).get("mismatch")
 
 
+def _two_flux_cosine_row(tmp_path, control):
+    """The cz_two row with the control pulse replaced by *control* (target stays 32 ns)."""
+    folder = tmp_path / "chips" / "cos"
+    folder.mkdir(parents=True)
+    s, w = _chip()
+    s["qubits"]["q1"]["z"]["operations"]["cz_flux"] = control
+    (folder / "state.json").write_text(json.dumps(s), encoding="utf-8")
+    (folder / "wiring.json").write_text(json.dumps(w), encoding="utf-8")
+    c = _client(tmp_path, folder=folder)
+    return c.get("/cz-plan/data?op=qubit_pairs.q1-2.macros.cz_two").get_json()["row"]
+
+
+_COSINE = {"__class__": "quam.components.pulses._CosineBipolarPulse", "length": "#./inferred_total_length",
+           "amplitude": 0.12, "flat_length": 120, "smoothing_length": 20, "post_zero_padding_length": 0}
+
+
+def test_two_flux_inferred_length_is_the_one_the_pulses_page_reads(tmp_path):
+    """A class whose length is a runtime property is checked with the same inferred length
+    pulse_length_ns gives, never reported as underivable."""
+    from quam_state_manager.core import cz_gate_plan as cgp
+    s, _w = _chip()
+    s["qubits"]["q1"]["z"]["operations"]["cz_flux"] = dict(_COSINE)
+    assert cgp.pulse_length_ns(s, "qubits.q1.z.operations.cz_flux")[0] == 140
+    r = _two_flux_cosine_row(tmp_path, dict(_COSINE))
+    t = r["two_flux_lengths"]
+    assert (t["control"], t["target"]) == (140, 32), r["notes"]
+    assert not any("could not be derived" in n for n in r["notes"]), r["notes"]
+    assert "inferred length" in r["duration_note"], r["duration_note"]
+
+
+def test_two_flux_inferred_class_missing_its_inputs_still_says_so(tmp_path):
+    bad = {k: v for k, v in _COSINE.items() if k != "flat_length"}
+    r = _two_flux_cosine_row(tmp_path, bad)
+    hits = [n for n in r["notes"] if "two-flux length check not made: the played length of" in n]
+    assert len(hits) == 1 and "q1" in hits[0] and hits[0].endswith("could not be derived"), r["notes"]
+
+
 # ------------------------------------------------------------------ one pair count for header and map legend
 
 class _Rows(list):
