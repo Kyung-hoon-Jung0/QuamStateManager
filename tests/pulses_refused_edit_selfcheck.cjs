@@ -83,5 +83,32 @@ check(() => assert.equal(rows[1].querySelector('[data-refused-note]').textConten
 const tinput = tform.querySelector('input');
 tinput.dispatchEvent(new w.Event('input', { bubbles: true }));
 check(() => assert.equal(tbl.querySelectorAll('tbody > tr').length, 1, 'typing again removes the row'));
+// A refusal row under a field at the window bottom is brought into view once; one in view never scrolls.
+const scrolls = [];
+w.Element.prototype.scrollIntoView = function (o) { scrolls.push({ el: this, o }); };
+const mkTable = () => {
+    const t = w.document.createElement('table');
+    t.innerHTML = '<tbody><tr><td class="col-prop">flat_length</td><td class="col-val">'
+        + '<form class="inline-edit pulse-edit-form"><input type="text" name="value" class="edit-input"'
+        + ' data-param="flat_length" data-committed="44" value="45"></form></td></tr></tbody>';
+    w.document.getElementById('inspector-pane').appendChild(t);
+    return t;
+};
+Object.defineProperty(w, 'innerHeight', { value: 1000, configurable: true });
+w.Element.prototype.getBoundingClientRect = function () {
+    return { left: 0, top: 1022, bottom: 1060, right: 400, width: 400, height: 38 };
+};
+const lowTbl = mkTable();
+refuse(lowTbl.querySelector('form'));
+check(() => assert.equal(scrolls.length, 1, 'a refusal row below the window is scrolled into view'));
+check(() => assert.ok(scrolls[0].el.hasAttribute('data-refused-row') && scrolls[0].o.block === 'nearest',
+    'the row itself, nearest'));
+refuse(lowTbl.querySelector('form'));
+check(() => assert.equal(scrolls.length, 1, 'only once, when the row is inserted'));
+w.Element.prototype.getBoundingClientRect = function () {
+    return { left: 0, top: 300, bottom: 338, right: 400, width: 400, height: 38 };
+};
+refuse(mkTable().querySelector('form'));
+check(() => assert.equal(scrolls.length, 1, 'a row already in view never scrolls'));
 console.log(n + ' assertions passed');
 w.close();

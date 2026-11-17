@@ -177,6 +177,83 @@ function resp(status, body) {
     ok(top + 40 <= 300 - 4, 'the badge ends inside the window (top ' + top + ')');
   }
 
+  // 2e: a grid row's own refusal note names the reason: the badge leaves instead of covering it
+  {
+    const W = world([LAB]);
+    const cell = W.w.document.querySelector('[data-dot-path="' + LAB + '"]');
+    const td = W.w.document.createElement('td');
+    td.innerHTML = '<span class="bulk-row-error" hidden></span>';
+    cell.closest('tr').appendChild(td);
+    const p = W.w.fetch('/field/edit', { method: 'POST', body: 'dot_path=' + encodeURIComponent(LAB) + '&value=93' });
+    await until(() => W.w.document.querySelector('.lab-check-badge'));
+    const slot = td.querySelector('.bulk-row-error');
+    slot.hidden = false; slot.textContent = 'Your pulse class refused this value: must be even.';
+    W.pending[0](resp(400, { ok: false, lab_refused: true, error: 'Nothing was written: must be even.' }));
+    await p;
+    await until(() => !W.w.document.querySelector('.lab-check-badge'), 1000);
+    ok(!W.w.document.querySelector('.lab-check-badge'),
+       'the grid row\'s own note names the refusal: the badge leaves instead of covering it');
+  }
+
+  // 2f: an offer badge with a grid row note sits under the whole row, never over the note
+  {
+    const W = world([LAB]);
+    const cell = W.w.document.querySelector('[data-dot-path="' + LAB + '"]');
+    const tr = cell.closest('tr');
+    const td = W.w.document.createElement('td');
+    td.innerHTML = '<span class="bulk-row-error">Your gate refused this value.</span>';
+    tr.appendChild(td);
+    W.w.Element.prototype.getBoundingClientRect = function () {
+      return this.tagName === 'TR' ? { left: 10, top: 30, bottom: 120, right: 600, width: 590, height: 90 }
+        : { left: 20, top: 60, bottom: 80, right: 90, width: 70, height: 20 };
+    };
+    const p = W.w.fetch('/field/edit', { method: 'POST', body: 'dot_path=' + encodeURIComponent(LAB) + '&value=80' });
+    await until(() => W.w.document.querySelector('.lab-check-badge'));
+    const T2 = 'qubit_pairs.p.macros.cz.flux_target.flat_length';
+    W.pending[0](resp(400, { ok: false, lab_refused: true,
+      error: 'Your gate refused this value -- nothing was written: differ',
+      lab_follow: [{ dot_path: LAB, value: 80 }, { dot_path: T2, value: 80 }] }));
+    await p;
+    await until(() => W.w.document.querySelector('.lab-check-follow'));
+    await tick(60);
+    const b = W.w.document.querySelector('.lab-check-badge');
+    ok(b && parseFloat(b.style.top) >= 120,
+       'an offer badge sits under the row and its note (' + (b && b.style.top) + ')');
+  }
+
+  // 2g: the taller refused row pushed the cell below the window: the row is brought back into view;
+  //     a row already in view is never scrolled
+  for (const pushed of [true, false]) {
+    const W = world([LAB]);
+    Object.defineProperty(W.w, 'innerHeight', { value: 1000, configurable: true });
+    const cell = W.w.document.querySelector('[data-dot-path="' + LAB + '"]');
+    const tr = cell.closest('tr');
+    const calls = [];
+    W.w.Element.prototype.scrollIntoView = function (o) { calls.push({ el: this, o }); };
+    let moved = false;
+    W.w.Element.prototype.getBoundingClientRect = function () {
+      const y = moved ? 1028 : 900;
+      return this.tagName === 'TR' ? { left: 10, top: y - 10, bottom: y + 70, right: 600, width: 590, height: 80 }
+        : { left: 20, top: y, bottom: y + 30, right: 90, width: 70, height: 30 };
+    };
+    if (!pushed) W.w.Element.prototype.getBoundingClientRect = function () {
+      return { left: 20, top: 300, bottom: 340, right: 90, width: 70, height: 40 };
+    };
+    const p = W.w.fetch('/field/edit', { method: 'POST', body: 'dot_path=' + encodeURIComponent(LAB) + '&value=93' });
+    await until(() => W.w.document.querySelector('.lab-check-badge'));
+    moved = true;
+    W.pending[0](resp(400, { ok: false, lab_refused: true, error: 'Nothing was written: odd.' }));
+    await p;
+    await until(() => W.w.document.querySelector('.lab-check-refused'));
+    await tick(60);
+    if (pushed) {
+      ok(calls.length === 1 && calls[0].el === tr && calls[0].o && calls[0].o.block === 'nearest',
+         'a row pushed below the window is scrolled back into view, nearest (' + calls.length + ')');
+    } else {
+      ok(calls.length === 0, 'a refused row already in view is never scrolled (' + calls.length + ')');
+    }
+  }
+
   // 3: non-lab edit -> no badge ever
   {
     const W = world([LAB]);

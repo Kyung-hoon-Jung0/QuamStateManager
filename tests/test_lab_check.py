@@ -28,7 +28,7 @@ def test_lab_check_selfcheck():
     if r.returncode == 2:
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
-    assert r.stdout.count("ok - ") >= 40, r.stdout
+    assert r.stdout.count("ok - ") >= 51, r.stdout
     # w9/labwarm: the "Preparing your lab code..." pins ran (10, 11)
     assert "says Preparing" in r.stdout and "delete step says Preparing" in r.stdout
 
