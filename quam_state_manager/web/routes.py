@@ -2197,7 +2197,8 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         except Exception:  # noqa: BLE001 — a hint never blocks activation
             pass
         _acquire_project_scope(current)
-        _select_scope_env(current)          # w9/labwarm
+        _set_scope_code_root(current)          # before the env warm
+        _select_scope_env(current)              # w9/labwarm
         # docs/20 v2: re-evaluate the first-open chip-name banner on every
         # activation (origin can flip live→archive; a staged name dismisses),
         # and adopt the chip's declared data folder(s) as workspace roots.
@@ -2286,6 +2287,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # chip without its memo); every activation path converges on the
         # reverse index, so a lost memo self-heals.
         _acquire_project_scope(ctx)
+        _set_scope_code_root(ctx)          # before the env warm
         _select_scope_env(ctx)              # w9/labwarm
         _maybe_identity_confirm(ctx)
         _maybe_chip_name_prompt(ctx)
@@ -2967,7 +2969,8 @@ def _warm_state_schema_async(store, inst, live_folder=None) -> None:
             return                                # already warm — zero cost
     except Exception:  # noqa: BLE001 — warm-up must never break activation
         return
-    key = python_path + "|" + ",".join(sorted(classes))
+    key = (python_path + "|" + ",".join(sorted(classes))
+           + "|" + (config_generator.lab_code_path(python_path) or ""))
     with _schema_warm_lock:
         if key in _schema_warm_inflight:
             return
@@ -8117,25 +8120,42 @@ def landing_projects():
         "_landing_projects.html",
         listing=listing,
         last_project=_load_session().get("last_project"),
-        env_views=_project_env_views([p["name"] for p in listing.get("projects") or []]),
+        env_views=_project_env_views([p["name"] for p in listing.get("projects") or []],
+                                     listing),
         # docs/263: each project's time zone (one memoized file read)
         tz_views=_project_tz_views(tz_names),
         tz_project=tz_names[0],
     )
 
 
-def _project_env_views(names) -> dict:
+def _project_env_views(names, listing: dict | None = None) -> dict:
     """``{project: project_env.view(...)}`` -- what each card's env row says.
-    Reads the memory file and stats each env: no discovery, no probe."""
+    Reads the memory file and stats each env, no probe. A project with no
+    remembered env also gets its own ``.venv`` looked up (a few stats beside
+    its calibration folder) -- the env a uv user would pick for it.
+    *listing* (a :func:`qualibrate_config.list_projects` result the caller
+    already holds) spares a second listing."""
     from quam_state_manager.core import project_env
     inst = current_app.instance_path
     try:
         selected = config_generator.get_selected_env(inst)
     except Exception:  # noqa: BLE001
         selected = None
+    calib = None                      # {project: calibration folder}, lazily
     out = {}
     for n in names:
-        v = project_env.view(inst, n, selected)
+        own = None
+        if not project_env.remembered(inst, n):
+            if calib is None:
+                try:
+                    src = listing if listing is not None else qualibrate_config.list_projects()
+                    calib = {p["name"]: (p.get("calibration_library") or {}).get("native")
+                             for p in src.get("projects") or []}
+                except Exception:  # noqa: BLE001 -- a suggestion never breaks a card
+                    calib = {}
+            found = config_generator.project_venv(calib.get(n))
+            own = found[1] if found else None
+        v = project_env.view(inst, n, selected, own=own)
         # a stable DOM id per project (a name may hold any character): the
         # rows a sync changes are swapped by it, out of band
         v["dom_id"] = "lenv-" + hashlib.sha1(n.encode("utf-8")).hexdigest()[:12]
@@ -8160,7 +8180,8 @@ def qualibrate_project_env():
     if not name:
         return render_template("_status.html", message="No project named.",
                                level="error"), 400
-    names = [p["name"] for p in _qualibrate_listing().get("projects") or []]
+    listing = _qualibrate_listing()
+    names = [p["name"] for p in listing.get("projects") or []]
     if name not in names:
         return render_template("_status.html",
                                message=f"Unknown qualibrate project: {name!r}",
@@ -8194,7 +8215,7 @@ def qualibrate_project_env():
             applied = True
     logger.info("project env: %s -> %s (%s%s)", name, python_path, how,
                 ", selected now" if applied else "")
-    views = _project_env_views(names)
+    views = _project_env_views(names, listing)
     row = render_template("_landing_project_env.html", p={"name": name},
                           pe=views[name], env_saved=how)
     # every OTHER card whose row this sync changed: a never-synced project's
@@ -9053,6 +9074,10 @@ def qualibrate_page():
     except OSError:
         raws["__root__"] = "(unreadable)"
     for p in listing["projects"]:
+        if p.get("implicit"):
+            raws[p["name"]] = ("(no projects/ folder: the root config.toml "
+                               "above is this whole project)")
+            continue
         try:
             raws[p["name"]] = (cfg_dir / "projects" / p["name"]
                                / "config.toml").read_text(
@@ -9188,7 +9213,9 @@ def qualibrate_project_config(name: str):
             encoding="utf-8", errors="replace") \
             or "(empty overlay — inherits everything)"
     except OSError:
-        raws["overlay"] = "(unreadable)"
+        raws["overlay"] = ("(no projects/ folder: the root config.toml is "
+                           "this whole project)"
+                           if proj.get("implicit") else "(unreadable)")
     try:
         raws["root"] = (cfg_dir / "config.toml").read_text(
             encoding="utf-8", errors="replace")
@@ -9442,12 +9469,23 @@ def qualibrate_open_project():
                                message=f"Unknown qualibrate project: {name!r}",
                                level="error"), 404
     state = proj["state_path"]
-    if not state["native"] or not state["exists"]:
+    if not state["native"]:
         return render_template(
             "_status.html",
-            message=(f"Project {name!r}: its state_path "
-                     f"({state['raw'] or '(empty)'}) does not exist — fix it "
-                     "in qualibrate first (see the Doctor panel)."),
+            message=(f"Project {name!r} has no state_path. Set [quam] "
+                     "state_path in its qualibrate config first (see the "
+                     "Doctor panel)."),
+            level="error"), 409
+    if not state["exists"]:
+        # a new project's state folder usually does not exist YET: the
+        # usual first step after configuring qualibrate is building it
+        return render_template(
+            "_status.html",
+            message=(f"Project {name!r}: no QUAM state at {state['native']} "
+                     "yet. Build one first (Generate Config here, or your "
+                     "own wiring / populate scripts), then open the project "
+                     "again. If the state lives elsewhere, fix [quam] "
+                     "state_path in qualibrate (see the Doctor panel)."),
             level="error"), 409
 
     # Customer feedback 2026-09-30: a PROJECT opens only with an env the user
@@ -9499,6 +9537,9 @@ def qualibrate_open_project():
     # _active_ctx() after it would cross-wire the pin onto whatever a
     # concurrent /load activated meanwhile (the _active_wc_lock bug class).
     _acquire_project_scope(opened, explicit=name)
+    # the activation above set the code root from the DERIVED scope (another
+    # project sharing this state_path, or none): follow the pin
+    _set_scope_code_root(opened)
 
     # dataset roots from the project's storage location (read-only scan)
     added = 0
@@ -9578,6 +9619,29 @@ def _select_scope_env(ctx) -> None:
             _bind_to_selected_env(ctx, inst)
     except Exception:  # noqa: BLE001 -- an env never blocks opening a chip
         logger.warning("scope env selection failed for %s", name, exc_info=True)
+
+
+def _set_scope_code_root(ctx) -> None:
+    """The chip being activated decides which lab code every probe imports:
+    its project's code root (the folder holding ``quam_config``) goes first
+    on PYTHONPATH for every lab-code child, as it already does for a node
+    run -- otherwise an env with another checkout installed reports the
+    chip's own classes as missing. A change re-warms the chip's schema (the
+    old manifest was probed under the other tree and no longer counts)."""
+    if not ctx:
+        return
+    root = None
+    if ctx.get("qualibrate_project"):
+        try:
+            root = config_generator.project_code_root(_calibrations_folder(ctx))
+        except Exception:  # noqa: BLE001 -- unknown root: inherit, never block
+            root = None
+    if config_generator.set_active_project_root(root) and ctx.get("store") is not None:
+        try:
+            _warm_state_schema_async(ctx.get("store"), current_app.instance_path,
+                                     live_folder=ctx.get("path"))
+        except Exception:  # noqa: BLE001 -- a warm never blocks opening a chip
+            logger.debug("schema re-warm after a code-root change failed", exc_info=True)
 
 
 def _bind_to_selected_env(ctx, inst) -> None:
@@ -27290,7 +27354,8 @@ def _kick_env_reprobe(store, inst, live_folder, reason=None) -> None:
         return
     with store._lock:
         classes = state_env_schema.harvest_classes(store.state)
-    key = python_path + "|" + ",".join(sorted(classes))
+    key = (python_path + "|" + ",".join(sorted(classes))
+           + "|" + (config_generator.lab_code_path(python_path) or ""))
     mods_now = tuple(sorted(state_env_schema.load_pulse_modules(inst)))
     with _schema_warm_lock:
         if key in _schema_warm_inflight:
@@ -52316,7 +52381,8 @@ def diagnostics_env_probe():
     from quam_state_manager.core import state_env_schema
     with store._lock:
         classes = state_env_schema.harvest_classes(store.state)
-    key = python_path + "|" + ",".join(sorted(classes))
+    key = (python_path + "|" + ",".join(sorted(classes))
+           + "|" + (config_generator.lab_code_path(python_path) or ""))
     with _schema_warm_lock:
         already = key in _schema_warm_inflight
         if not already:

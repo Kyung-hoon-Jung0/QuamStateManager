@@ -182,8 +182,10 @@ def _isolate_env_discovery_cache():
     from quam_state_manager.core import config_generator
 
     config_generator.reset_env_discovery_cache()
+    config_generator.set_active_project_root(None)
     yield
     config_generator.reset_env_discovery_cache()
+    config_generator.set_active_project_root(None)
 
 
 @pytest.fixture(autouse=True)

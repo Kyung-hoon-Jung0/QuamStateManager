@@ -22,9 +22,13 @@ uv add "quam-state-manager @ git+https://github.com/Kyung-hoon-Jung0/QuamStateMa
 ## Run
 
 ```bash
-qsm browser          # conda / activated env
-uv run qsm browser   # uv project
+qsm browser                   # conda, or an activated .venv
+uv run --no-sync qsm browser  # uv project, without activating
 ```
+
+`--no-sync` matters: plain `uv run` first re-resolves the whole project, and
+if that resolve fails (or QSM was added with `uv pip install`, not `uv add`)
+QSM never starts.
 
 The Sync-Qualibrate workbench can show QUAlibrate through QSM. Set its HTTP
 address in the workbench; QSM saves it after checking that QUAlibrate answers.
@@ -59,7 +63,7 @@ uv pip install --reinstall --no-deps "git+https://github.com/Kyung-hoon-Jung0/Qu
 | `invalid peer certificate: UnknownIssuer` / `CERTIFICATE_VERIFY_FAILED` (a proxy re-signs HTTPS) | uv: add `--native-tls`; pip: add `--trusted-host pypi.org --trusted-host files.pythonhosted.org` |
 | `couldn't find remote ref refs/tags/vX.Y.Z` | that tag does not exist; pick one from the Tags page |
 | `No module named quam_state_manager.web` | close QSM, delete any `~uam_state_manager*` folder in the env's `site-packages`, reinstall with `--force-reinstall --no-deps` |
-| `qsm` not found | wrong env: activate the lab env (or use `uv run qsm`) and reinstall |
+| `qsm` not found | wrong env: activate the lab env (or use `uv run --no-sync qsm`) and reinstall |
 
 ---
 

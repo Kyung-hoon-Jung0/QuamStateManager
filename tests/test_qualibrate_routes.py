@@ -140,7 +140,8 @@ class TestOpenInSM:
     def test_dangling_state_path_409(self, env):
         r = env["client"].post("/qualibrate/open", data={"project": "alpha"})
         assert r.status_code == 409
-        assert "does not exist" in r.get_data(as_text=True)
+        body = r.get_data(as_text=True)
+        assert "no QUAM state at" in body and "Build one first" in body
 
     def test_empty_state_path_409(self, env):
         r = env["client"].post("/qualibrate/open", data={"project": "delta"})

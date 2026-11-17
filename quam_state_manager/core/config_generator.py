@@ -956,39 +956,49 @@ def discover_uv_venvs() -> list[dict]:
     projects = list(listing.get("projects") or [])
     projects.sort(key=lambda p: not p.get("active"))
     for proj in projects:
-        calib = (proj.get("calibration_library") or {}).get("native")
-        if not calib:
-            continue
-        try:
-            # QA generate-r2-29: a qualibrate folder can be drive-less rooted
-            # (``\work\...``); the stat below already resolves it against
-            # the current drive, so spell that drive out — the row's python
-            # then equals what resolve_python_interpreter returns for the
-            # same folder typed with its drive (the Custom path), and a row
-            # click never persists a drive-relative interpreter. absolute(),
-            # not resolve(): a POSIX .venv/bin/python is a symlink to the
-            # base interpreter.
-            node = Path(calib).absolute()
-            for _ in range(5):                    # itself + ≤4 ancestors
-                venv = node / ".venv"
-                if (venv / "pyvenv.cfg").is_file():
-                    python = resolve_python_interpreter(str(venv))
-                    if python and python not in seen:
-                        seen.add(python)
-                        out.append({
-                            "name": ".venv · " + str(proj.get("name") or node.name),
-                            "path": str(venv),
-                            "python": python,
-                            "kind": "uv-venv",
-                            "project": proj.get("name"),
-                        })
-                    break
-                if node.parent == node:
-                    break
-                node = node.parent
-        except OSError:
-            continue
+        found = project_venv((proj.get("calibration_library") or {}).get("native"))
+        if found and found[1] not in seen:
+            venv, python = found
+            seen.add(python)
+            out.append({
+                "name": ".venv (" + str(proj.get("name") or venv.parent.name) + ")",
+                "path": str(venv),
+                "python": python,
+                "kind": "uv-venv",
+                "project": proj.get("name"),
+            })
     return out
+
+
+def project_venv(calib_folder: str | None) -> tuple[Path, str] | None:
+    """The ``.venv`` of the repo holding *calib_folder* (a project's
+    ``calibration_library.folder``): the folder itself + up to 4 ancestors are
+    searched for ``.venv/pyvenv.cfg``; the nearest one wins. Returns
+    ``(venv_folder, interpreter)`` or None. A few stats, never raises,
+    READ-ONLY."""
+    if not calib_folder:
+        return None
+    try:
+        # QA generate-r2-29: a qualibrate folder can be drive-less rooted
+        # (``\work\...``); the stat below already resolves it against
+        # the current drive, so spell that drive out -- the row's python
+        # then equals what resolve_python_interpreter returns for the
+        # same folder typed with its drive (the Custom path), and a row
+        # click never persists a drive-relative interpreter. absolute(),
+        # not resolve(): a POSIX .venv/bin/python is a symlink to the
+        # base interpreter.
+        node = Path(calib_folder).absolute()
+        for _ in range(5):                    # itself + up to 4 ancestors
+            venv = node / ".venv"
+            if (venv / "pyvenv.cfg").is_file():
+                python = resolve_python_interpreter(str(venv))
+                return (venv, python) if python else None
+            if node.parent == node:
+                return None
+            node = node.parent
+    except OSError:
+        return None
+    return None
 
 
 def _envs_from_environments_txt() -> list[Path]:
@@ -1249,7 +1259,7 @@ def _env_signature(python_path: str) -> str | None:
     # A lab code folder changes what this interpreter imports, so every cache
     # keyed on this signature (catalogue, lab worker, replot) misses when it moves.
     # Absent folder: the signature is unchanged from before the setting existed.
-    lab = get_lab_code_dir(python_path)
+    lab = lab_code_path(python_path)
     if lab:
         parts.append("lab=" + os.path.normcase(lab))
     return "|".join(parts)
@@ -1449,11 +1459,47 @@ def set_lab_code_dir(instance_path, python_path: str, folder: str | None) -> Non
         safe_io.atomic_write_json(path, data)
 
 
+# The code root of the QUALIBRATE project whose chip is active (the folder
+# holding its quam_config / calibration_utils, :func:`project_code_root`).
+# Set on every chip activation; every lab-code child of any interpreter puts
+# it FIRST, so a probe imports the same tree a node run of that project
+# imports -- an env with ANOTHER checkout installed (editable) or on its
+# inherited PYTHONPATH must not decide which classes the chip "has".
+_PROJECT_ROOT: dict = {"root": None}
+
+
+def set_active_project_root(root: str | None) -> bool:
+    """Record the active project's code root (None: no project / none found).
+    True when it changed (callers re-warm what was probed under the old one)."""
+    root = str(root) if root else None
+    old = _PROJECT_ROOT["root"]
+    _PROJECT_ROOT["root"] = root
+    return (os.path.normcase(old) if old else None) != (os.path.normcase(root) if root else None)
+
+
+def active_project_root() -> str | None:
+    return _PROJECT_ROOT["root"]
+
+
+def lab_code_path(python_path) -> str | None:
+    """The folders a lab-code child of *python_path* gets ahead of the
+    inherited PYTHONPATH, joined: the active project's code root, then the
+    lab code folder stored for this interpreter (each once). None when
+    neither is set. Also the cache key of everything probed through them."""
+    parts = []
+    for e in (active_project_root(), get_lab_code_dir(python_path)):
+        if e and not any(_same_dir(e, x) for x in parts):
+            parts.append(e)
+    return os.pathsep.join(parts) or None
+
+
 def effective_pythonpath(python_path, folder: str | None = None) -> str | None:
-    """The PYTHONPATH a subprocess of *python_path* runs with: the lab code
-    folder (or *folder*, when given) first, then this process's own."""
+    """The PYTHONPATH a subprocess of *python_path* runs with:
+    :func:`lab_code_path` (the active project's code root, then the lab code
+    folder) first, then this process's own. A given *folder* replaces both
+    (a folder under test is checked on its own)."""
     base = os.environ.get("PYTHONPATH")
-    lab = folder if folder is not None else get_lab_code_dir(python_path)
+    lab = folder if folder is not None else lab_code_path(python_path)
     if not lab:
         return base
     return lab + (os.pathsep + base if base else "")
@@ -1552,10 +1598,12 @@ def child_pythonpath(python_path, project_root: str | None = None) -> str | None
     same modules cannot win), then the lab code folder stored for this
     interpreter and the inherited entries, each once, in that order.
     Without a project root this is exactly :func:`effective_pythonpath`.
+    With one, the ACTIVE chip's project root is not added: a node of another
+    project imports its own tree only.
     """
-    base = effective_pythonpath(python_path)
     if not project_root:
-        return base
+        return effective_pythonpath(python_path)
+    base = effective_pythonpath(python_path, get_lab_code_dir(python_path) or "")
     rest = [e for e in _split_pp(base) if not _same_dir(e, project_root)]
     return os.pathsep.join([str(project_root)] + rest)
 
