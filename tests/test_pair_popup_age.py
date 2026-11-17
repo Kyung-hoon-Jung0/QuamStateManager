@@ -10,4 +10,4 @@ def test_pair_popup_measured_line_follows_the_shown_key():
     result = subprocess.run(['node', 'tests/pair_popup_age_selfcheck.cjs'], cwd=ROOT,
                             capture_output=True, text=True, encoding='utf-8', timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert 'pair popup age checks passed (4 assertions)' in result.stdout, result.stdout
+    assert 'pair popup age checks passed (8 assertions)' in result.stdout, result.stdout

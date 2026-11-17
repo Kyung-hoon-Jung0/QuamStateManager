@@ -273,6 +273,28 @@ class TestRevertTheFailedTargets:
         assert live["f_01"] == 5.11e9                  # never offered, never written
         assert self._status_item(chip, iid)["revert_retryable"] == []
 
+    def test_the_offer_text_and_the_row_note_are_one_format(self, chip):
+        """A long frequency reads with its full digits in the button's tooltip
+        and in the row note, from one formatter; a tiny value keeps 3e-05."""
+        patches = self._node_wrote(chip)
+        chip.set_live("qubits.q1.f_01", 5987654000.0)
+        patches[0] = _patch("q1", "f_01", 6780000000.0, 5987654000.0)
+        inst, iid = _record(chip, patches)
+        chip.set_live("qubits.q1.f_01", 5.5e9)            # refused on the first press
+        chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={})
+        chip.set_live("qubits.q1.f_01", 5987654000.0)     # back to the run's value
+        chip.c.post("/state/sync", data={"mode": "pull"})
+        st = self._status_item(chip, iid)
+        note = st["outcome_note"]
+        offer = st.get("revert_offer") or []
+        assert [o["path"] for o in offer] == ["qubits.q1.f_01"], offer
+        for o in offer:
+            assert o["value_text"] == scheduler.value_text(o["value"])
+            assert o["old_text"] == scheduler.value_text(o["old"])
+            assert f"({o['old_text']} -> {o['value_text']})" in note, (o, note)
+        assert "5987654000.0" in note and "e+09" not in offer[0]["value_text"]
+        assert scheduler.value_text(3.6e-05) == "3.6e-05"
+
     def test_an_earlier_revert_says_when_and_that_the_value_changed_since(self, chip):
         inst, iid = self._reverted_then_readopted(chip)
         first_at = scheduler._find(scheduler.load_queue(inst), iid)["failed_revert"]["at"]
@@ -281,7 +303,7 @@ class TestRevertTheFailedTargets:
         # the time of the press that reverted it, as an ISO stamp the page renders
         assert f"reverted earlier 1: qubits.q1.f_01 at {first_at}" in msg, msg
         # the person set it back to the run's value: never read as still reverted
-        assert "changed since that revert 1: qubits.q1.f_01 (now 5.11e+09)" in msg, msg
+        assert "changed since that revert 1: qubits.q1.f_01 (now 5110000000.0)" in msg, msg
         assert [x.get("at") for x in body["result"]["reverted_now"]] == [body["result"]["at"]]
 
     def test_an_earlier_revert_that_still_holds_is_not_called_changed(self, chip):

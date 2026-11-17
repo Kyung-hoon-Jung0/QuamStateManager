@@ -53851,11 +53851,8 @@ def scheduler_queue_mutate(action: str):
     return jsonify({"ok": True, "state": _sched_state()})
 
 
-def _revert_value_text(v) -> str:
-    """A value in a revert note: a float to 6 significant digits, never its full repr."""
-    if isinstance(v, float):
-        return f"{v:.6g}"
-    return json.dumps(v) if isinstance(v, str) else str(v)
+# a value in a revert note or offer: the row note's own formatter, one format
+_revert_value_text = scheduler.value_text
 
 
 def _revert_refusal_text(c: dict) -> str:
@@ -53991,7 +53988,7 @@ def _annotate_revert_retryable(queue: list) -> None:
         handle = SimpleNamespace(store=ctx["store"])
         scope = _revert_press_scope(it, lambda k: _current_value(handle, k))
         it["revert_retryable"] = [_revert_key(w) for w in scope]
-        # the *_text fields: the same number format as the row's own note
+        # the *_text fields: the row note's own formatter (scheduler.value_text)
         it["revert_offer"] = [{"path": _revert_key(w), "value": w.get("value"),
                                "old": w.get("old"),
                                "value_text": _revert_value_text(w.get("value")),
