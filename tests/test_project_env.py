@@ -454,3 +454,83 @@ def test_run_env_source_names_where_the_env_came_from(tmp_path, monkeypatch):
     assert project_env.run_env_source(str(inst), "p") == (str(proj), "project")
     monkeypatch.setattr(config_generator, "get_selected_env", lambda i: None)
     assert project_env.run_env_source(str(inst), "nobody") == (None, "")
+
+
+# ------------------------------------------------- a uv user's first project
+def _uv_repo(root: Path) -> tuple[Path, str]:
+    """A calibration repo the way a uv user has it: ``<repo>/.venv`` beside
+    ``<repo>/calibrations``. Returns (calibrations folder, interpreter)."""
+    venv = root / "repo" / ".venv"
+    py = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    py.parent.mkdir(parents=True, exist_ok=True)
+    py.write_bytes(b"")
+    (venv / "pyvenv.cfg").write_text("home = x\nuv = 0.8\n", encoding="utf-8")
+    calib = root / "repo" / "calibrations"
+    calib.mkdir(parents=True)
+    return calib, str(py)
+
+
+@pytest.fixture
+def uv_first(tmp_path, monkeypatch):
+    """A flat qualibrate config (what ``qualibrate config`` writes: no
+    projects/ folder) whose calibration repo carries its own .venv; SM has
+    never seen an env."""
+    calib, py = _uv_repo(tmp_path)
+    state = tmp_path / "repo" / "quam_state"
+    cfg = tmp_path / "qcfg"
+    _write(cfg / "config.toml", f'''
+[qualibrate]
+version = 6
+project = "first"
+
+[qualibrate.calibration_library]
+folder = "{calib.as_posix()}"
+
+[quam]
+state_path = "{state.as_posix()}"
+''')
+    monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(cfg / "config.toml"))
+    monkeypatch.delenv("QUALIBRATE_CONFIG_DIR", raising=False)
+    qc._state_index_cache.clear()
+    monkeypatch.setattr(routes, "_warm_state_schema_async", lambda *a, **k: None)
+    inst = tmp_path / "_inst"
+    app = create_app(testing=True, instance_path=str(inst))
+    return {"c": app.test_client(), "inst": inst, "py": py, "state": state,
+            "tmp": tmp_path}
+
+
+class TestUvFirstProject:
+    def test_view_prefers_the_projects_own_venv(self, tmp_path):
+        inst = tmp_path / "i"
+        inst.mkdir()
+        assert project_env.view(inst, "p", None, own="V") == {
+            "python": "V", "label": "V", "state": "suggested", "exists": False}
+        project_env.remember(inst, "other", "A")         # most recently used
+        assert project_env.view(inst, "p", "G", own="V")["python"] == "V"
+        assert project_env.view(inst, "p", "G")["python"] == "A"
+        project_env.remember(inst, "p", "B")             # a choice wins over both
+        v = project_env.view(inst, "p", "G", own="V")
+        assert v["state"] == "remembered" and v["python"] == "B"
+
+    def test_project_venv_finds_the_nearest_dot_venv(self, tmp_path):
+        calib, py = _uv_repo(tmp_path)
+        venv, got = config_generator.project_venv(str(calib))
+        assert got == py and venv.name == ".venv"
+        assert config_generator.project_venv(None) is None
+        assert config_generator.project_venv(str(tmp_path / "elsewhere")) is None
+
+    def test_the_card_suggests_the_venv_beside_the_calibrations(self, uv_first):
+        html = uv_first["c"].get("/landing/projects").get_data(as_text=True)
+        row = _card_env(html, "first")
+        assert "repo (.venv)" in row and "suggested &mdash; confirm" in row
+        assert ">Confirm<" in row
+        # a suggestion is not a choice: nothing remembered yet
+        assert project_env.remembered(uv_first["inst"], "first") is None
+
+    def test_opening_before_the_state_exists_says_build_it(self, uv_first):
+        project_env.remember(uv_first["inst"], "first", uv_first["py"])
+        r = uv_first["c"].post("/qualibrate/open", data={"project": "first"})
+        assert r.status_code == 409
+        body = r.get_data(as_text=True)
+        assert "no QUAM state at" in body and "yet" in body
+        assert "Generate Config" in body

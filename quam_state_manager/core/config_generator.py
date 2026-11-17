@@ -956,39 +956,49 @@ def discover_uv_venvs() -> list[dict]:
     projects = list(listing.get("projects") or [])
     projects.sort(key=lambda p: not p.get("active"))
     for proj in projects:
-        calib = (proj.get("calibration_library") or {}).get("native")
-        if not calib:
-            continue
-        try:
-            # QA generate-r2-29: a qualibrate folder can be drive-less rooted
-            # (``\work\...``); the stat below already resolves it against
-            # the current drive, so spell that drive out — the row's python
-            # then equals what resolve_python_interpreter returns for the
-            # same folder typed with its drive (the Custom path), and a row
-            # click never persists a drive-relative interpreter. absolute(),
-            # not resolve(): a POSIX .venv/bin/python is a symlink to the
-            # base interpreter.
-            node = Path(calib).absolute()
-            for _ in range(5):                    # itself + ≤4 ancestors
-                venv = node / ".venv"
-                if (venv / "pyvenv.cfg").is_file():
-                    python = resolve_python_interpreter(str(venv))
-                    if python and python not in seen:
-                        seen.add(python)
-                        out.append({
-                            "name": ".venv · " + str(proj.get("name") or node.name),
-                            "path": str(venv),
-                            "python": python,
-                            "kind": "uv-venv",
-                            "project": proj.get("name"),
-                        })
-                    break
-                if node.parent == node:
-                    break
-                node = node.parent
-        except OSError:
-            continue
+        found = project_venv((proj.get("calibration_library") or {}).get("native"))
+        if found and found[1] not in seen:
+            venv, python = found
+            seen.add(python)
+            out.append({
+                "name": ".venv · " + str(proj.get("name") or venv.parent.name),
+                "path": str(venv),
+                "python": python,
+                "kind": "uv-venv",
+                "project": proj.get("name"),
+            })
     return out
+
+
+def project_venv(calib_folder: str | None) -> tuple[Path, str] | None:
+    """The ``.venv`` of the repo holding *calib_folder* (a project's
+    ``calibration_library.folder``): the folder itself + ≤4 ancestors are
+    searched for ``.venv/pyvenv.cfg``; the nearest one wins. Returns
+    ``(venv_folder, interpreter)`` or None. A few stats, never raises,
+    READ-ONLY."""
+    if not calib_folder:
+        return None
+    try:
+        # QA generate-r2-29: a qualibrate folder can be drive-less rooted
+        # (``\work\...``); the stat below already resolves it against
+        # the current drive, so spell that drive out — the row's python
+        # then equals what resolve_python_interpreter returns for the
+        # same folder typed with its drive (the Custom path), and a row
+        # click never persists a drive-relative interpreter. absolute(),
+        # not resolve(): a POSIX .venv/bin/python is a symlink to the
+        # base interpreter.
+        node = Path(calib_folder).absolute()
+        for _ in range(5):                    # itself + ≤4 ancestors
+            venv = node / ".venv"
+            if (venv / "pyvenv.cfg").is_file():
+                python = resolve_python_interpreter(str(venv))
+                return (venv, python) if python else None
+            if node.parent == node:
+                return None
+            node = node.parent
+    except OSError:
+        return None
+    return None
 
 
 def _envs_from_environments_txt() -> list[Path]:

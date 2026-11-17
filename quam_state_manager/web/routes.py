@@ -8126,16 +8126,29 @@ def landing_projects():
 
 def _project_env_views(names) -> dict:
     """``{project: project_env.view(...)}`` -- what each card's env row says.
-    Reads the memory file and stats each env: no discovery, no probe."""
+    Reads the memory file and stats each env, no probe. A project with no
+    remembered env also gets its own ``.venv`` looked up (a few stats beside
+    its calibration folder) -- the env a uv user would pick for it."""
     from quam_state_manager.core import project_env
     inst = current_app.instance_path
     try:
         selected = config_generator.get_selected_env(inst)
     except Exception:  # noqa: BLE001
         selected = None
+    calib = None                      # {project: calibration folder}, lazily
     out = {}
     for n in names:
-        v = project_env.view(inst, n, selected)
+        own = None
+        if not project_env.remembered(inst, n):
+            if calib is None:
+                try:
+                    calib = {p["name"]: (p.get("calibration_library") or {}).get("native")
+                             for p in qualibrate_config.list_projects().get("projects") or []}
+                except Exception:  # noqa: BLE001 -- a suggestion never breaks a card
+                    calib = {}
+            found = config_generator.project_venv(calib.get(n))
+            own = found[1] if found else None
+        v = project_env.view(inst, n, selected, own=own)
         # a stable DOM id per project (a name may hold any character): the
         # rows a sync changes are swapped by it, out of band
         v["dom_id"] = "lenv-" + hashlib.sha1(n.encode("utf-8")).hexdigest()[:12]
@@ -9449,12 +9462,23 @@ def qualibrate_open_project():
                                message=f"Unknown qualibrate project: {name!r}",
                                level="error"), 404
     state = proj["state_path"]
-    if not state["native"] or not state["exists"]:
+    if not state["native"]:
         return render_template(
             "_status.html",
-            message=(f"Project {name!r}: its state_path "
-                     f"({state['raw'] or '(empty)'}) does not exist — fix it "
-                     "in qualibrate first (see the Doctor panel)."),
+            message=(f"Project {name!r} has no state_path — set [quam] "
+                     "state_path in its qualibrate config first (see the "
+                     "Doctor panel)."),
+            level="error"), 409
+    if not state["exists"]:
+        # a new project's state folder usually does not exist YET: the
+        # usual first step after configuring qualibrate is building it
+        return render_template(
+            "_status.html",
+            message=(f"Project {name!r}: no QUAM state at {state['native']} "
+                     "yet. Build one first -- Generate Config here, or your "
+                     "own wiring / populate scripts -- then open the project "
+                     "again. If the state lives elsewhere, fix [quam] "
+                     "state_path in qualibrate (see the Doctor panel)."),
             level="error"), 409
 
     # Customer feedback 2026-09-30: a PROJECT opens only with an env the user

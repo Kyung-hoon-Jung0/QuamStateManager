@@ -196,16 +196,23 @@ def label(python: str | None) -> str:
     return env_dir.name or str(p)
 
 
-def view(inst, project: str | None, selected: str | None) -> dict:
+def view(inst, project: str | None, selected: str | None,
+         own: str | None = None) -> dict:
     """What a project card / the env badge shows for *project*:
     ``{"python", "label", "state", "exists"}`` with state ``remembered`` (the
     project was synced), ``suggested`` (never synced; the offered env),
-    ``none`` (nothing to offer)."""
+    ``none`` (nothing to offer).
+
+    *own* is the interpreter of the project's own ``.venv`` (uv / venv next
+    to its calibration folder, ``config_generator.project_venv``): a project
+    never synced is offered that one first -- a uv user keeps one venv per
+    calibration repo, and another project's env is the wrong guess. It is
+    still only a suggestion: opening needs the user's confirm."""
     rem = remembered(inst, project)
     if rem:
         python, state = rem, "remembered"
     else:
-        python = suggestion(inst, fallback=selected)
+        python = own or suggestion(inst, fallback=selected)
         state = "suggested" if python else "none"
     return {"python": python, "label": label(python), "state": state,
             "exists": bool(python) and os.path.isfile(python)}
