@@ -164,9 +164,15 @@
             } else el.setAttribute('aria-pressed', on ? 'true' : 'false');
         });
     }
-    // A button option: Left / Right / Home / End only move focus to another option
-    // of the same control; Enter or Space presses it as before, so an arrow key never
-    // changes a selection (and never writes what a press of that option would write).
+    // A button option: Left / Right / Home / End move to another option of the same
+    // control and press it there (automatic activation, as the link options do), so an
+    // arrow key fires the same click a mouse press fires. A command option (no
+    // aria-pressed) and a group marked data-seg-manual (its press does more than switch
+    // a view) only take focus; Enter or Space presses them.
+    function segAuto(option) {
+        var group = option.closest('.ui-segmented');
+        return option.hasAttribute('aria-pressed') && !!group && !group.hasAttribute('data-seg-manual');
+    }
     function segButtons(option) {
         var group = option.closest('.ui-segmented');
         return group ? Array.prototype.filter.call(group.querySelectorAll('button.ui-segmented-opt'), function (b) {
@@ -191,6 +197,7 @@
         if (!next) return;
         e.preventDefault();
         next.focus();
+        if (segAuto(next)) next.click();
     });
     document.addEventListener('keydown', function (e) {
         if (hasMod(e) || e.shiftKey) return;

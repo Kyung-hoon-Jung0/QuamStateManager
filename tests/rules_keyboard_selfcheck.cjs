@@ -119,6 +119,19 @@ function tabbables(w, root) {
   det.open = false; w.key(sum, 'Enter'); ok(det.open === true, 'K9 Enter expands');
   const chips = Array.from(w.dlg().querySelectorAll('.gen-rule-chip'));
   ok(chips.every(c => c.tagName === 'BUTTON' && c.hasAttribute('aria-pressed')), 'K10 chips are buttons with aria-pressed');
+  {
+    // K10b the Select chips are commands: with the kit's segmented key handler loaded an arrow only moves focus
+    w.eval(require('fs').readFileSync(require('path').join(__dirname, '..', 'quam_state_manager', 'web', 'static',
+                                                           'ui-menu.js'), 'utf8'));
+    const was = chips.map(c => c.getAttribute('aria-pressed')).join();
+    const ticked = Array.from(w.dlg().querySelectorAll('input[type=checkbox]')).map(b => b.checked).join();
+    chips[0].focus(); w.key(chips[0], 'ArrowRight');
+    ok(w.document.activeElement === chips[1] && !w.document.querySelector('.gen-rule-menu')
+       && chips.map(c => c.getAttribute('aria-pressed')).join() === was
+       && Array.from(w.dlg().querySelectorAll('input[type=checkbox]')).map(b => b.checked).join() === ticked,
+       'K10b ArrowRight on a Select chip moves focus only: no menu, no re-tick');
+    chips[0].focus();
+  }
   // K11: Esc inside an open menu closes only the menu
   chips[1].click();
   ok(!!w.document.querySelector('.gen-rule-menu'), 'K11 feedline menu open');
