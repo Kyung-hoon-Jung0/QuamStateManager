@@ -9800,6 +9800,31 @@ def _port_owner_map(wiring_root: dict | None) -> dict[str, str]:
     return {k: " + ".join(v) for k, v in out.items()}
 
 
+def _diff_port_owners(srcs: list) -> dict[str, str]:
+    """Port dot-path -> owner label over EVERY compared source's wiring.
+
+    The Diff pane / tree rows name a port's owner the way the Json Tree does
+    (:func:`_port_owner_map`, the one rule). Sources can be wired differently,
+    so the labels of all sources are united in source order: a port that moved
+    from q1 to q2 between two runs names both owners. A source whose
+    pair cannot be read adds nothing (no label, never a failed page).
+    """
+    merged: dict[str, list[str]] = {}
+    for src in srcs:
+        try:
+            pair = _diff_pool_pair(src)
+        except Exception:      # noqa: BLE001 -- a label is never worth a failed page
+            pair = None
+        if not pair:
+            continue
+        for path, text in _port_owner_map(pair[1]).items():
+            owners = merged.setdefault(path, [])
+            for label in text.split(" + "):
+                if label not in owners:
+                    owners.append(label)
+    return {k: " + ".join(v) for k, v in merged.items()}
+
+
 def _state_json_text(store) -> str:
     """``json.dumps(store.state)``, kept in RAM a depth-2 chunk at a time (RAM
     P6).
@@ -38842,6 +38867,7 @@ def diff_view():
     all_rows: list = []
     more = 0
     tree_rows: list = []
+    port_owners: dict = {}
     if src_a is not None and src_b is not None and not error:
         try:
             if tab == "figures":
@@ -38859,6 +38885,8 @@ def diff_view():
             # "never 500 the menu" try because it sat after it.
             if view == "panes" and rows:
                 tree_rows = _diff_tree_rows(rows, total_rows=all_rows)
+            if tab == "state" and view != "list":
+                port_owners = _diff_port_owners(srcs)
         except Exception as exc:      # noqa: BLE001 — never 500 the menu
             logger.warning("diff build failed: %s", exc, exc_info=True)
             error = "Could not build this diff."
@@ -38885,6 +38913,7 @@ def diff_view():
         **_ctx(page="diff", a_ref=a_ref, b_ref=b_ref, c_ref=c_ref, tab=tab, view=view,
                d_ref=d_ref, e_ref=e_ref, srcs=srcs, slot_refs=slot_refs, base=base,
                slots=_DIFF_SLOTS, slot_srcs=slot_srcs, tree_rows=tree_rows,
+               port_owners=port_owners,
                src_a=src_a, src_b=src_b, src_c=src_c, payload=payload, error=error,
                rows=rows, more=more, next_rows=limit + _DIFF_LIST_PAGE,
                q=q, all_rows=limit + more,

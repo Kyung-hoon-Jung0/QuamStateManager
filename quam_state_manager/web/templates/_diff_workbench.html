@@ -307,7 +307,7 @@
         </span>
       </div>
       <div id="diff-tree" class="json-tree"></div>
-      <script id="diff-tree-payload" type="application/json">{{ {'a': payload.tree_a, 'b': payload.tree_b} | tojson }}</script>
+      <script id="diff-tree-payload" type="application/json">{{ {'a': payload.tree_a, 'b': payload.tree_b, 'owners': port_owners or {}} | tojson }}</script>
     {% endif %}
   {% endif %}
 </div>
@@ -339,6 +339,9 @@
     // A is the primary (before) side and B the reference (after), so every row
     // reads "A value → B value" like every other before→after surface.
     // union:true is what makes a key only ONE side has render at all.
+    // Port owner labels (the Json Tree's own chip) come from every compared
+    // source's wiring; reset per render so another page's map never leaks in.
+    window._treePortOwners = payload.owners || null;
     window.renderJsonTree('diff-tree', payload.a, {
         refData: payload.b, union: true, valueClick: 'diff', defaultDepth: 99,
     });
