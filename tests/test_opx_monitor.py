@@ -1207,7 +1207,8 @@ def test_round5_display_formatting(env):
     html = page(app, 'live')
     assert 'limit 50 °C' in html and '50.0 °C' not in html
     assert '60.0 °C' in html
-    assert re.search(r'Idle minutes <input\b[^>]*name="idle_minutes"[^>]*value="120"', page(app, 'settings'))
+    assert re.search(r'Idle minutes</label></div>\s*<input class="ui-input ui-input--num"[^>]*name="idle_minutes"'
+                     r'[^>]*value="120"', page(app, 'settings'))
     assert re.search(r'\(UTC[+-]\d{1,2}(?::\d{2})?\)$', om.local_time('2026-11-02T20:25:40Z'))
     badge = app.test_client().get('/opx-monitor/alarm-badge').get_data(as_text=True)
     assert 'limit 50 °C' in badge and '50.0 °C' not in badge
@@ -1337,8 +1338,8 @@ def test_stress_r4_outage_red(env):
 def test_stress_r5_settings(env):
     app, m, *_ = env
     html = page(app,'settings')
-    assert '<input name="python" list=' in html
-    assert '<input name="port"' in html
+    assert '<input class="ui-input ui-input--block" id="ui-opxmon-f-python" name="python" list=' in html
+    assert '<input class="ui-input ui-input--num" id="ui-opxmon-f-port" name="port"' in html
 
 
 def test_stress_r6_returning_viewer_checks(env):
