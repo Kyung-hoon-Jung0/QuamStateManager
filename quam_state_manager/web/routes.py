@@ -21422,6 +21422,18 @@ _TREND_2Q_MAX_CHIPS = _TRENDS_MAX_FAMILIES - 1
 _TREND_2Q_KNOB_SLOTS = 3
 
 
+def _trend_2q_default(pair_chips: list[dict]) -> str | None:
+    """The 2Q family a fresh Trends open charts for this badge row: the resolved
+    gate fidelity (the Overview tile's number) when the row offers it beside the
+    raw InterleavedRB family, else that raw family; None when the row has no
+    InterleavedRB family. The one rule for a bare request and for the empty
+    template a viewer asked for before the chip recorded any 2Q gate fidelity."""
+    paths = [c.get("path") for c in pair_chips]
+    if _TREND_IRB not in paths:
+        return None
+    return _TREND_2Q_RESOLVED if _TREND_2Q_RESOLVED in paths else _TREND_IRB
+
+
 @functools.lru_cache(maxsize=16384)   # RAM P1a: a pure function of the tail
 def _trend_is_gate_fidelity(tail: str) -> bool:
     """Is this family THE 2Q gate fidelity, or a Clifford / state / decay number?
@@ -22057,6 +22069,21 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
         if len(pair_chips) > _TREND_2Q_MAX_CHIPS:
             pair_chips_more += len(pair_chips) - _TREND_2Q_MAX_CHIPS
             pair_chips = pair_chips[:_TREND_2Q_MAX_CHIPS]
+    # The empty template asks a question the chip may have answered since the
+    # selection was made (a viewer opened before any 2Q event, or its replayed
+    # query): once the row no longer offers the template, it stands for what a
+    # fresh open charts, resolved by the same rule, in its place in the order.
+    if (_TREND_2Q_FIDELITY_TEMPLATE in extras
+            and not any(c["path"] == _TREND_2Q_FIDELITY_TEMPLATE for c in pair_chips)):
+        default_2q = _trend_2q_default(pair_chips)
+        if default_2q:
+            i = extras.index(_TREND_2Q_FIDELITY_TEMPLATE)
+            if default_2q in extras:
+                del extras[i]
+            else:
+                extras[i] = default_2q
+            for c in pair_chips:
+                c["active"] = c["path"] in extras
     # ``?path=`` is ALSO what the search box shows: the badges ride ``?paths=``,
     # so a badge press can never evict what the user typed (and vice versa).
     extra = (request.args.get("path") or "").strip()
@@ -22080,9 +22107,9 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
         sel = [m for m in preferred if m in have][:3] or preferred[:3]
         # the default 2Q trend is the RESOLVED gate fidelity (what the
         # Overview tile shows), where the raw IRB family used to be
-        if any(c["path"] == _TREND_IRB for c in pair_chips):
-            extras.append(_TREND_2Q_RESOLVED if any(
-                c["path"] == _TREND_2Q_RESOLVED for c in pair_chips) else _TREND_IRB)
+        default_2q = _trend_2q_default(pair_chips)
+        if default_2q:
+            extras.append(default_2q)
             for c in pair_chips:
                 c["active"] = c["path"] in extras
     sel = [m for m in sel if m in curated]

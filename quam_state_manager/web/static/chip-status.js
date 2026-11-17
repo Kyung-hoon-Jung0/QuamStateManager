@@ -2751,12 +2751,17 @@ window.ChipStatus.mount = function (opts) {
             if (fidRows) {
                 html += '<div class="topo-popup-section">'
                      + '<div class="topo-popup-section-title">Gate fidelity</div>' + fidRows;
-                if (typeof e.cz_fidelity_updated_at === 'number') {
+                // The time of the number the 2Q badge shows, read where the
+                // badge title reads it (_edge2QAt: that key's own time), never
+                // the pair's cz_fidelity time, which may be another key's.
+                var tq = _edge2QAt(e);
+                if (typeof tq.ms === 'number') {
                     html += '<div class="topo-popup-recency"><span class="topo-recency '
-                         + _ageClass(e.cz_fidelity_updated_at) + '">measured '
-                         + _ageLabel(e.cz_fidelity_updated_at) + '</span></div>';
+                         + _ageClass(tq.ms) + '">' + _esc(_edge2QLabel()) + ' measured '
+                         + _ageLabel(tq.ms) + '</span></div>';
                 } else {
-                    html += '<div class="topo-popup-recency">age unknown</div>';
+                    html += '<div class="topo-popup-recency">age unknown'
+                         + (tq.leaf ? ': no time recorded at ' + _esc(tq.leaf) : '') + '</div>';
                 }
                 // Which run set the number: only when the run recorded its own
                 // id beside that very metric (never a neighbouring metric's run).

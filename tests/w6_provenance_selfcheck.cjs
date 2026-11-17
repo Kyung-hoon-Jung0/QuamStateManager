@@ -15,6 +15,7 @@ const win = new JSDOM('<body><div id="anchor"></div></body>', {runScripts:'outsi
 win.Function(`
  var activePopup, _esc = String, closePopup = function(){}, pct = String;
  var positionPopup = function(p){document.body.appendChild(p)}, _ageClass=String, _ageLabel=String;
+ var _edge2QAt = function(){return {ms:null, leaf:null}}, _edge2QLabel = function(){return ''};
  window.TopoGraph = {closeDetails:function(){}};
  ${fn('openPairPopup')}
  window.openPairPopup=openPairPopup;

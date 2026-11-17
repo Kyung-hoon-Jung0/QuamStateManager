@@ -284,3 +284,32 @@ def test_a_wildcard_family_beside_one_variant_names_what_it_spans(irb_client):
     assert labels["macros.*.fidelity.InterleavedRB"].endswith("all variants"), labels
     assert labels["macros.cz_SNZ.fidelity.InterleavedRB"].endswith("cz_SNZ"), labels
     assert "· *" not in body
+
+
+TEMPLATE = "qubit_pairs.*.gate_fidelity"
+
+
+def test_a_selection_made_before_any_2q_event_resolves_like_a_fresh_open(irb_client):
+    """A viewer that pressed the empty 2Q template before the chip recorded any
+    gate fidelity asks for it again (its reload, its replayed query) once IRB
+    events exist: it gets what a fresh open charts, the resolved family, and
+    the badge for it pressed, never the empty template card."""
+    import re
+    body = irb_client.get("/topology/trends?metrics=&paths=" + TEMPLATE).get_data(as_text=True)
+    assert "Nothing recorded for <code>" + TEMPLATE not in body
+    assert any(c["metric"] == "gate_fidelity_resolved" and c["series"] for c in _charts(body))
+    assert re.search('data-trend-path="' + re.escape(RESOLVED) + '"[^>]*aria-pressed="true"', body)
+    fresh = irb_client.get("/topology/trends").get_data(as_text=True)
+    assert ({c["metric"] for c in _charts(body) if c.get("kind") != "qubit"}
+            == {c["metric"] for c in _charts(fresh) if c.get("kind") != "qubit"})
+    # already charted: the template folds into it, one chart
+    both = irb_client.get("/topology/trends?metrics=&paths=" + RESOLVED + "," + TEMPLATE).get_data(as_text=True)
+    assert [c["metric"] for c in _charts(both)].count("gate_fidelity_resolved") == 1
+
+
+def test_the_template_stays_honest_on_a_chip_with_no_gate_fidelity(tmp_path):
+    c = _hot_cold_chip(tmp_path, "nogate", {"macros.cz.phase_shift_target": .2},
+                       {"mutual_flux_bias.0": .3}, steps=2)
+    body = c.get("/topology/trends?metrics=&paths=" + TEMPLATE).get_data(as_text=True)
+    assert "Nothing recorded for <code>" + TEMPLATE + "</code>" in body
+    assert not any(ch["metric"] == "gate_fidelity_resolved" for ch in _charts(body))
