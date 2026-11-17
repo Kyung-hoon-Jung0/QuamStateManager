@@ -112,7 +112,7 @@ def test_a_lab_twpa_chip_loads_and_every_surface_renders(tmp_path):
     assert store.merged["twpa_ext"]["__class__"] == LAB_TWPA
     app, c = _app(tmp_path / "inst")
     assert c.post("/load", data={"folder": str(chip)}).status_code in (200, 302)
-    for url in ("/", "/explorer", "/qubits", "/bulk", "/topology", "/instrument",
+    for url in ("/topology?view=overview", "/explorer", "/qubits", "/bulk", "/topology", "/instrument",
                 "/diagnostics", "/pulses", "/regenerate"):
         r = c.get(url)
         assert r.status_code == 200, (url, r.status_code)

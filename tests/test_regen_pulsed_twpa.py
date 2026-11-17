@@ -141,7 +141,7 @@ def test_a_pulsed_twpa_chip_loads_renders_and_is_untouched_on_disk(tmp_path):
     assert store.merged["extras"][PUMP_FLAG] is True
     app, c = _app(tmp_path / "inst")
     assert c.post("/load", data={"folder": str(chip)}).status_code in (200, 302)
-    for url in ("/", "/explorer", "/instrument", "/pulses", "/diagnostics", "/regenerate", "/bulk"):
+    for url in ("/topology?view=overview", "/explorer", "/instrument", "/pulses", "/diagnostics", "/regenerate", "/bulk"):
         r = c.get(url)
         assert r.status_code == 200, (url, r.status_code)
     after = json.loads((chip / "state.json").read_text(encoding="utf-8"))

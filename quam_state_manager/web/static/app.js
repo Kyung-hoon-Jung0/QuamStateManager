@@ -862,6 +862,8 @@ function _askLazyGroup(g) {
     var vals = {};
     try { vals = JSON.parse(g.getAttribute('hx-vals') || '{}'); } catch (e2) {}
     g.__lazyAsked = true;
+    var hintText = g.querySelector('.tree-lazy-hint small');
+    if (hintText) hintText.textContent = 'loading…';
     var p = window.htmx.ajax('GET', url,
                              { source: g, target: box, swap: 'innerHTML', values: vals });
     var settle = function () {
@@ -880,7 +882,12 @@ window._askLazyGroup = _askLazyGroup;
 document.addEventListener('htmx:afterRequest', function (evt) {
     var g = evt.target;
     if (!g || !g.matches || !g.matches('details[data-lazy-group]')) return;
-    if (g.querySelector('.tree-lazy-hint')) g.__lazyAsked = false;
+    var hint = g.querySelector('.tree-lazy-hint');
+    if (!hint) return;
+    g.__lazyAsked = false;
+    // Say so in the group itself: a failed ask must not read "loading..." forever.
+    var small = hint.querySelector('small');
+    if (small) small.textContent = 'could not load: close and reopen to try again';
 });
 
 document.addEventListener('htmx:afterSwap', function(evt) {
