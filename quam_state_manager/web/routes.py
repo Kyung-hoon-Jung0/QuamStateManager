@@ -2197,7 +2197,8 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         except Exception:  # noqa: BLE001 — a hint never blocks activation
             pass
         _acquire_project_scope(current)
-        _select_scope_env(current)          # w9/labwarm
+        _set_scope_code_root(current)          # before the env warm
+        _select_scope_env(current)              # w9/labwarm
         # docs/20 v2: re-evaluate the first-open chip-name banner on every
         # activation (origin can flip live→archive; a staged name dismisses),
         # and adopt the chip's declared data folder(s) as workspace roots.
@@ -2286,6 +2287,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # chip without its memo); every activation path converges on the
         # reverse index, so a lost memo self-heals.
         _acquire_project_scope(ctx)
+        _set_scope_code_root(ctx)          # before the env warm
         _select_scope_env(ctx)              # w9/labwarm
         _maybe_identity_confirm(ctx)
         _maybe_chip_name_prompt(ctx)
@@ -2967,7 +2969,8 @@ def _warm_state_schema_async(store, inst, live_folder=None) -> None:
             return                                # already warm — zero cost
     except Exception:  # noqa: BLE001 — warm-up must never break activation
         return
-    key = python_path + "|" + ",".join(sorted(classes))
+    key = (python_path + "|" + ",".join(sorted(classes))
+           + "|" + (config_generator.lab_code_path(python_path) or ""))
     with _schema_warm_lock:
         if key in _schema_warm_inflight:
             return
@@ -9609,6 +9612,29 @@ def _select_scope_env(ctx) -> None:
             _bind_to_selected_env(ctx, inst)
     except Exception:  # noqa: BLE001 -- an env never blocks opening a chip
         logger.warning("scope env selection failed for %s", name, exc_info=True)
+
+
+def _set_scope_code_root(ctx) -> None:
+    """The chip being activated decides which lab code every probe imports:
+    its project's code root (the folder holding ``quam_config``) goes first
+    on PYTHONPATH for every lab-code child, as it already does for a node
+    run -- otherwise an env with another checkout installed reports the
+    chip's own classes as missing. A change re-warms the chip's schema (the
+    old manifest was probed under the other tree and no longer counts)."""
+    if not ctx:
+        return
+    root = None
+    if ctx.get("qualibrate_project"):
+        try:
+            root = config_generator.project_code_root(_calibrations_folder(ctx))
+        except Exception:  # noqa: BLE001 -- unknown root: inherit, never block
+            root = None
+    if config_generator.set_active_project_root(root) and ctx.get("store") is not None:
+        try:
+            _warm_state_schema_async(ctx.get("store"), current_app.instance_path,
+                                     live_folder=ctx.get("path"))
+        except Exception:  # noqa: BLE001 -- a warm never blocks opening a chip
+            logger.debug("schema re-warm after a code-root change failed", exc_info=True)
 
 
 def _bind_to_selected_env(ctx, inst) -> None:
@@ -27321,7 +27347,8 @@ def _kick_env_reprobe(store, inst, live_folder, reason=None) -> None:
         return
     with store._lock:
         classes = state_env_schema.harvest_classes(store.state)
-    key = python_path + "|" + ",".join(sorted(classes))
+    key = (python_path + "|" + ",".join(sorted(classes))
+           + "|" + (config_generator.lab_code_path(python_path) or ""))
     mods_now = tuple(sorted(state_env_schema.load_pulse_modules(inst)))
     with _schema_warm_lock:
         if key in _schema_warm_inflight:
@@ -52347,7 +52374,8 @@ def diagnostics_env_probe():
     from quam_state_manager.core import state_env_schema
     with store._lock:
         classes = state_env_schema.harvest_classes(store.state)
-    key = python_path + "|" + ",".join(sorted(classes))
+    key = (python_path + "|" + ",".join(sorted(classes))
+           + "|" + (config_generator.lab_code_path(python_path) or ""))
     with _schema_warm_lock:
         already = key in _schema_warm_inflight
         if not already:

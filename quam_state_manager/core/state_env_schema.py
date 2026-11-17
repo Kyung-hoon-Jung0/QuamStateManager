@@ -230,8 +230,8 @@ def save_pulse_modules(instance_path, modules: list[str]) -> list[str]:
 def _lab_code_dir(python_path):
     """The lab code folder the probe of *python_path* runs with: a cache entry
     probed under another folder (or none) imported other lab classes."""
-    from quam_state_manager.core.config_generator import get_lab_code_dir
-    return get_lab_code_dir(python_path)
+    from quam_state_manager.core.config_generator import lab_code_path
+    return lab_code_path(python_path)
 
 
 def _entry_fresh(entry: dict, modules: list[str]) -> bool:
@@ -622,6 +622,8 @@ def manifest_for_store(store, python_path: str | None, instance_path=None, *,
         sig = _env_signature(python_path)
         if sig is None or entry.get("signature") != sig:
             return None                                  # pip install / env gone
+        if entry.get("lab_code_dir") != _lab_code_dir(python_path):
+            return None                                  # probed under another code tree
         classes = entry.get("classes") or {}
         if not set(requested) <= set(classes):
             # a class the probe has not covered yet may be in the

@@ -166,8 +166,8 @@ def _kill_tree(proc):
 
 def _lab_dir(python_path):
     try:
-        from quam_state_manager.core.config_generator import get_lab_code_dir
-        return get_lab_code_dir(python_path)
+        from quam_state_manager.core.config_generator import lab_code_path
+        return lab_code_path(python_path)
     except Exception:  # noqa: BLE001
         return None
 

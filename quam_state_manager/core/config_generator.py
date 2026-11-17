@@ -1259,7 +1259,7 @@ def _env_signature(python_path: str) -> str | None:
     # A lab code folder changes what this interpreter imports, so every cache
     # keyed on this signature (catalogue, lab worker, replot) misses when it moves.
     # Absent folder: the signature is unchanged from before the setting existed.
-    lab = get_lab_code_dir(python_path)
+    lab = lab_code_path(python_path)
     if lab:
         parts.append("lab=" + os.path.normcase(lab))
     return "|".join(parts)
@@ -1459,11 +1459,46 @@ def set_lab_code_dir(instance_path, python_path: str, folder: str | None) -> Non
         safe_io.atomic_write_json(path, data)
 
 
+# The code root of the QUALIBRATE project whose chip is active (the folder
+# holding its quam_config / calibration_utils, :func:`project_code_root`).
+# Set on every chip activation; every lab-code child of any interpreter puts
+# it FIRST, so a probe imports the same tree a node run of that project
+# imports -- an env with ANOTHER checkout installed (editable) or on its
+# inherited PYTHONPATH must not decide which classes the chip "has".
+_PROJECT_ROOT: dict = {"root": None}
+
+
+def set_active_project_root(root: str | None) -> bool:
+    """Record the active project's code root (None: no project / none found).
+    True when it changed (callers re-warm what was probed under the old one)."""
+    root = str(root) if root else None
+    old = _PROJECT_ROOT["root"]
+    _PROJECT_ROOT["root"] = root
+    return (os.path.normcase(old) if old else None) != (os.path.normcase(root) if root else None)
+
+
+def active_project_root() -> str | None:
+    return _PROJECT_ROOT["root"]
+
+
+def lab_code_path(python_path) -> str | None:
+    """The folders a lab-code child of *python_path* gets ahead of the
+    inherited PYTHONPATH, joined: the active project's code root, then the
+    lab code folder stored for this interpreter (each once). None when
+    neither is set. Also the cache key of everything probed through them."""
+    parts = []
+    for e in (active_project_root(), get_lab_code_dir(python_path)):
+        if e and not any(_same_dir(e, x) for x in parts):
+            parts.append(e)
+    return os.pathsep.join(parts) or None
+
+
 def effective_pythonpath(python_path, folder: str | None = None) -> str | None:
-    """The PYTHONPATH a subprocess of *python_path* runs with: the lab code
-    folder (or *folder*, when given) first, then this process's own."""
+    """The PYTHONPATH a subprocess of *python_path* runs with: the active
+    project's code root and the lab code folder (or *folder*, when given)
+    first, then this process's own."""
     base = os.environ.get("PYTHONPATH")
-    lab = folder if folder is not None else get_lab_code_dir(python_path)
+    lab = folder if folder is not None else lab_code_path(python_path)
     if not lab:
         return base
     return lab + (os.pathsep + base if base else "")
