@@ -223,6 +223,9 @@
     --ui-fold-mark: 9px;        /* the drawn chevron's arm */
     --ui-fold-nudge: 4px;       /* optical centring of a rotated square */
     --ui-fold-stroke: 2px;
+    /* the panel expanded to the very top (.ui-split-top) */
+    --ui-split-arrows-inset: 2px;     /* the bar's arrows, stacked in the panel's top-right corner */
+    --ui-split-head-room: calc(var(--inspector-toggle-w) + 2 * var(--ui-split-arrows-inset)); /* kept free for them */
     /* OPX monitor: preserve the reviewed geometry and theme aliases. */
     --ui-opxmon-muted: var(--pico-muted-color);
     --ui-opxmon-space-lg: 1rem;
@@ -999,6 +1002,21 @@
 .ui-pane-sliver { overflow-x: hidden; }
 .ui-pane-sliver * { visibility: hidden; }
 .ui-pane-sliver h1, .ui-pane-sliver h1 *, .ui-pane-sliver h2, .ui-pane-sliver h2 * { visibility: visible; }
+/* The panel expanded to the very top (base.html markTop): the page above it is
+   less than a bar tall, so it gives the panel all of its height. Without this the
+   page's padding (2 x --table-pane-pad-v) and the 12 px bar stayed as a strip
+   between the top bar and the panel's head row. The bar then lies over the head
+   row's top edge (still the drag handle) and its arrows sit in room the head row
+   keeps free on its right, stacked; the page-heading toggle has no heading to fold. */
+.ui-split-top > #table-pane { padding-top: 0; padding-bottom: 0; max-height: 0; overflow: hidden; flex-grow: 0; }
+.ui-split-top > .gutter { margin-bottom: calc(-1 * var(--split-gutter-size)); z-index: 6; background: transparent; }
+.ui-split-top > .gutter > .gutter-controls {
+    top: var(--ui-split-arrows-inset); right: var(--ui-split-arrows-inset); transform: none;
+    flex-direction: column; gap: var(--ui-split-arrows-inset);
+}
+.ui-split-top > #inspector-pane { flex-grow: 1; }
+.ui-split-top > #inspector-pane .inspector-header { padding-right: var(--ui-split-head-room); }
+.ui-split-top > .pageheader-toggle { visibility: hidden; }
 .ui-ds-tags { margin: 0; gap: var(--ui-gap-1); }
 .ui-note-open { flex-basis: 100%; order: 9; }
 
