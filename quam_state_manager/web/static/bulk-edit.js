@@ -4761,47 +4761,6 @@
     });
 })();
 
-/* P1-7 (UX round): the quick-filter chip strip is ONE tab stop (roving
-   tabindex) -- Tab walked ~30 chips to reach the grid. Left / Right / Home /
-   End move inside it; the chip that last had focus is the strip's stop. */
-(function () {
-    function chips(bar) {
-        return Array.prototype.filter.call(bar.querySelectorAll('.bulk-chip'),
-            function (c) { return !c.hidden; });
-    }
-    function rove(bar, active) {
-        chips(bar).forEach(function (c) { c.setAttribute('tabindex', c === active ? '0' : '-1'); });
-    }
-    function barOf(t) {
-        var c = t && t.closest && t.closest('.bulk-chip');
-        return c ? { chip: c, bar: c.closest('#bulk-chipbar') } : null;
-    }
-    document.addEventListener('focusin', function (e) {
-        var o = barOf(e.target);
-        if (o && o.bar) rove(o.bar, o.chip);
-    });
-    document.addEventListener('keydown', function (e) {
-        var o = barOf(e.target);
-        if (!o || !o.bar || e.ctrlKey || e.metaKey || e.altKey) return;
-        var list = chips(o.bar), i = list.indexOf(o.chip), j = -1;
-        if (e.key === 'ArrowRight') j = Math.min(i + 1, list.length - 1);
-        else if (e.key === 'ArrowLeft') j = Math.max(i - 1, 0);
-        else if (e.key === 'Home') j = 0;
-        else if (e.key === 'End') j = list.length - 1;
-        if (j < 0) return;
-        e.preventDefault();
-        rove(o.bar, list[j]);
-        list[j].focus();
-    });
-    function init() {
-        var bar = document.getElementById('bulk-chipbar');
-        if (!bar) return;
-        var list = chips(bar);
-        var stops = list.filter(function (c) { return c.getAttribute('tabindex') !== '-1'; });
-        if (list.length && stops.length !== 1) rove(bar, stops[0] || list[0]);
-    }
-    window._bulkChipRoveInit = init;      // (selfcheck)
-    document.addEventListener('htmx:afterSettle', init);
-    if (document.readyState !== 'loading') init();
-    else document.addEventListener('DOMContentLoaded', init);
-})();
+/* The quick-filter chip strip's one-tab-stop keyboard model (roving
+   tabindex) lives in app.js (window._bulkChipRoveInit): the Json tree's chip
+   strip uses it too, on pages that never load this bundle. */

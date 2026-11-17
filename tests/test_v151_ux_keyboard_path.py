@@ -57,3 +57,22 @@ def test_the_documented_shortcuts_match_what_works():
     assert "<div>Apply all</div>" not in help_
     assert "else the top-bar <b>Apply</b> (same confirm)" in help_
     assert "first matching cell" in help_
+
+
+def test_the_apply_chord_is_listed_as_global():
+    # the Json tree reaches Apply by Ctrl+Enter too, so the help names it in the
+    # Global group, not only under the grid
+    help_ = (_WEB / "templates" / "_help.html").read_text(encoding="utf-8")
+    glob = help_[help_.index('help-sc-group">Global'):help_.index('help-sc-group">Live state edit')]
+    assert "<kbd>Ctrl</kbd>+<kbd>Enter</kbd>" in glob and "<kbd>Cmd</kbd>+<kbd>Enter</kbd>" in glob
+    js = (_WEB / "static" / "app.js").read_text(encoding="utf-8")
+    sheet = js[js.index("['Global', '']"):js.index("['Live state edit (table view)")]
+    assert "['Ctrl+Enter / Cmd+Enter', 'Apply:" in sheet
+
+
+def test_the_chip_roving_is_core_not_the_grid_bundle():
+    # the Json tree page never loads bulk-edit.js
+    js = (_WEB / "static" / "app.js").read_text(encoding="utf-8")
+    bulk = (_WEB / "static" / "bulk-edit.js").read_text(encoding="utf-8")
+    assert "window._bulkChipRoveInit = init;" in js and "c.closest('.bulk-chipbar')" in js
+    assert "_bulkChipRoveInit = " not in bulk
