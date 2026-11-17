@@ -8120,18 +8120,21 @@ def landing_projects():
         "_landing_projects.html",
         listing=listing,
         last_project=_load_session().get("last_project"),
-        env_views=_project_env_views([p["name"] for p in listing.get("projects") or []]),
+        env_views=_project_env_views([p["name"] for p in listing.get("projects") or []],
+                                     listing),
         # docs/263: each project's time zone (one memoized file read)
         tz_views=_project_tz_views(tz_names),
         tz_project=tz_names[0],
     )
 
 
-def _project_env_views(names) -> dict:
+def _project_env_views(names, listing: dict | None = None) -> dict:
     """``{project: project_env.view(...)}`` -- what each card's env row says.
     Reads the memory file and stats each env, no probe. A project with no
     remembered env also gets its own ``.venv`` looked up (a few stats beside
-    its calibration folder) -- the env a uv user would pick for it."""
+    its calibration folder) -- the env a uv user would pick for it.
+    *listing* (a :func:`qualibrate_config.list_projects` result the caller
+    already holds) spares a second listing."""
     from quam_state_manager.core import project_env
     inst = current_app.instance_path
     try:
@@ -8145,8 +8148,9 @@ def _project_env_views(names) -> dict:
         if not project_env.remembered(inst, n):
             if calib is None:
                 try:
+                    src = listing if listing is not None else qualibrate_config.list_projects()
                     calib = {p["name"]: (p.get("calibration_library") or {}).get("native")
-                             for p in qualibrate_config.list_projects().get("projects") or []}
+                             for p in src.get("projects") or []}
                 except Exception:  # noqa: BLE001 -- a suggestion never breaks a card
                     calib = {}
             found = config_generator.project_venv(calib.get(n))
@@ -8176,7 +8180,8 @@ def qualibrate_project_env():
     if not name:
         return render_template("_status.html", message="No project named.",
                                level="error"), 400
-    names = [p["name"] for p in _qualibrate_listing().get("projects") or []]
+    listing = _qualibrate_listing()
+    names = [p["name"] for p in listing.get("projects") or []]
     if name not in names:
         return render_template("_status.html",
                                message=f"Unknown qualibrate project: {name!r}",
@@ -8210,7 +8215,7 @@ def qualibrate_project_env():
             applied = True
     logger.info("project env: %s -> %s (%s%s)", name, python_path, how,
                 ", selected now" if applied else "")
-    views = _project_env_views(names)
+    views = _project_env_views(names, listing)
     row = render_template("_landing_project_env.html", p={"name": name},
                           pe=views[name], env_saved=how)
     # every OTHER card whose row this sync changed: a never-synced project's
@@ -9210,8 +9215,7 @@ def qualibrate_project_config(name: str):
     except OSError:
         raws["overlay"] = ("(no projects/ folder: the root config.toml is "
                            "this whole project)"
-                           if not (cfg_dir / "projects").is_dir()
-                           else "(unreadable)")
+                           if proj.get("implicit") else "(unreadable)")
     try:
         raws["root"] = (cfg_dir / "config.toml").read_text(
             encoding="utf-8", errors="replace")
@@ -9468,7 +9472,7 @@ def qualibrate_open_project():
     if not state["native"]:
         return render_template(
             "_status.html",
-            message=(f"Project {name!r} has no state_path — set [quam] "
+            message=(f"Project {name!r} has no state_path. Set [quam] "
                      "state_path in its qualibrate config first (see the "
                      "Doctor panel)."),
             level="error"), 409
@@ -9478,8 +9482,8 @@ def qualibrate_open_project():
         return render_template(
             "_status.html",
             message=(f"Project {name!r}: no QUAM state at {state['native']} "
-                     "yet. Build one first -- Generate Config here, or your "
-                     "own wiring / populate scripts -- then open the project "
+                     "yet. Build one first (Generate Config here, or your "
+                     "own wiring / populate scripts), then open the project "
                      "again. If the state lives elsewhere, fix [quam] "
                      "state_path in qualibrate (see the Doctor panel)."),
             level="error"), 409

@@ -534,3 +534,17 @@ class TestUvFirstProject:
         body = r.get_data(as_text=True)
         assert "no QUAM state at" in body and "yet" in body
         assert "Generate Config" in body
+
+    def test_the_card_lists_the_projects_once(self, uv_first, monkeypatch):
+        calls = []
+        real = qc.list_projects
+        monkeypatch.setattr(qc, "list_projects",
+                            lambda *a, **k: calls.append(1) or real(*a, **k))
+        uv_first["c"].get("/landing/projects")
+        assert len(calls) == 1
+
+    def test_the_implicit_projects_popup_names_the_root_as_the_project(self, uv_first):
+        (uv_first["tmp"] / "qcfg" / "projects").mkdir()     # empty: still implicit
+        body = uv_first["c"].get("/qualibrate/project-config/first").get_data(as_text=True)
+        assert "the root config.toml is this whole project" in body
+        assert "(unreadable)" not in body

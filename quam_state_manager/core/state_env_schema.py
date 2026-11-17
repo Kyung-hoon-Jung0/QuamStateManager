@@ -228,8 +228,9 @@ def save_pulse_modules(instance_path, modules: list[str]) -> list[str]:
 
 
 def _lab_code_dir(python_path):
-    """The lab code folder the probe of *python_path* runs with: a cache entry
-    probed under another folder (or none) imported other lab classes."""
+    """The folders the probe of *python_path* puts first (the active
+    project's code root, then the lab code folder): a cache entry probed under
+    other folders (or none) imported other lab classes."""
     from quam_state_manager.core.config_generator import lab_code_path
     return lab_code_path(python_path)
 

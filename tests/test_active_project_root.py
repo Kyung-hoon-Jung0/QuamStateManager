@@ -135,3 +135,18 @@ def test_explicit_open_of_a_shared_state_sets_the_opened_projects_root(tmp_path,
     assert r.status_code < 400, r.get_data(as_text=True)
     assert os.path.normcase(cg.active_project_root() or "") == \
         os.path.normcase(str(roots["beta"]))
+
+
+def test_a_node_of_another_project_never_gets_the_active_root(tmp_path, monkeypatch):
+    """child_pythonpath with an explicit project root (a node run) carries
+    that project's tree only: the active chip's root belongs to another
+    project and must not be on the node's path at all."""
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    monkeypatch.setattr(cg, "get_lab_code_dir", lambda py: None)
+    active, node = tmp_path / "active", tmp_path / "node"
+    active.mkdir()
+    node.mkdir()
+    cg.set_active_project_root(str(active))
+    assert cg.child_pythonpath("py", str(node)).split(os.pathsep) == [str(node)]
+    assert cg.child_pythonpath("py", str(active)).split(os.pathsep) == [str(active)]
+    assert cg.child_pythonpath("py").split(os.pathsep) == [str(active)]
