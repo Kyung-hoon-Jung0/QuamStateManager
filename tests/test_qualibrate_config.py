@@ -325,6 +325,62 @@ class TestListProjects:
         assert listing["projects"] == []
 
 
+class TestFlatConfig:
+    """A single config.toml with no projects/ folder (a per-repo config picked
+    with QUALIBRATE_CONFIG_FILE, common with uv venvs) is ONE implicit project."""
+
+    def _flat(self, tmp_path, project_line=""):
+        state = tmp_path / "state"; state.mkdir()
+        data = tmp_path / "data"; data.mkdir()
+        cfg = tmp_path / "qcfg"
+        _write(cfg / "config.toml",
+               f'[qualibrate]\nversion = 6\n{project_line}'
+               f'[qualibrate.storage]\ntype = "local_storage"\n'
+               f'location = "{data.as_posix()}"\n'
+               f'[quam]\nstate_path = "{state.as_posix()}"\nversion = 3\n')
+        return cfg, state, data
+
+    def test_listed_as_one_active_project(self, tmp_path):
+        cfg, state, data = self._flat(tmp_path)
+        listing = qc.list_projects(cfg)
+        assert [p["name"] for p in listing["projects"]] == ["qcfg"]
+        p = listing["projects"][0]
+        assert p["implicit"] is True and p["active"] is True
+        assert listing["active"] == "qcfg"
+        assert Path(p["state_path"]["native"]) == state
+        assert p["state_path"]["exists"] is True
+        assert Path(p["storage"]["native"]) == data
+        # nothing written: still no projects/ folder
+        assert not (cfg / "projects").exists()
+
+    def test_root_project_key_names_it(self, tmp_path):
+        cfg, _, _ = self._flat(tmp_path, 'project = "lab"\n')
+        assert [p["name"] for p in qc.list_projects(cfg)["projects"]] == ["lab"]
+        assert qc.project_state_paths(cfg)["active"] == "lab"
+
+    def test_state_index_and_tray_agree(self, tmp_path):
+        cfg, state, _ = self._flat(tmp_path)
+        idx = qc.project_state_paths(cfg)
+        assert idx["active"] == "qcfg"
+        assert [(n, Path(s)) for n, s in idx["projects"]] == [("qcfg", state)]
+        tray = qc.tray_status(cfg)
+        assert tray["active"] == "qcfg" and tray["project_exists"] is True
+        assert tray["state_exists"] is True
+
+    def test_config_without_paths_lists_nothing(self, tmp_path):
+        cfg = tmp_path / "qcfg"
+        _write(cfg / "config.toml", "[qualibrate]\nversion = 6\n")
+        assert qc.list_projects(cfg)["projects"] == []
+        assert qc.project_state_paths(cfg)["projects"] == []
+
+    def test_real_projects_win_over_implicit(self, tmp_path):
+        cfg, _, _ = self._flat(tmp_path)
+        _write(cfg / "projects" / "P1" / "config.toml", "")
+        listing = qc.list_projects(cfg)
+        assert [p["name"] for p in listing["projects"]] == ["P1"]
+        assert listing["projects"][0]["implicit"] is False
+
+
 class TestLint:
     def test_real_folder_anomaly_set(self, tmp_path):
         paths = _projects_tree(tmp_path)

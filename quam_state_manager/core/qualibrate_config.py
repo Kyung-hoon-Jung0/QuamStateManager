@@ -578,6 +578,36 @@ def active_project(cfg_dir: Path | None = None) -> str | None:
     return str(project) if project else None
 
 
+def _project_names(cfg_dir: Path, root_cfg: dict) -> tuple[list[str], bool]:
+    """``(names, implicit)``: the projects SM lists for one config folder.
+
+    Normally the sub-folders of ``<cfg>/projects``. A config with no project
+    sub-folders but its own ``[quam].state_path`` or storage ``location`` (a
+    single flat ``config.toml`` -- e.g. one written beside a per-repo uv venv
+    and selected with ``QUALIBRATE_CONFIG_FILE``) is qualibrate's own single
+    project: it is listed as ONE implicit project, named after the root's
+    ``[qualibrate].project`` or else the config folder, so it opens like any
+    other project. Nothing is written."""
+    names: list[str] = []
+    try:
+        names = sorted(p.name for p in (cfg_dir / "projects").iterdir()
+                       if p.is_dir())
+    except OSError:
+        pass
+    if names:
+        return names, False
+    q = root_cfg.get("qualibrate") if isinstance(root_cfg, dict) else None
+    q = q if isinstance(q, dict) else {}
+    m = root_cfg.get("quam") if isinstance(root_cfg, dict) else None
+    m = m if isinstance(m, dict) else {}
+    st = q.get("storage") if isinstance(q.get("storage"), dict) else {}
+    if not (m.get("state_path") or st.get("location")):
+        return [], False
+    name = q.get("project")
+    name = str(name) if isinstance(name, str) and name.strip() else cfg_dir.name
+    return [name], True
+
+
 def list_projects(cfg_dir: Path | None = None,
                   root_file: Path | None = None) -> dict[str, Any]:
     """Everything the Projects sidebar/page needs, in one READ-ONLY pass.
@@ -616,11 +646,9 @@ def list_projects(cfg_dir: Path | None = None,
     m_ver = (root_cfg.get("quam") or {}).get("version")
 
     projects_dir = cfg_dir / "projects"
-    names: list[str] = []
-    try:
-        names = sorted(p.name for p in projects_dir.iterdir() if p.is_dir())
-    except OSError:
-        pass
+    names, implicit = _project_names(cfg_dir, root_cfg)
+    if implicit:
+        active = names[0]
 
     def _value(effective: dict, overlay: dict, section: tuple[str, ...],
                key: str) -> tuple[Any, str]:
@@ -675,7 +703,9 @@ def list_projects(cfg_dir: Path | None = None,
 
         out_projects.append({
             "name": name,
-            "active": name == active,
+            # the implicit project IS the whole config: always the active one
+            "active": implicit or name == active,
+            "implicit": implicit,
             "overlay_empty": overlay_empty,
             "state_path": state,
             "storage": storage,
@@ -742,6 +772,11 @@ def tray_status(cfg_dir: Path | None = None) -> dict[str, Any]:
         entry = (key, str(active_v) if active_v else None, root_cfg, {})
         c["entry"] = entry
     _, active, root_cfg, state_memo = entry
+    # a flat config (no projects/ sub-folders) is its own implicit project;
+    # re-checked per call: a projects/ folder can appear without a root edit
+    names, implicit = _project_names(cfg_dir, root_cfg)
+    if implicit:
+        active = names[0]
     if not active:
         return {"config_exists": True, "active": None,
                 "state_raw": None, "state_native": None, "state_exists": False}
@@ -764,7 +799,7 @@ def tray_status(cfg_dir: Path | None = None) -> dict[str, Any]:
         "active": active,
         # v1.5.1 (U P2-21): the root config can name a project that has no
         # projects/<name> folder -- not a project SM can open by name
-        "project_exists": (cfg_dir / "projects" / active).is_dir(),
+        "project_exists": implicit or (cfg_dir / "projects" / active).is_dir(),
         "state_raw": st["raw"],
         "state_native": st["native"],
         "state_exists": bool(st["native"] and Path(st["native"]).is_dir()),
@@ -798,6 +833,8 @@ def project_state_paths(cfg_dir: Path | None = None) -> dict[str, Any]:
         names = sorted(d.name for d in proj_dir.iterdir() if d.is_dir())
     except OSError:
         names = []
+    # the root mtime is in the key, so the implicit-project decision (which
+    # reads only the root) is re-made whenever the root changes
     key_parts: list[Any] = [str(cfg_dir), str(root_path), root_m]
     for n in names:
         try:
@@ -811,6 +848,9 @@ def project_state_paths(cfg_dir: Path | None = None) -> dict[str, Any]:
 
     root_cfg = _load_toml_retry(root_path)
     active = (root_cfg.get("qualibrate") or {}).get("project")
+    names, implicit = _project_names(cfg_dir, root_cfg)
+    if implicit:
+        active = names[0]
     projects: list[tuple[str, str | None]] = []
     raws: dict[str, Any] = {}
     for n in names:

@@ -9053,6 +9053,10 @@ def qualibrate_page():
     except OSError:
         raws["__root__"] = "(unreadable)"
     for p in listing["projects"]:
+        if p.get("implicit"):
+            raws[p["name"]] = ("(no projects/ folder: the root config.toml "
+                               "above is this whole project)")
+            continue
         try:
             raws[p["name"]] = (cfg_dir / "projects" / p["name"]
                                / "config.toml").read_text(
@@ -9188,7 +9192,10 @@ def qualibrate_project_config(name: str):
             encoding="utf-8", errors="replace") \
             or "(empty overlay — inherits everything)"
     except OSError:
-        raws["overlay"] = "(unreadable)"
+        raws["overlay"] = ("(no projects/ folder: the root config.toml is "
+                           "this whole project)"
+                           if not (cfg_dir / "projects").is_dir()
+                           else "(unreadable)")
     try:
         raws["root"] = (cfg_dir / "config.toml").read_text(
             encoding="utf-8", errors="replace")
