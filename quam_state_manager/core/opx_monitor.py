@@ -271,6 +271,38 @@ def target_label(target: dict) -> str:
     return s
 
 
+def chip_target(network: Any) -> Optional[dict]:
+    """The target an open chip's wiring ``network`` block names, or None without a host.
+
+    Host and cluster name are read with the one rule SM identifies a chip's hardware by
+    (``history._normalised_network``); the port is taken when it is a whole number 1-65535.
+    A chip that connects through its own client class (``use_custom_qmm``, or a
+    ``qmm_class`` other than the plain QuantumMachinesManager) is kind ``custom``: the
+    monitor says it cannot watch it instead of guessing a QM server."""
+    from quam_state_manager.core.history import _normalised_network
+    if not isinstance(network, dict):
+        return None
+    ident = dict(_normalised_network(network))
+    host = ident.get("host")
+    if not isinstance(host, str) or not host.strip():
+        return None
+    raw_port = network.get("port")
+    port = None
+    if isinstance(raw_port, int) and not isinstance(raw_port, bool):
+        port = raw_port
+    elif isinstance(raw_port, str) and raw_port.strip().isdigit():
+        port = int(raw_port.strip())
+    if port is not None and not 1 <= port <= 65535:
+        port = None
+    cluster = ident.get("cluster_name")
+    qmm_class = network.get("qmm_class")
+    custom = bool(network.get("use_custom_qmm")) or bool(
+        isinstance(qmm_class, str) and qmm_class.strip()
+        and qmm_class.strip().rsplit(".", 1)[-1] != "QuantumMachinesManager")
+    return {"kind": "custom" if custom else "qmm", "host": host.strip(), "port": port,
+            "cluster_name": cluster.strip() if isinstance(cluster, str) and cluster.strip() else None}
+
+
 def load_settings(instance) -> dict:
     p = _dir(instance) / "settings.json"
     try:
@@ -915,6 +947,16 @@ def failure_summary(errors):
                 'No data call answered.')
 
 
+def admin_origin_ok(url) -> bool:
+    """An Admin URL is an HTTP(S) origin: scheme, host and nothing after it."""
+    try:
+        parsed = urlsplit(str(url))
+        return (parsed.scheme in ('http', 'https') and bool(parsed.netloc) and parsed.path in ('', '/')
+                and not parsed.query and not parsed.fragment and not parsed.username)
+    except ValueError:
+        return False
+
+
 def read_admin(url, cluster_name=None, clock=time.time):
     """Only the two documented read routes, no redirects or connection headers.
 
@@ -927,7 +969,7 @@ def read_admin(url, cluster_name=None, clock=time.time):
     try:
         parsed = urlsplit(url)
         admin_host = parsed.hostname
-        if parsed.scheme not in ('http', 'https') or not parsed.netloc or parsed.path not in ('', '/') or parsed.query or parsed.fragment or parsed.username:
+        if not admin_origin_ok(url):
             raise ValueError('Admin URL must be an HTTP(S) origin')
         opener = urllib.request.build_opener(_NoRedirect)
         answers = []
@@ -1213,8 +1255,13 @@ class Monitor:
     injectable so tests drive it with fake answers."""
 
     def __init__(self, instance, worker_factory: Optional[Callable] = None,
-                 clock: Callable[[], float] = time.time, mono: Optional[Callable[[], float]] = None):
+                 clock: Callable[[], float] = time.time, mono: Optional[Callable[[], float]] = None,
+                 default_source: Optional[Callable[[], Optional[dict]]] = None):
         self.instance = Path(instance)
+        # the open chip's target and env (``{"target", "python", "python_source"}``, or
+        # None when no chip is open); a saved settings target overrides it
+        self.default_source = default_source
+        self._target_sig = None
         # an injected wall clock (tests) also drives the monotonic one
         self.mono = mono or (time.monotonic if clock is time.time else clock)
         self.clock_measure: Optional[dict] = None
@@ -1255,8 +1302,49 @@ class Monitor:
         return self._trends[key]
 
     # -- settings shortcuts
-    def settings(self) -> dict:
+    def saved_settings(self) -> dict:
+        """The settings file as saved (the override), without the chip's default."""
         return load_settings(self.instance)
+
+    def chip_default(self) -> Optional[dict]:
+        if self.default_source is None:
+            return None
+        try:
+            d = self.default_source()
+        except Exception:  # noqa: BLE001; an unreadable chip is "no default", never a guess
+            logger.exception("opx monitor: the open chip's target could not be read")
+            return None
+        return d if isinstance(d, dict) else None
+
+    def settings(self) -> dict:
+        """The settings in effect: a saved target wins; without one, the open chip's
+        target and (unless a Python is saved) the env SM runs that chip's project with.
+        ``target_source`` / ``python_source`` say which: ``settings``, ``chip`` or None."""
+        s = load_settings(self.instance)
+        d = self.chip_default()
+        s["chip_default"] = d
+        s["target_source"] = "settings" if s.get("target") else None
+        s["python_source"] = "settings" if s.get("python") else None
+        if not s.get("target") and d and d.get("target"):
+            s["target"] = dict(d["target"])
+            s["target_source"] = "chip"
+            if not s.get("python") and d.get("python"):
+                s["python"] = d["python"]
+                s["python_source"] = "chip"
+        return s
+
+    def sync_target(self) -> None:
+        """The target in effect changed (another chip was opened, or the override was
+        saved or cleared): stop the old worker and drop the old OPX's answer, so nothing
+        from the previous target is shown or polled. Call without holding ``_lock``."""
+        s = self.settings()
+        sig = (json.dumps(s.get("target"), sort_keys=True), s.get("python"))
+        if sig == self._target_sig:
+            return
+        first = self._target_sig is None
+        self._target_sig = sig
+        if not first:
+            self.reset()
 
     def history(self, key: Optional[str] = None) -> Optional[History]:
         key = key or target_key(self.settings().get("target"))
@@ -1334,13 +1422,17 @@ class Monitor:
             self.viewer_check_pending = False
 
     def _poll_once(self) -> None:
+        self.sync_target()
         s = self.settings()
         if not s.get("target") or not s.get("python"):
             return
+        polled_sig = (json.dumps(s.get("target"), sort_keys=True), s.get("python"))
         if (s["target"] or {}).get("kind", "qmm") != "qmm":
             self.last_error = NOT_QM_SERVER
             return
         with self._lock:
+            if polled_sig != self._target_sig:
+                return  # the target changed since this poll read it
             if self._worker is None and self.clock() < self._retry_at:
                 return  # backing off after a failure
             self.last_try_at = self.clock()
@@ -1430,6 +1522,7 @@ class Monitor:
 
     def want(self, tab=None, job_limit=100):
         """A monitor page asked: keep polling for a few intervals."""
+        self.sync_target()
         s = self.settings()
         arriving = self.clock() >= self.wanted_until
         if arriving and (self.last_try_at is None or self.clock() - self.last_try_at > s['interval_s']):
@@ -1493,6 +1586,7 @@ class Monitor:
         "close all" as listed on the page). Only a QM that is open on the server
         at that moment AND was named is closed -- a QM opened after the page
         rendered is never touched. Logged in History."""
+        self.sync_target()
         s = self.settings()
         cap = self.capabilities()
         if not cap["close"]:
@@ -1596,6 +1690,7 @@ class Monitor:
         return self.viewer_check_pending or self.last_ok_at is None or bool(self.last_error) or self.clock() - self.last_ok_at > STALE_INTERVALS * self.poll_interval()
 
     def status(self) -> dict:
+        self.sync_target()
         s = self.settings()
         now = self.clock()
         age = (now - self.last_ok_at) if self.last_ok_at else None
@@ -1642,6 +1737,7 @@ class Monitor:
                 'health': health_state, 'admin': self.admin,
                 "answer": self.last_answer, "target_label": target_label(s.get("target") or {}),
                 "target_kind": (s.get("target") or {}).get("kind"),
+                "target_source": s.get("target_source"),
                 "valid_for_ms": max(0, int((STALE_INTERVALS * self.poll_interval() - (age or 0)) * 1000)) if state == 'ok' else 0,
                 "interval_s": self.poll_interval(), "alarms": alarms,
                 "alarms_armed": s.get("alarms_armed"), "capabilities": self.capabilities()}

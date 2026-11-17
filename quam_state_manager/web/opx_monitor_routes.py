@@ -39,10 +39,35 @@ def _idle_minutes(raw, old):
     return v if math.isfinite(v) else float(old)
 
 
+def chip_default_source(app):
+    """What the monitor watches when Monitor settings name no target: the open chip's
+    wiring ``network`` block, polled with the env SM already runs that chip's project
+    subprocesses with (the project's chosen env, else the app's selected env). Reads the
+    app's active context directly, so the poller thread follows a chip switch too."""
+    def source():
+        from quam_state_manager.core import project_env
+        name = app.config.get("active_context")
+        ctx = (app.config.get("contexts") or {}).get(name) if name is not None else None
+        if not ctx or ctx.get("type") != "quam":
+            return None
+        store = ctx.get("store")
+        wiring = getattr(store, "wiring", None)
+        state = getattr(store, "state", None)
+        network = (wiring.get("network") if isinstance(wiring, dict) else None)
+        if network is None and isinstance(state, dict):
+            network = state.get("network")
+        py, py_source = project_env.run_env_source(app.instance_path, ctx.get("qualibrate_project"))
+        return {"target": om.chip_target(network), "python": py, "python_source": py_source,
+                "env_label": project_env.label(py)}
+    return source
+
+
 def monitor() -> om.Monitor:
     m = current_app.config.get("opx_monitor")
     if m is None:
-        m = current_app.config["opx_monitor"] = om.Monitor(current_app.instance_path)
+        app = current_app._get_current_object()
+        m = current_app.config["opx_monitor"] = om.Monitor(
+            current_app.instance_path, default_source=chip_default_source(app))
     return m
 
 
@@ -219,6 +244,8 @@ def _view(tab: str) -> dict:
     return {**owner_ctx, 'temperature_failed': 'controllers' in st['section_errors'] or any(k.endswith('.temperatures') for k in (st.get('answer') or {}).get('refused', {})), 'unreadable_temps': om.unreadable_temperatures(st.get('answer')), 'last_job': last_job, 'hottest': hottest, 'local_time': om.local_time, 'plain_error': plain_error, 'call_failure': om.call_failure, 'raw_error': raw_error(st), 'stale_time': stale_time, 'opx_time': om.opx_time, 'pc_zone': om.zone_text(), 'words': om.words, 'job_activity': om.job_activity, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': verdict, 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason, skew=skew) if not run_reason else {}, 'clock_skew': skew, 'skew_text': om.skew_text(skew, m.clock()), 'metric_known': om.metric_known, 'job_list_cap': om.JOB_LIST_CAP, 'value_vs_limit': om.value_vs_limit,
             "trends": m.trends().series(m.clock()) if m.trends() and tab == "live" else {}, "idle_states": idle_states, "idle_ids": [k for k, v in idle_states.items() if v['idle'] and st['state'] == 'ok'], "tab": tab, "tabs": TABS, "tab_labels": TAB_LABELS, "st": st, "settings": s,
             "target": t, "has_headers": has_headers,
+            "saved": m.saved_settings() if tab == "settings" else {},
+            "target_label": om.target_label, "env_label": _env_label,
             "history_rows": h.table() if h and tab == "history" else [],
             "actions": h.recent_actions() if h and tab in ("history", "cleanup") else [],
             "offered": om.offered_metrics(st.get("answer")),
@@ -278,6 +305,11 @@ def opx_alarm_badge():
     return resp
 
 
+def _env_label(python):
+    from quam_state_manager.core import project_env
+    return project_env.label(python)
+
+
 def _form_bool(name):
     return request.form.get(name) in ("1", "on", "true", "yes")
 
@@ -287,7 +319,8 @@ def opx_monitor_save_settings():
     """Every field is checked before anything is stored: a 400 stores nothing, leaves the
     monitor as it was and draws the form back with what the user typed."""
     m = monitor()
-    s = m.settings()
+    # the file as saved: the open chip's default target is never written as an override
+    s = m.saved_settings()
     f = request.form
     msgs = []
     hdr_txt = f.get("headers")
@@ -308,6 +341,12 @@ def opx_monitor_save_settings():
     py = (f.get("python") or "").strip() or None
     if py and not Path(py).is_file():
         return refuse("That Python interpreter does not exist.")
+    admin_url = (f.get("admin_url") or "").strip()
+    if admin_url and not om.admin_origin_ok(admin_url):
+        if "://" not in admin_url:
+            return refuse("The Admin URL must start with http:// or https://; this looks like a host; put it in Host. "
+                          "The Admin URL is only for the optional admin panel.")
+        return refuse("The Admin URL must be an http:// or https:// address with nothing after the host and port.")
     # a limit for a metric the server does not report right now is kept
     th = dict(s.get("thresholds") or {})
     for k, v in f.items():
@@ -332,7 +371,7 @@ def opx_monitor_save_settings():
         except ValueError:
             return refuse("Connection headers must be a JSON object.")
     new = {"target": target, "python": py, "interval_s": om.clamp_interval(f.get("interval_s")),
-           "admin_url": (f.get("admin_url") or "").strip(), "idle_minutes": _idle_minutes(f.get("idle_minutes"), s["idle_minutes"]), "thresholds": th, "alarms_armed": _form_bool("alarms_armed")}
+           "admin_url": admin_url, "idle_minutes": _idle_minutes(f.get("idle_minutes"), s["idle_minutes"]), "thresholds": th, "alarms_armed": _form_bool("alarms_armed")}
     changed_conn = (new["target"] != s.get("target")) or (new["python"] != s.get("python")) or new["admin_url"] != s.get("admin_url")
     om.save_settings(m.instance, new)
     if target is not None:
@@ -349,6 +388,25 @@ def opx_monitor_save_settings():
     m.want()
     m.ensure_running_if_armed()
     return _settings_reply(" ".join(["Settings saved."] + msgs), at="settings")
+
+
+@opxmon_bp.route("/opx-monitor/settings/use-default", methods=["POST"])
+def opx_monitor_use_default():
+    """Drop the saved target and Python (the override); every other setting is kept.
+    The monitor then watches the open chip's OPX with that chip's env."""
+    m = monitor()
+    s = m.saved_settings()
+    if s.get("settings_error"):
+        return _settings_reply(s["settings_error"], error=True, at="settings")
+    om.save_settings(m.instance, {**s, "target": None, "python": None})
+    m.reset()
+    m.want()
+    eff = m.settings()
+    if eff.get("target_source") == "chip":
+        msg = "Using the open chip's OPX: " + om.target_label(eff["target"]) + "."
+    else:
+        msg = "Override cleared. No chip is open, so no OPX is watched."
+    return _settings_reply(msg, at="settings")
 
 
 _TAG_RE = re.compile(r"[a-z0-9]{1,16}")

@@ -30,6 +30,9 @@
 {%- set age_rows = st.section_errors.items()|rejectattr('0', 'equalto', 'controllers' if tab == 'live' else '')|list %}
 {%- if age_rows %}<p class="ui-text-quiet ui-opxmon-section-age">{% for section, error in age_rows %}<span title="{{ error }}">{{ 'Open QMs' if section == 'open_qms' else section|replace('_', ' ')|capitalize }} unavailable; {{ 'last good read at ' ~ local_time(st.section_times.get(section)) if st.section_times.get(section) else 'no successful read yet' }}</span>{% if not loop.last %}. {% endif %}{% endfor %}</p>{% endif %}
 {%- if tab == 'live' %}
+  {%- if st.target_source %}
+  <p class="ui-note" data-opxmon-source="{{ st.target_source }}">Watching {{ st.target_label }} {{ "from the open chip's wiring" if st.target_source == 'chip' else 'from Monitor settings' }}. <a href="/opx-monitor/settings" hx-get="/opx-monitor/settings" hx-target="#table-pane" hx-push-url="true">Change</a></p>
+  {%- endif %}
   {{ ui.ui_stats(tiles, 'Key numbers') }}
   {#- Zone: Open QMs -#}
   {%- set qms = ans.open_qms %}
@@ -195,38 +198,63 @@
   <p class="ui-opxmon-close-result" role="status" hidden></p>
 
 {%- elif tab == 'settings' %}
+  {%- set st_saved = saved.target or {} -%}
+  {%- set dflt = settings.chip_default or {} -%}
+  {%- set dflt_target = dflt.target -%}
   <form class="ui-opxmon-settings" hx-post="/opx-monitor/settings" hx-target="#ui-opxmon-body" hx-swap="outerHTML">
-    <section class="ui-zone" aria-label="Connection"><div class="ui-zone-head"><h3 class="ui-zone-title">Connection</h3><span class="ui-zone-sum">{{ target.host or 'not set' }}{% if target.port %}:{{ target.port }}{% endif %}</span></div>
-    <div class="ui-zone-body">
-      <p class="ui-text-quiet">A QM server (host and port). A task-queue cloud backend exposes no monitor API and cannot be watched here.</p>
-      <div class="ui-opxmon-grid">
-        <label>Admin URL <input name="admin_url" value="{{ ps.get('admin_url', '') if ps is not none else (settings.admin_url or '') }}" placeholder="HTTP(S) origin" autocomplete="off"></label>
-        <label>Host <input name="host" value="{{ ps.get('host', '') if ps is not none else (target.host or '') }}" autocomplete="off"></label>
-        <label>Port <input name="port" value="{{ ps.get('port', '') if ps is not none else (target.port or '') }}" inputmode="numeric" autocomplete="off"></label>
-        <label>Cluster name <input name="cluster_name" placeholder="{{ 'auto: ' ~ (st.admin.cluster.name if st.admin.cluster else ans.cluster_name) if st.admin.cluster or ans.cluster_name else 'auto: detected cluster' }}" value="{{ ps.get('cluster_name', '') if ps is not none else (target.cluster_name or '') }}" autocomplete="off"></label>
-        <label><input type="checkbox" name="tls" value="1" {% if (ps.get('tls') if ps is not none else target.tls) %}checked{% endif %}> TLS</label>
-        <label class="ui-opxmon-wide">Connection headers (JSON, stored under this SM's instance folder, never shown again)
-          <textarea name="headers" rows="2" placeholder="{{ 'stored — leave empty to keep' if has_headers else 'optional' }}" autocomplete="off"></textarea></label>
-        {% if has_headers %}<label><input type="checkbox" name="clear_headers" value="1"{% if ps is not none and ps.get('clear_headers') %} checked{% endif %}> Remove the stored headers</label>{% endif %}
+    <section class="ui-zone" aria-label="Connection"><div class="ui-zone-head"><h3 class="ui-zone-title">Connection</h3><span class="ui-zone-sum">{{ target_label(target) or 'not set' }}{% if settings.target_source == 'chip' %} &middot; from the open chip{% elif settings.target_source == 'settings' %} &middot; from Monitor settings{% endif %}</span></div>
+    <div class="ui-zone-body ui-field-stack ui-field-stack--dense">
+      {%- if dflt_target %}
+      <p class="ui-note" data-opxmon-default="{{ 'overridden' if st_saved else 'used' }}">Default from the open chip's wiring: <span class="ui-text-strong">{{ target_label(dflt_target) }}</span>{% if dflt.python %}, Python env {{ env_label(dflt.python) }}{% endif %}.
+        {%- if st_saved %} The saved connection below overrides it.{% else %} Leave Host empty to keep watching it; type a host to watch another OPX.{% endif %}</p>
+      {%- elif dflt %}
+      <p class="ui-note" data-opxmon-default="none">The open chip's wiring names no OPX host, so there is no default; set one below.</p>
+      {%- else %}
+      <p class="ui-note" data-opxmon-default="none">No chip is open. With a chip open, the monitor watches the OPX its wiring names unless a connection is saved here.</p>
+      {%- endif %}
+      {%- if st_saved or saved.python %}
+      <div class="ui-actions ui-actions--start"><button type="button" class="btn-sm outline" hx-post="/opx-monitor/settings/use-default" hx-target="#ui-opxmon-body" hx-swap="outerHTML">{{ "Use the open chip's OPX" if dflt_target else 'Clear the saved connection' }}</button></div>
+      {%- endif %}
+      <p class="ui-note">A QM server (host and port). A task-queue cloud backend exposes no monitor API and cannot be watched here.</p>
+      <div class="ui-field-grid">
+        <div class="ui-field"><div class="ui-field-head"><label class="ui-field-label" for="ui-opxmon-f-host">Host</label></div>
+          <input class="ui-input ui-input--block" id="ui-opxmon-f-host" name="host" value="{{ ps.get('host', '') if ps is not none else (st_saved.host or '') }}"{% if dflt_target and not st_saved %} placeholder="{{ dflt_target.host }} (open chip)"{% endif %} autocomplete="off"></div>
+        <div class="ui-field"><div class="ui-field-head"><label class="ui-field-label" for="ui-opxmon-f-port">Port</label></div>
+          <input class="ui-input ui-input--num" id="ui-opxmon-f-port" name="port" value="{{ ps.get('port', '') if ps is not none else (st_saved.port or '') }}"{% if dflt_target and dflt_target.port and not st_saved %} placeholder="{{ dflt_target.port }}"{% endif %} inputmode="numeric" autocomplete="off"></div>
+        <div class="ui-field"><div class="ui-field-head"><label class="ui-field-label" for="ui-opxmon-f-cluster">Cluster name</label></div>
+          <input class="ui-input ui-input--block" id="ui-opxmon-f-cluster" name="cluster_name" placeholder="{{ (dflt_target.cluster_name ~ ' (open chip)') if dflt_target and dflt_target.cluster_name and not st_saved else ('auto: ' ~ (st.admin.cluster.name if st.admin.cluster else ans.cluster_name) if st.admin.cluster or ans.cluster_name else 'auto: detected cluster') }}" value="{{ ps.get('cluster_name', '') if ps is not none else (st_saved.cluster_name or '') }}" autocomplete="off"></div>
+        <div class="ui-field ui-field-wide"><label class="ui-check"><input type="checkbox" name="tls" value="1"{% if (ps.get('tls') if ps is not none else st_saved.tls) %} checked{% endif %}>TLS</label></div>
+        <div class="ui-field ui-field-wide"><div class="ui-field-head"><label class="ui-field-label" for="ui-opxmon-f-headers">Connection headers (JSON, stored under this SM's instance folder, never shown again)</label></div>
+          <textarea class="ui-textarea" id="ui-opxmon-f-headers" name="headers" rows="2" placeholder="{{ 'stored, leave empty to keep' if has_headers else 'optional' }}" autocomplete="off"></textarea></div>
+        {% if has_headers %}<div class="ui-field ui-field-wide"><label class="ui-check"><input type="checkbox" name="clear_headers" value="1"{% if ps is not none and ps.get('clear_headers') %} checked{% endif %}>Remove the stored headers</label></div>{% endif %}
       </div>
+      <details class="ui-disclosure"{% if ps is not none and ps.get('admin_url') or settings.admin_url %} open{% endif %}><summary class="ui-disclosure-summary">Advanced</summary><div class="ui-disclosure-body ui-field-stack ui-field-stack--dense">
+        <p class="ui-note">Admin URL: the web address of the OPX admin panel (for example http://host:port), read for cluster and device details. Optional; the OPX host goes in Host above.</p>
+        <div class="ui-field"><div class="ui-field-head"><label class="ui-field-label" for="ui-opxmon-f-admin">Admin URL</label></div>
+          <input class="ui-input ui-input--block" id="ui-opxmon-f-admin" name="admin_url" value="{{ ps.get('admin_url', '') if ps is not none else (settings.admin_url or '') }}" placeholder="http://host:port (optional)" autocomplete="off"></div>
+      </div></details>
     </div></section>
-    <section class="ui-zone" aria-label="Python environment with the QM SDK"><div class="ui-zone-head"><h3 class="ui-zone-title">Python environment with the QM SDK</h3><span class="ui-zone-sum">{{ 'set' if settings.python else 'not set' }}</span></div>
-    <div class="ui-zone-body">
-      <label>Interpreter path <input name="python" list="ui-opxmon-interpreters" value="{{ ps.get('python', '') if ps is not none else (settings.python or '') }}" placeholder="Full path to Python" autocomplete="off"></label>
+    <section class="ui-zone" aria-label="Python environment with the QM SDK"><div class="ui-zone-head"><h3 class="ui-zone-title">Python environment with the QM SDK</h3><span class="ui-zone-sum">{% if settings.python_source == 'chip' %}{{ env_label(settings.python) }} &middot; the open chip's project env{% elif settings.python %}{{ env_label(settings.python) }} &middot; from Monitor settings{% else %}not set{% endif %}</span></div>
+    <div class="ui-zone-body ui-field-stack ui-field-stack--dense">
+      <div class="ui-field"><div class="ui-field-head"><label class="ui-field-label" for="ui-opxmon-f-python">Interpreter path</label></div>
+        <input class="ui-input ui-input--block" id="ui-opxmon-f-python" name="python" list="ui-opxmon-interpreters" value="{{ ps.get('python', '') if ps is not none else (saved.python or '') }}" placeholder="{{ (dflt.python ~ ' (open chip)') if dflt.python and not saved.python else 'Full path to Python' }}" autocomplete="off"></div>
       <datalist id="ui-opxmon-interpreters">{% for e in envs %}<option value="{{ e.python }}">{{ e.name or e.python }}</option>{% endfor %}</datalist>
     </div></section>
     <section class="ui-zone" aria-label="Polling and alarms"><div class="ui-zone-head"><h3 class="ui-zone-title">Polling and alarms</h3><span class="ui-zone-sum">every {{ settings.interval_s|int }} s &middot; alarms {{ 'armed' if settings.alarms_armed else 'off' }}</span></div>
-    <div class="ui-zone-body">
-      <div class="ui-opxmon-grid">
-      <label>Idle minutes <input class="ui-opxmon-input-number" name="idle_minutes" value="{{ ps.get('idle_minutes', '') if ps is not none else '%g'|format(settings.idle_minutes) }}" type="number" min="0.01" step="any"></label>
-      <label>Interval (s, minimum {{ min_interval|int }}) <input class="ui-opxmon-input-number" name="interval_s" value="{{ ps.get('interval_s', '') if ps is not none else settings.interval_s|int }}" inputmode="numeric"></label>
-      <label>All FEMs limit (°C; no default is assumed) <input class="ui-opxmon-input-number" name="th__temp:all_fems" value="{{ ps.get('th__temp:all_fems', '') if ps is not none else settings.thresholds.get('temp:all_fems', '') }}" inputmode="decimal"></label>
+    <div class="ui-zone-body ui-field-stack ui-field-stack--dense">
+      <div class="ui-field-grid">
+        <div class="ui-field"><div class="ui-field-head"><label class="ui-field-label" for="ui-opxmon-f-idle">Idle minutes</label></div>
+          <input class="ui-input ui-input--num" id="ui-opxmon-f-idle" name="idle_minutes" value="{{ ps.get('idle_minutes', '') if ps is not none else '%g'|format(settings.idle_minutes) }}" type="number" min="0.01" step="any"></div>
+        <div class="ui-field"><div class="ui-field-head"><label class="ui-field-label" for="ui-opxmon-f-interval">Interval (s, minimum {{ min_interval|int }})</label></div>
+          <input class="ui-input ui-input--num" id="ui-opxmon-f-interval" name="interval_s" value="{{ ps.get('interval_s', '') if ps is not none else settings.interval_s|int }}" inputmode="numeric"></div>
+        <div class="ui-field"><div class="ui-field-head"><label class="ui-field-label" for="ui-opxmon-f-allfems">All FEMs limit (&deg;C; no default is assumed)</label></div>
+          <input class="ui-input ui-input--num" id="ui-opxmon-f-allfems" name="th__temp:all_fems" value="{{ ps.get('th__temp:all_fems', '') if ps is not none else settings.thresholds.get('temp:all_fems', '') }}" inputmode="decimal"></div>
       </div>
-      <label><input type="checkbox" name="alarms_armed" value="1" {% if (ps.get('alarms_armed') if ps is not none else settings.alarms_armed) %}checked{% endif %}> Arm alarms (keeps polling while SM runs; alarms show in the top bar and as a toast)</label>
+      <label class="ui-check"><input type="checkbox" name="alarms_armed" value="1"{% if (ps.get('alarms_armed') if ps is not none else settings.alarms_armed) %} checked{% endif %}>Arm alarms (keeps polling while SM runs; alarms show in the top bar and as a toast)</label>
       {%- if offered %}
       <table class="ui-table ui-opxmon-table" aria-label="Alarm limits"><thead><tr><th class="ui-table-head">Metric</th><th class="ui-table-head">Alarm when</th><th class="ui-table-head ui-table-num">Limit</th></tr></thead>
         <tbody>{% for m in offered %}<tr><td data-label="Metric" class="ui-table-cell"><span class="ui-text-strong">{{ m.label }}</span> <span class="ui-text-quiet">({{ m.unit }})</span></td><td data-label="Alarm when" class="ui-table-cell">{{ m.direction }}</td>
-          <td data-label="Limit" class="ui-table-cell ui-table-num"><input class="ui-opxmon-input-number" name="th__{{ m.key }}" value="{{ ps.get('th__' ~ m.key, '') if ps is not none else settings.thresholds.get(m.key, '') }}" inputmode="decimal" aria-label="Limit for {{ m.label }}"></td></tr>{% endfor %}</tbody></table>
+          <td data-label="Limit" class="ui-table-cell ui-table-num"><input class="ui-input ui-input--num" name="th__{{ m.key }}" value="{{ ps.get('th__' ~ m.key, '') if ps is not none else settings.thresholds.get(m.key, '') }}" inputmode="decimal" aria-label="Limit for {{ m.label }}"></td></tr>{% endfor %}</tbody></table>
       {%- else %}
       <p class="ui-state ui-state--empty ui-opxmon-no-metrics"><span class="ui-state-key">No metrics to set limits on.</span> The server has not returned any temperature or metric reading yet.</p>
       {%- endif %}
@@ -242,10 +270,10 @@
       <table class="ui-table ui-opxmon-table" aria-label="PC names"><thead><tr><th class="ui-table-head">Tag</th><th class="ui-table-head">Name</th><th class="ui-table-head">Remove</th></tr></thead>
         <tbody>{% for tag in pc_name_rows %}<tr class="ui-opxmon-pcname-row" data-tag="{{ tag }}"><td data-label="Tag" class="ui-table-cell"><code class="ui-chip">{{ tag|owner_shown }}</code>{% if this_tag == tag %} <span class="ui-pill ui-pill--accent ui-opxmon-this-pc" title="{{ same_tag_hint }}">same tag as this PC</span>{% endif %}{% if tag in seen_tags %} <span class="ui-text-quiet">in an open QM</span>{% endif %}</td>
           <td data-label="Name" class="ui-table-cell">{% set shown = pc_names.get(tag, '')|label_shown %}<input class="ui-input" name="label__{{ tag }}" value="{{ pn.get('label__' ~ tag, shown) if pn is not none else shown }}" maxlength="40" autocomplete="off" aria-label="Name for tag {{ tag }}"{% if shown != pc_names.get(tag, '') %} title="Stored as {{ pc_names.get(tag, '')|label_full }}"{% endif %}><input type="hidden" name="was__{{ tag }}" value="{{ pn.get('was__' ~ tag, shown) if pn is not none else shown }}"></td>
-          <td data-label="Remove" class="ui-table-cell">{% if tag in pc_names %}<label><input type="checkbox" name="remove__{{ tag }}" value="1"{% if pn is not none and pn.get('remove__' ~ tag) %} checked{% endif %}> remove</label>{% endif %}</td></tr>{% endfor %}
+          <td data-label="Remove" class="ui-table-cell">{% if tag in pc_names %}<label class="ui-check"><input type="checkbox" name="remove__{{ tag }}" value="1"{% if pn is not none and pn.get('remove__' ~ tag) %} checked{% endif %}>remove</label>{% endif %}</td></tr>{% endfor %}
           {% for ref, key in pc_name_bad %}<tr class="ui-opxmon-pcname-row" data-bad-key="1" data-key-ref="{{ ref }}"><td data-label="Tag" class="ui-table-cell"><code class="ui-chip">{{ key|owner_shown }}</code> <span class="ui-text-quiet">not a valid tag; rename it or remove it</span><input type="hidden" name="badkey__{{ ref }}" value="1"></td>
           <td data-label="Name" class="ui-table-cell"><span class="ui-text-quiet" title="{{ pc_names[key]|label_full }}">{{ pc_names[key]|label_shown }}</span> <input class="ui-input" name="rename__{{ ref }}" value="{{ pn.get('rename__' ~ ref, '') if pn is not none else '' }}" maxlength="16" placeholder="new tag" autocomplete="off" aria-label="New tag for the invalid key"></td>
-          <td data-label="Remove" class="ui-table-cell"><label><input type="checkbox" name="removebad__{{ ref }}" value="1"{% if pn is not none and pn.get('removebad__' ~ ref) %} checked{% endif %}> remove</label></td></tr>{% endfor %}
+          <td data-label="Remove" class="ui-table-cell"><label class="ui-check"><input type="checkbox" name="removebad__{{ ref }}" value="1"{% if pn is not none and pn.get('removebad__' ~ ref) %} checked{% endif %}>remove</label></td></tr>{% endfor %}
           <tr class="ui-opxmon-pcname-new"><td data-label="Tag" class="ui-table-cell"><input class="ui-input" name="new_tag" value="{{ pn.get('new_tag', '') if pn is not none else '' }}" maxlength="16" placeholder="new tag" autocomplete="off" aria-label="New tag"></td><td data-label="Name" class="ui-table-cell"><input class="ui-input" name="new_label" value="{{ pn.get('new_label', '') if pn is not none else '' }}" maxlength="40" placeholder="name" autocomplete="off" aria-label="Name for the new tag"></td><td class="ui-table-cell"></td></tr></tbody></table>
       {% if not pc_name_rows and not pc_name_bad %}<p class="ui-note">No tags named yet and none seen in an open QM.</p>{% endif %}
       <button type="submit" class="btn-sm">Save PC names</button>

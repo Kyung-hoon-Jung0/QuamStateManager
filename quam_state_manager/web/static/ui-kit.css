@@ -260,10 +260,8 @@
     --ui-opxmon-health-max-width: 22rem;
     --ui-opxmon-owner-clip-max: 22rem;
     --ui-opxmon-state-min: 13rem;
-    --ui-opxmon-legend-font: 0.9rem;
     --ui-opxmon-note-space: 0.2rem;
     --ui-opxmon-full-width: 100%;
-    --ui-opxmon-number-width: 7rem;
     --ui-opxmon-lh-tile: 1.25;
     /* Datasets diff + plot-click popup (DS-1/DS-2): the reviewed geometry, kept exact */
     --ui-ds-muted: var(--pico-muted-color);
@@ -645,9 +643,6 @@
 .ui-opxmon-fem--held .ui-opxmon-light { background: var(--ui-warn-text); }
 .ui-opxmon-fem--stale { border-style: dashed; color: var(--ui-opxmon-muted); }
 .ui-opxmon-fem-stale {margin:var(--ui-gap-2) 0}
-.ui-opxmon-settings fieldset { margin-bottom: var(--ui-opxmon-space-lg); }
-.ui-opxmon-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--ui-opxmon-field-width), 1fr)); gap: var(--ui-opxmon-tile-padding) var(--ui-opxmon-space-lg); }
-.ui-opxmon-grid .ui-opxmon-wide { grid-column: 1 / -1; }
 .ui-opxmon-actions { margin: 0; padding-left: var(--ui-opxmon-heading-space); }
 .ui-opxmon-alarm-slot { list-style: none; }
 .ui-opxmon-alarm-badge { display: inline-block; padding: var(--ui-opxmon-badge-padding-y) var(--ui-gap-2); border-radius: var(--ui-r-md); font-size: var(--ui-opxmon-fem-font); text-decoration: none;
@@ -693,17 +688,12 @@
 .ui-opxmon-tile summary::after {display:none}
 .ui-opxmon-tile strong {white-space:normal; font-size:var(--ui-opxmon-compact-font); line-height:var(--ui-opxmon-lh-tile)}
 
-.ui-opxmon-settings label {font-size:var(--ui-opxmon-compact-font); margin:0 0 var(--ui-opxmon-space-xs)}
-.ui-opxmon-settings fieldset {padding:0; margin-bottom:var(--ui-opxmon-space-md)}
-.ui-opxmon-settings legend {font-size:var(--ui-opxmon-legend-font); margin:0 0 var(--ui-gap-1)}
 .ui-opxmon-settings .ui-note {margin:var(--ui-opxmon-note-space) 0; font-size:var(--ui-opxmon-tile-font)}
-.ui-opxmon-settings input, .ui-opxmon-settings select, .ui-opxmon-settings textarea {font-size:var(--ui-opxmon-input-font); margin-bottom:0}
 .ui-opxmon-table code {overflow-wrap:anywhere; white-space:normal}
 
 .ui-opxmon-tile svg {display:block; width:var(--ui-opxmon-full-width); height:var(--ui-icon-btn); color:var(--ui-accent)}
 .ui-opxmon-tile summary > span {overflow-wrap:anywhere}
 .ui-opxmon-health-note {margin:0}
-.ui-opxmon-settings .ui-opxmon-input-number {width:var(--ui-opxmon-number-width); display:inline-block; padding:var(--ui-opxmon-space-xs) var(--ui-gap-2); height:auto}
 
 .ui-opxmon-other-temperatures {margin:var(--ui-opxmon-space-sm) 0; font-size:var(--ui-opxmon-input-font)}
 .ui-opxmon-other-temperatures > summary {margin:0}
@@ -1071,6 +1061,18 @@
 .ui-input-unit--invalid:focus-within { box-shadow: var(--ui-ctl-ring-danger); }
 .ui-input-unit--disabled.ui-input-unit--disabled { border-color: var(--ui-border); background-color: var(--ui-ctl-bg-disabled); }
 .ui-input-unit--block { display: flex; width: 100%; }
+/* A multi-line text box: the input's border, colours and focus ring, full width. */
+.ui-textarea.ui-textarea {
+    box-sizing: border-box; display: block; width: 100%; max-width: 100%; min-height: var(--ui-ctl-h); margin: 0;
+    padding: var(--ui-gap-1) var(--ui-ctl-pad-x); resize: vertical;
+    border: var(--ui-bw) solid var(--ui-ctl-border); border-radius: var(--ui-r-btn);
+    background-color: var(--ui-ctl-bg); color: var(--ui-text);
+    font-family: inherit; font-size: var(--ui-fs-sm); font-weight: var(--ui-fw-normal); line-height: var(--ui-lh-read);
+    box-shadow: none; outline: 0;
+}
+.ui-textarea.ui-textarea::placeholder { color: var(--ui-text-2); opacity: 1; }
+.ui-textarea.ui-textarea:hover { border-color: var(--ui-ctl-border-hover); }
+.ui-textarea.ui-textarea:focus { border-color: var(--ui-accent); outline: 0; box-shadow: var(--ui-ctl-ring); }
 .ui-input-unit--block > .ui-input.ui-input { flex: 1 1 auto; width: auto; min-width: 0; }
 
 /* Field: label above (small, quiet), control, hint, error; a source tag
@@ -1088,6 +1090,7 @@
 .ui-field > .ui-input-unit, .ui-field > .ui-input, .ui-field > .ui-select, .ui-field > .ui-menu { align-self: flex-start; }
 .ui-field > .ui-input-unit--block, .ui-field > .ui-input--block, .ui-field > .ui-select--block, .ui-field > .ui-menu--block { align-self: stretch; }
 .ui-field-stack { display: flex; flex-direction: column; gap: var(--ui-gap-3); }
+.ui-field-grid > .ui-field-wide { grid-column: 1 / -1; }
 .ui-field-stack--dense { gap: var(--ui-gap-2); }
 
 /* Menu: a trigger and a pop-up list of options (pick one, or run an action). */

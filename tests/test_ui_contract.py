@@ -1384,3 +1384,71 @@ def test_stage6_feature_selectors_are_reviewed_and_tokenized():
             assert part in _STAGE6_SELECTORS, part
             seen.add(part)
     assert seen == _STAGE6_SELECTORS
+
+
+_RAW_TAG_RE = re.compile(r"<(input|textarea|label|fieldset|legend)\b([^>]*)>", re.I)
+
+
+def _attr(attrs, name):
+    m = re.search(r'\b' + name + r'\s*=\s*"([^"]*)"', attrs)
+    return m.group(1) if m else None
+
+
+def measure_raw_form_controls(paths):
+    """Form controls drawn by the browser's (Pico's) defaults instead of a kit part: a
+    fieldset or legend, a label without a kit class, a textarea without ui-textarea, a
+    text input without ui-input, and a checkbox or radio outside a ``label.ui-check``."""
+    found = {}
+    for path in paths:
+        text = _read(path)
+        bad = []
+        open_label = None
+        for m in _RAW_TAG_RE.finditer(text):
+            tag, attrs = m.group(1).lower(), m.group(2)
+            classes = (_attr(attrs, "class") or "").split()
+            if tag in ("fieldset", "legend"):
+                bad.append(tag)
+            elif tag == "label":
+                open_label = classes
+                if not any(c.startswith("ui-") for c in classes):
+                    bad.append("label without a kit class")
+                continue
+            elif tag == "textarea" and "ui-textarea" not in classes:
+                bad.append("textarea without ui-textarea")
+            elif tag == "input":
+                kind = (_attr(attrs, "type") or "text").lower()
+                if kind == "hidden":
+                    pass
+                elif kind in ("checkbox", "radio"):
+                    before = text[:m.start()]
+                    inside = before.rfind("<label") > before.rfind("</label")
+                    if not (inside and open_label is not None and "ui-check" in open_label):
+                        bad.append(kind + " outside label.ui-check")
+                elif "ui-input" not in classes:
+                    bad.append("input without ui-input")
+        if bad:
+            found[path.name] = bad
+    return found
+
+
+def _opx_monitor_templates():
+    return sorted(_TPL.glob("*opx_*.html"))
+
+
+def test_opx_monitor_templates_use_only_kit_form_parts():
+    """The OPX monitor pages draw every field, checkbox and text box with kit parts;
+    no Pico-default control is left (docs/308_ui_kit.md)."""
+    paths = _opx_monitor_templates()
+    assert any(p.name == "_opx_monitor_body.html" for p in paths)
+    assert measure_raw_form_controls(paths) == {}
+
+
+def test_raw_form_control_measure_can_fail(tmp_path):
+    tpl = tmp_path / "_opx_x.html"
+    tpl.write_text('<fieldset><legend>a</legend></fieldset><label>Host <input name="h"></label>'
+                   '<label class="ui-check"><input type="checkbox"> ok</label><input type="checkbox">'
+                   '<textarea name="t"></textarea><textarea class="ui-textarea"></textarea>'
+                   '<input type="hidden" name="x"><input class="ui-input" name="y">', encoding="utf-8")
+    assert measure_raw_form_controls([tpl]) == {"_opx_x.html": [
+        "fieldset", "legend", "label without a kit class", "input without ui-input",
+        "checkbox outside label.ui-check", "textarea without ui-textarea"]}
