@@ -253,6 +253,18 @@
         var chg = rowFor(def).querySelector('[data-env-change]');
         open(def, chg ? chg.getAttribute('data-env-current') : '', null, { noScroll: true });
     }
+    /* A card's Confirm re-renders that card's env row; a picker open for the
+       same project re-reads it, so its row shows the confirmed env as in use. */
+    document.addEventListener('htmx:afterSwap', function (e) {
+        var d = (e && e.detail) || {};
+        var elt = d.requestConfig && d.requestConfig.elt;
+        var t = d.target;
+        var pk = picker();
+        if (!pk || pk.hidden || !elt || !elt.closest || !elt.closest('.landing-env-confirm')) return;
+        if (!t || !t.getAttribute || t.getAttribute('data-project') !== _project) return;
+        var chg = t.querySelector('[data-env-change]');
+        open(_project, chg ? chg.getAttribute('data-env-current') : '', null, { noScroll: true, keepPending: true });
+    });
     document.addEventListener('htmx:afterSettle', boot);
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
     else boot();
