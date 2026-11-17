@@ -151,3 +151,7 @@ def test_the_additions_section_is_never_left_blank_while_display_facts_load():
     """A mount whose display fetch is in flight, answers for an older spec, fails, or is deferred
     shows a loading line or the reason with a Retry -- never an empty host."""
     _run("gen_additions_display_wait_selfcheck.cjs")
+
+
+def test_the_cz_button_says_why_it_is_off_and_the_lab_count_is_honest():
+    _run("gen_additions_czwhy_selfcheck.cjs")

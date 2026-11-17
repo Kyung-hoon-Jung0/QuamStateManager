@@ -245,10 +245,19 @@ window.WiringGrid = (function () {
     var cap = document.getElementById("gen-topo-caption");
     var placed = 0, qs = qubits();
     for (var i = 0; i < qs.length; i++) if (cellOf(qs[i])) placed++;
-    var npairs = ((spec() && spec().qubit_pairs) || []).length;
+    var plist = (spec() && spec().qubit_pairs) || [], npairs = plist.length;
+    // A pair is drawn only when both its qubits sit on the board; the count
+    // says how many are not, and when the list is still the automatic chain.
+    var undrawn = 0;
+    for (var pi = 0; pi < plist.length; pi++) {
+      if (!(plist[pi] && cellOf(plist[pi][0]) && cellOf(plist[pi][1]))) undrawn++;
+    }
+    var st = S();
     if (cap) {
       cap.textContent = placed + "/" + qs.length + " qubits placed · " + npairs +
-        (npairs === 1 ? " pair" : " pairs");   // QA F15: never "1 pairs"
+        (npairs === 1 ? " pair" : " pairs") +   // QA F15: never "1 pairs"
+        (npairs && !(st && st.pairsTouched) ? " (automatic chain)" : "") +
+        (undrawn ? " \u00b7 " + undrawn + " not drawn until both qubits are placed" : "");
       // Pre-announce the step-leave gate: partial placement (some but not all)
       // is exactly what the Next-check rejects — tint the progress chip now.
       cap.classList.toggle("gen-topo-caption-warn", placed > 0 && placed < qs.length);
@@ -493,8 +502,11 @@ window.WiringGrid = (function () {
   // (qubit_pairs). Placement is kept simple/valid (unique cells, in-zone); the
   // EDGE topology is the point (chain=line, ring=cycle, star=hub, grid=4-NN).
 
-  function layoutChain(qs) {        // snake fill + consecutive edges
-    var cols = Math.max(1, requestedZone().cols), pos = {}, edges = [];
+  function layoutChain(qs) {        // straight row (snake in a typed zone) + consecutive edges
+    // A chain is a straight line unless the user typed the board size: the
+    // near-square default board would fold it into an L.
+    var s = S(), typed = !!(s && s.topoZone && s.topoZone.cols && s.topoZone.rows);
+    var cols = Math.max(1, typed ? requestedZone().cols : qs.length), pos = {}, edges = [];
     qs.forEach(function (q, i) {
       var r = Math.floor(i / cols), inRow = i % cols;
       pos[q] = { col: (r % 2 === 0) ? inRow : (cols - 1 - inRow), row: r };
@@ -587,8 +599,12 @@ window.WiringGrid = (function () {
     var s = S();
     var dirty = placedExtent().cols > 0 ||
                 !!(s && s.pairsTouched && ((spec() && spec().qubit_pairs) || []).length);
-    if (dirty && typeof window !== "undefined" && window.confirm &&
-        !window.confirm("Replace the current layout and pairs with the " + name + " preset?")) {
+    // Name what is lost: the pairs typed by hand are replaced, not merged.
+    var had = ((spec() && spec().qubit_pairs) || []).length, typedPairs = !!(s && s.pairsTouched && had);
+    var msg = "Replace the current layout and pairs with the " + name + " preset?" +
+      (typedPairs ? " Your " + had + (had === 1 ? " pair is" : " pairs are") + " replaced by the " +
+        L.edges.length + " " + name + (L.edges.length === 1 ? " pair." : " pairs.") : "");
+    if (dirty && typeof window !== "undefined" && window.confirm && !window.confirm(msg)) {
       return;
     }
     applyLayout(L.pos, L.edges);

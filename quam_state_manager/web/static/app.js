@@ -13489,7 +13489,22 @@ window.clearDetailPanelSearch = function(btnEl) {
             // typing not staged yet it stages first, like the grid's Apply all.
             if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.altKey
                     && input.value === input.defaultValue && !state.pending) return;
-            if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); flush(); }
+            if (e.key === "Enter") {
+                e.preventDefault(); e.stopPropagation();
+                // A landed commit closes the editor and leaves focus on its
+                // row (Enter or F2 there opens it again). A refusal, or keys
+                // typed while the write was in flight, keep it open.
+                Promise.resolve(flush()).then(function () {
+                    if (tree._editor !== state || state.pending || document.activeElement !== input
+                            || input.value !== input.defaultValue) return;
+                    var row = el.closest(".tree-row");
+                    state.leave();   // nothing pending: closes clean, no draft kept
+                    if (row && row.isConnected && row.hasAttribute("tabindex")) {
+                        row._kbNoMount = true;
+                        try { row.focus({ preventScroll: true }); } finally { row._kbNoMount = false; }
+                    }
+                });
+            }
             if (e.key === "Escape") {
                 e.preventDefault(); e.stopPropagation();
                 if (state.escaped && input.value === input.defaultValue) {
@@ -14381,6 +14396,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             if (e.target !== container) container.tabIndex = -1;
             if (e.target && e.target.classList && e.target.classList.contains("tree-row")) {
                 container._kbRow = e.target;
+                if (e.target._kbNoMount) return;   // an editor that just closed on Enter
                 var v = e.target.querySelector(":scope > .ui-tree-value");
                 if (v) _makeValueEditable(v, e.target.parentElement.dataset.path);
             } else if (e.target && e.target.closest) {

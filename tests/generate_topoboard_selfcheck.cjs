@@ -536,6 +536,34 @@ function stone(win, qid) {
     ok(z3.cols >= 1 && z3.rows >= 6, 'r2-16: a typed zone below the placement is still floored (got ' + z3.cols + 'x' + z3.rows + ')');
   }
 
+  // The qubit count's automatic chain is named as such, and the caption says
+  // how many pairs the empty board does not draw yet.
+  {
+    const w = freshChip();
+    const cap = w.document.getElementById('gen-topo-caption').textContent;
+    ok(w.QuamGen.state.spec.qubit_pairs.length === 5, 'count 6 auto-chains 5 pairs');
+    ok(/^0\/6 qubits placed \D*5 pairs \(automatic chain\)/.test(cap) &&
+      /5 not drawn until both qubits are placed/.test(cap),
+       'caption names the automatic chain and the undrawn pairs (got "' + cap + '")');
+    w.WiringGrid.preset('chain');
+    const cap2 = w.document.getElementById('gen-topo-caption').textContent;
+    ok(!/automatic chain|not drawn/.test(cap2), 'a placed chain caption has no undrawn note (got "' + cap2 + '")');
+  }
+  // Chain on the default board is one straight row, and a confirm over typed
+  // pairs says they are replaced.
+  {
+    const w = freshChip();
+    const G = w.WiringGrid;
+    w.QuamGen.state.spec.qubit_pairs = [['q1', 'q3']]; w.QuamGen.state.pairsTouched = true;
+    let asked = '';
+    w.confirm = function (m) { asked = m; return true; };
+    G.preset('chain');
+    ok(QS.every(function (q, i) { const c = G._cellOf(q); return c && c.row === 0 && c.col === i; }),
+       'chain on the default board is one straight row');
+    ok(/Your 1 pair is replaced by the 5 chain pairs\./.test(asked),
+      'the confirm names the replaced pairs (got "' + asked + '")');
+  }
+
   if (fails) { console.error(fails + ' check(s) FAILED'); process.exit(1); }
   console.log('generate_topoboard_selfcheck: all checks passed');
 })();

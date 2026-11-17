@@ -547,8 +547,10 @@ window.TopoGraph = (function () {
     var cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
     var level = Math.abs(dy) <= 0.01;
     // pairpill: a label centred on the line between two pills is the
-    // narrow two-line stack on level edges too (left endpoint first).
-    if (!level || !e.has_coupler) {
+    // narrow two-line stack on level edges too (left endpoint first). A
+    // coupler edge's label sits beside its ring instead, so it reads as the
+    // one-line pair name at every angle, like the level ones.
+    if (!e.has_coupler) {
       // Read every non-level edge top-first, using endpoints rather than the
       // display pair id (which may abbreviate or contain hyphenated names).
       var first = level ? x1 <= x2 : y1 <= y2;
@@ -729,8 +731,16 @@ window.TopoGraph = (function () {
     // clears the arrow head (half-width ~7 px at the default cell), and the
     // coupler dot on the midpoint where the edge has one
     var off = t.hasAttribute("data-clear") ? f * 0.5 + Math.max(10, +t.getAttribute("data-clear")) : 0;
-    var px = cx + nx * off * side, py = cy + ny * off * side;
     t.setAttribute("font-size", f);
+    if (off && Math.abs(Math.sin(ang)) > 0.01 && t.getBBox) {
+      // A one-line name beside a steep edge's coupler ring clears it by its
+      // half extent along the edge normal (its width on a vertical edge).
+      t.setAttribute("x", 0); t.setAttribute("y", 0);
+      var bb = t.getBBox();
+      off = Math.abs(nx) * bb.width / 2 + Math.abs(ny) * bb.height / 2 + 3 +
+            Math.max(10, +t.getAttribute("data-clear"));
+    }
+    var px = cx + nx * off * side, py = cy + ny * off * side;
     t.setAttribute("data-px", r1(px)); t.setAttribute("data-py", r1(py));
     t.setAttribute("x", r1(px)); t.setAttribute("y", r1(py));
     // A level label needs no transform at all (FB-01: no rotated text).

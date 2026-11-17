@@ -179,7 +179,11 @@ const DATA = {
     key('Enter');
     await tick(20);
     ok(posts.length === 1, 'Enter inside the editor commits exactly once (' + posts.length + ' post)');
-    ok(doc.activeElement === input, 'Enter commits and stays in the input');
+    ok(!row.querySelector('input.tree-edit-input') && doc.activeElement === row,
+       'Enter commits, closes the editor and stays on its row');
+    key('Enter');
+    ok(!!row.querySelector('input.tree-edit-input') && doc.activeElement === row.querySelector('input.tree-edit-input'),
+       'Enter on the row opens the editor again');
     ok(pageKeys === 0, 'a commit never also reaches a page-level handler');
 
     // ── 5. F1 on a focused row ─────────────────────────────────────────────
