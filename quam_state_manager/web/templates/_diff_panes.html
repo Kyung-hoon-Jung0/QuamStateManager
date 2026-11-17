@@ -76,6 +76,7 @@
             <button type="button" class="dp-toggle" aria-expanded="true" title="Collapse / expand">&#9662;</button>
             <span class="dp-key dp-key-dir">{{ t.name }}</span>
             <span class="dp-count" data-count="{{ t.count }}" title="{{ t.count }} differing key{{ '' if t.count == 1 else 's' }} inside{% if payload.truncated %} (of the first {{ '{:,}'.format(_shown) }} the diff collected){% endif %}{% if rows | length < _found %} — this page lists {{ rows | length }}{% endif %}">{{ t.count }}</span>
+            {% set _own = (port_owners or {}).get(t.path) %}{% if _own %}<span class="tree-owner-chip" title="This port is wired to {{ _own }}">&#8961; {{ _own }}</span>{% endif %}
           </td>
           {% for src in srcs %}<td class="dp-cell dp-cell-dir" data-i="{{ loop.index0 }}"></td>{% endfor %}
         </tr>
@@ -86,6 +87,7 @@
           <td class="dp-key-col" title="{{ r.path }}">
             <span class="dp-toggle-gap"></span>
             <span class="dp-key dp-key-leaf">{{ t.name }}</span>
+            {% set _own = (port_owners or {}).get(t.path) %}{% if _own %}<span class="tree-owner-chip" title="This port is wired to {{ _own }}">&#8961; {{ _own }}</span>{% endif %}
           </td>
           {% for v in r.vals %}
           {% set i = loop.index0 %}
