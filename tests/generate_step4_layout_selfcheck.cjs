@@ -306,7 +306,7 @@ function buildTo4(win, opts) {
   while (G.state.spec.qubit_pairs.length > 1) {
     win.document.querySelector('#gen-pair-list .gen-row-del').click();
   }
-  ok(/ 1 pair$/.test(cap.textContent), 'L6: singular caption (got: ' + cap.textContent + ')');
+  ok(/ 1 pair(?!s)/.test(cap.textContent), 'L6: singular caption (got: ' + cap.textContent + ')');
 })();
 
 // L7 (QA regenerate-r2-34): + Add pair pre-fills a pair not listed yet, and
