@@ -1466,7 +1466,13 @@
        A value that is not a number gives null (the caller keeps its own honest text). */
     function voltTexts(values) {
         var d = pickVoltDigits(values || []);
-        return (values || []).map(function (v) { return num(v) ? voltNum(v, d) + " V" : null; });
+        var si = window.PlotTheme && typeof window.PlotTheme.siFormat === "function" ? window.PlotTheme.siFormat : null;
+        return (values || []).map(function (v) {
+            if (!num(v)) return null;
+            // a level far below a millivolt reads with an SI prefix (355.87 nV), not a row of zeros
+            if (si && v !== 0 && Math.abs(v) < 1e-3) return si(v, "V");
+            return voltNum(v, d) + " V";
+        });
     }
     window.GateTimeline = { render: render, valueAt: laneValueAt, readout: readout, laneColor: laneColor,
                             voltTexts: voltTexts };

@@ -204,6 +204,7 @@ const statusAsked = [];
 let createSync = { auto_push: false, state: 'mine', unapplied: 1 };
 const charts = [];
 // the real chart script supplies the shared volt text; only its drawing is mocked
+window.eval(fs.readFileSync(path.join(ROOT, 'static', 'plot-theme.js'), 'utf8'));
 window.eval(fs.readFileSync(path.join(ROOT, 'static', 'gate-timeline.js'), 'utf8'));
 const realVoltTexts = window.GateTimeline && window.GateTimeline.voltTexts;
 window.GateTimeline = { voltTexts: realVoltTexts, render: (host, data) => {
@@ -435,7 +436,7 @@ function tableWidths(el, sw, cw) {
     await settle();
     ok($('#czg-pairs .ui-segmented-on').textContent.indexOf('q1-2') === 0 && /op_q1-2/.test($('#czg-intent').textContent), 'choosing a pair shows its own evidence');
     ok(/0.18 V/.test($('#czg-intent').textContent) && !/0.1800/.test($('#czg-intent').textContent), 'numbers in the shortest exact form');
-    ok(typeof realVoltTexts === 'function' && /0\.0000003559 V/.test($('#czg-intent').textContent)
+    ok(typeof realVoltTexts === 'function' && /355\.87 nV/.test($('#czg-intent').textContent)
        && !/\de-\d/.test($('#czg-intent').textContent),
        'a level read off the samples prints as the chart prints it (rounded digits), never as a raw float');
 
