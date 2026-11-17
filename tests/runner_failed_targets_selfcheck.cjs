@@ -22,13 +22,15 @@ const { JSDOM } = require("jsdom");
     const partial = Object.assign({}, failed, { id: "c", failed_writes: fw3, failed_revert: { ok: true,
       reverted: [{ path: "qubits.q1.f_01" }], refused: [{ path: "qubits.q1.T1", code: "changed" }], remaining: ["qubits.q1.f_12"],
       at: "2026-01-02T03:04:05Z", message: "reverted 1: qubits.q1.f_01 — not reverted 1: qubits.q1.T1: the live value changed since the run (now 2.6)" } });
+    // an earlier press is named with its time, in the same message
+    partial.failed_revert.message += " \u2014 reverted earlier 1: qubits.q1.f_12 at 2026-01-01T00:00:00+00:00";
     const full = Object.assign({}, failed, { id: "d", failed_writes: fw3, failed_revert: { ok: true,
       reverted: fw3.map(x => ({ path: x.dotted })), refused: [], remaining: [], message: "reverted 3" } });
     const stuck = Object.assign({}, failed, { id: "e", failed_writes: fw3, failed_revert: { ok: true,
       reverted: [{ path: "qubits.q1.f_01" }], refused: [{ path: "qubits.q1.T1" }, { path: "qubits.q1.f_12" }], remaining: [], message: "x" } });
     // a refused value that came back: the server says it is retryable now
     const back = Object.assign({}, failed, { id: "f", failed_writes: fw3, revert_retryable: ["qubits.q1.T1"],
-      revert_offer: [{ path: "qubits.q1.T1", value: 3e-05, old: 2.1e-05 }],
+      revert_offer: [{ path: "qubits.q1.T1", value: 3e-05, old: 2.1e-05, value_text: "3e-05", old_text: "2.1e-05" }],
       failed_revert: { ok: true, reverted: [{ path: "qubits.q1.f_01" }], remaining: [], message: "second",
         presses: [{ at: "t0", message: "first press words" }] } });
     const afterA = Object.assign({}, failed, { revert_retryable: [], failed_revert: { ok: true,
@@ -41,6 +43,8 @@ const { JSDOM } = require("jsdom");
         : (String(url).includes("/revert-failed") ? { ok: true, message: "reverted 1: qubits.q1.f_01",
             state: { queue: [afterA, clean, partial, full, stuck, back], run: { status: "idle" } } } : {}) };
     };
+    // the page's one time format (app.js); a stub that shows it was used
+    w.SnapTime = { display: (d, short) => "T<" + d.toISOString() + (short ? ",short" : "") + ">" };
     w.eval(fs.readFileSync(path.join(__dirname, "..", "quam_state_manager", "web", "static", "scheduler.js"), "utf8"));
     w.document.dispatchEvent(new w.Event("DOMContentLoaded"));
     await new Promise(resolve => setTimeout(resolve, 100));
@@ -69,8 +73,12 @@ const { JSDOM } = require("jsdom");
     const det = w.document.querySelector('.sched-item[data-id="f"] details[data-revert-presses="1"]');
     assert(det && !det.open && /first press words/.test(det.textContent), "earlier presses sit collapsed"); checks++;
     assert(/as of the press at /.test(pm.textContent), "a stored refusal says when it was true"); checks++;
+    assert(pm.textContent.indexOf("press at T<2026-01-02T03:04:05.000Z>)") > 0,
+      "the press time is in the page's time format, not the browser locale: " + pm.textContent); checks++;
+    assert(/qubits\.q1\.f_12 at T<2026-01-01T00:00:00\.000Z>$/.test(pm.textContent),
+      "a press time inside the message is in the same format: " + pm.textContent); checks++;
     assert(/^As of /.test(det.querySelector("div").textContent), "an earlier press line says when"); checks++;
-    assert(fb.title === "Puts back: qubits.q1.T1 (run value 0.00003 -> 0.000021)",
+    assert(fb.title === "Puts back: qubits.q1.T1 (run value 3e-05 -> 2.1e-05)",
       "the button title names path, run value and the value it goes back to: " + fb.title); checks++;
     const fn = w.document.querySelector('.sched-item[data-id="f"] [data-revert-names="1"]');
     assert(fn && fn.textContent === "Will revert: qubits.q1.T1", "three or fewer: the names sit under the button"); checks++;

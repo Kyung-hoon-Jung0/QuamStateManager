@@ -260,7 +260,9 @@ class TestRevertTheFailedTargets:
         inst, iid = self._reverted_then_readopted(chip)
         st = self._status_item(chip, iid)
         assert st["revert_retryable"] == ["qubits.q1.T1"]
-        assert st["revert_offer"] == [{"path": "qubits.q1.T1", "value": 3.0e-05, "old": 2.1e-05}]
+        # the *_text fields carry the row note's number format (3e-05, never 0.00003)
+        assert st["revert_offer"] == [{"path": "qubits.q1.T1", "value": 3.0e-05, "old": 2.1e-05,
+                                       "value_text": "3e-05", "old_text": "2.1e-05"}]
         r = chip.c.post(f"/scheduler/item/{iid}/revert-failed",
                         json={"shown": st["revert_retryable"]})
         body = r.get_json()
@@ -270,6 +272,44 @@ class TestRevertTheFailedTargets:
         assert live["T1"] == 2.1e-05
         assert live["f_01"] == 5.11e9                  # never offered, never written
         assert self._status_item(chip, iid)["revert_retryable"] == []
+
+    def test_an_earlier_revert_says_when_and_that_the_value_changed_since(self, chip):
+        inst, iid = self._reverted_then_readopted(chip)
+        first_at = scheduler._find(scheduler.load_queue(inst), iid)["failed_revert"]["at"]
+        body = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={}).get_json()
+        msg = body["message"]
+        # the time of the press that reverted it, as an ISO stamp the page renders
+        assert f"reverted earlier 1: qubits.q1.f_01 at {first_at}" in msg, msg
+        # the person set it back to the run's value: never read as still reverted
+        assert "changed since that revert 1: qubits.q1.f_01 (now 5.11e+09)" in msg, msg
+        assert [x.get("at") for x in body["result"]["reverted_now"]] == [body["result"]["at"]]
+
+    def test_an_earlier_revert_that_still_holds_is_not_called_changed(self, chip):
+        patches = self._node_wrote(chip)
+        inst, iid = _record(chip, patches)
+        chip.set_live("qubits.q1.T1", 9.9e-05)
+        chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={})
+        chip.set_live("qubits.q1.T1", 3.0e-05)
+        chip.c.post("/state/sync", data={"mode": "pull"})
+        msg = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={}).get_json()["message"]
+        assert "reverted earlier 1: qubits.q1.f_01 at " in msg and "changed since" not in msg, msg
+
+    def test_the_latest_line_keeps_every_press_already_and_unchanged(self, chip):
+        patches = self._node_wrote(chip)
+        chip.set_live("qubits.q1.f_12", 4.8e9)
+        patches.append(_patch("q1", "f_12", 4.8e9, 4.8e9))          # changed nothing
+        inst, iid = _record(chip, patches)
+        chip.set_live("qubits.q1.T1", 2.1e-05)                      # put back by hand
+        chip.set_live("qubits.q1.f_01", 5.0e9)                      # moved away: refused
+        first = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={}).get_json()
+        assert "already reverted 1: qubits.q1.T1" in first["message"], first["message"]
+        chip.set_live("qubits.q1.f_01", 5.11e9)                     # back to the run's value
+        chip.c.post("/state/sync", data={"mode": "pull"})
+        body = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={}).get_json()
+        msg = body["message"]
+        assert [x["path"] for x in body["result"]["reverted_now"]] == ["qubits.q1.f_01"], body
+        assert "already reverted 1: qubits.q1.T1" in msg, msg
+        assert "unchanged by the run 1: qubits.q1.f_12" in msg, msg
 
     def test_a_press_without_a_shown_list_reverts_the_same_scope(self, chip):
         inst, iid = self._reverted_then_readopted(chip)
@@ -402,7 +442,7 @@ def test_the_queue_row_says_it_and_offers_the_revert():
                        capture_output=True, text=True, encoding="utf-8", timeout=60,
                        env=dict(os.environ, NODE_PATH=os.environ.get("NODE_PATH") or str(
                            Path(__file__).resolve().parents[1] / "node_modules")))
-    assert r.returncode == 0 and "24 checks passed" in r.stdout, r.stdout + r.stderr
+    assert r.returncode == 0 and "26 checks passed" in r.stdout, r.stdout + r.stderr
 
 
 class TestCompactRowNamesTheMetricTarget:

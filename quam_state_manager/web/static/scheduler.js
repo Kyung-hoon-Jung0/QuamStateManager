@@ -25,14 +25,18 @@
       .then(function (r) { return r.json().catch(function () { return {}; }); })
       .catch(function () { return { __neterr: true }; });
   }
-  // a stored press time (ISO) in the viewer's local clock; the raw text if unreadable
+  // a stored press time (ISO) in the page's one time format (SnapTime, the
+  // viewer's chosen zone with its offset), never the browser locale's words;
+  // the raw text when unreadable or when that formatter is absent
   function pressTime(iso) {
     var d = new Date(iso);
-    return isNaN(d.getTime()) ? String(iso) : d.toLocaleString();
+    if (isNaN(d.getTime()) || !(window.SnapTime && window.SnapTime.display)) return String(iso);
+    return window.SnapTime.display(d, false);
   }
-  function fmtVal(v) {
-    if (v === null || v === undefined) return "none";
-    return typeof v === "object" ? JSON.stringify(v) : String(v);
+  // a revert message names press times as ISO stamps: each in the same format
+  var ISO_STAMP = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g;
+  function withPressTimes(text) {
+    return String(text == null ? "" : text).replace(ISO_STAMP, pressTime);
   }
   function postJSON(url, body) {
     return fetchJSON(url, {
@@ -392,7 +396,7 @@
           self._queueSig = null;
           if (r && r.state) self.renderQueue(r.state);
           else fetchJSON("/scheduler/status").then(function (st) { self._queueSig = null; self.renderQueue(st); });
-          var msg = (r && (r.message || r.error)) || "Revert failed";
+          var msg = withPressTimes((r && (r.message || r.error)) || "Revert failed");
           if (window.showToast) window.showToast(msg, r && r.ok ? "success" : "warning");
           return r;
         });
@@ -626,7 +630,7 @@
         rmsg.setAttribute("data-failed-revert", rv.ok ? "ok" : "refused");
         // a press-time record: its values were true when pressed, not now
         rmsg.textContent = (rv.at ? "Revert (as of the press at " + pressTime(rv.at) + "): "
-          : "Revert: ") + rv.message;
+          : "Revert: ") + withPressTimes(rv.message);
         nameCell.appendChild(rmsg);
         var earlierPresses = (rv.presses || []).filter(function (h) { return h && h.message; });
         if (earlierPresses.length) {
@@ -638,7 +642,7 @@
           earlierPresses.slice().reverse().forEach(function (h) {
             var line = document.createElement("div");
             line.className = "muted";
-            line.textContent = (h.at ? "As of " + pressTime(h.at) + ": " : "") + h.message;
+            line.textContent = (h.at ? "As of " + pressTime(h.at) + ": " : "") + withPressTimes(h.message);
             det.appendChild(line);
           });
           nameCell.appendChild(det);
@@ -663,7 +667,8 @@
         var offerList = Array.isArray(it.revert_offer) ? it.revert_offer : [];
         rb.title = offerList.length
           ? "Puts back: " + offerList.map(function (o) {
-              return o.path + " (run value " + fmtVal(o.value) + " -> " + fmtVal(o.old) + ")";
+              // the server's text: the same number format as the row's note
+              return o.path + " (run value " + o.value_text + " -> " + o.old_text + ")";
             }).join("; ")
           : "Put back each listed value; a value changed since the run is refused and named";
         nameCell.appendChild(rb);
