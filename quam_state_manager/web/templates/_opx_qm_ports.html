@@ -24,21 +24,25 @@
 {%- if not pm.fems %}
 <p class="ui-note">The configuration declares no controller ports.</p>
 {%- endif %}
+{%- if pm.fems %}
+<div class="ui-field-stack ui-field-stack--dense">
+{%- endif %}
 {%- for f in pm.fems or [] %}
-<p class="ui-text-strong">{{ f.controller }}{% if f.slot is not none %} / slot {{ f.slot }}{% endif %}{% if f.type %} &middot; {{ f.type }}{% endif %}</p>
-{%- if f.ports %}
 <dl class="ui-facts" aria-label="Ports of {{ f.key }}">
+<div class="ui-facts-row"><dt class="ui-facts-label ui-text-strong">{{ f.controller }}{% if f.slot is not none %} / slot {{ f.slot }}{% endif %}</dt><dd class="ui-facts-value ui-text-strong">{{ f.type or 'type not given' }}{% if not f.ports %} &middot; no ports declared{% endif %}</dd></div>
+{%- if f.ports %}
 {%- for kind in ['analog_outputs', 'analog_inputs', 'digital_outputs', 'digital_inputs'] %}{% set rows = f.ports|selectattr('kind', 'equalto', kind)|list %}{% if rows %}
 <div class="ui-facts-row"><dt class="ui-facts-label">{{ _kind_label[kind] }}</dt><dd class="ui-facts-value">
 {%- for p in rows %}
 {%- if p.elements %}<span title="{{ _kind_label.get(kind, kind) }} {{ p.port }}: {{ p.elements|join(', ') }}{% if not p.declared %} (not declared under the controller){% endif %}"><span class="ui-pill ui-pill--accent">{{ p.port }}</span> {{ p.elements[:3]|join(', ') }}{% if p.elements|length > 3 %} +{{ p.elements|length - 3 }}{% endif %}</span>{% else %}<span class="ui-pill" title="{{ _kind_label.get(kind, kind) }} {{ p.port }}: declared, no element uses it">{{ p.port }}</span>{% endif %}{% if not loop.last %} {% endif %}
 {%- endfor %}</dd></div>{% endif %}
 {%- endfor %}
-</dl>
-{%- else %}
-<p class="ui-note">No ports declared.</p>
 {%- endif %}
+</dl>
 {%- endfor %}
+{%- if pm.fems %}
+</div>
+{%- endif %}
 {%- if pm.unparsed %}<p class="ui-note">{{ pm.unparsed }} reference{{ 's' if pm.unparsed != 1 }} not shown: a port this view cannot place (for example an Octave port or a malformed entry).</p>{% endif %}
 <p class="ui-text-quiet">Highlighted: a port an element of this QM references. Declared in the configuration; not proof that the running program plays on it.</p>
 </div></details>
