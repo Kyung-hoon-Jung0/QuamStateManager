@@ -11319,7 +11319,7 @@ details.sched-card[open] > summary::before { content: "\25BE "; }
 .sched-item-overbadge { font-size: .66rem; padding: 0 .3rem; border-radius: 999px; flex: 0 0 auto;
     border: 1px solid var(--pico-primary); color: var(--pico-primary); white-space: nowrap; }
 /* targets — secondary tier; click-to-edit chip */
-.sched-item-targets-chip { font-size: .8rem; color: var(--pico-color); background: transparent;
+.sched-item-targets-chip { font-size: .8rem; color: inherit; background: transparent;
     border: 1px dashed var(--pico-muted-border-color); border-radius: 4px; padding: .02rem .35rem;
     cursor: text; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .sched-item-targets-chip:hover { border-color: var(--pico-primary); }

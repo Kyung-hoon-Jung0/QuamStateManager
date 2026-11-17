@@ -53784,6 +53784,50 @@ def _revert_refusal_text(c: dict) -> str:
     return reason
 
 
+def _revert_entry_at(r: dict, prev: dict) -> dict:
+    """An earlier reverted entry with the time of the press that reverted it.
+    A record from before entries carried their own time takes the previous
+    press's time only when that press is known to be the one (it reverted the
+    path, or it was the only press); otherwise the time stays unknown."""
+    if r.get("at"):
+        return r
+    now = {x.get("path") for x in (prev.get("reverted_now") or []) if isinstance(x, dict)}
+    only = not [h for h in (prev.get("presses") or []) if isinstance(h, dict)]
+    if prev.get("at") and (r.get("path") in now or only):
+        return dict(r, at=prev["at"])
+    return r
+
+
+def _revert_earlier_parts(earlier: list, read) -> list:
+    """The message parts for values an earlier press reverted: when (the
+    press time, ISO, which the page renders in its one time format) and,
+    for a value that no longer holds what that press put back, that it
+    changed since and what it holds now."""
+    if not earlier:
+        return []
+    from quam_state_manager.core.autofit.writer import _values_equal
+    groups: dict = {}
+    for r in earlier:
+        groups.setdefault(r.get("at"), []).append(str(r.get("path")))
+    words = "; ".join(", ".join(ps) + (f" at {at}" if at else "")
+                      for at, ps in groups.items())
+    parts = [f"reverted earlier {len(earlier)}: {words}"]
+    moved = []
+    for r in earlier:
+        if "to" not in r:
+            continue
+        try:
+            cur = read(r.get("path"))
+        except KeyError:
+            moved.append(f"{r.get('path')} (no longer on the chip)")
+            continue
+        if not _values_equal(cur, r["to"]):
+            moved.append(f"{r.get('path')} (now {_revert_value_text(cur)})")
+    if moved:
+        parts.append(f"changed since that revert {len(moved)}: " + ", ".join(moved))
+    return parts
+
+
 def _revert_key(w: dict):
     return w.get("dotted") or w.get("path")
 
@@ -53854,8 +53898,11 @@ def _annotate_revert_retryable(queue: list) -> None:
         handle = SimpleNamespace(store=ctx["store"])
         scope = _revert_press_scope(it, lambda k: _current_value(handle, k))
         it["revert_retryable"] = [_revert_key(w) for w in scope]
+        # the *_text fields: the same number format as the row's own note
         it["revert_offer"] = [{"path": _revert_key(w), "value": w.get("value"),
-                               "old": w.get("old")} for w in scope]
+                               "old": w.get("old"),
+                               "value_text": _revert_value_text(w.get("value")),
+                               "old_text": _revert_value_text(w.get("old"))} for w in scope]
 
 
 def _merge_revert_lists(prev: dict, now: dict, reverted_paths: set) -> dict:
@@ -53977,7 +54024,8 @@ def scheduler_revert_failed(item_id: str):
     out = revert_patches(handle, patches, apply_live=True,
                          label=f"runner:{item.get('name') or item_id}")
     # out.paths: old = the node's value the revert replaced, new = restored
-    reverted = [{"path": p["path"], "from": p["old"], "to": p["new"]}
+    now_at = datetime.now(timezone.utc).isoformat()
+    reverted = [{"path": p["path"], "from": p["old"], "to": p["new"], "at": now_at}
                 for p in (out.paths if out.ok else [])]
     refused = blind + list(out.conflicts or [])
     if not out.ok and out.error and out.error not in ("nothing revertible", "CAS conflict"):
@@ -53991,21 +54039,25 @@ def scheduler_revert_failed(item_id: str):
     remaining = [p for p in _revert_retryable_paths(all_writes, read) if p not in done]
     # the record accumulates: what an earlier press put back stays recorded
     prev_rev = [r for r in (prev.get("reverted") or []) if isinstance(r, dict)]
-    earlier = [r for r in prev_rev if r.get("path") not in done]
+    earlier = [_revert_entry_at(r, prev) for r in prev_rev if r.get("path") not in done]
     earlier_paths = {r.get("path") for r in earlier}
     already = [a for a in already if a["path"] not in earlier_paths]
+    # every press's classifications, not this press's alone (an earlier
+    # press's "already" / "unchanged" values are never retried, so a press
+    # would otherwise drop them from the line it leaves)
+    lists = _merge_revert_lists(prev, {"already_reverted": already, "unchanged": unchanged,
+                                       "refused": refused},
+                                {r.get("path") for r in earlier + reverted})
     parts = []
     if reverted:
         parts.append(f"reverted {len(reverted)}: " + ", ".join(r["path"] for r in reverted))
-    if earlier:
-        parts.append(f"reverted earlier {len(earlier)}: "
-                     + ", ".join(r["path"] for r in earlier))
-    if already:
-        parts.append(f"already reverted {len(already)}: "
-                     + ", ".join(a["path"] for a in already))
-    if unchanged:
-        parts.append(f"unchanged by the run {len(unchanged)}: "
-                     + ", ".join(u["path"] for u in unchanged))
+    parts.extend(_revert_earlier_parts(earlier, read))
+    if lists["already_reverted"]:
+        parts.append(f"already reverted {len(lists['already_reverted'])}: "
+                     + ", ".join(a["path"] for a in lists["already_reverted"]))
+    if lists["unchanged"]:
+        parts.append(f"unchanged by the run {len(lists['unchanged'])}: "
+                     + ", ".join(u["path"] for u in lists["unchanged"]))
     # a refusal that names no path is the whole press failing (the live write),
     # not one value: it is stated as a sentence, never counted as "1"
     named = [c for c in refused if c.get("path")]
@@ -54018,15 +54070,12 @@ def scheduler_revert_failed(item_id: str):
     presses = [h for h in (prev.get("presses") or []) if isinstance(h, dict)]
     if prev.get("message"):
         presses.append({"at": prev.get("at"), "message": prev["message"]})
-    lists = _merge_revert_lists(prev, {"already_reverted": already, "unchanged": unchanged,
-                                       "refused": refused},
-                                {r.get("path") for r in earlier + reverted})
     remaining = [p for p in remaining if p not in {r.get("path") for r in earlier}]
     result = {"ok": bool(out.ok and (reverted or not (attempt or blind))),
               "reverted": earlier + reverted, "reverted_now": reverted,
               "already_reverted": lists["already_reverted"], "unchanged": lists["unchanged"],
               "refused": lists["refused"], "remaining": remaining, "presses": presses,
-              "message": message, "at": datetime.now(timezone.utc).isoformat()}
+              "message": message, "at": now_at}
     scheduler.set_item_failed_revert(inst, item_id, result)
     if reverted:
         scheduler.bump_chip_rev(inst)
@@ -54371,7 +54420,10 @@ def scheduler_start():
             logger.warning("start preflight failed", exc_info=True)
             pre = None
         if pre is not None and not pre.get("ok"):
-            return jsonify({"ok": False, "reason": "preflight", "preflight": pre}), 409
+            # an expected answer the page handles (it offers "Start anyway"),
+            # not a failed request: 200 with ok False. A real conflict (a
+            # foreign runner, an archive, unreadable settings) stays a 409.
+            return jsonify({"ok": False, "reason": "preflight", "preflight": pre})
     app = current_app._get_current_object()
     scheduler.set_refresh_hook(
         lambda folder, item_id, status: _scheduler_refresh_hook(

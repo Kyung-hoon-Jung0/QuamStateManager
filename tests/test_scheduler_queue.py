@@ -1002,6 +1002,22 @@ def client(tmp_path):
     return app.test_client()
 
 
+def test_saved_targets_chip_text_is_not_the_button_inverse_colour():
+    """The targets chip is role=button, and Pico's [role=button] rule redefines
+    --pico-color ON that element to the button's inverse (white): a chip
+    coloured var(--pico-color) showed saved targets as an empty box on the
+    row. The chip inherits the row's text colour instead."""
+    import re
+    static = Path(__file__).resolve().parents[1] / "quam_state_manager" / "web" / "static"
+    js = (static / "scheduler.js").read_text(encoding="utf-8")
+    assert 'class="sched-item-targets-chip' in js and 'role="button"' in js
+    css = (static / "style.css").read_text(encoding="utf-8")
+    rules = re.findall(r"\.sched-item-targets-chip(?:\.is-default)?\s*\{([^}]*)\}", css)
+    assert rules, "the chip rule exists"
+    colours = [m for body in rules for m in re.findall(r"(?<![-\w])color\s*:\s*([^;]+);", body)]
+    assert colours and not any("--pico-color" in c for c in colours), colours
+
+
 class TestQueueRoutes:
     def test_scan_lists_nodes(self, client, tmp_path):
         folder = tmp_path / "cal"
@@ -1050,9 +1066,11 @@ class TestQueueRoutes:
 
     def test_start_refused_when_preflight_fails(self, client):
         # No chip is open in the test app, so the Strict preflight fails and the
-        # run is refused with the failing checks (never silently started).
+        # run is refused with the failing checks (never silently started). The
+        # refusal is an answer the page handles ("Start anyway"), not a failed
+        # request: 200 with ok False, so the console logs no failed load.
         resp = client.post("/scheduler/start", json={})
-        assert resp.status_code == 409
+        assert resp.status_code == 200
         body = resp.get_json()
         assert body["ok"] is False and body["reason"] == "preflight"
         assert body["preflight"]["ok"] is False
