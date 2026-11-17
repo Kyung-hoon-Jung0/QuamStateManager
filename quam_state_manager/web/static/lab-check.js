@@ -145,7 +145,7 @@
         var top = r.bottom + 2;
         if (h && top + h > vh - 4) {
             var above = r.top - h - 2;
-            top = above >= 4 ? above : Math.max(4, vh - 4 - h);
+            top = above >= 4 && above + h <= vh - 4 ? above : Math.max(4, vh - 4 - h);
         }
         badge.style.top = Math.max(4, top) + 'px';
     }
@@ -223,13 +223,15 @@
             }
             // the surface's own error markup can move the cell: re-anchor
             var raf = window.requestAnimationFrame || function (f) { return setTimeout(f, 16); };
-            // a field's own refusal row (Pulses property table) sits right under the cell:
-            // the badge goes under that row so it never hides the field's own line
+            // a field's own refusal row (Pulses property table) already names the reason under
+            // the cell: the badge leaves then, unless it carries an offer, which goes under the row
             raf(function () { raf(function () {
                 var a = badge._anchor;
                 var tr = a && a.closest ? a.closest('tr') : null;
                 var nx = tr && tr.nextElementSibling;
-                badge._placeAt = nx && nx.hasAttribute('data-refused-row') ? nx : a;
+                var own = nx && nx.hasAttribute('data-refused-row') ? nx : null;
+                if (own && !badge._keep) { done(); return; }
+                badge._placeAt = own || a;
                 _place(badge, badge._placeAt);
             }); });
             // typing again in the refused cell dismisses the badge (the offer button keeps it)
