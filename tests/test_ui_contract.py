@@ -1052,6 +1052,7 @@ _STAGE6_SELECTORS = {
     '.gate-status-list .gate-status + .gate-status', '.gate-status',
     '.gate-status-row', '.gate-status-row:has(> .gate-status-details[open])',
     '.gate-status-row > .ui-chip', '.gate-status-items', '.gate-status-details',
+    '#pulse-detail-root .gate-status-items', '#pulse-detail-root .gate-status-items > .ui-pill',
     '.gate-status-details[open]', '.gate-status-details .ui-disclosure-summary',
     '.gate-status-details-list', '.gate-status-details-list dd', '.gate-status-actions',
     '.gate-status-edit', '.gate-status-activate', '.gate-status-recheck', '.gate-status-delete',
@@ -1262,6 +1263,29 @@ _STAGE6_SELECTORS = {
     '.topbar.tb-fit-11 .sync-control-text',
     '.topbar.tb-fit-11 #pending-tray .sync-control-act',
 }
+
+
+def _kit_rule(selector: str) -> dict:
+    """The declarations of the one ui-kit.css rule whose selector list names ``selector``."""
+    out = {}
+    for sel, body, _stack in _blocks(_strip_comments(_read(_UI_KIT))):
+        if selector in [p.strip() for p in sel.split(",")]:
+            out.update(dict(_decls(body)))
+    return out
+
+
+def test_gate_line_in_a_pulse_detail_wraps_its_pills_and_a_list_row_still_clips():
+    # A gate line standing alone in a pulse detail (#pulse-detail-root) must not cut a long pill at a narrow
+    # pane: the pill row wraps and the pill text breaks like a long name (overflow-wrap: anywhere, as .ui-chip).
+    single = _kit_rule("#pulse-detail-root .gate-status-items")
+    assert single.get("flex-wrap") == "wrap" and single.get("overflow") == "visible", single
+    pill = _kit_rule("#pulse-detail-root .gate-status-items > .ui-pill")
+    assert pill.get("white-space") == "normal" and pill.get("overflow-wrap") == "anywhere", pill
+    assert pill.get("max-width") == "100%", pill
+    assert _kit_rule(".ui-chip").get("overflow-wrap") == "anywhere"
+    # the list row keeps its one-line layout: pills clip before the actions wrap
+    listed = _kit_rule(".gate-status-items")
+    assert listed.get("flex-wrap") == "nowrap" and listed.get("overflow") == "hidden", listed
 
 
 def test_stage6_feature_selectors_are_reviewed_and_tokenized():
