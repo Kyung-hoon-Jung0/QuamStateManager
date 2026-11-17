@@ -51,7 +51,7 @@ def client(tmp_path):
 
 class TestSidebarAffordance:
     def test_printer_icon_sits_beside_chip_status(self, client):
-        page = client.get("/").get_data(as_text=True)
+        page = client.get("/", follow_redirects=True).get_data(as_text=True)
         i = page.index(">Chip Status</a>")
         # in the SAME nav-sub-row, before the subnav toggle
         row_end = page.index("nav-sub-toggle", i)

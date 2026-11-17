@@ -118,7 +118,7 @@ def test_the_js_export_posts_the_visible_columns():
 
 
 def test_ctrl_k_and_help_name_export(client):
-    html = client.get("/").get_data(as_text=True)
+    html = client.get("/", follow_redirects=True).get_data(as_text=True)
     m = re.search(r'<script id="cmd-palette-data"[^>]*>(.*?)</script>', html, re.S)
     pages = json.loads(m.group(1))["pages"]
     assert any(p["label"].lower().startswith("export") and p["url"] == "/table" for p in pages), pages

@@ -160,7 +160,7 @@ class TestBulkRender:
         /bulk fragment. They still call the same BulkEdit setters and write the
         same localStorage keys; only the location moved.
         """
-        page = client.get("/").get_data(as_text=True)
+        page = client.get("/", follow_redirects=True).get_data(as_text=True)
         assert 'id="bulk-ls-slider"' in page and "BulkEdit.setLetterSpacing" in page
         assert "BulkEdit.setFont" in page and "BulkEdit.toggleBold" in page
         # the Flat View's own, independent set moved alongside it

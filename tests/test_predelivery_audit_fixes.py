@@ -383,7 +383,7 @@ class TestUnsavedEditsCloseGuard:
         client = app.test_client()
         client.post("/load", data={"folder": str(live)})
         client.post("/field/edit", data={"dot_path": "qubits.q1.f_01", "value": "7e9"})
-        html = client.get("/").data.decode()
+        html = client.get("/", follow_redirects=True).data.decode()
         import re
         m = re.search(r'data-change-count="(\d+)"', html)
         assert m and int(m.group(1)) >= 1
@@ -766,7 +766,7 @@ class TestChipTokenBakedIntoPage:
         # The /chip/active-token endpoint and the baked window.__chipToken agree.
         tok = client.get("/chip/active-token").get_json()["token"]
         assert tok
-        page = client.get("/").data.decode()
+        page = client.get("/", follow_redirects=True).data.decode()
         assert "window.__chipToken" in page
         assert tok in page
 

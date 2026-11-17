@@ -44,7 +44,7 @@ def client(tmp_path):
 
 class TestBookmarkMoved:
     def test_bookmark_is_a_sidebar_tool_now(self, client):
-        page = client.get("/").get_data(as_text=True)
+        page = client.get("/", follow_redirects=True).get_data(as_text=True)
         assert "sidebar-tool-details" in page
         # it sits with Settings + Calculator, below them
         i = page.index('class="sidebar-tools"')
@@ -65,7 +65,7 @@ class TestBookmarkMoved:
         """
         from pathlib import Path
         import quam_state_manager
-        page = client.get("/").get_data(as_text=True)
+        page = client.get("/", follow_redirects=True).get_data(as_text=True)
         assert 'hx-post="/state/archive"' in page
         assert 'hx-target="#archive-status"' in page
         assert 'data-after-request="archiveDone"' in page
@@ -76,7 +76,7 @@ class TestBookmarkMoved:
         assert "archive-flash" in app_js
 
     def test_the_topbar_slot_is_the_version_now(self, client):
-        page = client.get("/").get_data(as_text=True)
+        page = client.get("/", follow_redirects=True).get_data(as_text=True)
         assert 'class="archive-wrap"' not in page
         assert 'id="state-version-slot"' in page
 
@@ -84,7 +84,7 @@ class TestBookmarkMoved:
         """Resolving it hashes the live state+wiring pair; docs/28 forbids a
         live read on a surface that renders on every page. So the slot fetches
         after paint, like the diagnostics and instances slots."""
-        page = client.get("/").get_data(as_text=True)
+        page = client.get("/", follow_redirects=True).get_data(as_text=True)
         m = re.search(r'id="state-version-slot"[^>]*', page)
         assert m and 'hx-get="/state/version"' in m.group(0)
         assert "load" in m.group(0)
@@ -92,7 +92,7 @@ class TestBookmarkMoved:
     def test_the_panel_is_not_inside_the_swap_target(self, client):
         """An innerHTML swap on the slot would delete the panel every time the
         chip refreshed."""
-        page = client.get("/").get_data(as_text=True)
+        page = client.get("/", follow_redirects=True).get_data(as_text=True)
         slot = re.search(r'<span id="state-version-slot".*?</span>', page, re.S)
         assert slot and 'id="state-version-panel"' not in slot.group(0)
 
@@ -335,7 +335,7 @@ class TestTheManualStatesTheCurrentCovenant:
         assert "is only ever written by an explicit" not in body
 
     def test_the_landing_glossary_names_it_too(self, client):
-        body = client.get("/").get_data(as_text=True)
+        body = client.get("/", follow_redirects=True).get_data(as_text=True)
         assert "Auto-Sync" in body
         assert "edits here never touch the instrument" not in body
 
@@ -539,7 +539,7 @@ class TestVersionDiff:
         """The overlay reuses the review shell classes (docs/86 language);
         the JS opens it with a focus trap and the panel's click-away guard
         ignores clicks inside it — closing the diff lands back on the row."""
-        page = client.get("/").get_data(as_text=True)
+        page = client.get("/", follow_redirects=True).get_data(as_text=True)
         m = re.search(r'<div id="version-diff-overlay"[^>]*>', page)
         assert m and "state-review-overlay" in m.group(0)
         assert 'id="version-diff-host"' in page

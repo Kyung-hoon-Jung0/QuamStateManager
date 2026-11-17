@@ -36,6 +36,19 @@ def test_sidebar_lazy_group_selfcheck():
     assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_every_open_lazy_group_gets_its_rows_under_real_htmx():
+    """Real htmx: overlapping asks of several restored groups all land (each group is its
+    own request source), and an ask that did not fill its group can be asked again."""
+    proc = subprocess.run(
+        ["node", str(_ROOT / "tests" / "sidebar_lazy_queue_selfcheck.cjs")],
+        capture_output=True, text=True, cwd=str(_ROOT), timeout=180)
+    if proc.returncode == 2 and "jsdom not installed" in (proc.stderr or ""):
+        pytest.skip("jsdom not installed")
+    assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    assert "ALL OK" in proc.stdout, proc.stdout
+
+
 def test_the_restore_asks_rather_than_simulating_a_toggle():
     """A source pin on the ONE decision that took four attempts to get right.
 
@@ -49,12 +62,16 @@ def test_the_restore_asks_rather_than_simulating_a_toggle():
         encoding="utf-8")
     i = js.index("details[data-lazy-group][open]")
     block = js[i:i + 1600]
-    assert "htmx.ajax('GET', url," in block, \
+    assert "_askLazyGroup(g)" in block, \
         "the restore must ASK with the element's own hx-get, not simulate a toggle"
-    assert "getAttribute('hx-vals')" in block, \
-        "the parameters are read off the element so they cannot drift from the markup"
     assert ".trigger(g, 'toggle')" not in block and "dispatchEvent(new Event('toggle'))" not in block, \
         "a simulated toggle was measured NOT to reach this trigger -- see docs/164"
+    j = js.index("function _askLazyGroup(g)")
+    helper = js[j:j + 1200]
+    assert "htmx.ajax('GET', url," in helper and "getAttribute('hx-vals')" in helper, \
+        "the parameters are read off the element so they cannot drift from the markup"
+    assert "source: g" in helper, \
+        "without a source htmx queues on body with strategy 'last' and drops all but the last ask"
 
 
 def test_no_template_hx_trigger_carries_a_filter():

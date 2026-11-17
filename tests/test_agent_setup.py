@@ -446,13 +446,13 @@ class TestDryRunToggle:
         from quam_state_manager.core import scheduler
         inst = self._inst(c)
         scheduler.save_settings(inst, {"global_simulate": True})
-        html = c.get("/").get_data(as_text=True)
-        assert 'id="agent-home"' in html, "with a chip open, / IS the Agent home"
+        html = c.get("/agent").get_data(as_text=True)
+        assert 'id="agent-home"' in html, "with a chip open, /agent is the Agent home"
         assert 'id="ag-dryrun-note"' in html and "Dry run is ON" in html and "change in Agent setup" in html
         assert html.index('id="ag-dryrun-note"') < html.index('id="agent-home"'), \
             "beside the mount, never inside it -- agent.js replaces the mount's innerHTML"
         scheduler.save_settings(inst, {"global_simulate": False})
-        html = c.get("/").get_data(as_text=True)
+        html = c.get("/agent").get_data(as_text=True)
         assert 'id="agent-home"' in html and 'id="ag-dryrun-note"' not in html and "Dry run is ON" not in html
 
     def test_the_setup_js_wires_the_checkbox_to_the_runner_settings(self):

@@ -123,12 +123,12 @@ class TestLiveWalk:
         c = env["client"]
         with env["app"].app_context():
             assert routes_mod._undo_live_enabled() is True      # absent file ⇒ ON
-        assert 'id="undo-live-toggle"' in c.get("/").get_data(as_text=True)
-        assert re.search(r'id="undo-live-toggle"\s+data-on="1" checked', c.get("/").get_data(as_text=True))
+        assert 'id="undo-live-toggle"' in c.get("/", follow_redirects=True).get_data(as_text=True)
+        assert re.search(r'id="undo-live-toggle"\s+data-on="1" checked', c.get("/", follow_redirects=True).get_data(as_text=True))
         r = c.post("/settings/undo-live")                        # bare POST toggles
         assert r.get_json() == {"ok": True, "enabled": False}
         assert (Path(env["app"].instance_path) / "undo_live.json").exists()
-        assert re.search(r'id="undo-live-toggle"\s+data-on="0"\s+onchange', c.get("/").get_data(as_text=True))
+        assert re.search(r'id="undo-live-toggle"\s+data-on="0"\s+onchange', c.get("/", follow_redirects=True).get_data(as_text=True))
         _set_setting(env, True)
 
     def test_the_toggle_sends_the_state_it_shows(self):

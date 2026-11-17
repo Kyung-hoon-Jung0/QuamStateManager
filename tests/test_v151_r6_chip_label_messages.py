@@ -31,7 +31,7 @@ def _write(folder, name):
 
 
 def _page_key(c) -> str:
-    m = re.search(r"window\.__chipKey = (\"[^\"]*\");", c.get("/").get_data(as_text=True))
+    m = re.search(r"window\.__chipKey = (\"[^\"]*\");", c.get("/", follow_redirects=True).get_data(as_text=True))
     assert m
     return json.loads(m.group(1))
 

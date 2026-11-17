@@ -5882,7 +5882,8 @@ class TestPhase5CacheControl:
 
     @pytest.mark.parametrize("url", ["/", "/qubits", "/bulk", "/explorer"])
     def test_a_full_page_is_no_store_too(self, loaded_client, url):
-        resp = loaded_client.get(url)
+        # "/" with a chip open redirects to Chip Status: judge the page it lands on
+        resp = loaded_client.get(url, follow_redirects=True)
         assert resp.status_code == 200 and resp.mimetype == "text/html", url
         assert resp.headers.get("Cache-Control") == "no-store", url
 
@@ -7372,7 +7373,7 @@ class TestSidebarIAr15:
         html = loaded_client.get('/regenerate').get_data(as_text=True)
         assert re.search(r'<h2 class="gen-title ui-head-title">Modify config</h2>', html)
         for url in ('/regenerate', '/help', '/'):
-            html = loaded_client.get(url).get_data(as_text=True)
+            html = loaded_client.get(url, follow_redirects=True).get_data(as_text=True)
             assert 'Modify config' in html
             assert 'Re-generate config' not in html and 'Re-generate Config' not in html
 
