@@ -286,6 +286,26 @@
         });
     }
 
+    /* A Jobs-tab "ports" link lands on /opx-monitor/live#opxmon-ports-<QM id>: open that QM's
+       Ports disclosure once and bring it into view (a details element does not open by itself). */
+    var portsHashDone = null;
+    function openPortsFromHash() {
+        var h = window.location && window.location.hash;
+        if (!h || h.indexOf("#opxmon-ports-") !== 0 || portsHashDone === h) return;
+        var id;
+        try { id = decodeURIComponent(h.slice(1)); } catch (err) { id = h.slice(1); }
+        var d = document.getElementById(id);
+        if (!d || d.tagName !== "DETAILS") return;
+        portsHashDone = h;
+        d.open = true;
+        if (d.hasAttribute("data-fold")) folds[d.getAttribute("data-fold")] = true;
+        if (d.scrollIntoView) d.scrollIntoView({block: "center"});
+    }
+    window.addEventListener("hashchange", function () { portsHashDone = null; openPortsFromHash(); });
+    document.addEventListener("DOMContentLoaded", openPortsFromHash);
+    document.addEventListener("htmx:afterSwap", openPortsFromHash);
+    openPortsFromHash();
+
     document.addEventListener("click", onClick);
     // Stage 0 uses a modifier instead of an attribute selector for expanded tiles.
     document.addEventListener("toggle", function (event) {

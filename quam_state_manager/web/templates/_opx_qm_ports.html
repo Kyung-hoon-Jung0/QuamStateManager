@@ -1,0 +1,50 @@
+{#- Per open QM: which controllers/FEMs and ports its configuration declares, and the
+    elements on each port (worker field ``port_map``, generator/opx_monitor_worker.py
+    _port_map). Config-declared, not proof that the running program plays on a port.
+    Field absent (an older worker) or None (config not read): no diagram, an honest line. -#}
+{%- set _kind_label = {'analog_outputs': 'Analog out', 'analog_inputs': 'Analog in',
+                       'digital_outputs': 'Digital out', 'digital_inputs': 'Digital in'} -%}
+{%- macro ports_anchor(qid) -%}opxmon-ports-{{ qid }}{%- endmacro -%}
+{#- From a job of an open QM (Jobs tab) to that QM's Ports disclosure on the Live tab. -#}
+{%- macro ports_link(q, text='ports') -%}
+{%- if q is mapping and q.port_map is mapping and q.port_map.fems is defined -%}
+<a href="/opx-monitor/live#{{ ports_anchor(q.id)|urlencode }}" data-opxmon-ports-link="{{ q.id }}">{{ text }}</a>
+{%- elif q is mapping and 'port_map' in q -%}
+<span class="ui-text-quiet">ports unknown: the configuration was not read</span>
+{%- else -%}
+<span class="ui-text-quiet">ports unknown</span>
+{%- endif -%}
+{%- endmacro -%}
+{%- macro ports_disclosure(q) -%}
+{%- set pm = q.port_map if q is mapping and 'port_map' in q else none -%}
+{%- if pm is mapping and pm.fems is defined -%}
+{%- set used = namespace(n=0, total=0) -%}{%- for f in pm.fems or [] %}{% for p in f.ports or [] %}{% set used.total = used.total + 1 %}{% if p.elements %}{% set used.n = used.n + 1 %}{% endif %}{% endfor %}{% endfor -%}
+<details class="ui-disclosure" id="{{ ports_anchor(q.id) }}" data-fold="ports-{{ q.id }}" data-opxmon-ports="{{ q.id }}"><summary class="ui-disclosure-summary">Ports in this QM's configuration <span class="ui-count">{{ used.n }} used</span></summary>
+<div class="ui-disclosure-body">
+{%- if not pm.fems %}
+<p class="ui-note">The configuration declares no controller ports.</p>
+{%- endif %}
+{%- for f in pm.fems or [] %}
+<p class="ui-text-strong">{{ f.controller }}{% if f.slot is not none %} / slot {{ f.slot }}{% endif %}{% if f.type %} &middot; {{ f.type }}{% endif %}</p>
+{%- if f.ports %}
+<dl class="ui-facts" aria-label="Ports of {{ f.key }}">
+{%- for kind in ['analog_outputs', 'analog_inputs', 'digital_outputs', 'digital_inputs'] %}{% set rows = f.ports|selectattr('kind', 'equalto', kind)|list %}{% if rows %}
+<div class="ui-facts-row"><dt class="ui-facts-label">{{ _kind_label[kind] }}</dt><dd class="ui-facts-value">
+{%- for p in rows %}
+{%- if p.elements %}<span title="{{ _kind_label.get(kind, kind) }} {{ p.port }}: {{ p.elements|join(', ') }}{% if not p.declared %} (not declared under the controller){% endif %}"><span class="ui-pill ui-pill--accent">{{ p.port }}</span> {{ p.elements[:3]|join(', ') }}{% if p.elements|length > 3 %} +{{ p.elements|length - 3 }}{% endif %}</span>{% else %}<span class="ui-pill" title="{{ _kind_label.get(kind, kind) }} {{ p.port }}: declared, no element uses it">{{ p.port }}</span>{% endif %}{% if not loop.last %} {% endif %}
+{%- endfor %}</dd></div>{% endif %}
+{%- endfor %}
+</dl>
+{%- else %}
+<p class="ui-note">No ports declared.</p>
+{%- endif %}
+{%- endfor %}
+{%- if pm.unparsed %}<p class="ui-note">{{ pm.unparsed }} reference{{ 's' if pm.unparsed != 1 }} not shown: a port this view cannot place (for example an Octave port or a malformed entry).</p>{% endif %}
+<p class="ui-text-quiet">Highlighted: a port an element of this QM references. Declared in the configuration; not proof that the running program plays on it.</p>
+</div></details>
+{%- elif q is mapping and 'port_map' in q -%}
+<div class="ui-text-quiet">ports unknown: the configuration was not read</div>
+{%- else -%}
+<div class="ui-text-quiet">ports unknown</div>
+{%- endif -%}
+{%- endmacro -%}

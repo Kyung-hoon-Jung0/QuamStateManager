@@ -1,6 +1,7 @@
 {%- import "_ui.html" as ui -%}
 {%- from "_opx_owner.html" import owner_cell, owner_head, owner_text, same_tag_hint -%}
 {%- from "_opx_qm_table.html" import qm_table with context -%}
+{%- from "_opx_qm_ports.html" import ports_link -%}
 {%- set ans = st.answer or {} -%}
 {%- set cap = st.capabilities -%}
 {%- set owners_stale = st.state != 'ok' -%}{%- set owners_age = ('%.0f'|format(st.age_s) ~ ' s ago') if st.age_s is not none else 'at an unknown time' -%}
@@ -46,7 +47,7 @@
     <p class="ui-zone-empty">{% if owners_stale %}No QM was open at the last good read ({{ owners_age }}); whether one is open now is unknown.{% else %}No QM is open: the hardware is free.{% endif %}</p>
   {%- else %}
     {%- if owners_stale %}<div class="ui-notice ui-notice--warn ui-opxmon-qm-stale" role="status"><span class="ui-notice-icon" aria-hidden="true">⚠</span><strong class="ui-notice-key">Not current.</strong><span class="ui-notice-text">Owners below are from the last good read, {{ owners_age }}; QMs may have opened or closed since. SM's watch is interrupted, so no QM counts as idle.</span></div>{% endif %}
-    {{ qm_table(qms, 'Who holds each open QM', owners_stale, owners_age) }}
+    {{ qm_table(qms, 'Who holds each open QM', owners_stale, owners_age, ports=True) }}
   {%- endif %}
   </div></section>
   {#- Zone: Temperatures -#}
@@ -138,7 +139,7 @@
       <td data-label="State" class="ui-table-cell ui-opxmon-qm-state"><span class="ui-text-strong">{{ qs.fact }}</span><div class="ui-text-quiet">{{ qs.basis }}{% if idle_states[q.id].idle and qs.fact != 'idle' %} &middot; idle{% endif %}</div></td>
       <td data-label="Owner" class="ui-table-cell">{{ owner_cell(owners[q.id], pc_names, this_tag) }}</td>
       <td data-label="FEMs" class="ui-table-cell">{{ (q.ports or []) | join(', ') or 'unknown' }}</td>
-      <td data-label="Jobs" class="ui-table-cell">{% if q.jobs is none %}unknown{% elif q.jobs %}{% for j in q.jobs %}<div><code class="ui-chip">{{ j.id }}</code> <span class="ui-text-strong">{{ j.status }}</span> {% set match = run_match(j) %}{% if match.url %}<a href="{{ match.url }}">probably #{{ match.id }}</a>{% endif %} <span class="ui-text-quiet">{{ match.reason }}{% if j.created_at %} &middot; created {{ opx_time(j.created_at) }} (OPX clock){% endif %}{% if j.description %} &middot; {{ j.description }}{% endif %}</span></div>{% endfor %}{% else %}<span class="ui-text-quiet">none</span>{% endif %}</td></tr>{% endfor %}</tbody>
+      <td data-label="Jobs" class="ui-table-cell">{% if q.jobs is none %}unknown{% elif q.jobs %}{% for j in q.jobs %}<div><code class="ui-chip">{{ j.id }}</code> <span class="ui-text-strong">{{ j.status }}</span> {{ ports_link(q) }} {% set match = run_match(j) %}{% if match.url %}<a href="{{ match.url }}">probably #{{ match.id }}</a>{% endif %} <span class="ui-text-quiet">{{ match.reason }}{% if j.created_at %} &middot; created {{ opx_time(j.created_at) }} (OPX clock){% endif %}{% if j.description %} &middot; {{ j.description }}{% endif %}</span></div>{% endfor %}{% else %}<span class="ui-text-quiet">none</span>{% endif %}</td></tr>{% endfor %}</tbody>
   </table>{% endif %}
   <p class="ui-text-quiet">The server does not report who opened a QM; the QM id and its jobs are what it gives.</p>
   </div></section>
@@ -149,7 +150,8 @@
   {%- if ans.jobs is not none %}
   <details class="ui-disclosure ui-opxmon-clock" data-fold="job-clock"><summary class="ui-disclosure-summary">Times are the QM server's own clock{% if not clock_skew %}; no job is linked to a run{% endif %}</summary><div class="ui-disclosure-body"><p class="ui-note">Job times are the QM server's own clock{% if clock_skew %}; {{ skew_text }} (from the admin server's Date header; used only to show times and link runs){% else %}; its offset from this PC is unknown (it is measured from the admin server's Date header; {{ 'no Admin URL is set' if not settings.admin_url else 'no consistent fresh admin answer' }}), so no job is linked to a run{% endif %}. Idle is judged only from what SM itself watched, never from these clocks.</p></div></details>
   {%- if ans.jobs %}<table class="ui-table ui-opxmon-table" aria-label="Server jobs"><thead><tr><th class="ui-table-head">Job id</th><th class="ui-table-head">Status</th><th class="ui-table-head ui-table-num">Created (OPX clock, shown in {{ pc_zone }})</th><th class="ui-table-head ui-table-num">Last update (OPX clock, shown in {{ pc_zone }})</th></tr></thead>
-    <tbody>{% for j in ans.jobs[:job_limit] %}<tr><td data-label="Job id" class="ui-table-cell"><code class="ui-chip">{{ j.id }}</code> {% set match = run_match(j) %}{% if match.url %}<a href="{{ match.url }}">probably #{{ match.id }}</a>{% endif %} <span class="ui-text-quiet">{{ match.reason }}</span></td><td data-label="Status" class="ui-table-cell"><span class="ui-text-strong">{{ j.status }}</span></td><td data-label="Created (OPX clock, shown in {{ pc_zone }})" class="ui-table-cell ui-table-num">{{ opx_time(j.created_at) }}</td><td data-label="Last update (OPX clock, shown in {{ pc_zone }})" class="ui-table-cell ui-table-num">{{ opx_time(j.updated_at) }}</td></tr>{% endfor %}</tbody></table>{% else %}<p class="ui-zone-empty">None.</p>{% endif %}
+    {%- set job_qm = {} %}{% for q in ans.open_qms or [] %}{% for j in q.jobs or [] %}{% set _ = job_qm.update({j.id: q}) %}{% endfor %}{% endfor %}
+    <tbody>{% for j in ans.jobs[:job_limit] %}<tr><td data-label="Job id" class="ui-table-cell"><code class="ui-chip">{{ j.id }}</code> {% if j.id in job_qm %}{{ ports_link(job_qm[j.id], 'ports of ' ~ job_qm[j.id].id) }}{% elif ans.open_qms is not none %}<span class="ui-text-quiet">ports unknown: its QM is closed</span>{% endif %} {% set match = run_match(j) %}{% if match.url %}<a href="{{ match.url }}">probably #{{ match.id }}</a>{% endif %} <span class="ui-text-quiet">{{ match.reason }}</span></td><td data-label="Status" class="ui-table-cell"><span class="ui-text-strong">{{ j.status }}</span></td><td data-label="Created (OPX clock, shown in {{ pc_zone }})" class="ui-table-cell ui-table-num">{{ opx_time(j.created_at) }}</td><td data-label="Last update (OPX clock, shown in {{ pc_zone }})" class="ui-table-cell ui-table-num">{{ opx_time(j.updated_at) }}</td></tr>{% endfor %}</tbody></table>{% else %}<p class="ui-zone-empty">None.</p>{% endif %}
   {% if (ans.jobs_total or ans.jobs|length) > job_limit %}<a class="btn-sm" href="/opx-monitor/jobs?limit={{ job_limit + 100 }}">Show more</a>{% endif %}
   {%- elif ans.refused and ans.refused.get_jobs %}<p class="ui-note">{{ call_failure('get_jobs', ans.refused.get_jobs) }}</p>{% else %}<p class="ui-zone-empty">Waiting for server jobs; this section has not answered this poll.</p>{% endif %}
   </div></section>
