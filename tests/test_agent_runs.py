@@ -1242,6 +1242,31 @@ def test_null_leaf_plus_truly_new_key_both_staged(c, inst, synth_folder):
 
 
 @pytest.mark.parametrize("synth_folder", ["null_leaf"], indirect=True)
+def test_run_rows_on_a_null_leaf_and_an_absent_key_reach_working_copy_and_live(c, inst, synth_folder):
+    """A run's approval as a node records it: both rows marked created with old=null,
+    one on a leaf that holds null, one on a key the chip does not have. Write to chip
+    stages both, settles the approval, and the store, the working copy files and the
+    live files all read back the two numbers, with nothing else changed."""
+    before = json.loads((synth_folder / "state.json").read_text(encoding="utf-8"))
+    ap = _null_leaf_approval(c, inst, [
+        {"path": "qubits.qA1.rb_details.alpha_stderr", "old": None, "new": 0.018, "created": True},
+        {"path": "qubits.qA1.rb_details.alpha_stderr_fit", "old": None, "new": 0.0021, "created": True}])
+    res = c.post(f"/api/agent/approvals/{ap['id']}/approve", json={}, headers=HUMAN).get_json()
+    assert res["ok"] and res["stage"]["applied"], res
+    assert res["stage"]["staged"] == 2 and not res["stage"]["unstaged"], res
+    assert approvals.get(str(inst), _chip(c), ap["id"])["status"] == "approved"
+    want = {"alpha_stderr": 0.018, "epc_stderr": 0.004, "alpha_stderr_fit": 0.0021}
+    expected = json.loads(json.dumps(before))
+    expected["qubits"]["qA1"]["rb_details"] = want
+    with c.application.app_context():
+        ctx = _ctx(c)
+        assert ctx["store"].state["qubits"]["qA1"]["rb_details"] == want
+        wc_state = Path(ctx["working_copy"].working_folder) / "state.json"
+    assert json.loads(wc_state.read_text(encoding="utf-8")) == expected
+    assert json.loads((synth_folder / "state.json").read_text(encoding="utf-8")) == expected
+
+
+@pytest.mark.parametrize("synth_folder", ["null_leaf"], indirect=True)
 def test_number_to_null_on_existing_leaf_is_staged(c, inst, synth_folder):
     """Decided: setting an existing number leaf to null is an ordinary edit."""
     ap = _null_leaf_approval(c, inst, [{"path": "qubits.qA1.rb_details.epc_stderr", "old": 0.004, "new": None}])

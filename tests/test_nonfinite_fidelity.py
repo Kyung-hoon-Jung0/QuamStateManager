@@ -134,11 +134,47 @@ class TestCzPlanBasis:
         out = cz_plan_fidelity({"InterleavedRB": 0.97, "InterleavedRB_load_id": 5,
                                 "IRB": 0.95, "IRB_load_id": 9})
         assert out["InterleavedRB"]["basis_text"] == "picked: newest run id"
-        assert cz_plan_fidelity({"IRB": 0.95})["InterleavedRB"]["basis_text"] == ""
+        assert cz_plan_fidelity({"IRB": 0.95})["InterleavedRB"]["basis_text"] == "the only per-gate entry"
+
+    def test_the_plan_row_names_a_key_that_holds_no_number(self):
+        out = cz_plan_fidelity({"InterleavedRB": 0.97, "IRB": 0.93, "interleaved_rb": float("nan")})
+        assert out["InterleavedRB"]["key"] == "InterleavedRB"
+        assert out["InterleavedRB"]["basis_text"] == "picked: key order (InterleavedRB before IRB)"
+        assert out["InterleavedRB"]["no_number_text"] == "1 more key holds no number: interleaved_rb"
+        two = cz_plan_fidelity({"InterleavedRB": 0.97, "IRB": float("inf"), "irb": float("nan")})
+        assert two["InterleavedRB"]["no_number_text"] == ""          # the reason already names both
+        assert "IRB, irb hold no number" in two["InterleavedRB"]["basis_text"].replace("(", "").replace(")", "")
+        assert cz_plan_fidelity({"InterleavedRB": 0.97, "IRB": 0.93})["InterleavedRB"]["no_number_text"] == ""
 
     def test_the_tooltip_states_it(self):
         src = (ROOT / "quam_state_manager" / "web" / "templates" / "_cz_plan.html").read_text(encoding="utf-8")
         assert "{% if r.irb_basis %} ({{ r.irb_basis }}){% endif %}" in src
+        assert "{% if r.irb_no_number %} &#10;{{ r.irb_no_number }}{% endif %}" in src
+
+
+def _cz_plan_irb_title(tmp_path, fid):
+    import re
+    from tests.test_cz_plan_page import _chip as _plan_chip, _client as _plan_client
+    folder = tmp_path / "plan"
+    folder.mkdir()
+    s, w = _plan_chip()
+    s["qubit_pairs"]["q1-2"]["macros"]["cz_unipolar"]["fidelity"] = fid
+    (folder / "state.json").write_text(json.dumps(s), encoding="utf-8")
+    (folder / "wiring.json").write_text(json.dumps(w), encoding="utf-8")
+    html = _plan_client(tmp_path, folder).get("/cz-plan").get_data(as_text=True)
+    row = re.search(r'<tr[^>]*data-op="qubit_pairs.q1-2.macros.cz_unipolar".*?</tr>', html, re.S)[0]
+    return re.search(r'<td class="czp-num" title="(from [^"]*)"', row)[1]
+
+
+class TestCzPlanTooltip:
+    def test_it_names_the_key_that_holds_no_number(self, tmp_path):
+        t = _cz_plan_irb_title(tmp_path, {"InterleavedRB": 0.97, "IRB": 0.93, "interleaved_rb": float("nan")})
+        assert t.startswith("from InterleavedRB (picked: key order (InterleavedRB before IRB))"), t
+        assert "2 IRB values on this pair: InterleavedRB 0.9700, IRB 0.9300" in t
+        assert "1 more key holds no number: interleaved_rb" in t
+
+    def test_a_lone_key_says_why(self, tmp_path):
+        assert _cz_plan_irb_title(tmp_path, {"IRB": 0.95}) == "from IRB (the only per-gate entry)"
 
 
 class TestTrendsLegend:

@@ -127,6 +127,10 @@ def test_no_coupler_table_identity(tmp_path):
         r'((?: <small class="muted">[^<]*</small>)?)',
         r'<span class="czp-nowrap">\1</span>\3 <small class="muted czp-nowrap">\2 MHz</small>', table)
     assert n_words, "the phrase cell is rendered"
+    # The IRB cell of a block holding one per-gate key says why that key was read;
+    # fold the reason back so every other byte stays pinned.
+    table, n_only = re.subn(r'title="from (\w+) \(the only per-gate entry\)"', r'title="from \1"', table)
+    assert n_only, "the IRB cell names why its key was read"
     # D6: the two-flux row's Moves cell separates its two movers with " / " (the only
     # difference from the previous pin: "q1</span><span" -> "q1</span> / <span").
     # The two-flux row of two standard pulses now carries its length help note (control

@@ -90,6 +90,13 @@ def _charts(body: str) -> list[dict]:
     return json.loads(m.group(1)) if m else []
 
 
+def _rendered_boxes(body: str) -> list[str]:
+    """The chart boxes as rendered, with the ``#topo-trends-data`` JSON payload
+    cut off first (it carries every note a box carries)."""
+    grid = body.split('<script type="application/json"', 1)[0]
+    return ['class="topo-trend-box"' + p for p in grid.split('class="topo-trend-box"')[1:]]
+
+
 class TestOneClickChartsEveryEntity:
     """Mechanism 1: `_trend_series_leaf` fans out over the entity segment for
     BOTH scopes."""
@@ -1189,6 +1196,31 @@ class TestReviewRound3:
             "the value EXISTS — this is not 'nothing recorded'"
         # the badge is not hidden: the family is real
         assert p in [b for b, _ in _badges(body)], _badges(body)
+
+    def test_the_single_point_box_mounts_no_axis(self, tmp_path):
+        """The honest slot is a claim about the RENDERED box, so it is read from the
+        markup with the JSON payload cut off: the payload carries the same note,
+        and a template that mounted the chart div over it would still pass a
+        check of the whole body."""
+        c = _hot_cold_chip(tmp_path, "axisless",
+                           {"macros.cz.phase_shift_target": 0.2},
+                           {"mutual_flux_bias.0": 0.3}, steps=1)
+        body = c.get("/topology/trends?metrics=&paths="
+                     "qubit_pairs.*.mutual_flux_bias.0").get_data(as_text=True)
+        boxes = [b for b in _rendered_boxes(body) if "no trend yet" in b]
+        assert len(boxes) == 1, f"{len(boxes)} rendered boxes say 'no trend yet'"
+        box = boxes[0]
+        assert 'class="muted topo-trend-empty"' in box, box
+        assert "topo-trend-chart" not in box, "an axis is mounted over the honest line: " + box
+        assert 'id="topo-trend-' not in box, "a chart mount point ships for a family with no trend"
+        # the same markup still mounts the axis for a family with a trend
+        m = _hot_cold_chip(tmp_path, "axismoved",
+                           {"macros.cz.phase_shift_target": 0.2},
+                           {"mutual_flux_bias.0": 0.3})
+        moved = m.get("/topology/trends?metrics=&paths="
+                      "qubit_pairs.*.macros.cz.phase_shift_target").get_data(as_text=True)
+        drawn = [b for b in _rendered_boxes(moved) if "topo-trend-chart" in b]
+        assert len(drawn) == 1 and "no trend yet" not in drawn[0], drawn
 
     def test_a_family_that_MOVED_still_draws_its_chart(self, tmp_path):
         """The honest slot must fire only when every series is a single point."""

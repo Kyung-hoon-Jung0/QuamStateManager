@@ -244,15 +244,17 @@ def test_pre_extraction_fixture_outputs_are_identical():
                 # which key the value came from, its physicality and any disagreeing key;
                 # the value and load id stay pinned. Their meaning is pinned in
                 # test_pair_gate_fidelity. The pick's wording (`basis_text`, one
-                # sentence naming why this key was read) is display text only,
-                # pinned in test_cz_gate_plan.
+                # sentence naming why this key was read) and `no_number_text` (the
+                # per-gate keys that hold no number) are display text only, pinned in
+                # test_cz_gate_plan and test_nonfinite_fidelity.
                 exp_fid, got_fid = exp_row.get("fidelity"), got_row.get("fidelity")
                 if isinstance(exp_fid, dict) and isinstance(got_fid, dict):
                     for name, entry in exp_fid.items():
                         got = got_fid.get(name)
                         if isinstance(entry, dict) and isinstance(got, dict):
                             added = set(got) - set(entry)
-                            assert added <= {"key", "physical", "conflict", "basis_text"}, (record["call"], sorted(added))
+                            assert added <= {"key", "physical", "conflict", "basis_text", "no_number_text"}, (
+                                record["call"], sorted(added))
                             for key in added:
                                 entry[key] = got[key]
         model = None
