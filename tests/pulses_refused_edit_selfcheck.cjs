@@ -64,5 +64,24 @@ check(() => assert.deepEqual(toasts, ['Nothing was written \u2014 ' + reason], '
 toasts.length = 0;
 refuseWith(form, 500);
 check(() => assert.equal(toasts.length, 1, 'a server failure on the field still toasts'));
+// In a property table the line gets its own full-width row, never a ribbon in the value column.
+const tbl = w.document.createElement('table');
+tbl.innerHTML = '<tbody><tr><td class="col-prop">flat_length</td><td class="col-val">'
+    + '<form class="inline-edit pulse-edit-form"><input type="text" name="value" class="edit-input"'
+    + ' data-param="flat_length" data-committed="44" value="45"></form></td></tr></tbody>';
+w.document.getElementById('inspector-pane').appendChild(tbl);
+const tform = tbl.querySelector('form');
+refuse(tform);
+refuse(tform);
+const rows = tbl.querySelectorAll('tbody > tr');
+check(() => assert.equal(rows.length, 2, 'one row added under the field, once'));
+check(() => assert.equal(tform.querySelector('[data-refused-note]'), null, 'not inside the value cell'));
+check(() => assert.equal(rows[1].cells.length, 1, 'the row has one cell'));
+check(() => assert.equal(rows[1].cells[0].colSpan, 2, 'spanning both columns'));
+check(() => assert.equal(rows[1].querySelector('[data-refused-note]').textContent,
+    'Not saved: the stored value is still 44.'));
+const tinput = tform.querySelector('input');
+tinput.dispatchEvent(new w.Event('input', { bubbles: true }));
+check(() => assert.equal(tbl.querySelectorAll('tbody > tr').length, 1, 'typing again removes the row'));
 console.log(n + ' assertions passed');
 w.close();
