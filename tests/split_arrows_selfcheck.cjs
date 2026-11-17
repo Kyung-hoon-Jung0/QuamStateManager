@@ -659,6 +659,55 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     t.d.getElementById('table-pane').innerHTML = '<h2>Datasets</h2><input id="dataset-search">';
     t.swap('inspector-pane', RUN);
     eq(t.sizes(), SPLIT.datasetExpandedSizes, 'the Datasets list keeps the run position');
+} else if (mode === 'top_edge') {
+    // A panel expanded to the very top sits right under the top bar: its page marks the split
+    // ui-split-top, and ui-kit.css then gives the panel the page's padding and the bar's row
+    // (test_split_arrows.py::test_the_top_panel_leaves_no_strip measures that CSS). Every panel
+    // kind that opens in the inspector shares this one split, so each is checked.
+    const PANELS = {
+        qubit: QUBIT,
+        pair: '<div class="inspector-header inspector-header-pair"></div><div class="pair-detail">pair</div>',
+        pulse: '<div class="inspector-header inspector-header-pulse"></div>pulse',
+        dataset_run: RUN,
+        dataset_compare: '<div class="inspector-header inspector-header-dataset inspector-header-compare"></div>cmp',
+        search: '<div class="inspector-header inspector-header-search"></div>results',
+        field_history: '<div class="field-history">ledger</div>',
+    };
+    for (const [name, html] of Object.entries(PANELS)) {
+        const s = await boot();
+        const host = s.d.getElementById('table-pane').parentElement;
+        Object.defineProperty(host, 'clientHeight', { value: 845, configurable: true });
+        const top = () => host.classList.contains('ui-split-top');
+        s.swap('inspector-pane', html);
+        assert.ok(!top(), name + ': a panel opened mid-page is not at the top');
+        s.calls[s.calls.length - 1].options.onDrag([0, 100]);
+        assert.ok(top(), name + ': while the bar is still held at the top, the strip is already gone');
+        s.drag([0, 100]);
+        assert.ok(top(), name + ': dragged all the way up, the panel is at the top');
+        s.drag([40, 60]);
+        assert.ok(!top(), name + ': dragged back down, the page shows again');
+        // Split.js with minSize 0 stops a hair above 0 %: under one bar of page left is the top
+        s.drag([0.71, 99.29]);
+        assert.ok(top(), name + ': a page sliver thinner than the bar is the top');
+        s.drag([3, 97]);
+        assert.ok(!top(), name + ': a page row taller than the bar is not');
+        s.drag([0, 100]);
+        s.d.getElementById('inspector-pane').innerHTML = '';
+        s.swap('inspector-pane');
+        assert.ok(!top(), name + ': closing the panel leaves the page whole');
+        s.swap('inspector-pane', html);
+        eq(s.sizes(), [0, 100], name + ': the next panel reopens at the top');
+        assert.ok(top(), name + ': and is marked at the top on open');
+        s.press('down');
+        assert.ok(!top(), name + ': the down arrow leaves the top');
+        s.drag([0, 100]);
+        s.d.getElementById('nav-qubits').click();
+        assert.ok(s.docked() && !top(), name + ': a docked panel is not at the top');
+        const p = s.d.getElementById('inspector-pane');
+        p.innerHTML = '';
+        s.swap('inspector-pane');
+        assert.ok(!top(), name + ': a closed panel leaves the page whole');
+    }
 } else {
     assert.fail('unknown mode: ' + mode);
 }

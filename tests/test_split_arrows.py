@@ -39,7 +39,7 @@ MODES = ["buttons", "arrows", "drag", "up_next", "down_next", "drag_after_arrow"
          "nav_sidebar", "nav_boost", "nav_push", "nav_history", "nav_same_page",
          "nav_collapse_low", "nav_collapse_high",
          "nav_reopen_low", "nav_reopen_high", "nav_run_only", "table_first", "trend_chart",
-         "dock_bar", "heading", "keeps_scroll"]
+         "dock_bar", "heading", "keeps_scroll", "top_edge"]
 
 
 def _node(*args: str) -> subprocess.CompletedProcess:
@@ -77,3 +77,68 @@ def test_the_arrows_fit_inside_the_gutter():
     # the old set-button rules are gone with their buttons
     assert ".split-set-btn" not in css and ".inspector-toggle-btn" not in css
     assert ".split-arrow-btn {" in css
+
+
+def _rule(css: str, selector: str) -> dict:
+    """Declarations of the one rule whose selector list is exactly ``selector`` ({} when absent)."""
+    m = re.search(r"(?:^|\})\s*" + re.escape(selector) + r"\s*\{([^}]*)\}", css, re.M)
+    if not m:
+        return {}
+    out = {}
+    for decl in m.group(1).split(";"):
+        if ":" in decl:
+            k, v = decl.split(":", 1)
+            out[k.strip()] = v.strip()
+    return out
+
+
+def _px(value: str, tokens: dict) -> float:
+    """A px length from a literal, a rem, a var() token or calc(-1 * var()).
+
+    Pico scales the root font with the window width; at 1440 wide 1 rem = 20 px
+    (Chrome measured the page pane's 0.6 rem padding as 12 px there).
+    """
+    value = value.strip()
+    neg = re.fullmatch(r"calc\(\s*-1\s*\*\s*(var\([^)]*\))\s*\)", value)
+    if neg:
+        return -_px(neg.group(1), tokens)
+    var = re.fullmatch(r"var\((--[\w-]+)\)", value)
+    if var:
+        return _px(tokens[var.group(1)], tokens)
+    if value.endswith("rem"):
+        return float(value[:-3]) * 20
+    if value.endswith("px"):
+        return float(value[:-2])
+    return float(value)
+
+
+def test_the_top_panel_leaves_no_strip():
+    """A panel expanded to the very top starts at the top bar's bottom edge (within 1 px).
+
+    The strip it replaced, measured in Chrome at 1440x900 for every panel kind: the page
+    pane kept its own top + bottom padding (style.css #table-pane, 2 x --table-pane-pad-v
+    = 24 px) when Split sized it to 0, and the 12 px bar sat below it -- 36 px between the
+    top bar and the panel's head row. In the top state (base.html markTop ->
+    .ui-split-top) the page gives up its padding and its height, and the bar overlays the
+    panel's own head row instead of taking a row of its own.
+    """
+    style = (WEB / "static" / "style.css").read_text(encoding="utf-8")
+    kit = (WEB / "static" / "ui-kit.css").read_text(encoding="utf-8")
+    tokens = dict(re.findall(r"(--[\w-]+)\s*:\s*([^;]+);", style))
+    base_pane = _rule(style, "#table-pane")
+    assert "var(--table-pane-pad-v)" in base_pane.get("padding", ""), "the page pane's own padding"
+    pad = _px(tokens["--table-pane-pad-v"], tokens)
+    bar = _px(tokens["--split-gutter-size"], tokens)
+    pane = _rule(kit, ".ui-split-top > #table-pane")
+    gutter = _rule(kit, ".ui-split-top > .gutter")
+    top_pad = _px(pane.get("padding-top", str(pad) + "px"), tokens)
+    bottom_pad = _px(pane.get("padding-bottom", str(pad) + "px"), tokens)
+    content = _px(pane["max-height"], tokens) if "max-height" in pane else 0.0
+    bar_row = bar + _px(gutter.get("margin-bottom", "0px"), tokens)
+    strip = top_pad + bottom_pad + content + bar_row
+    assert abs(strip) <= 1, f"{strip:g} px between the top bar and the panel (was 2 x {pad:g} + {bar:g})"
+    assert pane.get("overflow") == "hidden", "the page's own content cannot spill over the panel"
+    assert _rule(kit, ".ui-split-top > #inspector-pane").get("flex-grow") == "1", \
+        "the panel takes the height the page gave up, to the window's bottom"
+    base = (WEB / "templates" / "base.html").read_text(encoding="utf-8")
+    assert 'classList.toggle("ui-split-top"' in base, "the split script marks the top state"

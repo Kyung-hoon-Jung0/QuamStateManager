@@ -1618,6 +1618,24 @@
                 pairs.forEach(function (pair) { pair.gutter.remove(); });
                 splitInstance = null;
             }
+            markTop(null);
+        }
+        // The panel expanded to the very top: when the page above it is less
+        // than a bar tall, the page gives the panel all of its height
+        // (ui-kit .ui-split-top). Without it the page's own padding and the
+        // bar stayed as a strip between the top bar and the panel's head row.
+        function markTop(sizes) {
+            var tp = document.getElementById("table-pane");
+            var host = tp && tp.parentElement;
+            if (!host) return;
+            var top = false;
+            if (sizes && splitInstance) {
+                var bar = Number(UI_CONFIG.split.gutterSize) || 0;
+                var h = host.clientHeight;
+                var px = h > 0 ? Number(sizes[0]) / 100 * h - bar / 2 : NaN;
+                top = Number(sizes[0]) <= 0 || px < bar;
+            }
+            host.classList.toggle("ui-split-top", top);
         }
         scope.cleanup(destroySplit);
         var STORAGE_KEY = "quam_split_sizes";
@@ -2019,10 +2037,12 @@
                 gutterSize: UI_CONFIG.split.gutterSize,
                 snapOffset: 0,
                 onDragStart: function(s) { dragStartSizes = s; },
+                onDrag: function(s) { markTop(s); },
                 onDragEnd: function(s) {
                     if (!scope.alive) return;
                     saveSizes(s); inspectorExpanded = s[1] > 30;
                     markSliver(null);
+                    markTop(s);
                     // v1.3.0 (customer): a drag is the user's last choice; the
                     // next inspector opens at this height. A press on the bar
                     // that did not move it is not a choice.
@@ -2046,6 +2066,7 @@
             });
 
             inspectorExpanded = sizes[1] > 30;
+            markTop(sizes);
             ensureGutterArrows();
         }
 
