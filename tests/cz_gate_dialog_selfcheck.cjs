@@ -125,7 +125,7 @@ function checkOk(body, opts) {
                  tiles: [{ key: 'peak', label: 'Highest level', value: '0.1903', unit: 'V', note: 'on q1.z', tone: 'neutral' }],
                  intent: [{ field: 'flux_pulse_qubit', operation: 'op_' + p, channel: 'q1.z', lane_key: 'q1.z',
                             intended: { length: 100, length_source: 'default', amplitude: 0.2, amplitude_source: 'given' },
-                            actual: { length_ns: 100, max_v: 0.18, min_v: 0, scale: 1 },
+                            actual: { length_ns: 100, max_v: 0.18, min_v: 3.55865437559e-7, scale: 1 },
                             differs: { length: false, amplitude: true }, tones: { length: null, amplitude: 'warn' }, why: ['The class shapes the waveform.'] }],
                  paths: ['a', 'b'],
                  verdict: (opts.refuse === p) ? { allowed: false, state: 'not checked', reason: 'A gate named so exists.' }
@@ -203,7 +203,10 @@ let driftSeq = [];
 const statusAsked = [];
 let createSync = { auto_push: false, state: 'mine', unapplied: 1 };
 const charts = [];
-window.GateTimeline = { render: (host, data) => {
+// the real chart script supplies the shared volt text; only its drawing is mocked
+window.eval(fs.readFileSync(path.join(ROOT, 'static', 'gate-timeline.js'), 'utf8'));
+const realVoltTexts = window.GateTimeline && window.GateTimeline.voltTexts;
+window.GateTimeline = { voltTexts: realVoltTexts, render: (host, data) => {
     if (host.closest('[hidden]')) throw new Error('Chart measured inside a hidden section');
     charts.push(data); return { destroy() {} };
 } };
@@ -432,6 +435,9 @@ function tableWidths(el, sw, cw) {
     await settle();
     ok($('#czg-pairs .ui-segmented-on').textContent.indexOf('q1-2') === 0 && /op_q1-2/.test($('#czg-intent').textContent), 'choosing a pair shows its own evidence');
     ok(/0.18 V/.test($('#czg-intent').textContent) && !/0.1800/.test($('#czg-intent').textContent), 'numbers in the shortest exact form');
+    ok(typeof realVoltTexts === 'function' && /0\.0000003559 V/.test($('#czg-intent').textContent)
+       && !/\de-\d/.test($('#czg-intent').textContent),
+       'a level read off the samples prints as the chart prints it (rounded digits), never as a raw float');
 
     // not checked wording
     type($('input[data-czg-name="amplitude"]'), '0.25');

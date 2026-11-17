@@ -1837,6 +1837,9 @@ dialog.ui-dialog:not(.gen-rule-dlg)::backdrop { background: var(--ui-backdrop); 
 /* a gate line standing alone in a pulse detail wraps its pills like a long name; a list row keeps clipping them */
 #pulse-detail-root .gate-status-items { flex-wrap: wrap; overflow: visible; }
 #pulse-detail-root .gate-status-items > .ui-pill { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+/* a long operation name in a pulse detail (section header, in-view chips) wraps like the gate pills */
+#pulse-detail-root .pulse-sec-op, #pulse-detail-root .pulse-sec-op code, #pulse-detail-root .pulse-overlay-chips,
+#pulse-detail-root .pulse-overlay-chip { max-width: 100%; min-width: 0; overflow-wrap: anywhere; }
 .gate-status-details { margin: 0; }
 .gate-status-details[open] { flex-basis: 100%; order: 10; }
 .gate-status-details .ui-disclosure-summary { font-weight: var(--ui-fw-normal); font-size: var(--ui-fs-xs); color: var(--ui-text-2); }

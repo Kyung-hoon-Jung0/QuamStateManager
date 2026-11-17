@@ -117,7 +117,7 @@ function tabbables(w, root) {
   w.key(sum, 'ArrowLeft'); ok(det.open === false, 'K9 Left collapses');
   w.key(sum, 'ArrowRight'); ok(det.open === true, 'K9 Right expands');
   det.open = false; w.key(sum, 'Enter'); ok(det.open === true, 'K9 Enter expands');
-  const chips = Array.from(w.dlg().querySelectorAll('.gen-rule-chip'));
+  let chips = Array.from(w.dlg().querySelectorAll('.gen-rule-chip'));
   ok(chips.every(c => c.tagName === 'BUTTON' && c.hasAttribute('aria-pressed')), 'K10 chips are buttons with aria-pressed');
   {
     // K10b the Select chips are commands: with the kit's segmented key handler loaded an arrow only moves focus
@@ -131,6 +131,19 @@ function tabbables(w, root) {
        && Array.from(w.dlg().querySelectorAll('input[type=checkbox]')).map(b => b.checked).join() === ticked,
        'K10b ArrowRight on a Select chip moves focus only: no menu, no re-tick');
     chips[0].focus();
+  }
+  {
+    // K10c Enter/Space on a Select chip (a click here) re-renders the chips; focus stays on the chip pressed
+    const none = w.dlg().querySelector('.gen-rule-chip[data-select-key="none"]');
+    none.focus(); none.click();
+    const now = w.document.activeElement;
+    ok(now !== none && now.getAttribute('data-select-key') === 'none' && w.dlg().contains(now),
+       'K10c None re-ticks and keeps focus on the new None chip, inside the dialog');
+    const all = w.dlg().querySelector('.gen-rule-chip[data-select-key="all"]');
+    all.focus(); all.click();
+    ok(w.document.activeElement.getAttribute('data-select-key') === 'all' && w.dlg().contains(w.document.activeElement),
+       'K10c All ready keeps focus on the new All ready chip');
+    chips = Array.from(w.dlg().querySelectorAll('.gen-rule-chip'));
   }
   // K11: Esc inside an open menu closes only the menu
   chips[1].click();

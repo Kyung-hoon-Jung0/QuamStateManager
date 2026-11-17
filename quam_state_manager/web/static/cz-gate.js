@@ -1913,10 +1913,17 @@
             return;
         }
         var oneLevel = rows.every(function (r) { var a = r.actual || {}; return a.max_v === a.min_v; });
-        var data = rows.map(function (r) {
+        // The levels are read off the played samples: they print as the chart prints a level (digits picked
+        // over the whole table), never as a raw float; without the chart script they keep the exact form.
+        var GT = window.GateTimeline;
+        var lv = [];
+        rows.forEach(function (r) { var a = r.actual || {}; lv.push(a.max_v, a.min_v); });
+        var lvText = GT && typeof GT.voltTexts === 'function' ? GT.voltTexts(lv) : [];
+        var level = function (k) { return lvText[k] != null ? lvText[k] : num(lv[k], 'V'); };
+        var data = rows.map(function (r, n) {
             var a = r.actual || {};
             var i = r.intended || {};
-            var levels = oneLevel ? [num(a.max_v, 'V')] : [num(a.max_v, 'V'), num(a.min_v, 'V')];
+            var levels = oneLevel ? [level(2 * n)] : [level(2 * n), level(2 * n + 1)];
             return [{ chip: rowName(r) },
                     i.length !== null ? num(i.length, 'ns') : i.length_source,
                     num(a.length_ns, 'ns'),

@@ -1461,5 +1461,13 @@
         return handle;
     }
 
-    window.GateTimeline = { render: render, valueAt: laneValueAt, readout: readout, laneColor: laneColor };
+    /* The chart's volt text for a set of levels shown together (a table column, a readout): the digits
+       are picked over the whole set, so two levels more than VOLT_EPS apart never print the same.
+       A value that is not a number gives null (the caller keeps its own honest text). */
+    function voltTexts(values) {
+        var d = pickVoltDigits(values || []);
+        return (values || []).map(function (v) { return num(v) ? voltNum(v, d) + " V" : null; });
+    }
+    window.GateTimeline = { render: render, valueAt: laneValueAt, readout: readout, laneColor: laneColor,
+                            voltTexts: voltTexts };
 })();

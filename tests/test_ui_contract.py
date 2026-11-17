@@ -1053,6 +1053,8 @@ _STAGE6_SELECTORS = {
     '.gate-status-row', '.gate-status-row:has(> .gate-status-details[open])',
     '.gate-status-row > .ui-chip', '.gate-status-items', '.gate-status-details',
     '#pulse-detail-root .gate-status-items', '#pulse-detail-root .gate-status-items > .ui-pill',
+    '#pulse-detail-root .pulse-sec-op', '#pulse-detail-root .pulse-sec-op code',
+    '#pulse-detail-root .pulse-overlay-chips', '#pulse-detail-root .pulse-overlay-chip',
     '.gate-status-details[open]', '.gate-status-details .ui-disclosure-summary',
     '.gate-status-details-list', '.gate-status-details-list dd', '.gate-status-actions',
     '.gate-status-edit', '.gate-status-activate', '.gate-status-recheck', '.gate-status-delete',
@@ -1286,6 +1288,21 @@ def test_gate_line_in_a_pulse_detail_wraps_its_pills_and_a_list_row_still_clips(
     # the list row keeps its one-line layout: pills clip before the actions wrap
     listed = _kit_rule(".gate-status-items")
     assert listed.get("flex-wrap") == "nowrap" and listed.get("overflow") == "hidden", listed
+
+
+def test_a_long_operation_name_in_a_pulse_detail_wraps_instead_of_scrolling_the_pane():
+    # The section header's op name and the in-view chips hold the full operation name; at a narrow pane
+    # they wrap (overflow-wrap: anywhere, as the gate pills) instead of pushing the pane sideways.
+    for sel in ("#pulse-detail-root .pulse-sec-op", "#pulse-detail-root .pulse-sec-op code",
+                "#pulse-detail-root .pulse-overlay-chips", "#pulse-detail-root .pulse-overlay-chip"):
+        rule = _kit_rule(sel)
+        assert rule.get("overflow-wrap") == "anywhere", (sel, rule)
+        assert rule.get("max-width") == "100%" and rule.get("min-width") == "0", (sel, rule)
+    # the templates still carry the hooks the rule targets
+    detail = _read(_TPL / "_pulse_detail.html")
+    section = _read(_TPL / "_pulse_params_section.html")
+    assert 'id="pulse-detail-root"' in detail and 'class="pulse-overlay-chips"' in detail
+    assert 'class="pulse-overlay-chip on"' in detail and 'class="pulse-sec-op"><code>' in section
 
 
 def test_stage6_feature_selectors_are_reviewed_and_tokenized():
