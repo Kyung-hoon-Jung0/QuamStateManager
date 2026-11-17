@@ -130,7 +130,11 @@ const type = text => {d.activeElement.value=text; d.activeElement.dispatchEvent(
     type('"changed"'); key('Escape');
     assert.equal(d.activeElement.value,'"hello"','Esc reverts and stays');
     focus('a'); type('2'); key('Enter'); await tick();
-    assert.equal(d.activeElement.value,'2','Enter commits and stays');
+    assert.equal(tree.querySelectorAll('input').length,0,'Enter commits and closes the editor');
+    assert.equal(d.activeElement,node('a').querySelector(':scope > .tree-row'),'focus stays on the committed row');
+    assert.equal(val('a').textContent.trim(),'2','the row shows the committed value');
+    key('Enter');
+    assert.equal(d.activeElement.value,'2','Enter on the row opens the editor again');
     assert.equal(tree._treeData.a,2,'server echo updates model');
     delay=40; type('3'); key('Enter'); type('34'); await tick(70);
     assert.equal(d.activeElement.value,'34','in-flight typing survives');
@@ -247,6 +251,7 @@ const type = text => {d.activeElement.value=text; d.activeElement.dispatchEvent(
     type('"#/other"');key('Enter');await tick();
     assert.equal(new w.URLSearchParams(calls.filter(c=>c.url==='/field/edit').at(-1).body).get('pointer_mode'),'relink','pointer transport explicitly relinks');
     assert.equal(tree._treeData.pointer,'#/other','relink model uses server echo');
+    key('Enter');   // the commit closed the editor; Enter on the row opens it again
     type('9');key('Enter');await tick();
     assert(toasts.includes('Edited other'),'commit toast names pointer target');
     assert(val('other').classList.contains('leu-flash'),'visible target flashes');
@@ -304,9 +309,9 @@ const type = text => {d.activeElement.value=text; d.activeElement.dispatchEvent(
     fsp=true;focus('b');type('3');key('Enter');await tick(80);
     assert(!d.querySelector('.fsp-card'),'no FSP pre-commit offer');
     assert.strictEqual(tree._treeData.b,3,'FSP committed at once as a number');
-    fsp=false;type('4');key('Enter');await tick(80);
+    fsp=false;key('Enter');type('4');key('Enter');await tick(80);
     assert.equal(tree._treeData.b,4,'a later edit on the same field commits');
-    assert.equal(d.activeElement.value,'4','later edit remains in the roving input');
+    assert.equal(val('b').textContent.trim(),'4','the later edit shows on its closed row');
 
     w.__treeCommitOnLeave=false;
     const swapTree = (data, sourceTag) => {
@@ -427,7 +432,7 @@ const type = text => {d.activeElement.value=text; d.activeElement.dispatchEvent(
     assert.equal(d.activeElement.value,'1234567890123','editing has no thousands separators');
     assert(parseInt(d.activeElement.style.minWidth)>=d.activeElement.value.length,'input minimum fits full content beside chip');
     type('2345678901234'); key('Enter'); await tick();
-    assert.equal(d.activeElement.value,'2345678901234','commit echo stays ungrouped');
+    key('Enter'); assert.equal(d.activeElement.value,'2345678901234','commit echo stays ungrouped');
     d.getElementById('pending-tray')?.remove();
     w.doStateSync('apply'); await tick();
     assert.equal(new w.URLSearchParams(calls.filter(c=>c.url==='/state/sync').at(-1).body).get('seen_changes'),'0','missing tray fails closed with declared zero');
