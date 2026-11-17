@@ -322,6 +322,9 @@
   }
 
   function renderSelect(d) {
+    // A press re-renders the chips: keep keyboard focus on the chip just pressed (found again by its key).
+    var act = document.activeElement;
+    var keep = act && d.selectEl.contains(act) && act.getAttribute ? act.getAttribute("data-select-key") : null;
     d.selectEl.innerHTML = "";
     d.selectEl.appendChild(el("span", { className: "gen-rule-select-label" }, "Select:"));
     // Exception to D-50 (commands show no selected look): the lit option says the ticks
@@ -353,8 +356,15 @@
     }, " gen-rule-chip-feed");
     cFeed.setAttribute("aria-haspopup", "menu");
     var cNone = chipBtn("None", none, function () { d.feedline = null; selectPairs(d, []); });
+    cAll.setAttribute("data-select-key", "all");
+    cFeed.setAttribute("data-select-key", "feedline");
+    cNone.setAttribute("data-select-key", "none");
     [cAll, cFeed, cNone].forEach(function (b) { b.disabled = !enabled; seg.appendChild(b); });
     d.selectEl.appendChild(seg);
+    if (keep) {
+      var back = seg.querySelector('[data-select-key="' + keep + '"]');
+      if (back && !back.disabled) back.focus();
+    }
   }
 
   function selectPairs(d, pids) {
