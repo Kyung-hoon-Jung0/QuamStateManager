@@ -2376,6 +2376,7 @@ window.PulsesPage = (function () {
         var below = row && row.nextElementSibling && row.nextElementSibling.hasAttribute('data-refused-row')
             ? row.nextElementSibling : null;
         var note = below ? below.querySelector('[data-refused-note]') : form.querySelector('[data-refused-note]');
+        var created = !note;
         if (!note) {
             note = document.createElement('small');
             note.className = 'ui-field-error';
@@ -2401,6 +2402,12 @@ window.PulsesPage = (function () {
         why = why.replace(/^Nothing was written\s*\u2014\s*/, '');
         note.textContent = (kept === '' ? 'Not saved.' : 'Not saved: the stored value is still ' + kept + '.')
             + (why ? ' ' + why : '');
+        // A new line under a field at the window bottom lands out of sight: bring it
+        // into view once (no scroll when it is already in view).
+        if (created && holder.getBoundingClientRect && holder.scrollIntoView) {
+            var hr = holder.getBoundingClientRect();
+            if (hr.top < 0 || hr.bottom > (window.innerHeight || 768)) holder.scrollIntoView({ block: 'nearest' });
+        }
         input.addEventListener('input', function clear() {
             input.removeAttribute('aria-invalid');
             if (holder.parentNode) holder.parentNode.removeChild(holder);

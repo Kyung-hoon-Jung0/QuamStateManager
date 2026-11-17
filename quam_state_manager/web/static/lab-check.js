@@ -150,6 +150,18 @@
         badge.style.top = Math.max(4, top) + 'px';
     }
 
+    function _hasOwnNote(tr) {
+        var e = tr.querySelector ? tr.querySelector('.bulk-row-error') : null;
+        return !!(e && !e.hidden && String(e.textContent || '').trim());
+    }
+
+    function _reveal(el) {
+        if (!el || !el.isConnected || !el.getBoundingClientRect || !el.scrollIntoView) return;
+        var r = el.getBoundingClientRect();
+        var vh = window.innerHeight || 768;
+        if (r.top < 0 || r.bottom > vh) el.scrollIntoView({ block: 'nearest' });
+    }
+
     function _badge(anchor) {
         var b = document.createElement('div');
         b.className = 'lab-check-badge';
@@ -223,13 +235,18 @@
             }
             // the surface's own error markup can move the cell: re-anchor
             var raf = window.requestAnimationFrame || function (f) { return setTimeout(f, 16); };
-            // a field's own refusal row (Pulses property table) already names the reason under
-            // the cell: the badge leaves then, unless it carries an offer, which goes under the row
+            // a field's own refusal (a Pulses refusal row under the cell, a grid row's own note)
+            // already names the reason: the badge leaves then, unless it carries an offer, which
+            // goes under that row so it never covers the note
             raf(function () { raf(function () {
                 var a = badge._anchor;
                 var tr = a && a.closest ? a.closest('tr') : null;
                 var nx = tr && tr.nextElementSibling;
                 var own = nx && nx.hasAttribute('data-refused-row') ? nx : null;
+                if (!own && tr && _hasOwnNote(tr)) own = tr;
+                // the note can grow the row and push the cell past the window edge:
+                // bring the row back into view (no scroll when it is already in view)
+                _reveal(own || tr);
                 if (own && !badge._keep) { done(); return; }
                 badge._placeAt = own || a;
                 _place(badge, badge._placeAt);
