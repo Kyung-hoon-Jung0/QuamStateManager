@@ -749,7 +749,11 @@ class TestLanding:
         for name in ("alpha", "beta", "gamma", "delta"):
             assert name in body
         # the dangling project's Open button is disabled with guidance
-        assert "disabled" in body and "fix it in QUAlibrate first" in body
+        assert "disabled" in body and (
+            "fix it in QUAlibrate first" in body or "Build it first (Generate Config)" in body)
+        # the qualibrate projects table says the same for a state not built yet
+        body = scoped["client"].get("/qualibrate").get_data(as_text=True)
+        assert "yet. Build it first (Generate Config), then Open" in body
 
     def test_landing_welcome_without_config(self, tmp_path, monkeypatch):
         monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(tmp_path / "ghost"))

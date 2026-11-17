@@ -66,7 +66,9 @@ function world(opts) {
       const ans = { json: () => Promise.resolve({ envs: [
         { name: 'A', python: 'C:\\envs\\A\\python.exe', kind: 'conda' },
         { name: 'B', python: 'C:\\envs\\B\\python.exe', kind: 'conda' },
-        { name: '.venv · lab', python: 'C:\\lab\\.venv\\Scripts\\python.exe', kind: 'uv-venv' }] }) };
+        { name: '.venv · lab', python: 'C:\\lab\\.venv\\Scripts\\python.exe', kind: 'uv-venv' }]
+        .concat(opts.projectVenv ? [{ name: '.venv (alpha)', python: 'C:\\alpha\\.venv\\Scripts\\python.exe',
+                                      kind: 'uv-venv', project: 'alpha' }] : []) }) };
       if (opts.slowEnvs) return new Promise((r) => { hold.envs = () => r(ans); });
       return Promise.resolve(ans);
     }
@@ -217,6 +219,25 @@ function click(W, sel) { W.d.querySelector(sel).dispatchEvent(new W.w.MouseEvent
        'a refused selection leaves the badge alone');
     await W.w.fetch('/generate/envs');
     ok(W.log.filter((u) => u === '/sidebar/folder-badges').length === 1, 'a GET never refreshes it');
+  }
+  // 9: a project's own .venv is listed first and runs only after a press
+  {
+    const W = world({ projectVenv: true });
+    click(W, '[data-env-change="alpha"]');
+    await until(() => W.d.querySelectorAll('.landing-env-row').length === 4);
+    await tick(20);
+    const row = W.d.querySelectorAll('.landing-env-row')[0];
+    ok(row.getAttribute('data-python') === 'C:\\alpha\\.venv\\Scripts\\python.exe', 'the project venv leads the list');
+    ok(row.querySelector('.landing-env-kind').textContent === 'project venv', 'it is labelled a project venv');
+    ok(!W.log.some((u) => u.indexOf('alpha') >= 0), 'the project venv is not run before a press');
+    const b = row.querySelector('button');
+    ok(b.textContent === 'Check' && !b.disabled && /not checked yet/.test(row.querySelector('.landing-env-status').textContent),
+       'its row offers Check');
+    b.dispatchEvent(new W.w.MouseEvent('click', { bubbles: true }));
+    await until(() => W.log.some((u) => u.indexOf('alpha') >= 0) && !b.disabled);
+    ok(b.textContent === 'Use this' && /quam 0\.6\.0/.test(row.querySelector('.landing-env-status').textContent),
+       'Check runs the probe and then offers Use this');
+    ok(W.posts.length === 0, 'Check saves nothing');
   }
   if (fails) { console.error(fails + ' FAIL'); process.exit(1); }
   console.log('all ok');
