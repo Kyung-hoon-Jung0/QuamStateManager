@@ -250,3 +250,15 @@ def any_project_env_chosen(monkeypatch):
     monkeypatch.setattr(project_env, "remembered",
                         lambda inst, project: sys.executable if project else None)
     monkeypatch.setattr(routes, "_select_project_env", lambda name: False)
+
+
+@pytest.fixture(autouse=True)
+def _restore_env_pulse_overlay():
+    # The selected env's pulse roster is a module global; a test that installs
+    # one must not change what the next test in the same process sees.
+    from quam_state_manager.core import pulse_catalog
+
+    before = pulse_catalog.env_overlay_active()
+    yield
+    if pulse_catalog.env_overlay_active() is not before:
+        pulse_catalog.apply_env_overlay(before)

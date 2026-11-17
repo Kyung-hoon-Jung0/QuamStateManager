@@ -1364,7 +1364,7 @@ def _describe(path: Path, wc) -> dict:
             reason = str(exc)
     aside = doc.get("set_aside")
     if not reason and isinstance(aside, str) and aside.strip():
-        reason = aside.strip()[:300]        # MINOR 7: SM set them aside, and why
+        reason = aside.strip()[:1000]       # SM set them aside, and why (room for a long path)
     if not reason:
         if doc.get("synced_live_hash") != wc.synced_live_hash:
             reason = "the chip was synced with its live folder after these edits were staged"

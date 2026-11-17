@@ -307,9 +307,11 @@ def hand_over(orphan: dict, wc, store) -> dict:
     out["rows"] = [r.dot_path for r in rows]
     if not rows:
         return out
-    reason = (f"unapplied work copied from {orphan['live_folder']}, which could not be "
-              "found when this chip was opened (moved or renamed?). Restore it only "
-              "if this is the same chip; that folder's own copy stays with it")
+    # The advice comes before the folder: a long path must never push it past
+    # the length a set-aside reason is kept at.
+    reason = ("unapplied work copied from a folder that could not be found when this "
+              "chip was opened (moved or renamed?). Restore it only if this is the same "
+              f"chip; that folder's own copy stays with it. Folder: {orphan['live_folder']}")
     target = pending_tray.set_aside(wc, rows, reason=reason)
     try:
         doc = safe_io.read_json(target, attempts=1)
