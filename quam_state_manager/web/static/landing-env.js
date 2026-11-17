@@ -119,6 +119,11 @@
             loading.textContent = envs.length ? '' : 'No conda or uv environments found — type an interpreter or venv folder below.';
             if (!envs.length) loading.hidden = false;
         }
+        // a project's own .venv leads the list for THAT project; the other
+        // envs keep the discovery order
+        envs = envs.slice().sort(function (a, b) {
+            return (b.project === _project ? 1 : 0) - (a.project === _project ? 1 : 0);
+        });
         envs.forEach(function (env) {
             var row = document.createElement('div');
             row.className = 'landing-env-row';
@@ -133,7 +138,8 @@
             row.appendChild(name);
             if (env.kind && env.kind !== 'conda') {
                 var kind = document.createElement('span'); kind.className = 'landing-env-kind';
-                kind.textContent = env.kind === 'uv-venv' ? 'uv venv' : env.kind; row.appendChild(kind);
+                kind.textContent = env.project ? 'project venv' : (env.kind === 'uv-venv' ? 'uv venv' : env.kind);
+                row.appendChild(kind);
             }
             var path = document.createElement('span'); path.className = 'landing-env-path'; path.textContent = env.python;
             row.appendChild(path);
@@ -142,12 +148,32 @@
             row.appendChild(st);
             var btn = document.createElement('button');
             btn.type = 'button'; btn.className = 'btn-sm outline';
-            btn.textContent = chosen ? 'In use' : (isCur ? 'Use this (suggested)' : 'Use this');
-            btn.disabled = true;           // until its probe says the QM stack is there
-            btn.addEventListener('click', function () { pick(env.python); });
+            var label = chosen ? 'In use' : (isCur ? 'Use this (suggested)' : 'Use this');
+            // An interpreter inside a lab's own code tree runs only after a
+            // press: listed, not executed, until the person asks for the check.
+            var deferred = !!env.project && !chosen;
+            if (deferred) {
+                st.setAttribute('data-state', 'idle');
+                st.textContent = 'not checked yet: press Check to run it';
+                btn.textContent = 'Check';
+                btn.disabled = false;
+            } else {
+                btn.textContent = label;
+                btn.disabled = true;       // until its probe says the QM stack is there
+            }
+            btn.addEventListener('click', function () {
+                if (deferred) {
+                    deferred = false;
+                    btn.textContent = label; btn.disabled = true;
+                    st.setAttribute('data-state', 'checking'); st.textContent = 'checking…';
+                    probe(env.python, st, btn);
+                    return;
+                }
+                pick(env.python);
+            });
             row.appendChild(btn);
             list.appendChild(row);
-            probe(env.python, st, btn);
+            if (!deferred) probe(env.python, st, btn);
         });
     }
 

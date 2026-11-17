@@ -118,7 +118,7 @@
                       hx-target="#table-pane" onclick="event.stopPropagation()">
                     <input type="hidden" name="project" value="{{ p.name }}">
                     <button type="submit" class="btn-sm outline"
-                            {% if not p.state_path.exists %}disabled title="state_path missing — see Doctor"{% else %}title="Load this project's chip + datasets in the State Manager (writes nothing to qualibrate)"{% endif %}>
+                            {% if not p.state_path.exists %}disabled title="{% if p.state_path.native %}No QUAM state at {{ p.state_path.raw }} yet. Build it first (Generate Config), then Open{% else %}state_path missing: see Doctor{% endif %}"{% else %}title="Load this project's chip + datasets in the State Manager (writes nothing to qualibrate)"{% endif %}>
                         Open in SM</button>
                 </form>
             </td>

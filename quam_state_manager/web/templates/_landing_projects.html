@@ -76,7 +76,7 @@
                 <input type="hidden" name="from" value="landing">
                 <button type="submit" class="btn-sm{% if p.name == last_project %} primary{% endif %}"
                         {% if not p.state_path.exists %}disabled
-                        title="state_path missing or empty — fix it in QUAlibrate first (Manage / doctor)"
+                        title="{% if p.state_path.native %}No QUAM state at {{ p.state_path.raw }} yet. Build it first (Generate Config), then Open{% else %}state_path missing or empty: fix it in QUAlibrate first (Manage / doctor){% endif %}"
                         {% else %}title="Load {{ p.state_path.raw }} + its data folders"{% endif %}>
                     {{ 'Continue' if p.name == last_project else 'Open' }}</button>
             </form>
