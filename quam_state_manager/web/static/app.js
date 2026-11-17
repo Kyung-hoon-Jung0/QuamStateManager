@@ -13438,7 +13438,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                     if (tree._editor !== state || state.pending || document.activeElement !== input
                             || input.value !== input.defaultValue) return;
                     var row = el.closest(".tree-row");
-                    state.leave(true);
+                    state.leave();   // nothing pending: closes clean, no draft kept
                     if (row && row.isConnected && row.hasAttribute("tabindex")) {
                         row._kbNoMount = true;
                         try { row.focus({ preventScroll: true }); } finally { row._kbNoMount = false; }

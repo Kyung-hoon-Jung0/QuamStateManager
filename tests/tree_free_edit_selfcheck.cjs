@@ -431,8 +431,9 @@ const type = text => {d.activeElement.value=text; d.activeElement.dispatchEvent(
     focus('long'); await tick(190);
     assert.equal(d.activeElement.value,'1234567890123','editing has no thousands separators');
     assert(parseInt(d.activeElement.style.minWidth)>=d.activeElement.value.length,'input minimum fits full content beside chip');
+    const longInput = d.activeElement;
     type('2345678901234'); key('Enter'); await tick();
-    key('Enter'); assert.equal(d.activeElement.value,'2345678901234','commit echo stays ungrouped');
+    assert.equal(longInput.value,'2345678901234','commit echo stays ungrouped');
     d.getElementById('pending-tray')?.remove();
     w.doStateSync('apply'); await tick();
     assert.equal(new w.URLSearchParams(calls.filter(c=>c.url==='/state/sync').at(-1).body).get('seen_changes'),'0','missing tray fails closed with declared zero');

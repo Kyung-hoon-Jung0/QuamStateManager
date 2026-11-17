@@ -47,7 +47,7 @@ async function world(roles) {
 (async () => {
   let w = await world(COLD);
   let btn = w.document.querySelector('.gen-add-czbtn');
-  let why = w.document.querySelector('tr[data-rid="q1-q2"] .gen-add-czwhy');
+  let why = w.document.querySelector('tr[data-rid="q1-q2"] [data-czwhy]');
   ok(btn && btn.disabled, 'W1 + CZ is disabled before the classes are read');
   ok(why && /not been read yet/.test(why.textContent) && !why.hidden,
     'W1 the row names why: ' + (why && why.textContent));
@@ -55,7 +55,7 @@ async function world(roles) {
   w = await world(READ({ 'pkg.pulses.FlatTopGaussianPulse': { origin: 'official', fields: {} } }));
   btn = w.document.querySelector('.gen-add-czbtn');
   ok(btn && !btn.disabled, 'W2 + CZ is enabled once the classes are read');
-  ok(!w.document.querySelector('.gen-add-czwhy'), 'W2 no note when the button works');
+  ok(!w.document.querySelector('[data-czwhy]'), 'W2 no note when the button works');
   const count = w.document.querySelector('.gen-add-count').textContent;
   ok(!/0 lab/.test(count) && /no lab module read/.test(count) && /^1 official/.test(count),
      'W3 the count says no lab module was read: ' + count);

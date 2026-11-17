@@ -1332,7 +1332,7 @@
     if (!(roles && roles.ok)) {
       cz.disabled = true; cz.title = rolesWhyOff();
       // Said on the row, not only on hover: a disabled button shows no tooltip on touch or keyboard.
-      czWhy = el("span", { className: "muted gen-add-czwhy" }, rolesWhyOff());
+      czWhy = el("span", { className: "muted", "data-czwhy": "1" }, rolesWhyOff());
     }
     cz.addEventListener("click", function () { openForm(tr, pid, long, ctx, null); });
     row.appendChild(cz);
