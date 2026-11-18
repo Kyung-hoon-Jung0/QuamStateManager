@@ -1623,6 +1623,10 @@
         // than a bar tall, the page gives the panel all of its height
         // (ui-kit .ui-split-top). Without it the page's own padding and the
         // bar stayed as a strip between the top bar and the panel's head row.
+        function markDragging(on) {
+            var g = document.querySelector(".gutter.gutter-vertical");
+            if (g) g.classList.toggle("gutter-dragging", on);
+        }
         function markTop(sizes) {
             var tp = document.getElementById("table-pane");
             var host = tp && tp.parentElement;
@@ -2035,9 +2039,12 @@
                 minSize: UI_CONFIG.split.minSizes,
                 gutterSize: UI_CONFIG.split.gutterSize,
                 snapOffset: 0,
-                onDragStart: function(s) { dragStartSizes = s; },
+                // .gutter-dragging keeps the bar's line thick while the pointer
+                // runs ahead of it (Split.js sets no class of its own).
+                onDragStart: function(s) { dragStartSizes = s; markDragging(true); },
                 onDrag: function(s) { markTop(s); },
                 onDragEnd: function(s) {
+                    markDragging(false);
                     if (!scope.alive) return;
                     saveSizes(s); inspectorExpanded = s[1] > 30;
                     markSliver(null);

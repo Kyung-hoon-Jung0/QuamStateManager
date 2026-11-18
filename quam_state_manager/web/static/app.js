@@ -48,7 +48,8 @@ var UI_CONFIG = {
         minSizes:       [0, 60],   /* min height (px) for [upper, lower] pane. Upper=0 lets the inspector be dragged to FULLY cover the page (Qubits / Chip Status / …); lower=60 keeps the inspector grabbable (use its × button to fully reveal the page instead). */
         tableFirstSizes: [35, 65],  /* R4-TP-1: where an inspector opens on Pulses when the user has made no choice yet (the table pane keeps its rows at 1366x768; 15% left 0) */
         datasetExpandedSizes: [25, 75],  /* v1.3.0: the fixed EXPANDED position while the inspector shows a dataset RUN. 15% left about two rows of the run list, and j/k between runs needs the neighbouring rows in view; 25% keeps about five. Every other inspector keeps expandedSizes. */
-        gutterSize:     12          /* height of the drag handle in px (compact D-3: 26 -> 12, a thin bar; the arrows sit at its right end with a >= 20px hit area) -- keep in sync with --split-gutter-size in style.css */
+        gutterSize:     12          /* drag handle height in px (D-3: 26 -> 12); its arrows sit at its centre,
+                                       a >= 20px hit area -- keep in sync with --split-gutter-size in style.css */
     },
 
     plotly: {

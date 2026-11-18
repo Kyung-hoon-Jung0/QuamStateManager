@@ -98,7 +98,9 @@
     --table-pane-pad-h:      1rem;    /* left/right padding inside the upper content pane */
     --inspector-pane-pad-v:  0.5rem;  /* top/bottom padding inside the lower detail pane (qubit detail, dataset detail…) */
     --inspector-pane-pad-h:  1rem;    /* left/right padding inside the lower detail pane */
-    --split-gutter-size:     12px;    /* height of the drag handle between panes (compact D-3: 26px -> 12px, a thin blue bar; the arrows keep a >= 20px hit area via ::before) -- keep in sync with UI_CONFIG.split.gutterSize */
+    --split-gutter-size:     12px;    /* drag handle height (D-3: 26 -> 12 px); sync UI_CONFIG.split.gutterSize */
+    --split-line-rest:       3px;     /* the visible accent line inside the drag handle, at rest */
+    --split-line-hover:      7px;     /* the same line while the pointer is on the handle or dragging it */
 
     /* -- SPLIT ARROW BUTTONS (up / down, on the gutter drag handle) -- */
     --inspector-toggle-w:    28px;    /* width of each arrow button (compact D-3: 38 -> 28; the hit area is widened by ::before) */
@@ -2255,42 +2257,29 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
     display: none;
 }
 
-/* Split.js gutter (the draggable divider between table-pane and inspector-pane) */
-.gutter {
-    flex-shrink: 0;
-    background: var(--pico-muted-border-color);
-    position: relative;
-}
-.gutter:hover, .gutter-dragging {
-    background: var(--pico-primary-background);
-}
+/* Split.js gutter (the draggable divider between table-pane and inspector-pane).
+   The 12 px hit area is transparent; ::after draws the boundary as a thin accent
+   line, grown on hover and while dragging (base.html marks .gutter-dragging).
+   The two arrows (base.html ensureGutterArrows: up = the fixed expanded position,
+   down = the fixed collapsed one) sit side by side at the bar's centre. */
+.gutter { flex-shrink: 0; background: transparent; position: relative; }
 .gutter.gutter-vertical {
     cursor: row-resize;
     height: var(--split-gutter-size);
 }
 .gutter.gutter-vertical::after {
     content: "";
-    position: absolute; left: 50%; top: 50%;
-    transform: translate(-50%, -50%);
-    width: 32px; height: 2px;
-    background: var(--pico-muted-color);
-    border-radius: 1px;
-    opacity: 0.5;
+    position: absolute; left: 0; right: 0; top: 50%;
+    transform: translateY(-50%);
+    height: var(--split-line-rest);
+    background: var(--ui-accent-fill);
+    transition: height 0.12s;
 }
-.gutter.gutter-vertical:hover::after {
-    opacity: 1;
-    background: var(--pico-primary-inverse);
-}
-
-/* v1.3.0 (customer): the gutter carries two arrows, up = the fixed expanded
-   position, down = the fixed collapsed one (base.html ensureGutterArrows).
-   They replaced a set-high / toggle / set-low trio whose set buttons were
-   read as moves. Sized by the --inspector-toggle-* tokens, inside the gutter. */
-.gutter.gutter-vertical:has(.gutter-controls)::after { display: none; }
+.gutter.gutter-vertical:hover::after, .gutter-vertical.gutter-dragging::after { height: var(--split-line-hover); }
 .gutter-controls {
     position: absolute;
-    right: 1rem; top: 50%;
-    transform: translateY(-50%);
+    left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
     display: flex; align-items: center; gap: 6px;
     z-index: 2;
 }
