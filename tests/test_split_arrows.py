@@ -1,16 +1,18 @@
-"""The inspector split bar: two arrows, and the user's last choice (v1.3.0).
+"""The inspector split bar: up, a circle and down, and the user's last choice (v1.3.0).
 
 Customer feedback: the bar carried set-high / toggle / set-low buttons, and a
 press of set-low (read as "move the bar down") stored the current position as
 the collapsed target, so the toggle afterwards seemed to do nothing. Now:
 
-- two arrows only: up moves the bar to the fixed expanded position
-  (datasetExpandedSizes for a dataset run, else expandedSizes), down to the
-  fixed collapsed one (collapsedSizes), on every press;
+- up moves the panel to the full height ([0, 100], the .ui-split-top state),
+  down docks it to its one-line bar, on every press; the circle between them
+  returns to the last DRAGGED height (``quam_split_drag``, written on a drag
+  end, seeded from an older stored drag), or the default with no drag yet;
+  the docked bar carries the same up and circle;
 - the user's LAST action decides where the next inspector opens (a run or
   qubit click, a reload, a new session), kept in one localStorage key
   (``quam_split_user``): a drag stores the dragged sizes, an arrow press
-  stores which arrow, opened at that arrow's fixed position. SM's own moves
+  stores which arrow, opened at that arrow's position. SM's own moves
   (menu auto-collapse, Compare, Go to state, the table-pane initSplit) never
   change it; with no choice yet, the defaults as before;
 - page navigation lowers an open run to min(remembered inspector share,
@@ -39,7 +41,7 @@ MODES = ["buttons", "arrows", "drag", "up_next", "down_next", "drag_after_arrow"
          "nav_sidebar", "nav_boost", "nav_push", "nav_history", "nav_same_page",
          "nav_collapse_low", "nav_collapse_high",
          "nav_reopen_low", "nav_reopen_high", "nav_run_only", "table_first", "trend_chart",
-         "dock_bar", "heading", "keeps_scroll", "top_edge"]
+         "dock_bar", "back", "heading", "keeps_scroll", "top_edge"]
 
 
 def _node(*args: str) -> subprocess.CompletedProcess:

@@ -1656,7 +1656,8 @@
         }
 
         // v1.3.0 (customer): the split bar has two arrows, each to a FIXED
-        // position. The old set-high / set-low buttons stored the current
+        // position (up: the full height, down: docked), and a circle between
+        // them back to the last dragged height (DRAG_KEY). The old set-high / set-low buttons stored the current
         // position as a hidden target (quam_split_expanded/_collapsed), so a
         // later press of the toggle seemed to do nothing. Those keys go.
         //
@@ -1735,6 +1736,26 @@
         function saveUserChoice(choice) {
             try { localStorage.setItem(USER_KEY, JSON.stringify(choice)); } catch (e) {}
         }
+        // The circle between the arrows returns to the last DRAGGED height, which
+        // an arrow press must not overwrite, so it keeps its own key. Seeded from
+        // a dragged choice stored before this key existed.
+        var DRAG_KEY = "quam_split_drag";
+        function dragSizes() {
+            try {
+                var d = JSON.parse(localStorage.getItem(DRAG_KEY) || "null");
+                if (validSizes(d)) return [Number(d[0]), Number(d[1])];
+            } catch (e) {}
+            var c = loadUserChoice();
+            return validSizes(c) ? [Number(c[0]), Number(c[1])] : null;
+        }
+        function saveDragSizes(sizes) {
+            try { localStorage.setItem(DRAG_KEY, JSON.stringify([Number(sizes[0]), Number(sizes[1])])); } catch (e) {}
+            // the circle on the bar now names the dragged height (the bar is not rebuilt by a drag)
+            var b = document.querySelector(".gutter-controls .split-back-btn");
+            if (b) { b.title = backTitle(); b.setAttribute("aria-label", b.title); }
+        }
+        // The up arrow: the panel takes the whole height (base markTop -> .ui-split-top).
+        function fullSizes() { return [0, 100]; }
         // The two fixed positions the arrows move to (UI_CONFIG.split).
         function expandedSizes() {
             // v1.3.0: a dataset run keeps more of the run list in view
@@ -1745,7 +1766,7 @@
         // The sizes of the user's last choice for the inspector shown now.
         function userSizes() {
             var c = loadUserChoice();
-            if (c === "up") return expandedSizes();
+            if (c === "up") return fullSizes();
             if (c === "down") return collapsedSizes();
             return c;
         }
@@ -1923,22 +1944,34 @@
                 up.type = "button";
                 up.className = "ui-dock-btn ui-dock-restore";
                 up.textContent = "\u2191";
-                up.title = "Restore the panel";
-                up.setAttribute("aria-label", "Restore the panel");
+                up.title = "Expand the panel to the full height";
+                up.setAttribute("aria-label", up.title);
+                var back = document.createElement("button");
+                back.type = "button";
+                back.className = "ui-dock-btn ui-dock-back";
+                back.textContent = "\u25CF";
                 var x = document.createElement("button");
                 x.type = "button";
                 x.className = "ui-dock-btn ui-dock-close";
                 x.textContent = "\u00D7";
                 x.title = "Close the panel";
                 x.setAttribute("aria-label", "Close the panel");
-                bar.appendChild(title); bar.appendChild(up); bar.appendChild(x);
+                bar.appendChild(title); bar.appendChild(up); bar.appendChild(back); bar.appendChild(x);
                 inspectorPane.insertBefore(bar, inspectorPane.firstChild);
             }
+            var backBtn = bar.querySelector(".ui-dock-back");
+            backBtn.title = backTitle();
+            backBtn.setAttribute("aria-label", backBtn.title);
             bar.querySelector(".ui-dock-title").textContent = dockTitle();
             bar.title = dockTitle();
             gutterListeners.push(scope.listen(bar.querySelector(".ui-dock-restore"), "click", function(e) {
                 e.stopPropagation();
-                undockInspector();
+                saveUserChoice("up");
+                undockInspector(fullSizes());
+            }));
+            gutterListeners.push(scope.listen(bar.querySelector(".ui-dock-back"), "click", function(e) {
+                e.stopPropagation();
+                undockInspector(backSizes());
             }));
             gutterListeners.push(scope.listen(bar.querySelector(".ui-dock-close"), "click", function(e) {
                 e.stopPropagation();
@@ -1949,6 +1982,19 @@
 
         function sameSizes(a, b) {
             return !!(a && b) && Math.abs(a[0] - b[0]) < 0.01 && Math.abs(a[1] - b[1]) < 0.01;
+        }
+
+        // The circle: back to the last dragged height, or the default opening
+        // height when nothing was dragged yet. The press is the user's choice.
+        function backSizes() {
+            var d = dragSizes();
+            if (d) saveUserChoice(d);
+            else { try { localStorage.removeItem(USER_KEY); } catch (e) {} }
+            return d || firstOpenSizes();
+        }
+        function backTitle() {
+            return dragSizes() ? "Back to the height you dragged it to"
+                : "Back to the default height (nothing dragged yet)";
         }
 
         function arrowButton(cls, glyph, title, choice, sizesFor) {
@@ -1973,7 +2019,7 @@
                     if (rb) rb.focus();
                     return;
                 }
-                saveUserChoice(choice);
+                if (choice) saveUserChoice(choice);
                 applySizes(sizesFor());
                 // initSplit rebuilt the gutter; keep a keyboard user on the arrow
                 var again = hadFocus && document.querySelector(".gutter-controls ." + cls.split(" ")[0]);
@@ -1990,7 +2036,9 @@
             wrap.className = "gutter-controls";
             // A button press on the gutter must not start a Split.js drag.
             gutterListeners.push(scope.listen(wrap, "mousedown", function(e) { e.stopPropagation(); }));
-            wrap.appendChild(arrowButton("split-up-btn ui-split-arrow", "\u25B2", "Expand the panel", "up", expandedSizes));
+            wrap.appendChild(arrowButton("split-up-btn ui-split-arrow", "\u25B2",
+                "Expand the panel to the full height", "up", fullSizes));
+            wrap.appendChild(arrowButton("split-back-btn ui-split-arrow", "\u25CF", backTitle(), null, backSizes));
             wrap.appendChild(arrowButton("split-down-btn ui-split-arrow", "\u25BC", "Dock the panel to the bottom", "down", collapsedSizes));
             gutter.appendChild(wrap);
         }
@@ -2052,7 +2100,7 @@
                     // v1.3.0 (customer): a drag is the user's last choice; the
                     // next inspector opens at this height. A press on the bar
                     // that did not move it is not a choice.
-                    if (!sameSizes(s, dragStartSizes)) saveUserChoice(s);
+                    if (!sameSizes(s, dragStartSizes)) { saveUserChoice(s); saveDragSizes(s); }
                     dragStartSizes = null;
                     /* Split.js resizing the panes does not fire a window
                        resize, so any Plotly chart in the inspector keeps its

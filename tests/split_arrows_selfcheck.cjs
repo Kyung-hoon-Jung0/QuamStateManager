@@ -5,11 +5,14 @@
  * is visible as the sizes of the last Split() call.
  *
  *   node tests/split_arrows_selfcheck.cjs <mode>
- *     buttons      -- two arrows only, titled and labelled; no set buttons
- *     arrows       -- each arrow lands on its FIXED position, again when pressed twice
+ *     buttons      -- up, circle, down, titled and labelled; no set buttons
+ *     arrows       -- up lands on the full height, down docks, the circle on the
+ *                     last dragged height, again when pressed twice
+ *     back         -- the circle: last drag after an up and after a down, from the
+ *                     bar and the docked bar; no drag -> the default; seeded from an
+ *                     old stored drag; an arrow press never overwrites the drag
  *     drag         -- a drag -> the next inspector opens at the dragged height
- *     up_next      -- an up press after a drag -> the next one opens at the fixed max
- *                     (for ITS kind: a run's or a qubit's)
+ *     up_next      -- an up press after a drag -> the next one opens at the full height
  *     down_next    -- a down press after a drag -> the next one opens at the fixed min
  *     drag_after_arrow -- a drag after an arrow -> the drag wins
  *     reload       -- the last choice survives a reload / a new session, over a
@@ -19,7 +22,7 @@
  *     retired      -- the old set-high / set-low keys are removed on load
  *     defaults     -- with no choice yet, the defaults as before
  *     still_click  -- a press on the bar that does not move it is not a choice
- *     focus        -- a keyboard user stays on the arrow after a press; a mouse
+ *     focus        -- a keyboard user stays on the arrow (or circle) after a press; a mouse
  *                     press drops focus as before
  *     nav_sidebar / nav_boost / nav_push / nav_history -- navigation collapses runs
  *                     at any height, across swaps/reruns, without changing memory
@@ -60,6 +63,7 @@ const SPLIT = {
     defaultSizes: [55, 45], expandedSizes: [15, 85], collapsedSizes: [85, 15],
     datasetExpandedSizes: [25, 75], minSizes: [0, 60], gutterSize: 12, tableFirstSizes: [35, 65],
 };
+const FULL = [0, 100];   // the up arrow: the panel takes the whole height
 const RUN = '<div id="ds-detail-root" data-uid="run-a">run</div>';
 const QUBIT = '<div class="qubit-detail">qubit</div>';
 
@@ -102,11 +106,20 @@ async function boot({ storage = {}, inspector = '' } = {}) {
         // compact D-1: SM's own collapse docks the panel to a one-line bar
         docked: () => d.getElementById('inspector-pane').classList.contains('ui-inspector-docked')
             && !!d.querySelector('#inspector-pane > .ui-dock-bar') && !d.querySelector('.gutter'),
+        // the docked bar's up arrow: the panel to the full height
         restore() {
             const b = d.querySelector('#inspector-pane > .ui-dock-bar .ui-dock-restore');
             assert.ok(b, 'the dock bar has a restore button');
             b.click();
         },
+        // the circle: back to the last dragged height (on the bar, or on the docked bar)
+        back() {
+            const b = d.querySelector('.gutter-controls .split-back-btn')
+                || d.querySelector('#inspector-pane > .ui-dock-bar .ui-dock-back');
+            assert.ok(b, 'a back-to-drag circle is shown');
+            b.click();
+        },
+        drag_key: () => w.localStorage.getItem('quam_split_drag'),
         rerun() { w.eval(splitScript); },
         swap(id, html) {
             const target = d.getElementById(id);
@@ -156,7 +169,8 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
         s.d.getElementById('nav-datasets').click();
         s.w.history.pushState({}, '', '/datasets');
         s.swap('table-pane', 'datasets page');
-        const expected = mode === 'nav_reopen_high' ? choice : SPLIT.datasetExpandedSizes;
+        // the up arrow is the full height, above every expanded share
+        const expected = mode === 'nav_reopen_high' ? choice : choice === 'up' ? FULL : SPLIT.datasetExpandedSizes;
         s.swap('inspector-pane', RUN);
         eq(s.sizes(), expected, 'after navigation the run opens at max(user share, expanded share)');
         assert.equal(s.user(), before, 'reopening preserves the remembered choice');
@@ -164,7 +178,7 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
         eq(s.sizes(), expected, 'a concurrent table swap keeps the reopened height');
         s.swap('inspector-pane', RUN_B);
         // compact D-1: the down arrow docks and is not a remembered choice
-        const plain = Array.isArray(choice) ? choice : SPLIT.datasetExpandedSizes;
+        const plain = Array.isArray(choice) ? choice : choice === 'up' ? FULL : SPLIT.datasetExpandedSizes;
         eq(s.sizes(), plain, 'the following run within Datasets uses the plain remembered height');
         assert.equal(s.user(), before, 'within-page switching also preserves memory');
     }
@@ -304,22 +318,30 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     const s = await boot();
     s.swap('inspector-pane', QUBIT);
     const buttons = s.d.querySelectorAll('.gutter button');
-    assert.equal(buttons.length, 2, 'the gutter carries exactly two buttons');
-    const [up, down] = buttons;
-    assert.ok(up.classList.contains('split-up-btn') && down.classList.contains('split-down-btn'),
-        'up arrow first, down arrow second');
+    assert.equal(buttons.length, 3, 'the gutter carries up, the circle and down');
+    const [up, back, down] = buttons;
+    assert.ok(up.classList.contains('split-up-btn') && back.classList.contains('split-back-btn')
+        && down.classList.contains('split-down-btn'), 'up arrow first, the circle between, down arrow last');
     assert.equal(up.textContent, String.fromCharCode(0x25B2));
+    assert.equal(back.textContent, String.fromCharCode(0x25CF));
     assert.equal(down.textContent, String.fromCharCode(0x25BC));
-    assert.equal(up.title, 'Expand the panel');
+    assert.equal(up.title, 'Expand the panel to the full height');
+    assert.equal(back.title, 'Back to the default height (nothing dragged yet)', 'no drag yet: the title says so');
     assert.equal(down.title, 'Dock the panel to the bottom');
-    assert.equal(up.getAttribute('aria-label'), 'Expand the panel');
+    assert.equal(up.getAttribute('aria-label'), 'Expand the panel to the full height');
+    assert.equal(back.getAttribute('aria-label'), back.title);
     assert.equal(down.getAttribute('aria-label'), 'Dock the panel to the bottom');
     assert.equal(up.type, 'button');
+    assert.equal(back.type, 'button');
+    assert.ok(back.classList.contains('ui-split-arrow'), 'the circle is the same kit part as the arrows');
     assert.equal(s.d.querySelectorAll('.split-set-btn, .inspector-toggle-btn').length, 0,
         'no set-high / set-low / toggle button is left');
+    s.drag([40, 60]);
+    assert.equal(s.d.querySelector('.split-back-btn').title, 'Back to the height you dragged it to',
+        'after a drag the circle names the dragged height');
     // a rebuild of the split never doubles them
-    s.press('down'); s.restore(); s.press('up');
-    assert.equal(s.d.querySelectorAll('.gutter button').length, 2, 'still two after presses');
+    s.press('down'); s.restore(); s.press('up'); s.back();
+    assert.equal(s.d.querySelectorAll('.gutter button').length, 3, 'still three after presses');
 } else if (mode === 'arrows') {
     const s = await boot();
     s.swap('inspector-pane', QUBIT);
@@ -329,21 +351,27 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     eq(JSON.parse(s.user()), [40, 60], 'the dock is not a remembered choice');
     s.restore();
     assert.ok(!s.docked() && !s.d.querySelector('.ui-dock-bar'), 'restore removes the bar');
-    eq(s.sizes(), [40, 60], 'restore returns to the last remembered split');
+    eq(s.sizes(), FULL, 'the docked bar\'s up arrow takes the full height, not the dragged one');
+    s.press('down');
+    s.back();
+    assert.ok(!s.docked(), 'the docked bar\'s circle undocks too');
+    eq(s.sizes(), [40, 60], 'the circle returns to the last dragged split');
     s.press('up');
-    eq(s.sizes(), SPLIT.expandedSizes, 'up lands on the fixed expanded position');
+    eq(s.sizes(), FULL, 'up lands on the full height');
     const n = s.calls.length;
     s.press('up');
     assert.equal(s.calls.length, n + 1, 'a second up press is applied again');
-    eq(s.sizes(), SPLIT.expandedSizes, 'and lands on the same expanded position');
-    // a dataset RUN in the inspector: up goes to the dataset expanded position
+    eq(s.sizes(), FULL, 'and lands on the full height again');
+    s.back();
+    eq(s.sizes(), [40, 60], 'the circle after up: the dragged split, not the up arrow');
+    // a dataset RUN in the inspector: up is the full height there too
     s.swap('inspector-pane', RUN);
     s.press('down');
-    s.restore();
-    eq(s.sizes(), SPLIT.datasetExpandedSizes, 'restore on a run after up: datasetExpandedSizes');
+    s.back();
+    eq(s.sizes(), [40, 60], 'the circle on a run after down: the dragged split');
     s.press('up');
-    eq(s.sizes(), SPLIT.datasetExpandedSizes, 'up too');
-    eq(JSON.parse(s.current()), SPLIT.datasetExpandedSizes, 'the press is the current split');
+    eq(s.sizes(), FULL, 'up on a run: the full height');
+    eq(JSON.parse(s.current()), FULL, 'the press is the current split');
 } else if (mode === 'drag') {
     // a drag -> the next run opens at the dragged height
     const s = await boot();
@@ -360,20 +388,21 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     s.swap('inspector-pane', RUN);
     eq(s.sizes(), [62, 38], 'a later drag replaces the earlier one');
 } else if (mode === 'up_next') {
-    // an up press (after a drag) -> the next inspector opens at the fixed max
+    // an up press (after a drag) -> the next inspector opens at the full height
     const s = await boot();
     s.swap('inspector-pane', RUN);
     s.drag([40, 60]);
     s.press('down');
-    s.restore();
+    s.back();
     s.press('up');
     assert.equal(s.user(), '"up"', 'the press is stored as the last choice');
     s.swap('inspector-pane', RUN_B);
-    eq(s.sizes(), SPLIT.datasetExpandedSizes, 'the next run opens at the fixed max, not the dragged height');
+    eq(s.sizes(), FULL, 'the next run opens at the full height, not the dragged height');
     s.swap('inspector-pane', QUBIT);
-    eq(s.sizes(), SPLIT.expandedSizes, 'a qubit opens at ITS fixed max (the arrow, not a run-sized number)');
-    s.swap('inspector-pane', RUN);
-    eq(s.sizes(), SPLIT.datasetExpandedSizes, 'and a run again at the run max');
+    eq(s.sizes(), FULL, 'a qubit too');
+    eq(JSON.parse(s.drag_key()), [40, 60], 'the up press leaves the dragged height for the circle');
+    s.back();
+    eq(s.sizes(), [40, 60], 'and the circle returns to it');
 } else if (mode === 'down_next') {
     // compact D-1: a down press docks; the next inspector opens at the remembered height
     const s = await boot();
@@ -424,14 +453,16 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     d2.press('up');
     const e2 = await boot({ storage: d2.storage() });
     e2.swap('inspector-pane', RUN);
-    eq(e2.sizes(), SPLIT.datasetExpandedSizes, 'after up, a new session opens a run at the fixed max');
+    eq(e2.sizes(), FULL, 'after up, a new session opens a run at the full height');
+    e2.back();
+    eq(e2.sizes(), [40, 60], 'and the circle still knows the drag from the earlier session');
 } else if (mode === 'programmatic') {
     for (const first of ['drag', 'up']) {
         const s = await boot();
         s.swap('inspector-pane', RUN);
         if (first === 'drag') s.drag([30, 70]); else s.press('up');
         const before = s.user();
-        const open = first === 'drag' ? [30, 70] : SPLIT.datasetExpandedSizes;
+        const open = first === 'drag' ? [30, 70] : FULL;
         // the sidebar-menu auto-collapse with a dataset detail open
         s.d.getElementById('nav-qubits').click();
         assert.ok(s.docked(), first + ': menu navigation collapses the run');
@@ -443,7 +474,8 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
         s.swap('table-pane', 'datasets page');
         s.swap('inspector-pane', RUN);
         // v1.4.0: plain last choice -> expanded minimum, so a reopened run has room after navigation.
-        eq(s.sizes(), SPLIT.datasetExpandedSizes, first + ': back on a run: at least the expanded height');
+        eq(s.sizes(), first === 'drag' ? SPLIT.datasetExpandedSizes : FULL,
+            first + ': back on a run: at least the expanded height');
         // the Compare-form collapse
         const go = s.d.getElementById('compare-go');
         s.d.dispatchEvent(new s.w.CustomEvent('htmx:beforeRequest', { detail: { elt: go } }));
@@ -545,7 +577,7 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     const u = await boot({ storage: { quam_split_user: '"up"' } });
     u.d.getElementById('table-pane').innerHTML = PULSES;
     u.swap('inspector-pane', QUBIT);
-    eq(u.sizes(), SPLIT.expandedSizes, 'a remembered choice wins on Pulses too');
+    eq(u.sizes(), FULL, 'a remembered choice (up: the full height) wins on Pulses too');
 } else if (mode === 'still_click') {
     const s = await boot();
     s.swap('inspector-pane', RUN);
@@ -557,7 +589,7 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     inst.options.onDragEnd(inst.getSizes());
     assert.equal(s.user(), '"up"', 'a press on the bar that did not move it is not a choice');
     s.swap('inspector-pane', QUBIT);
-    eq(s.sizes(), SPLIT.expandedSizes, 'the qubit opens at the up arrow position, not the run-sized bar');
+    eq(s.sizes(), FULL, 'the qubit opens at the up arrow position (full height), not the bar\'s');
 } else if (mode === 'focus') {
     const s = await boot();
     s.swap('inspector-pane', QUBIT);
@@ -572,15 +604,59 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     assert.ok(now && now.classList && now.classList.contains('ui-dock-restore'),
         'a keyboard dock moves focus to the bar\'s restore button');
     s.restore();
-    eq(s.sizes(), SPLIT.expandedSizes, 'restore after up returns to the expanded position');
+    eq(s.sizes(), FULL, 'the docked bar\'s up arrow: the full height');
+    // the circle is keyboard-reachable and keeps a keyboard user on it
+    s.d.querySelector('.split-back-btn').focus();
+    s.press('back');
+    now = s.d.activeElement;
+    assert.ok(now && now.classList && now.classList.contains('split-back-btn'),
+        'focus is on the rebuilt circle after a keyboard press');
     // a MOUSE press (detail 1) drops focus as before -- no lingering focus ring
     const up = s.d.querySelector('.split-up-btn');
     up.focus();
     up.dispatchEvent(new s.w.MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
-    eq(s.sizes(), SPLIT.expandedSizes, 'the mouse press moved the bar');
+    eq(s.sizes(), FULL, 'the mouse press moved the bar');
     const after = s.d.activeElement;
     assert.ok(!(after && after.classList && after.classList.contains('split-up-btn')),
         'a mouse press does not put focus back on the rebuilt arrow');
+} else if (mode === 'back') {
+    // the circle returns to the last DRAGGED height, whatever arrow was pressed since
+    const s = await boot();
+    s.swap('inspector-pane', RUN);
+    s.drag([40, 60]);
+    eq(JSON.parse(s.drag_key()), [40, 60], 'a drag is kept for the circle');
+    s.press('up');
+    eq(s.sizes(), FULL, 'up: the full height');
+    s.back();
+    eq(s.sizes(), [40, 60], 'circle after up: the dragged height');
+    eq(JSON.parse(s.user()), [40, 60], 'the circle makes the drag the last choice again');
+    s.press('down');
+    assert.ok(s.docked(), 'down docks');
+    s.restore();
+    eq(s.sizes(), FULL, 'up from the docked bar: the full height');
+    s.press('down');
+    s.back();
+    eq(s.sizes(), [40, 60], 'circle from the docked bar (after a down): the dragged height');
+    eq(JSON.parse(s.drag_key()), [40, 60], 'no arrow press overwrote the drag');
+    // no drag yet: the default for the panel's kind, and the choice is cleared
+    const n = await boot();
+    n.swap('inspector-pane', QUBIT);
+    assert.ok(/default height/.test(n.d.querySelector('.split-back-btn').title), 'the title says so');
+    n.press('up');
+    n.back();
+    eq(n.sizes(), SPLIT.expandedSizes, 'no drag: a qubit at its default');
+    assert.equal(n.user(), null, 'and no choice is left behind');
+    assert.equal(n.drag_key(), null, 'nor a drag invented');
+    n.swap('inspector-pane', RUN);
+    n.press('up');
+    n.back();
+    eq(n.sizes(), SPLIT.datasetExpandedSizes, 'no drag: a run at its default');
+    // an older session's stored drag (quam_split_user sizes) seeds the circle
+    const o = await boot({ storage: { quam_split_user: '[25,75]' } });
+    o.swap('inspector-pane', RUN);
+    o.press('up');
+    o.back();
+    eq(o.sizes(), [25, 75], 'the circle starts from an older stored drag');
 } else if (mode === 'dock_bar') {
     // compact D-1: the docked bar names the panel and carries restore + close
     const s = await boot();
@@ -593,10 +669,16 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     assert.equal(bar.querySelector('.ui-dock-title').textContent, '#7 ramsey', 'the bar names the panel');
     assert.equal(s.d.getElementById('table-pane').style.height, '', 'the page gets everything else');
     assert.equal(s.d.getElementById('inspector-pane').style.height, '', 'the panel is only its bar');
+    assert.ok(bar.querySelector('.ui-dock-back'), 'the docked bar carries the circle too');
     s.restore();
-    eq(s.sizes(), [30, 70], 'restore returns to the remembered split');
+    eq(s.sizes(), FULL, 'the docked bar\'s up arrow: the full height');
+    assert.equal(s.user(), '"up"', 'stored as the up choice');
     s.w._applySplitPreset('collapsed');
     assert.ok(s.docked(), 'Go to state docks too');
+    s.d.querySelector('#inspector-pane > .ui-dock-bar .ui-dock-back').click();
+    eq(s.sizes(), [30, 70], 'the docked bar\'s circle: back to the dragged height');
+    s.w._applySplitPreset('collapsed');
+    assert.ok(s.docked(), 'docked again');
     let closed = 0;
     s.w.closeInspector = () => {
         closed++;
