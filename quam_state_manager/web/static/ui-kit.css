@@ -1593,9 +1593,12 @@ html:not(.diag-on) .tmap-legend .tmap-legend-diag { display: none; }
 body.cm-dir-overlay-on #status-bar { bottom: calc(var(--ui-gap-3) + max(var(--cm-overlay-h, 0px), var(--undo-trail-h, 0px)) + var(--ui-gap-2)); }
 .cm-popup-title > .cm-dir-where { margin-left: var(--ui-gap-2); font-weight: var(--ui-fw-normal); }
 .cm-dir-tether { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; overflow: visible; pointer-events: none; z-index: 3999; }
-.cm-dir-tether .cm-dir-tether-ring { fill: var(--ui-accent-bg); fill-opacity: 0.35; stroke: var(--ui-accent); stroke-width: var(--ui-focus-w); }
-.cm-svg .cm-dir-docked .cm-stone { stroke: var(--ui-accent); stroke-width: var(--ui-fold-stroke); }
-.cm-svg .cm-dir-docked .cm-edge-line { stroke: var(--ui-accent); }
+/* outline only: a fill would veil the entity's own hover colour underneath */
+.cm-dir-tether .cm-dir-tether-ring { fill: none; stroke: var(--ui-accent); stroke-width: var(--ui-focus-w); }
+/* docked without a pointer on it (keyboard, open detail); while hovered the
+   entity-hover rules (style.css, .cm-hot) own colour and width */
+.cm-svg .cm-dir-docked:not(.cm-hot) .cm-stone { stroke: var(--ui-accent); stroke-width: var(--ui-fold-stroke); }
+.cm-svg .cm-dir-docked:not(.cm-hot) .cm-edge-line { stroke: var(--ui-accent); }
 
 /* ===== stage 4: existing shared selectors moved onto the kit (docs/308, W5/W7/W15, D-43/D-45/D-61) =====
    Every consumer of these selectors moves in this one section; the old
@@ -1786,6 +1789,8 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 
 /* The qubits page draws large stones: its map scales to the pane width. */
 .cm-svg.cm-hl-qubits { max-width: var(--ui-opxmon-full-width); height: auto; }
+/* hovered/linked link on the Pairs page: wider than its resting 14 (style.css .cm-hl-pairs) */
+.cm-svg.cm-hl-pairs .cm-hot .cm-edge-line, .cm-svg.cm-hl-pairs .cm-edge.topo-linked .cm-edge-line { stroke-width: 17; }
 
 /* A native <dialog> wearing the kit shell: hidden when closed, a centred fixed
    column with a backdrop when open. The two older kit dialogs keep their own

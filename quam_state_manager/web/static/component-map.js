@@ -232,7 +232,7 @@ window.ComponentMap = (function () {
     _ring(pop._docked ? anchor : null, a);
   }
 
-  // A docked panel sits away from its entity, so the entity wears a filled
+  // A docked panel sits away from its entity, so the entity wears an outline
   // ring (no connector: a line on the map reads as a pair edge). It goes when
   // the panel closes.
   var SVGNS = "http://www.w3.org/2000/svg";

@@ -1154,6 +1154,8 @@ _STAGE6_SELECTORS = {
     '.czp-map-view',
     '.czp-map-view .cm-svg',
     '.cm-svg.cm-hl-qubits',
+    # map hover on the Pairs page: the hovered/linked link stays wider than at rest
+    '.cm-svg.cm-hl-pairs .cm-hot .cm-edge-line', '.cm-svg.cm-hl-pairs .cm-edge.topo-linked .cm-edge-line',
     '.czp-map-view > .cmap',
     '.czp-map-view > .czp-map',
     '.czp-map-view [role="button"]:focus-visible',
