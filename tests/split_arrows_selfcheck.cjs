@@ -605,6 +605,14 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
         'a keyboard dock moves focus to the bar\'s restore button');
     s.restore();
     eq(s.sizes(), FULL, 'the docked bar\'s up arrow: the full height');
+    now = s.d.activeElement;
+    assert.ok(now && now.classList && now.classList.contains('split-up-btn'),
+        'a keyboard press on the docked bar\'s up arrow lands on the split bar\'s');
+    s.press('down');
+    s.back();
+    now = s.d.activeElement;
+    assert.ok(now && now.classList && now.classList.contains('split-back-btn'),
+        'a keyboard press on the docked bar\'s circle lands on the split bar\'s');
     // the circle is keyboard-reachable and keeps a keyboard user on it
     s.d.querySelector('.split-back-btn').focus();
     s.press('back');

@@ -987,10 +987,11 @@
 /* The panel expanded to the very top (base.html markTop): the page above it is
    less than a bar tall, so it gives the panel all of its height. Without this the
    page's padding (2 x --table-pane-pad-v) stayed as a strip between the top bar
-   and the panel's head row. The bar keeps its own 12 px row (its line and its
-   centred arrows never cover the head row); the page-heading toggle has no
-   heading to fold. */
+   and the panel's head row. The bar keeps its own 12 px row, moved down just
+   enough that the page area's clip leaves its taller buttons whole; the
+   page-heading toggle has no heading to fold. */
 .ui-split-top > #table-pane { padding-top: 0; padding-bottom: 0; max-height: 0; overflow: hidden; flex-grow: 0; }
+.ui-split-top > .gutter { margin-top: calc((var(--inspector-toggle-h) - var(--split-gutter-size)) / 2); }
 .ui-split-top > #inspector-pane { flex-grow: 1; }
 .ui-split-top > .pageheader-toggle { visibility: hidden; }
 .ui-ds-tags { margin: 0; gap: var(--ui-gap-1); }

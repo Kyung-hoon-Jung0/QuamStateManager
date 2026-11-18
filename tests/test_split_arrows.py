@@ -131,8 +131,12 @@ def test_the_bar_is_a_visible_line_with_centred_arrows():
     controls = _rule(style, ".gutter-controls")
     assert controls.get("left") == "50%" and "right" not in controls
     assert "translate(-50%, -50%)" in controls.get("transform", "")
+    head = _rule(style, ".inspector-header")
+    assert int(controls["z-index"]) > int(head["z-index"]), "the sticky panel head would cut the buttons"
     kit = (WEB / "static" / "ui-kit.css").read_text(encoding="utf-8")
-    assert ".ui-split-top > .gutter" not in kit, "the top state keeps the same bar"
+    assert _rule(kit, ".ui-split-top > .gutter") == {
+        "margin-top": "calc((var(--inspector-toggle-h) - var(--split-gutter-size)) / 2)"
+    }, "at the top the bar only moves down by what its taller buttons stick out"
     base = (WEB / "templates" / "base.html").read_text(encoding="utf-8")
     assert 'classList.toggle("gutter-dragging", on)' in base
     assert "markDragging(true)" in base and "markDragging(false)" in base

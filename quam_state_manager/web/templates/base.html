@@ -1657,8 +1657,9 @@
 
         // v1.3.0 (customer): the split bar has two arrows, each to a FIXED
         // position (up: the full height, down: docked), and a circle between
-        // them back to the last dragged height (DRAG_KEY). The old set-high / set-low buttons stored the current
-        // position as a hidden target (quam_split_expanded/_collapsed), so a
+        // them back to the last dragged height (DRAG_KEY). The old set-high /
+        // set-low buttons stored the current position as a hidden target
+        // (quam_split_expanded/_collapsed), so a
         // later press of the toggle seemed to do nothing. Those keys go.
         //
         // The user's LAST action decides where the next inspector opens (a
@@ -1756,7 +1757,7 @@
         }
         // The up arrow: the panel takes the whole height (base markTop -> .ui-split-top).
         function fullSizes() { return [0, 100]; }
-        // The two fixed positions the arrows move to (UI_CONFIG.split).
+        // The default opening position and the down arrow's (UI_CONFIG.split).
         function expandedSizes() {
             // v1.3.0: a dataset run keeps more of the run list in view
             return document.querySelector('#inspector-pane #ds-detail-root')
@@ -1964,14 +1965,20 @@
             backBtn.setAttribute("aria-label", backBtn.title);
             bar.querySelector(".ui-dock-title").textContent = dockTitle();
             bar.title = dockTitle();
-            gutterListeners.push(scope.listen(bar.querySelector(".ui-dock-restore"), "click", function(e) {
+            // The docked bar goes away: a keyboard press (detail 0) lands on the
+            // same button of the split bar that replaces it.
+            function undockTo(e, sizes, cls) {
                 e.stopPropagation();
+                undockInspector(sizes);
+                var same = e.detail === 0 && document.querySelector(".gutter-controls ." + cls);
+                if (same) same.focus();
+            }
+            gutterListeners.push(scope.listen(bar.querySelector(".ui-dock-restore"), "click", function(e) {
                 saveUserChoice("up");
-                undockInspector(fullSizes());
+                undockTo(e, fullSizes(), "split-up-btn");
             }));
             gutterListeners.push(scope.listen(bar.querySelector(".ui-dock-back"), "click", function(e) {
-                e.stopPropagation();
-                undockInspector(backSizes());
+                undockTo(e, backSizes(), "split-back-btn");
             }));
             gutterListeners.push(scope.listen(bar.querySelector(".ui-dock-close"), "click", function(e) {
                 e.stopPropagation();

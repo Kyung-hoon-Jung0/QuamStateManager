@@ -2260,8 +2260,8 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
 /* Split.js gutter (the draggable divider between table-pane and inspector-pane).
    The 12 px hit area is transparent; ::after draws the boundary as a thin accent
    line, grown on hover and while dragging (base.html marks .gutter-dragging).
-   The two arrows (base.html ensureGutterArrows: up = the fixed expanded position,
-   down = the fixed collapsed one) sit side by side at the bar's centre. */
+   Its buttons (base.html ensureGutterArrows: up = full height, circle = dragged
+   height, down = dock) sit at the bar's centre, above the sticky panel head (z 5). */
 .gutter { flex-shrink: 0; background: transparent; position: relative; }
 .gutter.gutter-vertical {
     cursor: row-resize;
@@ -2281,7 +2281,7 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
     left: 50%; top: 50%;
     transform: translate(-50%, -50%);
     display: flex; align-items: center; gap: 6px;
-    z-index: 2;
+    z-index: 6;
 }
 .split-arrow-btn {
     width: var(--inspector-toggle-w); height: var(--inspector-toggle-h);
