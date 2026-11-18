@@ -4546,7 +4546,7 @@ td.col-delta .val-delta { margin-left: 0; }
 .topo-hero-edge-hit { cursor: pointer; }
 /* Pairs as first-class map objects: midpoint badge, data-driven edge style,
    linked highlight (pair <-> its qubits). Colours are custom properties. */
-:root { --topo-pair-badge-stroke: rgba(0,0,0,.28); --topo-pair-badge-text: var(--pico-color); --topo-pair-linked: var(--pico-primary); }
+:root { --topo-pair-badge-stroke: rgba(0,0,0,.28); --topo-pair-badge-text: var(--pico-color); --topo-pair-linked: var(--ui-ok-border); }
 [data-theme="dark"], [data-theme="qm"] { --topo-pair-badge-stroke: rgba(255,255,255,.35); }
 .topo-pair-badge { cursor: pointer; outline: none; }
 .topo-pair-badge .topo-pair-badge-pill rect { stroke: var(--topo-pair-badge-stroke); stroke-width: .8; }
@@ -4562,8 +4562,8 @@ td.col-delta .val-delta { margin-left: 0; }
 .topo-pair-badge.topo-linked .topo-pair-badge-pill rect { stroke: var(--topo-pair-linked); stroke-width: 1.6; }
 .topo-hero-edge.topo-linked .topo-hero-edge-line { stroke-width: 11; opacity: 1; }
 .topo-hero-node.topo-linked .topo-hero-stone { stroke: var(--topo-pair-linked); stroke-width: 3; }
-.cm-edge.topo-linked .cm-edge-line { stroke: var(--topo-pair-linked); stroke-width: 4; opacity: 1; }
-.cm-node.topo-linked .cm-stone { stroke: var(--topo-pair-linked); stroke-width: 2.5; }
+.cm-edge.topo-linked .cm-edge-line { stroke: var(--topo-pair-linked); stroke-width: 11; opacity: 1; }
+.cm-node.topo-linked .cm-stone { stroke: var(--topo-pair-linked); stroke-width: 3; }
 .cm-edge-pending .cm-edge-line { stroke-dasharray: 6 4; }
 .cm-edge-none .cm-edge-line { stroke-dasharray: 2 5; }
 .cm-edge-stale .cm-edge-line { opacity: .45; }
@@ -4724,11 +4724,11 @@ td.col-delta .val-delta { margin-left: 0; }
 .cm-node.cm-chain-emph .cm-id { opacity: 1; }
 
 /* entity hover (map↔table, both directions) — AFTER the mode rules so the
-   accent overrides any dim at equal specificity */
-.cm-svg .cm-hot .cm-stone { stroke: var(--pico-primary); stroke-width: 3; opacity: 1; }
+   accent overrides any dim; ok green, a little WIDER than at rest (stone 1.4/2.2, link 9/14) */
+.cm-svg .cm-hot .cm-stone { stroke: var(--topo-pair-linked); stroke-width: 3.4; opacity: 1; }
 .cm-svg .cm-hot .cm-id { opacity: 1; }
-.cm-svg .cm-hot .cm-edge-line { stroke: var(--pico-primary); stroke-width: 4; opacity: 1; }
-.cm-svg .cm-hot .cm-arrow { fill: var(--pico-primary); opacity: 1; }
+.cm-svg .cm-hot .cm-edge-line { stroke: var(--topo-pair-linked); stroke-width: 11; opacity: 1; }
+.cm-svg .cm-hot .cm-arrow { fill: var(--topo-pair-linked); opacity: 1; }
 .cm-svg .cm-hot .cm-res, .cm-svg .cm-hot .cm-flux, .cm-svg .cm-hot .cm-coupler { opacity: 1; }
 .data-table tr.cm-row-hot > td { background: var(--pico-primary-focus, rgba(2,154,232,.14)); }
 
