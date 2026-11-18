@@ -548,8 +548,8 @@
   "templates/base.html": 8
  },
  "style_css": {
-  "lines": 15940,
-  "rules": 5827
+  "lines": 15929,
+  "rules": 5825
  },
  "unruled_classes": {
   "static/agent-setup.js": 5,

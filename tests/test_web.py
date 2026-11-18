@@ -1672,15 +1672,17 @@ class TestSidebarFeatures:
         assert "tree-branch-active > summary" in css.read_text(encoding="utf-8")
 
     def test_split_set_icons_and_presets_present(self):
-        """The gutter carries two arrows to fixed positions; the user's last
-        choice (a drag or an arrow) is kept in one localStorage key. Behaviour
-        is pinned in tests/test_split_arrows.py."""
+        """The gutter carries up (full height), a circle (back to the last
+        dragged height) and down (dock); the user's last choice (a drag or a
+        button) is kept in one localStorage key, the last drag in another.
+        Behaviour is pinned in tests/test_split_arrows.py."""
         # v1.3.0: set-high / set-low icons + preset keys -> two fixed arrows +
         # one last-choice key, because customers pressed set-low to move the
         # bar and the toggle then seemed to do nothing.
         base = (Path(__file__).resolve().parent.parent
                 / "quam_state_manager" / "web" / "templates" / "base.html")
         text = base.read_text(encoding="utf-8")
+        assert "split-back-btn" in text and 'var DRAG_KEY = "quam_split_drag";' in text
         assert "split-up-btn" in text and "split-down-btn" in text, (
             "The gutter up / down arrows are missing from the split IIFE."
         )

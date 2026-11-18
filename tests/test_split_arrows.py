@@ -1,16 +1,18 @@
-"""The inspector split bar: two arrows, and the user's last choice (v1.3.0).
+"""The inspector split bar: up, a circle and down, and the user's last choice (v1.3.0).
 
 Customer feedback: the bar carried set-high / toggle / set-low buttons, and a
 press of set-low (read as "move the bar down") stored the current position as
 the collapsed target, so the toggle afterwards seemed to do nothing. Now:
 
-- two arrows only: up moves the bar to the fixed expanded position
-  (datasetExpandedSizes for a dataset run, else expandedSizes), down to the
-  fixed collapsed one (collapsedSizes), on every press;
+- up moves the panel to the full height ([0, 100], the .ui-split-top state),
+  down docks it to its one-line bar, on every press; the circle between them
+  returns to the last DRAGGED height (``quam_split_drag``, written on a drag
+  end, seeded from an older stored drag), or the default with no drag yet;
+  the docked bar carries the same up and circle;
 - the user's LAST action decides where the next inspector opens (a run or
   qubit click, a reload, a new session), kept in one localStorage key
   (``quam_split_user``): a drag stores the dragged sizes, an arrow press
-  stores which arrow, opened at that arrow's fixed position. SM's own moves
+  stores which arrow, opened at that arrow's position. SM's own moves
   (menu auto-collapse, Compare, Go to state, the table-pane initSplit) never
   change it; with no choice yet, the defaults as before;
 - page navigation lowers an open run to min(remembered inspector share,
@@ -39,7 +41,7 @@ MODES = ["buttons", "arrows", "drag", "up_next", "down_next", "drag_after_arrow"
          "nav_sidebar", "nav_boost", "nav_push", "nav_history", "nav_same_page",
          "nav_collapse_low", "nav_collapse_high",
          "nav_reopen_low", "nav_reopen_high", "nav_run_only", "table_first", "trend_chart",
-         "dock_bar", "heading", "keeps_scroll", "top_edge"]
+         "dock_bar", "back", "heading", "keeps_scroll", "top_edge"]
 
 
 def _node(*args: str) -> subprocess.CompletedProcess:
@@ -112,6 +114,34 @@ def _px(value: str, tokens: dict) -> float:
     return float(value)
 
 
+def test_the_bar_is_a_visible_line_with_centred_arrows():
+    """The boundary is a visible accent line at rest, thicker on hover and while dragging,
+    and its two arrows sit at the bar's centre (at the right edge they were mistaken for
+    the run navigation arrows next to them)."""
+    style = (WEB / "static" / "style.css").read_text(encoding="utf-8")
+    tokens = dict(re.findall(r"(--[\w-]+)\s*:\s*([^;]+);", style))
+    rest, hover = _px(tokens["--split-line-rest"], tokens), _px(tokens["--split-line-hover"], tokens)
+    bar = _px(tokens["--split-gutter-size"], tokens)
+    assert 2 <= rest <= 4 and 6 <= hover <= 8 and hover <= bar, (rest, hover, bar)
+    line = _rule(style, ".gutter.gutter-vertical::after")
+    assert line.get("height") == "var(--split-line-rest)" and "accent" in line.get("background", "")
+    assert line.get("left") == "0" and line.get("right") == "0", "the line spans the whole bar"
+    grown = _rule(style, ".gutter.gutter-vertical:hover::after, .gutter-vertical.gutter-dragging::after")
+    assert grown.get("height") == "var(--split-line-hover)"
+    controls = _rule(style, ".gutter-controls")
+    assert controls.get("left") == "50%" and "right" not in controls
+    assert "translate(-50%, -50%)" in controls.get("transform", "")
+    head = _rule(style, ".inspector-header")
+    assert int(controls["z-index"]) > int(head["z-index"]), "the sticky panel head would cut the buttons"
+    kit = (WEB / "static" / "ui-kit.css").read_text(encoding="utf-8")
+    assert _rule(kit, ".ui-split-top > .gutter") == {
+        "margin-top": "calc((var(--inspector-toggle-h) - var(--split-gutter-size)) / 2)"
+    }, "at the top the bar only moves down by what its taller buttons stick out"
+    base = (WEB / "templates" / "base.html").read_text(encoding="utf-8")
+    assert 'classList.toggle("gutter-dragging", on)' in base
+    assert "markDragging(true)" in base and "markDragging(false)" in base
+
+
 def test_the_top_panel_leaves_no_strip():
     """A panel expanded to the very top starts at the top bar's bottom edge (within 1 px).
 
@@ -119,8 +149,9 @@ def test_the_top_panel_leaves_no_strip():
     pane kept its own top + bottom padding (style.css #table-pane, 2 x --table-pane-pad-v
     = 24 px) when Split sized it to 0, and the 12 px bar sat below it -- 36 px between the
     top bar and the panel's head row. In the top state (base.html markTop ->
-    .ui-split-top) the page gives up its padding and its height, and the bar overlays the
-    panel's own head row instead of taking a row of its own.
+    .ui-split-top) the page gives up its padding and its height. The bar keeps its own
+    row (it used to overlay the head row, with its arrows stacked at the far right next to
+    the run navigation; users mistook them for each other), so only the bar is left.
     """
     style = (WEB / "static" / "style.css").read_text(encoding="utf-8")
     kit = (WEB / "static" / "ui-kit.css").read_text(encoding="utf-8")
@@ -134,11 +165,13 @@ def test_the_top_panel_leaves_no_strip():
     top_pad = _px(pane.get("padding-top", str(pad) + "px"), tokens)
     bottom_pad = _px(pane.get("padding-bottom", str(pad) + "px"), tokens)
     content = _px(pane["max-height"], tokens) if "max-height" in pane else 0.0
-    bar_row = bar + _px(gutter.get("margin-bottom", "0px"), tokens)
-    strip = top_pad + bottom_pad + content + bar_row
-    assert abs(strip) <= 1, f"{strip:g} px between the top bar and the panel (was 2 x {pad:g} + {bar:g})"
+    assert "margin-bottom" not in gutter and "background" not in gutter, \
+        "the bar no longer overlays the head row or hides its line at the top"
+    strip = top_pad + bottom_pad + content
+    assert abs(strip) <= 1, f"{strip:g} px of page between the top bar and the bar (was 2 x {pad:g})"
     assert pane.get("overflow") == "hidden", "the page's own content cannot spill over the panel"
-    assert _rule(kit, ".ui-split-top > #inspector-pane").get("flex-grow") == "1", \
-        "the panel takes the height the page gave up, to the window's bottom"
+    panel = _rule(kit, ".ui-split-top > #inspector-pane")
+    assert panel.get("flex-grow") == "1", "the panel takes the height the page gave up, to the window's bottom"
+    assert panel.get("flex-shrink") == "1", "the bar's top margin comes out of the panel, not past the window"
     base = (WEB / "templates" / "base.html").read_text(encoding="utf-8")
     assert 'classList.toggle("ui-split-top"' in base, "the split script marks the top state"
