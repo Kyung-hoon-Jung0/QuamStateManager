@@ -170,7 +170,8 @@ def test_the_top_panel_leaves_no_strip():
     strip = top_pad + bottom_pad + content
     assert abs(strip) <= 1, f"{strip:g} px of page between the top bar and the bar (was 2 x {pad:g})"
     assert pane.get("overflow") == "hidden", "the page's own content cannot spill over the panel"
-    assert _rule(kit, ".ui-split-top > #inspector-pane").get("flex-grow") == "1", \
-        "the panel takes the height the page gave up, to the window's bottom"
+    panel = _rule(kit, ".ui-split-top > #inspector-pane")
+    assert panel.get("flex-grow") == "1", "the panel takes the height the page gave up, to the window's bottom"
+    assert panel.get("flex-shrink") == "1", "the bar's top margin comes out of the panel, not past the window"
     base = (WEB / "templates" / "base.html").read_text(encoding="utf-8")
     assert 'classList.toggle("ui-split-top"' in base, "the split script marks the top state"
