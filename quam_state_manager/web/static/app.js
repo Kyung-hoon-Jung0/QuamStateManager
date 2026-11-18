@@ -43,7 +43,12 @@ var UI_CONFIG = {
        pane and the lower inspector/detail pane.                       */
     split: {
         defaultSizes:   [55, 45],  /* initial split as percentages [upper pane %, lower pane %] — must add up to 100 */
-        expandedSizes:  [15, 85],  /* the fixed EXPANDED position: where an inspector opens when the user has made no choice yet (the gutter up arrow goes to the full height instead). Customer ask (2026-08-27): the detail panel nearly full-screen, the upper table keeps a 15% sliver for context + grabbing. v1.3.0: a layout constant, never user-configured; the user's LAST action (a drag's height, or an arrow) is kept in localStorage "quam_split_user" and decides where the next inspector opens. */
+        /* The fixed EXPANDED position: where an inspector opens when the user has made no choice yet
+           (the gutter up arrow goes to the full height instead). Customer ask (2026-08-27): the detail
+           panel nearly full-screen, the upper table keeps a 15% sliver for context + grabbing.
+           v1.3.0: a layout constant, never user-configured; the user's LAST action (a drag's height,
+           or an arrow) is kept in localStorage "quam_split_user" and decides where the next inspector opens. */
+        expandedSizes:  [15, 85],
         collapsedSizes: [85, 15],  /* the fixed COLLAPSED position: where the gutter down arrow (and SM's own collapses: menu navigation, Compare, Go to state) moves the bar -- inspector gets 15%. v1.3.0: a layout constant; the old set-low preset ("quam_split_collapsed") is gone. */
         minSizes:       [0, 60],   /* min height (px) for [upper, lower] pane. Upper=0 lets the inspector be dragged to FULLY cover the page (Qubits / Chip Status / …); lower=60 keeps the inspector grabbable (use its × button to fully reveal the page instead). */
         tableFirstSizes: [35, 65],  /* R4-TP-1: where an inspector opens on Pulses when the user has made no choice yet (the table pane keeps its rows at 1366x768; 15% left 0) */
