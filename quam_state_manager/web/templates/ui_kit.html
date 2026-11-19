@@ -425,4 +425,17 @@
 </table>
 </section>
 
+<section class="ui-kit-section" aria-label="Element defaults">
+<h2 class="ui-kit-section-title">Element defaults</h2>
+<p class="ui-kit-label">Plain controls inherit compact kit sizes and theme colours.</p>
+<div class="ui-actions"><input type="checkbox" id="uk-default-check">
+<label class="ui-field-label" for="uk-default-check">Plain checkbox</label></div>
+<div class="ui-actions"><input type="radio" name="uk-default-radio" id="uk-default-radio" checked>
+<label class="ui-field-label" for="uk-default-radio">Plain radio</label></div>
+<details><summary>Plain disclosure with a long title that can wrap within a narrow card</summary>
+<p class="ui-note">The leading marker follows the open state.</p></details>
+{{ ui.ui_check('Kit checkbox', True) }}
+{{ ui.ui_disclosure('Kit disclosure', body=[{'part': 'note', 'text': 'Existing kit part.'}]) }}
+</section>
+
 {% endblock %}

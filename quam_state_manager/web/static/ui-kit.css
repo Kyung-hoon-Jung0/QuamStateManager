@@ -1976,3 +1976,114 @@ table.ui-pair-props { table-layout: fixed; width: 100%; }
 .ui-opxmon-port-popup { position: fixed; z-index: var(--ui-menu-z); padding: var(--ui-gap-3); }
 .ui-opxmon-port-popup.hidden { display: none; }
 
+
+/* Kit sweep wave 2: defaults */
+/* App chrome only. Explicit parts retain their own sizing, states and markers. */
+/* The repeated app scope outranks legacy summary headings without changing explicit kit parts. */
+.app-shell input:is([type="checkbox"], [type="radio"]):not(:where(
+    .ui-check > input, .ui-check-box, .gen-rule-row input, .gen-rule-grp-cb)) {
+    -webkit-appearance: none;
+    appearance: none;
+    position: relative;
+    flex: 0 0 auto;
+    width: var(--ui-check-size);
+    height: var(--ui-check-size);
+    margin: 0;
+    padding: 0;
+    vertical-align: middle;
+    border: var(--ui-bw-check) solid var(--ui-check-border);
+    border-radius: var(--ui-r-check);
+    background-color: var(--ui-check-bg);
+    background-image: none;
+    box-shadow: none;
+    cursor: pointer;
+}
+.app-shell input:is([type="checkbox"], [type="radio"]):not(:where(
+    .ui-check > input, .ui-check-box, .gen-rule-row input, .gen-rule-grp-cb)):hover {
+    border-color: var(--ui-accent);
+}
+.app-shell input:is([type="checkbox"], [type="radio"]):not(:where(
+    .ui-check > input, .ui-check-box, .gen-rule-row input, .gen-rule-grp-cb)):focus-visible {
+    outline: 0;
+    box-shadow: var(--ui-check-ring);
+}
+.app-shell input:is([type="checkbox"], [type="radio"]):not(:where(
+    .ui-check > input, .ui-check-box, .gen-rule-row input, .gen-rule-grp-cb)):checked {
+    border-color: var(--ui-accent);
+    background-color: var(--ui-accent);
+    background-image: none;
+}
+.app-shell input:is([type="checkbox"], [type="radio"]):not(:where(
+    .ui-check > input, .ui-check-box, .gen-rule-row input, .gen-rule-grp-cb)):indeterminate {
+    border-color: var(--ui-accent);
+    background-color: var(--ui-accent);
+    background-image: none;
+}
+.app-shell input:is([type="checkbox"], [type="radio"]):not(:where(
+    .ui-check > input, .ui-check-box, .gen-rule-row input, .gen-rule-grp-cb))::before {
+    content: "";
+    position: absolute;
+    left: 30%;
+    top: 8%;
+    width: 30%;
+    height: 55%;
+    border: solid var(--ui-on-accent);
+    border-width: 0 var(--ui-bw-check) var(--ui-bw-check) 0;
+    transform: rotate(45deg);
+    opacity: 0;
+}
+.app-shell input:is([type="checkbox"], [type="radio"]):not(:where(
+    .ui-check > input, .ui-check-box, .gen-rule-row input, .gen-rule-grp-cb)):checked::before {
+    opacity: 1;
+}
+.app-shell input:is([type="checkbox"], [type="radio"]):not(:where(
+    .ui-check > input, .ui-check-box, .gen-rule-row input, .gen-rule-grp-cb)):indeterminate::before {
+    left: 22%;
+    top: 44%;
+    width: 56%;
+    height: 0;
+    border-width: var(--ui-bw-check) 0 0;
+    transform: none;
+    opacity: 1;
+}
+.app-shell input:is([type="checkbox"], [type="radio"]):not(:where(
+    .ui-check > input, .ui-check-box, .gen-rule-row input, .gen-rule-grp-cb)):disabled {
+    opacity: .5;
+    cursor: default;
+}
+.app-shell input:is([type="checkbox"], [type="radio"]):not(:where(
+    .ui-check > input, .ui-check-box, .gen-rule-row input, .gen-rule-grp-cb)):where([type="radio"]) {
+    border-radius: var(--ui-r-round);
+}
+.app-shell.app-shell details > summary:not(:where(
+    [class*="ui-"], .ui-opxmon-tile summary, .tree-root > summary, .btn-sm)) {
+    display: flex;
+    align-items: center;
+    gap: var(--ui-gap-2);
+    cursor: pointer;
+    list-style: none;
+    font-size: var(--ui-fs-sm);
+    font-weight: var(--ui-fw);
+    color: var(--ui-text);
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+}
+.app-shell.app-shell details > summary:not(:where(
+    [class*="ui-"], .ui-opxmon-tile summary, .tree-root > summary, .btn-sm))::-webkit-details-marker {
+    display: none;
+}
+.app-shell.app-shell details > summary:not(:where(
+    [class*="ui-"], .ui-opxmon-tile summary, .tree-root > summary, .btn-sm))::after {
+    display: none;
+}
+.app-shell.app-shell details > summary:not(:where(
+    [class*="ui-"], .ui-opxmon-tile summary, .tree-root > summary, .btn-sm))::before {
+    content: var(--ui-disclosure-marker);
+    color: var(--ui-text-2);
+    flex: 0 0 auto;
+}
+.app-shell.app-shell details[open] > summary:not(:where(
+    [class*="ui-"], .ui-opxmon-tile summary, .tree-root > summary, .btn-sm))::before {
+    content: var(--ui-disclosure-marker-open);
+}
