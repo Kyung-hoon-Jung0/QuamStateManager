@@ -30859,7 +30859,8 @@ def _search_pages(query: str) -> list[dict]:
 
 @bp.route("/search")
 def search():
-    context = {} if request.headers.get("HX-Request") == "true" else _ctx(page="search")
+    full_page = not _is_htmx()
+    context = {**_ctx(page="search"), "full_page": True} if full_page else {}
     index = _index()
     query = request.args.get("q", "").strip()
 

@@ -335,6 +335,8 @@
     --ui-rule-checkbox-size: 1.1rem;
     --ui-rule-control-7: 2px solid var(--ui-text-2);
     --ui-rule-control-8: 2px;
+    /* Bulk grid text: the kit small size times the user's grid scale (set on :root by bulk-edit.js). */
+    --ui-bulk-cell-fs: calc(var(--ui-fs-sm) * var(--bulk-fs, 1));
 }
 
 /* Stage 0 parts: roving scalar editor (D-1/D-2/D-7). */
@@ -1979,8 +1981,12 @@ table.ui-pair-props { table-layout: fixed; width: 100%; }
 
 /* Kit sweep wave 2: chrome */
 .ui-chrome-content { min-width: 0; }
-.ui-chrome-content .gen-steps { max-width: 100%; overflow-x: auto; flex-wrap: nowrap; }
-.ui-chrome-content .gen-steps > li { flex: 0 0 auto; white-space: nowrap; }
+@media (max-width: 600px) {
+    .ui-chrome-content .gen-steps {
+        max-width: 100%; overflow-x: auto; flex-wrap: nowrap; padding-bottom: var(--ui-bw);
+    }
+    .ui-chrome-content .gen-steps > li { flex: 0 0 auto; white-space: nowrap; }
+}
 .ui-pulse-list .pagination { max-width: 100%; }
 .ui-pulse-list .pagination > ul { flex-wrap: wrap; gap: var(--ui-gap-2); }
 .ui-pulse-list .pagination a {
@@ -1999,8 +2005,8 @@ table.ui-pair-props { table-layout: fixed; width: 100%; }
 }
 
 .ui-plan-link.ui-plan-link { font-size: var(--ui-fs-sm); }
-.ui-bulk-compact { --ui-bulk-font: calc(var(--ui-fs-sm) * var(--bulk-fs)); }
-.ui-bulk-compact .bulk-cell { font-size: var(--ui-bulk-font); }
+.ui-bulk-compact .bulk-cell,
+.ui-bulk-compact .bulk-rowhead { font-size: var(--ui-bulk-cell-fs); }
 .ui-bulk-compact .ui-check { max-width: 100%; white-space: normal; }
 .ui-check input.ui-check-box { width: var(--ui-check-size); height: var(--ui-check-size); }
 .ui-fidelity-title.ui-fidelity-title { font-size: var(--ui-fs-md); overflow-wrap: anywhere; }
@@ -2026,5 +2032,8 @@ table.ui-pair-props { table-layout: fixed; width: 100%; }
 }
 .ui-gate-summary .ui-verdict-key { font-size: var(--ui-fs-sm); }
 .ui-textarea--grow.ui-textarea--grow { resize: none; overflow-y: auto; }
+.sidebar-filter .ui-textarea--grow {
+    max-height: calc(var(--ui-lh-read) * 3em + 2 * var(--ui-gap-1) + 2 * var(--ui-bw));
+}
 .ui-title-btn.btn-sm { font-size: var(--ui-fs-sm); }
 .ui-btn-icon.ui-btn-icon--warn { color: var(--ui-warn-text); }

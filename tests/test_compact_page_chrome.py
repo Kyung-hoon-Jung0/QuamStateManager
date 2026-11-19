@@ -25,6 +25,8 @@ def test_sidebar_filter_uses_compact_block_input():
     tag = re.search(r'<textarea[^>]*id="sidebar-filter-input"[^>]*>', base)[0]
     assert 'class="search-help-input ui-textarea ui-textarea--grow"' in tag
     assert 'resize: none' in rule('.ui-textarea--grow.ui-textarea--grow')
+    cap = rule('.sidebar-filter .ui-textarea--grow')
+    assert 'max-height: calc(var(--ui-lh-read) * 3em + 2 * var(--ui-gap-1) + 2 * var(--ui-bw))' in cap
 
 
 def test_explorer_warning_uses_icon_button_shape():
@@ -54,8 +56,10 @@ def test_bulk_sync_and_cells_use_compact_kit_sizes():
     template = source("templates/_bulkedit.html")
     assert 'class="bulk-freqsync-ctl ui-check"' in template
     assert 'bulk-panel ui-bulk-compact' in template
-    assert 'font-size: var(--ui-bulk-font)' in rule('.ui-bulk-compact .bulk-cell')
-    assert 'var(--bulk-fs)' in rule('.ui-bulk-compact')
+    assert 'font-size: var(--ui-bulk-cell-fs)' in rule('.ui-bulk-compact .bulk-rowhead')
+    assert '.ui-bulk-compact .bulk-cell,' in source("static/ui-kit.css")
+    root = source("static/ui-kit.css").split(":root {", 1)[1].split("}", 1)[0]
+    assert '--ui-bulk-cell-fs: calc(var(--ui-fs-sm) * var(--bulk-fs, 1));' in root
 
 
 def test_pulses_head_keeps_the_corner_free_for_the_header_toggle():
@@ -93,6 +97,12 @@ def test_folder_browser_rows_and_bands_share_kit_spacing():
 
 
 def test_wizard_tabs_scroll_within_narrow_content():
+    css = source("static/ui-kit.css").split("/* Kit sweep wave 2: chrome */")[1]
+    narrow = re.search(r"@media \(max-width: 600px\) \{((?:[^{}]*\{[^}]*\})*)\s*\}", css)
+    assert narrow and '.ui-chrome-content .gen-steps {' in narrow[1]
+    assert '.ui-chrome-content .gen-steps > li {' in narrow[1]
+    assert css.count('.gen-steps') == 2, "the tab row keeps its wrapping outside the narrow query"
+    assert 'padding-bottom: var(--ui-bw)' in rule('.ui-chrome-content .gen-steps')
     assert 'overflow-x: auto' in rule('.ui-chrome-content .gen-steps')
     assert 'max-width: 100%' in rule('.ui-chrome-content .gen-steps')
     assert 'flex-wrap: nowrap' in rule('.ui-chrome-content .gen-steps')
@@ -108,6 +118,15 @@ def test_direct_search_has_app_shell_but_htmx_keeps_fragment(loaded_client, quer
     assert '<!DOCTYPE html>' not in fragment and 'id="table-pane"' not in fragment
     if query:
         assert 'search-panel' in direct and 'search-panel' in fragment
+        table = direct.split('id="table-pane"', 1)[1].split('id="inspector-pane"', 1)[0]
+        inspector = direct.split('id="inspector-pane"', 1)[1].split('id="status-bar"', 1)[0]
+        assert 'search-panel' not in table and 'search-panel' in inspector
+
+
+def test_history_restore_of_search_gets_the_full_page(loaded_client):
+    restore = loaded_client.get('/search', query_string={'q': 'qA1'},
+                                headers={'HX-Request': 'true', 'HX-History-Restore-Request': 'true'})
+    assert '<!DOCTYPE html>' in restore.get_data(as_text=True)
 
 
 def test_chrome_additions_are_theme_independent_and_narrow_safe():
@@ -129,6 +148,7 @@ def test_chrome_css_only_changes_the_reviewed_scopes():
     selectors = set(re.findall(r"([^{}]+)\{", css))
     assert {s.strip() for s in selectors} == {
         '.ui-chrome-content',
+        '@media (max-width: 600px)',
         '.ui-chrome-content .gen-steps',
         '.ui-chrome-content .gen-steps > li',
         '.ui-pulse-list .pagination',
@@ -140,8 +160,7 @@ def test_chrome_css_only_changes_the_reviewed_scopes():
         '.ui-gate-summary .ui-verdict > .ui-dot',
         '.ui-gate-summary .ui-verdict-key',
         '.ui-plan-link.ui-plan-link',
-        '.ui-bulk-compact',
-        '.ui-bulk-compact .bulk-cell',
+        '.ui-bulk-compact .bulk-cell,\n.ui-bulk-compact .bulk-rowhead',
         '.ui-bulk-compact .ui-check',
         '.ui-check input.ui-check-box',
         '.ui-fidelity-title.ui-fidelity-title',
@@ -154,6 +173,7 @@ def test_chrome_css_only_changes_the_reviewed_scopes():
         '.ui-settings-targets .ui-field-grid',
         '.ui-settings-targets .ui-input',
         '.ui-textarea--grow.ui-textarea--grow',
+        '.sidebar-filter .ui-textarea--grow',
         '.ui-title-btn.btn-sm',
         '.ui-btn-icon.ui-btn-icon--warn',
     }
