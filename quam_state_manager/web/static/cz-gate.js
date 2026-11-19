@@ -159,7 +159,9 @@
             foot.prepend(hint);
         }
         var s = $('czg-status');
-        var shown = !!held && !(s && s.textContent === MARKED_FOOTER);
+        // the status line names the marked field's own reason (or the marked-field line)
+        var said = !!(s && s.textContent && (s.textContent === MARKED_FOOTER || hasInvalid()));
+        var shown = !!held && !said;
         hint.hidden = !shown;
         var ids = (b.getAttribute('aria-describedby') || '').split(/\s+/).filter(function (id) {
             return id && id !== hint.id;

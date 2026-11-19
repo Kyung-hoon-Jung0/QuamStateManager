@@ -2307,3 +2307,35 @@ summary:where(:not([class]), .muted, .section-header, .ph-drift-title):not(:wher
 .ui-dialog-foot:has(> #czg-check-hint) { flex-wrap: wrap; }
 .ui-dialog-foot > #czg-check-hint { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; }
 .ui-dialog-foot > #czg-check-hint[hidden] { display: none; }
+
+/* Kit sweep wave 2: final A */
+/* Re-generate source row: wraps at narrow width so "Load different..." stays whole and pressable */
+.ui-regen .regen-bar { flex-wrap: wrap; }
+.ui-regen .regen-chip { min-width: 0; overflow-wrap: anywhere; }
+.ui-regen .regen-meta { white-space: nowrap; }
+/* the kit sample page: the side-by-side pair stacks when a column would not fit */
+.ui-kit-pair { grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr)); }
+.ui-kit-samples { display: flex; flex-direction: column; align-items: flex-start; gap: var(--ui-gap-2); }
+/* OPX monitor settings: the connection summary wraps instead of running off the zone */
+.ui-opxmon-settings .ui-zone-sum { flex: 1 1 auto; min-width: 0; justify-content: flex-end; white-space: normal;
+    text-align: right; overflow-wrap: anywhere; }
+/* a port box whose placeholder explains the default is as wide as its field, so the words fit */
+.ui-opxmon-settings .ui-field > .ui-input--num.ui-input--num,
+.ui-generate .gen-field > .ui-input--num.ui-input--num { width: 100%; max-width: 100%; text-align: left; }
+/* Generate: a stacked field's label sits at the left edge of its control, not centred over it */
+.ui-generate .gen-line-toggle.ui-field,
+.ui-generate .gen-naming-controls .ui-field,
+.ui-generate .gen-preset-bar .ui-field { align-items: flex-start; }
+/* command palette: the picked row is a soft accent band, so the badge and path keep their contrast */
+.ui-palette .cmd-palette-item.active { background: var(--ui-accent-bg); color: var(--ui-text); }
+.ui-palette .cmd-palette-item.active .cmd-palette-sub { color: var(--ui-text-2); }
+/* the skip link opens on its own surface above the top bar instead of over the app title */
+.ui-skip-link:focus { position: fixed; top: var(--ui-gap-1); left: var(--ui-gap-1); z-index: 1000;
+    background: var(--ui-surface-0); box-shadow: var(--ui-shadow); }
+/* Experiment Runner: a step title stays on one line; its explanation drops below when there is no room */
+.ui-scheduler .ui-disclosure-summary { flex-wrap: wrap; }
+.ui-scheduler .ui-disclosure-summary > strong { white-space: nowrap; }
+.ui-scheduler .ui-disclosure-summary > .muted { flex: 1 1 28ch; min-width: 0; }
+/* Kit page samples: the tray and legend samples keep a gap between their parts, as on their real pages */
+.ui-kit-samples .ui-live-tray,
+.ui-kit-samples .ui-iw-conflict { display: flex; align-items: center; gap: var(--ui-gap-2); }

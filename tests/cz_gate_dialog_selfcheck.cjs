@@ -344,6 +344,12 @@ function tableWidths(el, sw, cw) {
     await settle();
     ok(!prim().disabled, 'a good name enables Check');
 
+    // a field typed wrong before any check: the footer carries one message, the field's own
+    type($('input[data-czg-name="amplitude"]'), 'abc');
+    await settle();
+    ok(prim().disabled && $('#czg-status').textContent === 'Type a number.' && !hintShown(),
+       'a marked field before a check: its own reason is the one footer message, the general hint steps aside');
+
     // entered value
     const amp = $('input[data-czg-name="amplitude"]');
     type(amp, '0.2');
