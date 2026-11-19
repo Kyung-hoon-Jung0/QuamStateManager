@@ -18,6 +18,7 @@ const BOOT = read('templates/_theme_boot.html').match(/<script>([\s\S]*?)<\/scri
 const APP = read('static/app.js');
 
 let fails = 0;
+const pending = [];
 function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } else { console.log('ok - ' + m); } }
 
 /* A controllable matchMedia: each query has a `matches` the test sets and
@@ -115,6 +116,40 @@ const LIGHT = '(prefers-color-scheme: light)';
        'a click on the page never collapses a wide sidebar');
 }
 
+/* ---- Back/Forward with no cached page: htmx swaps in a fresh body whose
+   .app-layout carries neither class; the narrow rule must apply to it again,
+   or the page is squeezed beside an open 300 px sidebar. ------------------- */
+{
+    const { w, doc } = makeWorld({ store: { quam_sidebar_collapsed: '0' }, media: { [NARROW]: true } });
+    const old = doc.querySelector('.app-layout');
+    const fresh = doc.createElement('div');
+    fresh.className = 'app-layout';
+    fresh.innerHTML = '<aside id="sidebar"></aside><main id="main"></main>';
+    old.replaceWith(fresh);
+    doc.body.dispatchEvent(new w.CustomEvent('htmx:historyRestore', { bubbles: true, detail: { path: '/x' } }));
+    ok(fresh.classList.contains('sidebar-narrow') && fresh.classList.contains('sidebar-collapsed'),
+       'a history restore at a narrow width collapses the new layout again');
+    ok(doc.getElementById('sidebar').hasAttribute('inert'),
+       'and the restored sidebar takes no Tab stop while collapsed');
+    w.toggleSidebar();
+    // The class watch is a MutationObserver: it answers after the current task.
+    pending.push(new Promise((done) => setTimeout(() => {
+        ok(!doc.getElementById('sidebar').hasAttribute('inert'),
+           'opening the restored sidebar makes it reachable again (the class watch follows the new layout)');
+        done();
+    }, 0)));
+}
+{
+    const { w, doc } = makeWorld({ store: { quam_sidebar_collapsed: '1' }, media: { [NARROW]: false } });
+    const fresh = doc.createElement('div');
+    fresh.className = 'app-layout';
+    fresh.innerHTML = '<aside id="sidebar"></aside>';
+    doc.querySelector('.app-layout').replaceWith(fresh);
+    doc.body.dispatchEvent(new w.CustomEvent('htmx:historyRestore', { bubbles: true, detail: { path: '/x' } }));
+    ok(!fresh.classList.contains('sidebar-narrow') && fresh.classList.contains('sidebar-collapsed'),
+       'a history restore at a wide width keeps the stored collapsed choice');
+}
+
 /* ---- theme ------------------------------------------------------------ */
 {
     const { w, doc, store, set } = makeWorld({ media: { [LIGHT]: true } });
@@ -145,4 +180,4 @@ const LIGHT = '(prefers-color-scheme: light)';
     ok(doc.documentElement.getAttribute('data-theme') === 'dark', 'and an OS change does not move it');
 }
 
-process.exit(fails ? 1 : 0);
+Promise.all(pending).then(() => process.exit(fails ? 1 : 0));

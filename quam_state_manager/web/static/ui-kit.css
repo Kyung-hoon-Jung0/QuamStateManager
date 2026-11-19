@@ -127,6 +127,7 @@
     --ui-menu-max-h: 18rem;
     --ui-menu-check: 1rem;          /* the check-mark column of a picking menu */
     --ui-menu-z: 60;
+    --ui-confirm-z: 9990;   /* the in-page OK/Cancel sits above every panel and overlay it is asked from */
     --ui-kit-col-narrow: 360px;     /* the sample page's narrow form column */
     --ui-kit-col-form: 372px;       /* the sample page's reading-order form column */
     --ui-ctl-ring: 0 0 0 2px var(--ui-accent-border);
@@ -2378,6 +2379,10 @@ details.ui-menu.topo-report-export { margin: 0; }
 /* Kit page samples: the tray and legend samples keep a gap between their parts, as on their real pages */
 .ui-kit-samples .ui-live-tray,
 .ui-kit-samples .ui-iw-conflict { display: flex; align-items: center; gap: var(--ui-gap-2); }
+
+/* In-page confirm above its caller: the question is asked from panels such as the sync tray (overlay z 9600),
+   so the confirm sheet must never open underneath the panel that asked it. */
+#sm-confirm-overlay { z-index: var(--ui-confirm-z); }
 
 /* Kit sweep wave 2: final suite */
 /* The one rule that owns the sidebar filter box's right padding: room for the ? (1.5rem) and the box's own

@@ -276,8 +276,13 @@ function partial(ts, extra) {
                          '20260821_010205_0003']
         .map((t) => '<input type="checkbox" class="sv-check" value="' + t + '" checked>')
         .join('');
+    const realMore = window.TopbarMore;
+    let moreClosed = 0;
+    window.TopbarMore = { isOpen: () => true, close: () => { moreClosed++; } };
     SV.compare('CHIP_A');
     await tick();
+    window.TopbarMore = realMore;
+    ok(moreClosed === 1, 'Compare closes the top-bar menu that held the Versions panel');
     ok(document.querySelector('.sidebar-nav a[href="/diff"]')
         .classList.contains('active'),
        'after a 3-tick Compare press, the sidebar Compare item is active');

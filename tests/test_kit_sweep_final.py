@@ -96,3 +96,26 @@ def test_agent_transcript_keeps_a_readable_height_when_narrow():
     assert body, "the narrow agent pane must size its transcript"
     assert re.search(r"(?<![-\w])height:\s*\d+vh", body.group(1))
     assert re.search(r"#table-pane:has\(> \.agent-home\)\s*\{[^}]*overflow-y:\s*auto", narrow)
+
+
+def _z_of(css, selector):
+    """The z-index value of the rule whose selector list starts with ``selector`` (var() resolved from :root)."""
+    m = re.search(re.escape(selector) + r"\s*\{[^}]*?z-index:\s*([^;}\s]+)", css)
+    assert m, "no z-index rule for " + selector
+    value = m.group(1)
+    var = re.fullmatch(r"var\((--[\w-]+)\)", value)
+    if var:
+        token = re.search(re.escape(var.group(1)) + r":\s*(\d+)", css)
+        assert token, "token not defined: " + var.group(1)
+        value = token.group(1)
+    return int(value)
+
+
+def test_the_in_page_confirm_opens_above_the_sync_tray_that_asks_it():
+    """Revert this session asks from the sync tray overlay; the confirm must not open underneath it."""
+    style = (WEB / "static" / "style.css").read_text(encoding="utf-8")
+    tray = _z_of(style, ".state-review-overlay")
+    confirm = _z_of(KIT_CSS, "#sm-confirm-overlay")
+    backdrop = _z_of(style, ".kb-sheet-backdrop")
+    assert confirm > tray, (confirm, tray)
+    assert confirm > backdrop, "the id rule must lift the confirm above the shared sheet backdrop"

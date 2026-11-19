@@ -12,6 +12,7 @@ bar's, as a click), and "Skip to content" leads the page. Behaviour pinned in
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -39,7 +40,11 @@ def test_the_skip_link_is_the_first_stop(tmp_path):
     html = app.test_client().get("/").get_data(as_text=True)
     body = html[html.index("<body"):]
     first_a = body.index("<a ")
-    assert body[first_a:].startswith('<a href="#table-pane" class="skip-link"'), body[first_a:first_a + 80]
+    first_tag = body[first_a:body.index(">", first_a) + 1]
+    # The first link of the page is the skip link to the content; other class tokens (the kit part) may sit beside it.
+    assert 'href="#table-pane"' in first_tag, first_tag
+    classes = re.search(r'class="([^"]*)"', first_tag)
+    assert classes and "skip-link" in classes.group(1).split(), first_tag
     css = (_WEB / "static" / "style.css").read_text(encoding="utf-8")
     assert ".skip-link:focus" in css and ".bulk-chip:focus-visible" in css
 
