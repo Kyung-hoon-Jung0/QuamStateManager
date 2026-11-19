@@ -548,6 +548,9 @@ window.SyncPanel.config.armMinMs = 0;   // the double-press guard has its own pi
        preflight, NAMES the outside values it also rolls back, says the push
        writes at once, and fires the button's hx-post only on OK. */
     const _btn = document.createElement('button');
+    document.body.appendChild(_btn);
+    const _smcRevert = window.smConfirm;
+    window.smConfirm = function (m) { lastConfirm = String(m); return Promise.resolve(confirmAnswer); };
     triggerCalls.length = 0; revertCalls.length = 0; lastConfirm = '';
     revertQueue = [{ ok: true, push_armed: true, mine_n: 2, outside_n: 1,
                      outside: [{ path: 'qubits.q1.T2ramsey', now: '7.3779e-05', back_to: '1.817e-05' }] }];
@@ -566,6 +569,14 @@ window.SyncPanel.config.armMinMs = 0;   // the double-press guard has its own pi
     await flush(30);
     ok(triggerCalls.length === 1 && triggerCalls[0].elt === _btn && triggerCalls[0].name === 'revertconfirmed',
        'OK fires the button\'s own request (revertconfirmed)');
+    // A tray re-render while the question is open detaches the button: OK then sends nothing.
+    triggerCalls.length = 0;
+    revertQueue = [{ ok: true, push_armed: true, mine_n: 1, outside_n: 0, outside: [] }];
+    window.smConfirm = function (m) { lastConfirm = String(m); _btn.remove(); return Promise.resolve(true); };
+    window.revertSessionConfirm(_btn);
+    await flush(30);
+    ok(triggerCalls.length === 0, 'OK on a button the tray replaced meanwhile fires nothing');
+    window.smConfirm = _smcRevert;
 
     /* ── 2b. LiveEditUndo boundary discipline (audit-r10) ─────────────── */
     {

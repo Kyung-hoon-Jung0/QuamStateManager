@@ -2307,3 +2307,42 @@ summary:where(:not([class]), .muted, .section-header, .ph-drift-title):not(:wher
 .ui-dialog-foot:has(> #czg-check-hint) { flex-wrap: wrap; }
 .ui-dialog-foot > #czg-check-hint { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; }
 .ui-dialog-foot > #czg-check-hint[hidden] { display: none; }
+
+/* Kit sweep wave 2: final */
+/* Chip Status report download: a kit menu on a native disclosure, without Pico's marker or chevron. */
+details.ui-menu.topo-report-export { margin: 0; }
+.topo-report-export > .ui-menu-trigger { list-style: none; cursor: pointer; margin: 0; }
+.topo-report-export > .ui-menu-trigger::-webkit-details-marker { display: none; }
+.topo-report-export > .ui-menu-trigger::after { display: none; content: none; }
+.topo-report-menu > .ui-option { text-decoration: none; white-space: nowrap; }
+/* Datasets: every run status is the same boxed badge; finished and unknown stay muted. */
+.ds-status.ds-status-done, .ds-status.ds-status-unknown { border-color: var(--ui-border-strong); }
+/* Diff workbench: each picker is one row (tag beside select); the pickers share a line when they fit. */
+.diff-wb-pickers > .diff-side.ui-field { flex: 0 1 auto; flex-direction: row; align-items: center;
+    gap: var(--ui-gap-2); min-width: 0; }
+.diff-wb-pickers > .diff-side.ui-field > select { flex: 0 1 auto; min-width: 0; }
+/* Journal foot: the raw file link wraps below a long folder instead of leaving the page. */
+.jr-head-actions { flex-wrap: wrap; }
+.jr-head-actions > span { min-width: 0; max-width: 100%; }
+.jr-head-actions .jr-folder { max-width: 100%; vertical-align: bottom; }
+/* Pulses filter: one row that scrolls sideways when narrow, never an orphan segment. */
+.ui-segmented-bar > .ui-segmented { flex-wrap: nowrap; overflow-x: auto; max-width: 100%; }
+.ui-segmented-bar > .ui-segmented > * { flex: 0 0 auto; white-space: nowrap; }
+/* Agent: the dry-run note wraps at words like body text instead of squeezing into a pill. */
+.ag-dryrun-note { display: block; }
+/* Autofit: a disclosure title keeps its label whole; the note beside it wraps on its own. */
+.autofit-profile > .ui-disclosure-summary { flex-wrap: wrap; }
+.autofit-profile > .ui-disclosure-summary > small { flex: 1 1 12rem; min-width: 0; }
+@media (max-width: 640px) {
+    /* Chip Status toolbar wraps its buttons; the pairs table scrolls inside its own box. */
+    .ui-heads-compact .ui-head--page.topology-toolbar, .ui-head.topology-toolbar { flex-wrap: wrap; }
+    #pairs-table { display: block; max-width: 100%; overflow-x: auto; }
+    /* Pair detail: the CZ gates head puts its summary on its own line. */
+    .gate-status-list > .ui-zone-head { flex-wrap: wrap; }
+    .gate-status-list > .ui-zone-head > .ui-zone-title { white-space: nowrap; }
+    .gate-status-list > .ui-zone-head > .ui-gate-summary { flex: 1 1 100%; margin-left: 0; }
+    /* Agent page: the pane scrolls and the transcript keeps a readable height of its own. */
+    #table-pane:has(> .agent-home) { overflow-y: auto; }
+    #table-pane > .agent-home, .agent-home > .ag-root { flex: 0 0 auto; }
+    #table-pane:has(> .agent-home) .ag-cards { flex: 0 0 auto; height: 65vh; min-height: 16rem; }
+}

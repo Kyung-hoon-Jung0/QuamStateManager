@@ -92,12 +92,16 @@
         <h3 class="topo-section-title">Health</h3>
         <button type="button" class="btn-sm outline topo-thresh-btn" onclick="toggleThresholdEditor()"
                 title="Edit the pass / warn / fail spec thresholds (shared with everyone using this SM)">&#9881; Thresholds</button>
-        <details class="topo-report-export">
-            <summary class="btn-sm outline" title="Download a dated chip report card">&#11015; Report</summary>
-            <div class="topo-report-menu">
-                <a class="btn-sm" href="/topology/report?format=md" download onclick="return ChipStatus.reportHref(this,'md')">Markdown</a>
-                <a class="btn-sm" href="/topology/report?format=csv" download onclick="return ChipStatus.reportHref(this,'csv')">CSV</a>
-                <a class="btn-sm" href="/topology/report?format=html" download onclick="return ChipStatus.reportHref(this,'html')">HTML</a>
+        <details class="ui-menu topo-report-export">
+            <summary class="btn-sm outline ui-menu-trigger"
+                     title="Download a dated chip report card">&#11015; Report</summary>
+            <div class="ui-menu-list ui-menu-list--end topo-report-menu" role="menu" aria-label="Chip report format">
+                <a class="ui-option" role="menuitem" href="/topology/report?format=md" download
+                   onclick="return ChipStatus.reportHref(this,'md')"><span class="ui-option-title">Markdown</span></a>
+                <a class="ui-option" role="menuitem" href="/topology/report?format=csv" download
+                   onclick="return ChipStatus.reportHref(this,'csv')"><span class="ui-option-title">CSV</span></a>
+                <a class="ui-option" role="menuitem" href="/topology/report?format=html" download
+                   onclick="return ChipStatus.reportHref(this,'html')"><span class="ui-option-title">HTML</span></a>
             </div>
         </details>
         <span class="topo-health-asof muted" id="topo-health-asof"></span>

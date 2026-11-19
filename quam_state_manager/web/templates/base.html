@@ -597,9 +597,9 @@
                            differs in content (HTMX re-renders) and re-flashes. #}
                         <form hx-post="/state/archive" hx-target="#archive-status" hx-swap="innerHTML"
                               data-after-request="archiveDone">
-                            <input type="text" name="tag" class="ui-input archive-in" maxlength="120"
+                            <input type="text" name="tag" class="ui-input ui-input--block archive-in" maxlength="120"
                                    placeholder="Tag (e.g. before CZ retune)" autocomplete="off">
-                            <textarea name="note" class="archive-note" rows="2" maxlength="2000"
+                            <textarea name="note" class="ui-textarea archive-note" rows="2" maxlength="2000"
                                       placeholder="Note (optional)"></textarea>
                             <div class="archive-actions">
                                 <button type="submit" class="btn-sm">Save bookmark</button>

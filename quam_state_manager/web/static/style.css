@@ -10776,18 +10776,6 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 }
 #bulk-json-modal .bulk-json-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
 
-/* ── Chip report-card export dropdown (Chip Status health header) ──── */
-.topo-report-export { position: relative; display: inline-block; }
-.topo-report-export > summary { list-style: none; cursor: pointer; display: inline-block; margin: 0; }
-.topo-report-export > summary::-webkit-details-marker { display: none; }
-.topo-report-menu {
-    position: absolute; top: 100%; left: 0; z-index: 20; margin-top: 3px; padding: 4px;
-    display: flex; flex-direction: column; gap: 3px; min-width: 8rem;
-    background: var(--pico-card-background-color); border: 1px solid var(--pico-muted-border-color);
-    border-radius: 6px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
-}
-.topo-report-menu a { white-space: nowrap; text-decoration: none; text-align: left; margin: 0; }
-
 /* ====================================================================== */
 /* Pulses page (library table + detail inspector)                         */
 /* ====================================================================== */

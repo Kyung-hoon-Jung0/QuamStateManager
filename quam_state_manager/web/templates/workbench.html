@@ -23,7 +23,18 @@
       width: 200px; padding: 4px 8px; border-radius: 5px; border: 1px solid #333;
       background: #1a1d23; color: #e6e6e6; font-size: 12px;
     }
-    #wb-bar input[type="checkbox"] { width: auto; margin: 0; vertical-align: middle; }
+    /* The kit check box in the label's own colour: this page loads no shared stylesheet. */
+    #wb-bar input.ui-check-box {
+      -webkit-appearance: none; appearance: none; position: relative; width: 14px; height: 14px; margin: 0;
+      padding: 0; vertical-align: middle; border: 1px solid currentColor; border-radius: 3px; background: transparent;
+      cursor: pointer; color-scheme: dark;
+    }
+    #wb-bar input.ui-check-box:checked { background: currentColor; }
+    #wb-bar input.ui-check-box::after {
+      content: ""; position: absolute; left: 30%; top: 8%; width: 30%; height: 55%; border: solid Canvas;
+      border-width: 0 2px 2px 0; transform: rotate(45deg); opacity: 0;
+    }
+    #wb-bar input.ui-check-box:checked::after { opacity: 1; }
     #wb-bar button {
       padding: 4px 10px; border-radius: 5px; border: 0; background: #2d6cdf;
       color: #fff; font-size: 12px; cursor: pointer;
@@ -157,7 +168,8 @@
     <input class="ui-input" id="wb-url" type="text" spellcheck="false" />
     <button class="btn-sm" id="wb-go" title="Reload the left pane with this URL">Reload</button>
     <label class="ui-check" for="wb-viasm" title="Show Qualibrate through the State Manager: each run gets an Open in
-      QSM link that opens it on the right"><input id="wb-viasm" type="checkbox" />&nbsp;Through&nbsp;SM</label>
+      QSM link that opens it on the right"><input id="wb-viasm" class="ui-check-box"
+      type="checkbox" />&nbsp;Through&nbsp;SM</label>
     <a id="wb-newtab" href="#" target="_blank" rel="noopener">open ↗</a>
     <button id="wb-detach" class="ghost btn-sm" title="Open Qualibrate in its own window (great on a second
       monitor)">&#10697; detach</button>

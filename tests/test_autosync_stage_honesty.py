@@ -25,8 +25,11 @@ that a unit exists: the row is what gives the user the ✕.
 
 from __future__ import annotations
 
+import html
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -341,6 +344,27 @@ class TestRevertThisSessionNamesWhatItRollsBack:
         assert 'hx-trigger="revertconfirmed"' in btn
         assert "revertSessionConfirm(this)" in btn
         assert "nothing touches the live chip" not in btn,             "an armed push never promises a review"
+
+    def test_the_armed_button_asks_in_page_and_only_ok_sends_its_request(self, env, tmp_path):
+        self._session_with_a_pulled_value(env)
+        btn = _revert_button(env["client"])
+        post = html.unescape(re.search(r'hx-post="([^"]+)"', btn).group(1))
+        fixture = tmp_path / "revert.json"
+        fixture.write_text(json.dumps({
+            "markup": btn + "Revert</button>",
+            "preflight": env["client"].get("/state/revert-last-apply/preflight").get_json(),
+            "expected": {"method": "POST", "url": post, "body": "", "headers": {
+                "HX-Request": "true", "HX-Target": "status-bar",
+                "HX-Current-URL": "http://localhost/",
+                "Content-Type": "application/x-www-form-urlencoded"}},
+        }), encoding="utf-8")
+        node = shutil.which("node")
+        assert node, "node is required for the confirmation selfcheck"
+        check = Path(__file__).parent / "revert_session_dialog_selfcheck.cjs"
+        result = subprocess.run([node, str(check), str(fixture)],
+                                capture_output=True, text=True, encoding="utf-8", timeout=60)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "DONE" in result.stdout
 
     def test_unarmed_it_keeps_the_review_promise(self, env):
         c = env["client"]
