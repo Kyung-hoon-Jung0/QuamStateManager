@@ -368,7 +368,8 @@ def test_d20_connection_failure_is_a_sentence():
     r = _runner()
     QmServerDetectionError = type('QmServerDetectionError', (Exception,), {})
     out = r.classify(QmServerDetectionError('failed to detect'), {'host': '10.0.0.5', 'cluster': 'c1'})
-    assert out == {'error_kind': 'connect', 'error': 'Could not reach the OPX at 10.0.0.5 (cluster c1).',
+    assert out == {'error_kind': 'connect', 'error': 'Could not reach the OPX at 10.0.0.5 (cluster c1). Check the host'
+                   ' and that the OPX is on, or simulate via QM-SaaS instead.',
                    'detail': 'QmServerDetectionError: failed to detect'}
     saas = r.classify(TimeoutError('slow'), {'local': None, 'saas': {'host': 'saas.example', 'email': 'e'}})
     assert saas['error_kind'] == 'connect' and 'OPX' not in saas['error'] and 'QM-SaaS simulator' in saas['error']
@@ -376,6 +377,14 @@ def test_d20_connection_failure_is_a_sentence():
     assert 'OPX' in r.classify(TimeoutError('x'), {'local': {'host': '10.0.0.5'}, 'saas': {'host': 's'}})['error']
     other = r.classify(ValueError('bad'), {'host': 'h'})
     assert other['error_kind'] == 'other' and other['detail'] == 'ValueError: bad'
+
+
+def test_a_timed_out_runtime_error_reads_as_unreachable_with_a_next_step():
+    r = _runner()
+    out = r.classify(RuntimeError('QM API call timed out'), {'host': '10.0.0.5'})
+    assert out['error_kind'] == 'connect' and out['detail'] == 'RuntimeError: QM API call timed out'
+    assert out['error'].startswith('Could not reach the OPX at 10.0.0.5.') and 'QM-SaaS' in out['error']
+    assert r.classify(RuntimeError('bad config'), {'host': 'h'})['error_kind'] == 'other'
 
 
 def test_d21_status_countdown_and_script_export(spec, tmp_path, monkeypatch):

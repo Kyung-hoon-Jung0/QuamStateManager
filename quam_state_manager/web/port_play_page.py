@@ -138,7 +138,7 @@ def port_play_test_connection():
     host = str(data.get("host") or "").strip()
     python = str(data.get("python") or "").strip()
     if not host:
-        return jsonify({"ok": False, "error": "No host: the chip's network block names none. Enter one."}), 400
+        return jsonify({"ok": False, "error": "The host field is empty. Enter the OPX host or IP."}), 400
     if not python or not config_generator.known_interpreter(python, current_app.instance_path):
         return jsonify({"ok": False, "error": "Choose a Python environment first."}), 400
     req = {"host": host, "cluster": str(data.get("cluster") or "").strip() or None,

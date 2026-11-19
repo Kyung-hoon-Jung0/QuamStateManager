@@ -235,7 +235,9 @@ def classify(exc, target, mode=None) -> dict:
     """The user's sentence for a failure, with the raw text in ``detail`` (D-20)."""
     raw = f"{type(exc).__name__}: {exc}"
     names = {c.__name__ for c in type(exc).__mro__}
-    if names & set(CONNECT_ERRORS) or isinstance(exc, (TimeoutError, ConnectionError)):
+    # A RuntimeError whose text says "timed out" is the QM API giving up on an unreachable host.
+    timed_out = "timed out" in str(exc).lower()
+    if names & set(CONNECT_ERRORS) or isinstance(exc, (TimeoutError, ConnectionError)) or timed_out:
         t = target or {}
         saas = t.get("saas") if isinstance(t.get("saas"), dict) else (t if mode == "saas" else None)
         if saas is not None and not isinstance(t.get("local"), dict):
@@ -246,7 +248,9 @@ def classify(exc, target, mode=None) -> dict:
             t = t["local"]
         where = str(t.get("host") or "the configured host")
         cluster = f" (cluster {t['cluster']})" if t.get("cluster") else ""
-        return {"error_kind": "connect", "error": f"Could not reach the OPX at {where}{cluster}.", "detail": raw}
+        return {"error_kind": "connect", "detail": raw,
+                "error": f"Could not reach the OPX at {where}{cluster}. Check the host and that the OPX is on,"
+                         " or simulate via QM-SaaS instead."}
     return {"error_kind": "other", "error": raw, "detail": raw}
 
 
