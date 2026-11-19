@@ -67,6 +67,19 @@ async function setup(b, method, url, form) {
       headers:{'X-SM-Actor':'operator'}});
     return r.status+' '+(await r.text()).replace(/<[^>]+>/g,' ').replace(/\\s+/g,' ').trim().slice(0,240);})()`);
 }
+// The walk is the explicit Apply / Revert-last-apply path, so it needs
+// Auto-Sync off. The server may open the chip with it armed: turn it off the
+// way a person does (the pill, then "Turn off" in its panel).
+const DISARM = '#auto-sync-pop button[hx-post="/auto-apply/disarm"]';
+async function autoSyncOff(b) {
+  for (let i = 0; i < 3; i++) {
+    if (await b.ev("!document.querySelector('.auto-apply-pill.auto-apply-on')")) return true;
+    if (!await b.ev(`!!document.querySelector('${DISARM}')`)) await clickSel(b, '.auto-apply-pill.auto-apply-on');
+    if (await waitFor(b, `!!document.querySelector('${DISARM}')`, 8000)) await clickSel(b, DISARM);
+    await waitFor(b, "!!document.querySelector('.auto-apply-pill.auto-apply-off')", 8000);
+  }
+  return b.ev("!document.querySelector('.auto-apply-pill.auto-apply-on')");
+}
 async function reload(b) {
   await b.send('Page.reload');
   await sleep(500);
@@ -80,6 +93,9 @@ async function openVersions(b, ledger = true) {
   for (let i = 0; i < 40; i++) {
     await b.ev("StateVersions.close&&StateVersions.close()");
     await sleep(300);
+    // the version chip lives inside the top-bar "..." menu: open the menu first
+    if (!await b.ev("!document.getElementById('topbar-more-menu').hidden")
+        && !await clickSel(b, '#topbar-more-btn')) { await sleep(1000); continue; }
     if (!await clickSel(b, '.state-version-chip')) { await sleep(1000); continue; }
     const src = await waitFor(b, "!document.getElementById('state-version-panel').hidden && (document.querySelector('#state-version-panel .state-versions')||{dataset:{}}).dataset.source", 30000);
     if (!ledger || src === 'ledger') return src;
@@ -96,6 +112,15 @@ async function openVersions(b, ledger = true) {
 const rowSel = (n) => `#state-version-panel .state-version-row:nth-child(${n})`;
 
 let dialogs = 0;
+// A confirm may be the browser's own dialog (answered by answerDialogs) or the
+// in-page kit confirm; press OK on the in-page one when it shows up.
+async function confirmInPage(b, ms = 3000) {
+  if (!await waitFor(b, "!!document.querySelector('#sm-confirm-overlay .sm-confirm-ok')", ms)) return false;
+  dialogs++;
+  const msg = await b.ev("(document.getElementById('sm-confirm-overlay').innerText||'').replace(/\s+/g,' ')");
+  console.log('  (in-page confirm answered OK: "' + String(msg).slice(0, 80) + '")');
+  return clickSel(b, '#sm-confirm-overlay .sm-confirm-ok');
+}
 function answerDialogs(b) {
   let seen = 0;
   return setInterval(() => {
@@ -122,6 +147,7 @@ async function fullText(b, url) {
     // setup: open the live chip (a person picks it under State Load)
     if (CHIP) console.log('setup: open the chip ->', await setup(b, 'POST', '/load', { folder: CHIP }));
     ok(await reload(b), 'the app opens with the chip and its version chip in the top bar');
+    ok(await autoSyncOff(b), 'setup: Auto-Sync turned off from its pill');
     await b.send('Page.navigate', { url: URL0 + '/state-history' });
     ok(await waitFor(b, "document.readyState==='complete' && !!document.querySelector('.state-version-chip')", 60000),
        'State History is the page the walk starts on');
@@ -195,6 +221,7 @@ async function fullText(b, url) {
     await clickSel(b, '.tray-revert-apply');
     await sleep(300);
     await clickSel(b, '.tray-revert-apply');
+    await confirmInPage(b);
     ok(await waitFor(b, "document.querySelector('#pending-tray').dataset.workingDirty==='1'", 30000), 'the pre-apply state is staged for review');
     ok(await waitFor(b, `!!document.querySelector('${applySel}')`, 30000) || await clickSel(b, '#pending-tray .sync-control-main'), 'the review offers Apply');
     await waitFor(b, `!!document.querySelector('${applySel}')`, 30000);

@@ -19,8 +19,8 @@ const CDP = process.argv[3] || '9463';
 const BASE = process.argv[4] || 'http://127.0.0.1:5463';
 const ONLY = (process.argv[5] || '').split(',').filter(Boolean);
 
-const SCRATCH = labPath('lab-P', 'scratch');
 const { labPath } = require('./lab_map.cjs');
+const SCRATCH = labPath('lab-P', 'scratch');
 const PY = process.env.SM_PY || labPath('lab-B', 'python');
 
 const errors = [];
@@ -103,18 +103,76 @@ async function main() {
   const want = p => ONLY.length === 0 || ONLY.includes(p);
   const ctxOut = {};
 
+  /* P0 (always): the walk assumes Auto-Sync is off. The server may open the
+   * chip with it armed, so turn it off the way a person does: the pill, then
+   * "Turn off" in its panel. A pill that cannot be turned off is a FAIL. */
+  const DISARM = '#auto-sync-pop button[hx-post="/auto-apply/disarm"]';
+  const autoSyncOff = async () => {
+    for (let i = 0; i < 3; i++) {
+      if (await count('.auto-apply-pill.auto-apply-on') === 0) break;
+      if (await count(DISARM) === 0) await click('.auto-apply-pill.auto-apply-on');
+      if (await until(`!!document.querySelector(${JSON.stringify(DISARM)})`, 8000)) await click(DISARM);
+      await until(`!document.querySelector('.auto-apply-pill.auto-apply-on')`, 8000);
+    }
+    return await count('.auto-apply-pill.auto-apply-on') === 0 && await count('.auto-apply-pill') > 0;
+  };
+  // the in-page kit confirm: press OK (a press that never opens it is a FAIL)
+  const confirmOk = async (name) => {
+    const shown = await until(`!!document.querySelector('#sm-confirm-overlay .sm-confirm-ok')`, 5000);
+    ok(name + ' opens the in-page confirm', !!shown && await count('#sm-confirm-overlay') === 1);
+    if (shown) await click('#sm-confirm-overlay .sm-confirm-ok');
+    return !!shown;
+  };
+  // "Load for review" on one State History row, through its in-page confirm
+  const stageRow = async (ts, name) => {
+    const pressed = await ev(`(function(){var row=document.querySelector('.sh-entry[data-ts="${ts}"]');
+      var b=row && row.querySelector('.sh-stage'); if(!b) return null; b.click(); return b.innerText.trim();})()`);
+    ok(name + ' the Load-for-review button exists on the row', !!pressed, pressed);
+    if (pressed) await confirmOk(name + ' Load for review');
+    return pressed;
+  };
+  // the tray's Apply: one press for plain edits; a staged version arms on the
+  // first press and writes on the second (Confirm), as a person presses it
+  const applyPress = async () => {
+    const first = await ev(`(function(){var b=document.querySelector('#pending-tray .btn-apply-live');
+      if(!b) return null; b.click(); return b.innerText.trim();})()`);
+    if (first === null) return null;
+    await sleep(900);
+    await ev(`(function(){var b=document.querySelector('#pending-tray .btn-apply-live[data-armed="1"]');
+      if(b) b.click(); return 1;})()`);
+    return first;
+  };
+  // the status line a press leaves (it auto-dismisses): read it while it is up
+  const statusLine = async (ms) => until(`(function(){var s=document.getElementById('status-bar');
+    return s && (s.innerText||'').trim() ? s.innerText.trim().slice(0,600) : '';})()`, ms);
+  const f01 = () => {
+    const raw = execFileSync(PY, ['-c',
+      'import json;print(json.load(open(r"' + SCRATCH + '/chip_5463/quam_state/state.json"))["qubits"]["q1"]["f_01"])'],
+      { encoding: 'utf8' });
+    return parseFloat(raw.trim());
+  };
+  await nav('/qubits');
+  ok('P0 Auto-Sync is off before the walk (turned off from its pill)', await autoSyncOff(),
+    String(await text('.auto-apply-pill')).replace(/\s+/g, ' ').slice(0, 80));
+
   /* ═══ P1: build a history to restore from ═══════════════════════════ */
   if (want('P1')) {
     await nav('/state-history');
     ok('P1 state-history page renders', /snapshot/i.test(String(await text('#table-pane'))), (await text('#table-pane') || '').slice(0, 160));
     // "Take snapshot" button
+    const tsBefore = await ev(`Array.prototype.map.call(document.querySelectorAll('.sh-entry'),
+      function(e){return e.dataset.ts})`);
     const btn = await ev(`(function(){var b=Array.from(document.querySelectorAll('button,a')).find(function(x){return /take snapshot/i.test(x.innerText||'')}); if(!b) return null; b.click(); return b.innerText.trim();})()`);
     ok('P1 Take snapshot button exists', !!btn, btn);
     await sleep(2500);
     snap('P1-after-take-snapshot');
     const n1 = await count('.sh-entry');
     ok('P1 one snapshot now listed', n1 >= 1, { entries: n1 });
-    ctxOut.snap1 = await ev(`(document.querySelector('.sh-entry')||{}).dataset ? document.querySelector('.sh-entry').dataset.ts : null`);
+    ctxOut.snap1 = await until(`(function(){var b=${JSON.stringify(tsBefore || [])};
+      var e=Array.prototype.find.call(document.querySelectorAll('.sh-entry'),
+        function(x){return b.indexOf(x.dataset.ts)<0});
+      return e ? e.dataset.ts : '';})()`, 8000);
+    ok('P1 the new snapshot has its own row', !!ctxOut.snap1, ctxOut.snap1);
     await shot('P1_history');
   }
 
@@ -134,15 +192,16 @@ async function main() {
     if (cell) {
       ctxOut.editPath = cell.path;
       ctxOut.editWas = cell.value;
+      ctxOut.f01Before = f01();
       await ev(`(function(){var i=document.querySelector('input.bulk-cell[data-dot-path="${cell.path}"]'); i.focus(); i.value='4312400000.5'; i.dispatchEvent(new Event('input',{bubbles:true})); i.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,keyCode:13,which:13})); i.blur(); return 1;})()`);
       await sleep(1200);
       snap('P2-after-typing-edit');
       const trayTxt = await text('#pending-tray');
       ok('P2 the edit is in the tray, the FILE is untouched',
-        log[log.length - 1].n_changed === 0 && /unsaved change/i.test(String(trayTxt)),
+        log[log.length - 1].n_changed === 0 && /unsaved change|staged, not applied/i.test(String(trayTxt)),
         { fileChanged: log[log.length - 1].n_changed, tray: String(trayTxt).slice(0, 120) });
       // explicit press: Apply to live now
-      const ap = await ev(`(function(){var b=document.querySelector('.btn-apply-live'); if(!b) return null; b.click(); return b.innerText.trim();})()`);
+      const ap = await applyPress();
       ok('P2 Apply-to-live button present', !!ap, ap);
       await sleep(3000);
       const s = snap('P2-after-apply-to-live');
@@ -159,6 +218,8 @@ async function main() {
     await sleep(2500);
     const entries = await ev(`Array.prototype.map.call(document.querySelectorAll('.sh-entry'), function(e){return {ts:e.dataset.ts, txt:(e.innerText||'').replace(/\\s+/g,' ').slice(0,140)}})`);
     ctxOut.entries = entries;
+    // the newest row now holds the P2 apply (the edited f_01): P6 restores it
+    ctxOut.editedTs = entries.length ? entries[0].ts : null;
     ok('P3 at least two snapshots exist', entries.length >= 2, entries.map(e => e.ts));
     snap('P3-after-second-snapshot');
     ok('P3 taking a snapshot writes nothing to the chip', log[log.length - 1].n_changed === 0, log[log.length - 1].changed);
@@ -167,46 +228,43 @@ async function main() {
   // helper: the snapshot list as {ts, txt} newest-first
   const entriesOf = async () => ev(`Array.prototype.map.call(document.querySelectorAll('.sh-entry'), function(e){return {ts:e.dataset.ts, txt:(e.innerText||'').replace(/\\s+/g,' ').slice(0,120)}})`);
   const detail = async () => text('#state-history-detail');
-  const f01 = () => {
-    const raw = execFileSync(PY, ['-c',
-      'import json;print(json.load(open(r"' + SCRATCH + '/chip_5463/quam_state/state.json"))["qubits"]["q1"]["f_01"])'],
-      { encoding: 'utf8' });
-    return parseFloat(raw.trim());
-  };
 
   /* ═══ P4: MODE 1 — stage the OLDEST snapshot into the working copy ═══ */
   if (want('P4')) {
     await nav('/state-history');
     const es = await entriesOf();
     ok('P4 snapshots to choose from', es.length >= 2, es.map(e => e.ts));
-    const oldest = es[es.length - 1].ts;
+    // the pre-edit version: the P1 snapshot when this run took one, else the oldest row
+    const p1row = ctxOut.snap1 && es.find(e => e.ts.indexOf(ctxOut.snap1) === 0);
+    const oldest = p1row ? p1row.ts : es[es.length - 1].ts;
     ctxOut.oldest = oldest; ctxOut.newest = es[0].ts;
     const before = f01();
-    // press "Load for review" on the OLDEST row
-    const pressed = await ev(`(function(){var row=document.querySelector('.sh-entry[data-ts="${oldest}"]'); if(!row) return null;
-      var b=Array.prototype.find.call(row.querySelectorAll('button'), function(x){return /load as working state/i.test(x.innerText||'')});
-      if(!b) return null; b.click(); return b.innerText.trim();})()`);
-    ok('P4 the Load-as-working-state button exists on the row', !!pressed, pressed);
-    await sleep(2600);
+    await ev(`(function(){var s=document.getElementById('status-bar'); if(s) s.innerHTML=''; return 1;})()`);
+    await stageRow(oldest, 'P4');
+    // the result is a status line (it auto-dismisses): read it while it is up
+    const d = await statusLine(8000);
+    await sleep(1500);
     const s = snap('P4-after-stage');
     ok('P4 MODE 1 STAGE WROTE NOTHING TO THE LIVE CHIP', s.n_changed === 0 && f01() === before,
       { changed: s.changed, f01: f01(), before });
-    const d = await detail();
     ok('P4 the result says it is the working state, not live', /working state/i.test(String(d)), String(d).slice(0, 200));
     const tray = await text('#pending-tray');
-    ok('P4 the tray says saved-to-working-not-live', /not on the live chip yet|Working state/i.test(String(tray)), String(tray).slice(0, 180));
+    ok('P4 the tray says saved-to-working-not-live',
+      /not on the live chip yet|Working state|Staged version/i.test(String(tray)), String(tray).slice(0, 180));
     await shot('P4_staged');
   }
 
   /* ═══ P5: apply the staged snapshot (the explicit press) ═══════════════ */
   if (want('P5')) {
     const before = f01();
-    const btn = await ev(`(function(){var b=document.querySelector('.btn-apply-live'); if(!b) return null; b.click(); return b.innerText.trim();})()`);
+    const btn = await applyPress();
     ok('P5 an Apply-to-live button is offered after staging', !!btn, btn);
     await sleep(3500);
     const s = snap('P5-after-apply-staged');
     ok('P5 applying the staged snapshot DID write the chip', s.n_changed >= 1, s.changed.slice(0, 6));
-    ok('P5 …and it restored the pre-edit f_01', Math.abs(f01() - 4312405235.74519) < 1e-6, { now: f01(), before });
+    const want = ctxOut.f01Before;
+    ok('P5 ...and it restored the pre-edit f_01', want !== undefined && Math.abs(f01() - want) < 1e-6,
+      { now: f01(), before, want });
     await nav('/state-history');
     const es = await entriesOf();
     ok('P5 a snapshot chain still exists to get back to', es.length >= 2, es.map(e => e.ts).slice(0, 5));
@@ -221,7 +279,7 @@ async function main() {
     const before = f01();
     // restore the NEWEST snapshot that is not the current content:
     // find the one that holds the edited f_01 (the P2 apply's post-snapshot)
-    const target = es0[0].ts;
+    const target = (ctxOut.editedTs && es0.some(e => e.ts === ctxOut.editedTs)) ? ctxOut.editedTs : es0[0].ts;
     ctxOut.restoreTarget = target;
     const pressed = await ev(`(function(){var row=document.querySelector('.sh-entry[data-ts="${target}"]'); if(!row) return null;
       var b=row.querySelector('.sh-restore-live'); if(!b) return null; b.click(); return b.innerText.trim();})()`);
@@ -238,8 +296,10 @@ async function main() {
     await nav('/state-history');
     const es1 = await entriesOf();
     ctxOut.afterP6 = es1.map(e => e.txt.slice(0, 60));
-    ok('P6 a pre-restore BACKUP snapshot exists (the restore is reversible)',
-      es1.some(e => /BACKUP/.test(e.txt)), es1.slice(0, 4).map(e => e.txt.slice(0, 70)));
+    // reversible: the restore is its own row and the pre-restore version is still listed
+    ok('P6 the restore is recorded and the pre-restore version stays listed (reversible)',
+      es1.some(e => /Restored a saved version/.test(e.txt)) && es1.some(e => e.ts === es0[0].ts),
+      es1.slice(0, 4).map(e => e.txt.slice(0, 70)));
     ok('P6 the snapshot count grew', es1.length > es0.length, { before: es0.length, after: es1.length });
     await shot('P6_restored');
   }
@@ -433,12 +493,18 @@ async function main() {
   if (want('P10')) {
     await nav('/qubits');
     const before = f01();
-    const btn = await ev(`(function(){var b=document.querySelector('.tray-revert-apply'); return b? b.innerText.trim(): null;})()`);
+    // Revert last apply sits in the sync panel (the tray's main control opens it)
+    await click('#pending-tray .sync-control-main');
+    const btn = await until(`(function(){var b=document.querySelector('.tray-revert-apply');
+      return b? b.innerText.trim(): '';})()`, 15000);
     ok('P10 the tray offers Revert last apply after an apply', !!btn, btn);
-    await ev(`(function(){var b=document.querySelector('.tray-revert-apply'); if(b) b.click(); return 1;})()`);
-    await sleep(1100);   // the toast auto-dismisses at ~2s -- read it while it is up
-    const bar = await text('#status-bar');
-    await sleep(1900);
+    await ev(`(function(){var s=document.getElementById('status-bar'); if(s) s.innerHTML=''; return 1;})()`);
+    await click('.tray-revert-apply');
+    await sleep(900);
+    await click('.tray-revert-apply[data-armed="1"]');
+    // the result is a status line (it auto-dismisses): read it while it is up
+    const bar = await statusLine(8000);
+    await sleep(1500);
     const sr = snap('P10-after-revert-press');
     ctxOut.p10bar = String(bar).slice(0, 260);
     ok('P10 Revert last apply STAGES only — it writes nothing by itself',
@@ -446,7 +512,7 @@ async function main() {
     ok('P10 …and says it is staged for review', /working state|review|Apply/i.test(String(bar)), String(bar).slice(0, 200));
     // complete the revert with the explicit apply press
     await nav('/qubits');
-    const ap = await ev(`(function(){var b=document.querySelector('.btn-apply-live'); if(!b) return null; b.click(); return b.innerText.trim();})()`);
+    const ap = await applyPress();
     ok('P10 an Apply button completes the revert', !!ap, ap);
     await sleep(4000);
     const s2 = snap('P10-after-revert-applied');
@@ -477,7 +543,7 @@ async function main() {
     // (a) the UI must not even OFFER restore on an archive
     await nav('/state-history');
     const nRestore = await count('.sh-restore-live');
-    const nStage = await ev(`Array.prototype.filter.call(document.querySelectorAll('.sh-entry button'), function(b){return /load as working state/i.test(b.innerText||'')}).length`);
+    const nStage = await count('.sh-stage');
     ok('P11 on an archive the UI offers NO restore-to-live button', nRestore === 0, { nRestore, nStage });
 
     // (b) the SERVER must refuse it too, by name
@@ -524,6 +590,9 @@ async function main() {
     ok('P11 …and nothing to the run archives', JSON.stringify(runBefore) === JSON.stringify(runAfter2), runAfter2);
     ctxOut.p11e = await ev(`location.pathname`);
     await shot('P11_applyonarchive');
+    const back = await click('#pending-tray .tray-archive-back');
+    const left = back && await until(`!document.querySelector('#pending-tray .tray-archive-back')`, 20000);
+    ok('P11 the tray Back button leaves the archive for the live chip', !!left, { back });
   }
 
   /* ═══ P13: a STAGED snapshot must not leak to live on its own ════════ */
@@ -532,8 +601,7 @@ async function main() {
     const es = await entriesOf();
     const t = (es.find(e => !/PLANTED/.test(e.txt)) || es[0]).ts;
     snap('P13-before');
-    await ev(`(function(){var row=document.querySelector('.sh-entry[data-ts="${t}"]');
-      var b=Array.prototype.find.call(row.querySelectorAll('button'), function(x){return /load as working state/i.test(x.innerText||'')}); b.click(); return 1;})()`);
+    await stageRow(t, 'P13');
     await sleep(3000);
     const s1 = snap('P13-staged');
     ok('P13 staging writes nothing', s1.n_changed === 0, s1.changed);
@@ -547,7 +615,8 @@ async function main() {
     const s3 = snap('P13-after-reload');
     ok('P13 …nor across a full page reload', s3.n_changed === 0, s3.changed);
     const tray = await text('#pending-tray');
-    ok('P13 the tray still says it is NOT on the live chip', /not on the live chip yet|not applied/i.test(String(tray)), String(tray).slice(0, 200));
+    ok('P13 the tray still says it is NOT on the live chip',
+      /not on the live chip yet|not applied|not on live/i.test(String(tray)), String(tray).slice(0, 200));
     ctxOut.p13tray = String(tray).slice(0, 200);
     await shot('P13_staged_idle');
   }
@@ -556,13 +625,20 @@ async function main() {
   if (want('P14')) {
     // first clear the staged state by applying it (explicit press)
     await nav('/qubits');
-    await ev(`(function(){var b=document.querySelector('.btn-apply-live'); if(b) b.click(); return 1;})()`);
+    await applyPress();
     await sleep(4000);
     snap('P14-cleared-staging');
     // arm Auto-Sync through its OWN visible control (pill -> panel -> Save),
     // push only, so nothing else can explain a write
+    // record the requests the arming sends, so a FAIL names the one that went wrong
+    await ev(`window.p14req=[]; document.addEventListener('htmx:afterRequest', function(e){
+      var x=e.detail.xhr, pi=e.detail.pathInfo;
+      window.p14req.push([pi && pi.requestPath, x && x.status]);});1`);
     await ev(`(function(){var b=document.querySelector('.auto-apply-pill'); if(!b) return null; b.click(); return b.innerText.trim();})()`);
-    await until(`!!document.getElementById('as-push')`, 8000);
+    // the panel arrives by htmx: press its submit only once htmx has bound the form
+    await until(`(function(){var f=document.querySelector('#auto-sync-pop form');
+      var d = f && f['htmx-internal-data'];
+      return !!(f && f.querySelector('#as-push') && d && d.initHash);})()`, 8000);
     const armed = await ev(`(function(){
       var pull=document.getElementById('as-pull'); var pr=document.getElementById('as-pull-replace');
       var push=document.getElementById('as-push'); var f=document.querySelector('#auto-sync-pop form');
@@ -570,22 +646,27 @@ async function main() {
       if(pull && pull.checked) pull.click();
       if(pr && pr.checked) pr.click();
       if(!push.checked) push.click();
-      var sb=Array.prototype.find.call(f.querySelectorAll('button'), function(b){return /save/i.test(b.innerText||'')});
+      var sb=Array.prototype.find.call(f.querySelectorAll('button'),
+        function(b){return /save|turn on/i.test(b.innerText||'')});
+      if(!sb) return null;
       sb.click();
       return {pull: pull && pull.checked, push: push.checked};
     })()`);
-    await sleep(2500);
+    // wait on the pill itself, not on a clock: the reply can be slow right after an apply
+    await until(`!!document.querySelector('.auto-apply-pill.auto-apply-on')`, 15000);
     const pill = await text('.auto-apply-pill');
-    ctxOut.p14arm = { armed: armed, pill: String(pill).slice(0, 90) };
+    ctxOut.p14arm = { armed: armed, pill: String(pill).slice(0, 90),
+      bar: String(await text('#status-bar')).slice(0, 200), tray: String(await text('#pending-tray')).slice(0, 120),
+      requests: await ev('window.p14req') };
     ok('P14 Auto-Sync (push) armed from its own visible control',
-       /Auto-Sync/i.test(String(pill)) && /push|both/i.test(String(pill)), ctxOut.p14arm);
+       // the pill may show only "Auto" on a narrow bar: its on-class and mode word decide
+       await count('.auto-apply-pill.auto-apply-on') === 1 && /push|both/i.test(String(pill)), ctxOut.p14arm);
     await nav('/state-history');
     await sleep(1500);
     const es = await entriesOf();
     const t = (es.find(e => !/PLANTED/.test(e.txt)) || es[0]).ts;
     const b4 = snap('P14-before-stage-armed');
-    await ev(`(function(){var row=document.querySelector('.sh-entry[data-ts="${t}"]');
-      var b=Array.prototype.find.call(row.querySelectorAll('button'), function(x){return /load as working state/i.test(x.innerText||'')}); if(b) b.click(); return 1;})()`);
+    await stageRow(t, 'P14');
     await sleep(6000);
     const s = snap('P14-after-stage-with-autoapply-armed');
     ctxOut.p14 = { changed: s.n_changed, paths: s.changed.slice(0, 6) };
@@ -612,8 +693,10 @@ async function main() {
         if(e.detail.elt.matches('.sh-restore-live')) window.restoreRequestCount++;
       };
       document.addEventListener('htmx:beforeRequest', window.countRestoreRequest);1`);
-    await ev(`(function(){var row=document.querySelector('.sh-entry[data-ts="${t}"]');
-        var b=row.querySelector('.sh-restore-live'); b.click(); b.click(); b.click(); return 1;})()`);
+    const pressed = await ev(`(function(){var row=document.querySelector('.sh-entry[data-ts="${t}"]');
+        var b=row && row.querySelector('.sh-restore-live'); if(!b) return 0;
+        b.click(); b.click(); b.click(); return 1;})()`);
+    ok('P15 the row offers Restore to live', pressed === 1);
     ok('Restore opens one in-page dialog', await count('#sm-confirm-overlay') === 1);
     ok('Three fast presses send nothing before OK', await ev('window.restoreRequestCount') === 0);
     await click('.sm-confirm-ok');
@@ -631,5 +714,7 @@ async function main() {
   fs.writeFileSync(OUT, JSON.stringify({ results, errors, log, ctx: ctxOut }, null, 1));
   console.log('\n--- ' + results.filter(r => !r.pass).length + ' FAIL of ' + results.length + ' ; console errors: ' + errors.length);
   ws.close();
+  // a FAIL must reach the exit code (a green rc with FAIL lines hides them)
+  process.exitCode = results.some(r => !r.pass) ? 1 : 0;
 }
 main().catch(e => { console.error('DRIVER ERROR', e); fs.writeFileSync(OUT, JSON.stringify({ results, errors, log, driverError: String(e && e.stack || e) }, null, 1)); process.exit(2); });
