@@ -76,7 +76,7 @@ win.PulsesPage.initCreate();
 
 const qsel = doc.querySelector('select[name="qubit"]');
 function anh() { return doc.querySelector('#pulse-create-fields input[name="anharmonicity"]'); }
-function note() { return anh().parentNode.querySelector('[data-field-note]'); }
+function note() { return anh().closest('.pulse-create-field').querySelector('[data-field-note]'); }
 function pick(q) {
   qsel.value = q;
   qsel.dispatchEvent(new win.Event('change', { bubbles: true }));
