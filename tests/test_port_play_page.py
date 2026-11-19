@@ -97,6 +97,11 @@ class TestStandalonePage:  # D-27
         r = client.post("/port-play/test-connection", json={"host": "h", "python": "C:/nope/python.exe"})
         assert r.status_code == 400 and not r.get_json()["ok"]
 
+    def test_an_emptied_host_field_says_the_field_is_empty_not_that_the_chip_has_none(self, client):
+        j = client.post("/port-play/test-connection", json={"host": " ", "python": "py"}).get_json()
+        assert j["error"] == "The host field is empty. Enter the OPX host or IP."
+        assert "names none" not in j["error"]
+
     def test_connection_failure_is_one_sentence_and_survives_non_utf8_stderr(self, client, monkeypatch):
         """Walk finding: the env's stderr carried a cp949 OS message, the UTF-8 read thread died and
         the page said "Not connected: no output". The read must not die, and a refusal reads as a sentence."""
