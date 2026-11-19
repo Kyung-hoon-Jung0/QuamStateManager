@@ -173,6 +173,42 @@
         var d = event.target;
         if (d && d.getAttribute && d.hasAttribute("data-fold") && d.closest("#ui-opxmon-body")) folds[d.getAttribute("data-fold")] = d.open;
     }
+    var racks = new Map();
+    var rackPopup = null;
+    function syncRacks() {
+        var b = body();
+        var live = new Set();
+        var popup = b && b.querySelector('#port-popup');
+        if (popup && rackPopup && popup !== rackPopup) {
+            rackPopup.classList.add('hidden');
+            popup.replaceWith(rackPopup);
+        } else rackPopup = popup;
+        if (b && window.renderInstrumentWiring) b.querySelectorAll('[data-opxmon-rack]').forEach(function(host) {
+            live.add(host.id);
+            var payload = host.getAttribute('data-opxmon-rack');
+            var previous = racks.get(host.id);
+            if (previous && previous.payload === payload) {
+                if (previous.host !== host) host.replaceWith(previous.host);
+                return;
+            }
+            if (previous && window.releaseInstrumentWiring) window.releaseInstrumentWiring(previous.host);
+            var spec = JSON.parse(payload);
+            window.renderInstrumentWiring(host.id, spec.data, {}, {
+                readOnly: true, highlight: spec.highlight, scale: 0.55, compactKey: true,
+                unplaceableText: function(stats) {
+                    return "This QM's configuration uses a layout this diagram does not render yet " +
+                        "(for example OPX+ or an Octave RF setup); " + (stats.refs_seen || 0) +
+                        " port connection(s) could not be placed.";
+                }
+            });
+            racks.set(host.id, {payload: payload, host: host});
+        });
+        racks.forEach(function(record, id) {
+            if (live.has(id)) return;
+            if (window.releaseInstrumentWiring) window.releaseInstrumentWiring(record.host);
+            racks.delete(id);
+        });
+    }
     var keptScroll = null, typedFocused = false;
     function beforeSwap(event) {
         var t = event.detail && event.detail.target;
@@ -184,6 +220,7 @@
         if (typed && openConfirm) openConfirm.typed = typed.value;
     }
     function afterSwap() {
+        syncRacks();
         var b = body();
         if (!b) return;
         b.querySelectorAll("details[data-fold]").forEach(function (d) {
@@ -299,7 +336,9 @@
         portsHashDone = h;
         d.open = true;
         if (d.hasAttribute("data-fold")) folds[d.getAttribute("data-fold")] = true;
-        if (d.scrollIntoView) d.scrollIntoView({block: "center"});
+        var host = document.getElementById('opxmon-rack-' + d.getAttribute('data-opxmon-ports'));
+        var target = host ? host.closest('.ui-opxmon-rack-block') : d;
+        if (target.scrollIntoView) target.scrollIntoView({block: "center"});
     }
     window.addEventListener("hashchange", function () { portsHashDone = null; openPortsFromHash(); });
     document.addEventListener("DOMContentLoaded", openPortsFromHash);
@@ -322,6 +361,8 @@
     document.addEventListener("DOMContentLoaded", syncTables);
     window.addEventListener("resize", syncTables);
     syncTables();
+    syncRacks();
+    document.addEventListener("DOMContentLoaded", syncRacks);
     document.addEventListener("htmx:afterSwap", function () {
         if (lastResult) say(lastResult.text, lastResult.bad);
     });

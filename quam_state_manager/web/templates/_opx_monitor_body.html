@@ -283,4 +283,13 @@
     </div></section>
   </form>
 {%- endif %}
+{% if tab == 'live' %}
+<div id="port-popup" class="ui-panel ui-opxmon-port-popup hidden">
+  <div class="ui-panel-head">
+    <strong id="popup-label" class="ui-panel-title"></strong>
+    <span id="popup-role-badge" class="ui-badge"></span>
+  </div>
+  <div id="popup-body" class="ui-facts"></div>
+</div>
+{% endif %}
 </div>
