@@ -2,7 +2,7 @@
    chip (core.regen_spec) and building into a NEW folder with the source chip's
    calibrated values merged back on (core.regenerate). Default source = the
    loaded chip; "Load different…" swaps another folder. Compact / VSCode-tight. #}
-<div class="regen" id="regen-surface" data-source-path="{{ active_path or '' }}">
+<div class="regen ui-regen" id="regen-surface" data-source-path="{{ active_path or '' }}">
   <div class="regen-bar">
     <span class="regen-k">Source</span>
     <span class="regen-chip" id="regen-chip">{{ (active_chip_label() if active_name else none) or active_name or '— no chip loaded —' }}</span>

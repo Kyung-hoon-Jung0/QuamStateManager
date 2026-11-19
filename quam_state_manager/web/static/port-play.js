@@ -929,7 +929,8 @@
     node.showModal();
     var first = openerRow() || rowList()[0];
     var focus = first && (first.querySelector('[data-offset]') || first.querySelector('[data-rf]'));
-    if (focus) focus.focus();
+    // the outputs table opens at its left edge: focusing must not scroll it sideways
+    if (focus) focus.focus({ preventScroll: true });
   }
 
   // ---- LF opener extras: Save offset and loopback calibration, bound to the opener port ----

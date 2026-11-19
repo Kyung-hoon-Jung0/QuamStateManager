@@ -35,6 +35,7 @@
     flagged | length ~ ' of ' ~ rows | length ~ ' flux line' ~ ('' if rows | length == 1 else 's') ~ (' needs a look.' if flagged | length == 1 else ' need a look.'),
     'The Notes column says why for each one (for example a filter outside the documented range).') }}</div>
 {%- endif %}
+<div class="ui-xscroll ui-xscroll-table">
 <table id="zline-table" class="data-table zline-table ui-table" role="grid">
     <thead>
         <tr>
@@ -79,6 +80,7 @@
     {% endfor %}
     </tbody>
 </table>
+</div>
 
 <section class="zline-detail" aria-live="polite">
     <div class="zline-controls">

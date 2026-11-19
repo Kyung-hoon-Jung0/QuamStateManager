@@ -1963,6 +1963,37 @@ function toStep4(win, G, n) {
       'W2-10: plain Generate still recalls its own last folder');
   })();
 
+  (function recalledOutputFolderBringsItsScriptsFolder() {
+    // A new session recalls the last output folder from browser storage; the
+    // scripts folder must follow it as after a draft restore, so step 7 passes
+    const OUT = 'D:/x/last/quam_state';
+    const w = makeWorld({ local: { quam_gen_output_path: OUT } });
+    w.G.goToStep(7);
+    ok($(w.win, 'gen-scripts-path').value === OUT + '/state_gen_scripts',
+      'recall: the scripts box follows the recalled output folder (got "' +
+      $(w.win, 'gen-scripts-path').value + '")');
+    click(w.win, $(w.win, 'gen-next'));
+    const msg = $(w.win, 'gen-message').textContent;
+    ok(msg.indexOf('editable Python scripts') < 0,
+      'recall: step 7 Next is not refused for the scripts folder (got "' + msg + '")');
+    setInput(w.win, $(w.win, 'gen-output-path'), 'D:/x/next/quam_state');
+    ok($(w.win, 'gen-scripts-path').value === 'D:/x/next/quam_state/state_gen_scripts',
+      'recall: the recalled scripts folder keeps following the next output pick');
+    // a folder the user typed in an earlier session comes back as it was
+    const w2 = makeWorld({ local: { quam_gen_output_path: OUT, quam_gen_scripts_path: 'E:/mine' } });
+    w2.G.goToStep(7);
+    ok($(w2.win, 'gen-scripts-path').value === 'E:/mine',
+      'recall: a scripts folder kept in storage is shown as it was saved');
+    // nothing saved: nothing invented, and Next names the missing output folder
+    const w3 = makeWorld();
+    w3.G.goToStep(7);
+    ok($(w3.win, 'gen-scripts-path').value === '',
+      'recall: with nothing saved the scripts box stays empty');
+    click(w3.win, $(w3.win, 'gen-next'));
+    ok($(w3.win, 'gen-message').textContent.indexOf('Choose an output folder') >= 0,
+      'recall: with nothing saved Next asks for the output folder');
+  })();
+
   if (fails) {
     console.error('generate_qa_session_selfcheck: ' + fails + ' FAILURES');
     process.exit(1);

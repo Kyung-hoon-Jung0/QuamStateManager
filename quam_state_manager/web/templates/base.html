@@ -283,7 +283,7 @@
     </script>
     {# P1-7 (UX round): past the ~80 sidebar stops to the page itself. It sits after the
        compact-class read above, which must stay the first element in the body. #}
-    <a href="#table-pane" class="skip-link" id="skip-link">Skip to content</a>
+    <a href="#table-pane" class="skip-link ui-skip-link" id="skip-link">Skip to content</a>
     {% include '_map_tools.html' %}
 
     {# docs/203 — the bar and the banner slots share ONE block container. The
@@ -1249,7 +1249,7 @@
         </div>
         <div class="settings-group">
         <small class="settings-label">Layout</small>
-        <button type="button" class="settings-opt" id="reset-menu-order">Reset menu order</button>
+        <button type="button" class="btn-sm outline" id="reset-menu-order">Reset menu order</button>
         <div class="settings-options">
         <label class="ui-check"><input type="checkbox" id="topbar-toggle" onchange="toggleTopbar()">Hide top bar</label>
         <script>(function(){var c=document.getElementById('topbar-toggle');if(!c||c.__smObs)return;c.__smObs=1;c.checked=document.documentElement.classList.contains('topbar-hidden');new MutationObserver(function(){c.checked=document.documentElement.classList.contains('topbar-hidden');}).observe(document.documentElement,{attributes:true,attributeFilter:['class']});})();</script>
@@ -1497,7 +1497,8 @@
     </div>
 
     <!-- Command palette (Ctrl/Cmd+K) -->
-    <div id="cmd-palette" class="cmd-palette" hidden role="dialog" aria-modal="true" aria-labelledby="cmd-palette-input">
+    <div id="cmd-palette" class="cmd-palette ui-palette" hidden role="dialog" aria-modal="true"
+         aria-labelledby="cmd-palette-input">
         <div class="cmd-palette-backdrop" onclick="window.closeCmdPalette()"></div>
         <div class="cmd-palette-box">
             <input id="cmd-palette-input" class="ui-input ui-input--block cmd-palette-input" type="text"

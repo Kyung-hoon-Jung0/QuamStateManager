@@ -13963,6 +13963,17 @@
       if (!onRegenPage()) {
         try { state.outputPath = localStorage.getItem("quam_gen_output_path") || ""; }
         catch (e) { /* private mode */ }
+        // The scripts folder comes back the way a draft restore brings it:
+        // the mirror's own folder (kept until the next output pick), else it
+        // follows the recalled output folder. Nothing recalled: stays empty.
+        var storedScripts = "";
+        try { storedScripts = localStorage.getItem("quam_gen_scripts_path") || ""; }
+        catch (e) { /* private mode */ }
+        state.scriptsPath = storedScripts;
+        state._scriptsPathTouched = !!storedScripts;
+        state._scriptsFromStorage = !!storedScripts;
+        maybeFollowScriptsPath();
+        syncScriptsControls();
       }
       var outEl = document.getElementById("gen-output-path");
       if (outEl && state.outputPath) outEl.value = state.outputPath;
