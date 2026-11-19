@@ -20,10 +20,7 @@
 <span class="ui-text-quiet">ports unknown: the running monitor does not report them (restart it to see ports)</span>
 {%- endif -%}
 {%- endmacro -%}
-{%- macro ports_disclosure(q) -%}
-{%- set pm = q.port_map if q is mapping and 'port_map' in q else none -%}
-{%- if pm is mapping and pm.fems is defined -%}
-{%- set used = namespace(n=0, total=0) -%}{%- for f in pm.fems or [] %}{% for p in f.ports or [] %}{% set used.total = used.total + 1 %}{% if p.elements %}{% set used.n = used.n + 1 %}{% endif %}{% endfor %}{% endfor -%}
+{%- macro rack_block(q) -%}
 {%- set rack = qm_racks.get(q.id) if qm_racks is defined else none -%}
 {%- if rack %}
 <div class="ui-opxmon-rack-block">
@@ -32,6 +29,15 @@
      role="img" aria-label="Ports declared by QM {{ q.id }}"></div>
 </div>
 {%- endif %}
+{%- endmacro -%}
+{%- macro ports_disclosure(q) -%}
+{%- set pm = q.port_map if q is mapping and 'port_map' in q else none -%}
+{%- if pm is mapping and pm.fems is defined -%}
+{%- set used = namespace(n=0, total=0) -%}
+{%- for f in pm.fems or [] %}{% for p in f.ports or [] %}
+{% set used.total = used.total + 1 %}
+{% if p.elements %}{% set used.n = used.n + 1 %}{% endif %}
+{% endfor %}{% endfor -%}
 <details class="ui-disclosure" id="{{ ports_anchor(q.id) }}" data-fold="ports-{{ q.id }}" data-opxmon-ports="{{ q.id }}"><summary class="ui-disclosure-summary">Ports in this QM's configuration <span class="ui-count">{{ used.n }} used</span></summary>
 <div class="ui-disclosure-body">
 {%- if not pm.fems %}

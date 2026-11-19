@@ -17349,6 +17349,9 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
                + (st.refs_seen ? ' — ' + st.refs_seen + ' port connection(s) were found but couldn’t be placed on the rack' : '')
                + '.')
             : 'No instrument wiring data found. Load a quam_state with wiring information.';
+        if (unplaceable && options && options.unplaceableText) {
+            msg = options.unplaceableText(st);
+        }
         var pEl = document.createElement('p');
         pEl.className = 'ui-note';
         pEl.textContent = msg;
@@ -17642,7 +17645,7 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
     });
 
     // v1.5.1 (U P2-20): what each colour means -- only the roles drawn here
-    _appendWiringLegend(container, roleColors);
+    _appendWiringLegend(container, roleColors, options && options.compactKey);
 
     // docs/135: size the rack(s) now that they are in the document, and offer
     // the overview when the rack is wider than its host.
@@ -17919,7 +17922,7 @@ var _WIRING_ROLE_WORDS = {
     twpa_ro: 'TWPA readout', twpa_in: 'TWPA input', digital: 'Digital / trigger',
     z_qdac: 'Flux + QDAC-II bias'
 };
-function _appendWiringLegend(container, roleColors) {
+function _appendWiringLegend(container, roleColors, compactKey) {
     var used = {};
     container.querySelectorAll('.iw-port-circle[data-role]').forEach(function (g) {
         used[g.getAttribute('data-qdac-shared') ? 'z_qdac' : g.getAttribute('data-role')] = true;
@@ -17930,7 +17933,7 @@ function _appendWiringLegend(container, roleColors) {
     });
     if (!roles.length) return;
     var box = document.createElement('div');
-    box.className = 'iw-legend';
+    box.className = 'iw-legend' + (compactKey ? ' ui-iw-key-compact' : '');
     box.setAttribute('role', 'list');
     box.setAttribute('aria-label', 'Port colours');
     roles.forEach(function (r) {
@@ -17945,6 +17948,10 @@ function _appendWiringLegend(container, roleColors) {
         item.appendChild(document.createTextNode(r === 'other' ? 'Other' : _WIRING_ROLE_WORDS[r]));
         box.appendChild(item);
     });
+    if (compactKey) {
+        container.appendChild(box);
+        return;
+    }
     // uv-2: the uncoloured marks and the DIG column need a key too -- a free
     // port (exists, nothing wired), a row where the FEM has no port at all
     // (drawn smaller), and what the DIG column is.

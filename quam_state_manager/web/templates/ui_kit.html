@@ -91,6 +91,8 @@
 <table class="ui-table ui-opxmon-table"><thead><tr><th class="ui-table-head">QM</th><th class="ui-table-head">Count</th></tr></thead><tbody><tr class="ui-opxmon-qm-row"><td class="ui-table-cell"><code>sample-id</code></td><td class="ui-table-cell ui-opxmon-num">1</td></tr></tbody></table>
 <p class="ui-note">The same table stacked for a narrow pane:</p>
 <table class="ui-table ui-opxmon-table ui-opxmon-table--stacked"><thead><tr><th class="ui-table-head">QM</th><th class="ui-table-head">Count</th></tr></thead><tbody><tr class="ui-opxmon-qm-row"><td class="ui-table-cell" data-label="QM"><code>sample-id</code></td><td class="ui-table-cell" data-label="Count">1</td></tr></tbody></table>
+<table class="ui-table ui-opxmon-table"><tbody><tr class="ui-opxmon-rack-row">
+<td class="ui-table-cell" colspan="2" data-label="QM rack">
 <div class="ui-opxmon-rack-block">
   <p class="ui-text-quiet">Only the FEMs this QM declares</p>
   <div class="ui-opxmon-rack" role="img" aria-label="Sample QM port highlights">
@@ -100,6 +102,10 @@
     </svg>
   </div>
 </div>
+<div class="ui-iw-key-compact" role="list" aria-label="Port colours">
+  <span class="iw-legend-item" role="listitem">Digital / trigger</span>
+</div>
+</td></tr></tbody></table>
 <div class="ui-panel ui-opxmon-port-popup hidden">Sample port hover</div>
 <ul class="ui-opxmon-actions"><li>Recorded clean-up action</li></ul>
 <p class="ui-state ui-opxmon-flash">Settings saved</p><p class="ui-state ui-state--error ui-opxmon-alarms">Temperature above limit</p>

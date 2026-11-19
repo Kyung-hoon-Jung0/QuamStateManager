@@ -58,7 +58,8 @@ try {
     check(draws === 2, 'each open QM uses the shared renderer once');
     const block = d.createElement('div'); block.className = 'ui-opxmon-rack-block';
     a.replaceWith(block); block.append(a);
-    const details = d.createElement('details'); details.id = 'opxmon-ports-QM-a'; block.after(details);
+    const details = d.createElement('details'); details.id = 'opxmon-ports-QM-a';
+    details.setAttribute('data-opxmon-ports', 'QM-a'); block.before(details);
     let rackScrolls = 0, detailScrolls = 0;
     block.scrollIntoView = () => rackScrolls++;
     details.scrollIntoView = () => detailScrolls++;
@@ -70,6 +71,12 @@ try {
     check(JSON.stringify(keys(a)) === JSON.stringify(spec.highlight.map(p => p.join('/')).sort()),
         'exact highlight set includes analog input and both digital directions');
     check(keys(b).join() === 'con1/1/2/output', 'second QM has independent highlights');
+    const compact = a.querySelector('.ui-iw-key-compact');
+    check(compact && compact.querySelectorAll('[role="listitem"]').length === 3,
+        'monitor requests the compact key with only the three drawn roles');
+    check(!compact.querySelector('.iw-key-free, .iw-key-none, .iw-key-dig, .iw-key-conflict'),
+        'compact key omits the full explanatory items');
+    check(!compact.textContent.includes('XY'), 'compact key omits roles removed by QM highlighting');
     check(a.querySelectorAll('.ui-opxmon-port-dim').length > 40, 'every other chassis port is dim');
     check(!a.querySelector('[data-element="foreign"]'), 'foreign assignments are removed');
     check(a.querySelector('.ui-opxmon-port-active circle').getAttribute('fill') === w.UI_CONFIG.roleColors.z,
@@ -127,10 +134,22 @@ try {
     w.OpxMonitor.afterSwap();
     check(w._iwDrawn.length === 0, 'leaving Live releases registered rack nodes');
     for (const stats of [{refs_seen: 1, refs_placed: 0}, {octave_detected: true}]) {
+        const mini = markup();
+        mini.setAttribute('data-opxmon-rack', JSON.stringify({data: {controllers: {}, stats}, highlight: []}));
+        poll(mini);
+        const expected = "This QM's configuration uses a layout this diagram does not render yet " +
+            '(for example OPX+ or an Octave RF setup); ' + (stats.refs_seen || 0) +
+            ' port connection(s) could not be placed.';
+        check(mini.textContent === expected && /^[\x00-\x7f]*$/.test(mini.textContent),
+            'monitor passes an ASCII QM note for OPX+ and Octave');
         const host = d.createElement('div'); host.id = 'unplaceable'; body.replaceChildren(host);
         renderer(host.id, {controllers: {}, stats}, {}, {readOnly: true, highlight: [], scale: 0.55});
         check(!host.querySelector('svg') && /layout.*render yet/.test(host.textContent),
             'OPX+ and Octave display the renderer unplaceable message');
+        const original = 'This chip\u2019s wiring uses a layout this diagram doesn\u2019t render yet ' +
+            '(e.g. OPX+ or an Octave RF setup)' + (stats.refs_seen ? ' \u2014 ' + stats.refs_seen +
+            ' port connection(s) were found but couldn\u2019t be placed on the rack' : '') + '.';
+        check(host.textContent === original, 'instrument default note remains unchanged');
         w.releaseInstrumentWiring(host);
     }
     const locked = d.createElement('div'); locked.id = 'locked'; body.replaceChildren(locked);
@@ -141,17 +160,47 @@ try {
         'read-only overrides requested editing and playback');
     check(locked.querySelector('[data-port="8"][data-io="output"] circle').getAttribute('r') === '8',
         'read-only keeps unused ports as dim dots even when editable was requested');
+    check(!locked.querySelector('.ui-iw-key-compact') &&
+        locked.querySelectorAll('.iw-key-free, .iw-key-none, .iw-key-dig, .iw-key-conflict').length === 4,
+        'instrument default keeps the full key');
     w.releaseInstrumentWiring(locked);
     const css = fs.readFileSync(path.join(staticDir, 'ui-kit.css'), 'utf8');
-    check(/\.ui-opxmon-rack svg\.instrument-svg\s*\{[^}]*max-width:\s*100%;[^}]*height:\s*auto/.test(css),
-        'mini SVG fits the pane without a crop or inline styles');
+    check(/\.ui-opxmon-rack svg\.instrument-svg\s*\{[^}]*max-width:\s*none;[^}]*height:\s*auto/.test(css),
+        'mini SVG preserves the readable scale instead of shrinking to its container');
+    check(/\.ui-opxmon-rack-block\s*\{[^}]*contain:\s*inline-size;[^}]*overflow-x:\s*auto/.test(css),
+        'rack block excludes drawing width from table sizing and owns horizontal scrolling');
+    check(/\.ui-opxmon-table--stacked td\s*\{[^}]*display:block/.test(css),
+        'narrow colspan cells remain full width blocks');
+    check(/\.ui-iw-key-compact\s*\{[^}]*display:\s*flex;[^}]*flex-wrap:\s*wrap/.test(css),
+        'compact key wraps inline items');
+    check(/\.ui-iw-key-compact > \.iw-legend-item\s*\{[^}]*display:\s*inline-flex/.test(css),
+        'compact key items stay inline');
     if (process.argv.includes('--page')) {
-        const page = new JSDOM(fs.readFileSync(0, 'utf8'));
+        const page = new JSDOM(fs.readFileSync(0, 'utf8'),
+            {url: 'http://localhost/opx-monitor/live', runScripts: 'outside-only', pretendToBeVisual: true});
         const pd = page.window.document;
         check(pd.querySelectorAll('#ui-opxmon-body #port-popup').length === 1,
             'server popup is inside the poll replacement boundary');
         check(pd.querySelectorAll('[data-opxmon-rack]').length === 2,
             'server emits one rack for each open QM');
+        const pw = page.window;
+        pw.htmx = w.htmx; pw.fetch = w.fetch;
+        pw.eval(fs.readFileSync(path.join(staticDir, 'app.js'), 'utf8'));
+        pw.eval(fs.readFileSync(path.join(staticDir, 'opx-monitor.js'), 'utf8'));
+        const hosts = Array.from(pd.querySelectorAll('[data-opxmon-rack]'));
+        const svgs = hosts.map(host => host.querySelector('svg'));
+        const pageBody = pd.getElementById('ui-opxmon-body');
+        pageBody.replaceWith(pageBody.cloneNode(true));
+        pw.OpxMonitor.afterSwap();
+        hosts.forEach((host, i) => {
+            check(pd.getElementById(host.id) === host && host.querySelector('svg') === svgs[i],
+                'polling reuses each server rack host and SVG inside the new table rows');
+            check(host.closest('tr').classList.contains('ui-opxmon-rack-row'),
+                'server rack is in its own row after polling');
+            const previous = host.closest('tr').previousElementSibling;
+            check(previous.dataset.qmId === host.id.replace('opxmon-rack-', ''),
+                'reused server rack stays directly below its QM');
+        });
         page.window.close();
     }
     console.log(checks + ' all checks passed');

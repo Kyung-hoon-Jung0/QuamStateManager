@@ -194,7 +194,12 @@
             if (previous && window.releaseInstrumentWiring) window.releaseInstrumentWiring(previous.host);
             var spec = JSON.parse(payload);
             window.renderInstrumentWiring(host.id, spec.data, {}, {
-                readOnly: true, highlight: spec.highlight, scale: 0.55
+                readOnly: true, highlight: spec.highlight, scale: 0.55, compactKey: true,
+                unplaceableText: function(stats) {
+                    return "This QM's configuration uses a layout this diagram does not render yet " +
+                        "(for example OPX+ or an Octave RF setup); " + (stats.refs_seen || 0) +
+                        " port connection(s) could not be placed.";
+                }
             });
             racks.set(host.id, {payload: payload, host: host});
         });
@@ -331,8 +336,8 @@
         portsHashDone = h;
         d.open = true;
         if (d.hasAttribute("data-fold")) folds[d.getAttribute("data-fold")] = true;
-        var rack = d.previousElementSibling;
-        var target = rack && rack.classList.contains('ui-opxmon-rack-block') ? rack : d;
+        var host = document.getElementById('opxmon-rack-' + d.getAttribute('data-opxmon-ports'));
+        var target = host ? host.closest('.ui-opxmon-rack-block') : d;
         if (target.scrollIntoView) target.scrollIntoView({block: "center"});
     }
     window.addEventListener("hashchange", function () { portsHashDone = null; openPortsFromHash(); });

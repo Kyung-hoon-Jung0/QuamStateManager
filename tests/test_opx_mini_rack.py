@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from jinja2 import ChoiceLoader, DictLoader
 
 from quam_state_manager.web import opx_monitor_routes as routes
 from quam_state_manager.web.opx_monitor_rack import qm_rack
@@ -87,7 +88,7 @@ def test_live_has_two_visible_racks_with_independent_payloads_and_unique_ids(app
     a, b = payloads(html)
     assert a["highlight"] != b["highlight"]
     assert "flux_b" not in json.dumps(a) and "flux_a" not in json.dumps(b)
-    assert html.index('id="opxmon-rack-QM-a"') < html.index('<details class="ui-disclosure"')
+    assert html.index('<details class="ui-disclosure"') < html.index('id="opxmon-rack-QM-a"')
     assert html.count("Chassis from the open chip&#39;s wiring") == 2
     assert html.count('id="port-popup"') == 1
     assert "popup-port-test" not in html
@@ -123,3 +124,63 @@ def test_mini_rack_jsdom_selfcheck(app_with):
                             capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "all checks passed" in result.stdout
+
+
+@pytest.mark.parametrize("owner_column", [True, False])
+@pytest.mark.parametrize("markers", [True, False])
+def test_live_rack_rows_span_actual_headers_and_follow_their_qms(app_with, owner_column, markers):
+    ans = _two_qms()
+    for q in ans["open_qms"]:
+        q["markers"] = ["qmowner__v1__c12345678__snone__xs__n"] if markers else []
+    app = app_with(ans)
+    if not owner_column:
+        # The current helper always shows Owner. Exercise a helper that omits it too.
+        source, _, _ = app.jinja_env.loader.get_source(app.jinja_env, "_opx_owner.html")
+        source = re.sub(r"({%- macro owner_head\(any_marker\) -%}).*?({%- endmacro -%})",
+                        r"\1\2", source, flags=re.S)
+        app.jinja_env.loader = ChoiceLoader([DictLoader({"_opx_owner.html": source}), app.jinja_env.loader])
+        app.jinja_env.cache.clear()
+    html = _page(app, "live")
+    table = re.search(r'<table[^>]*aria-label="Who holds each open QM.*?</table>', html, re.S).group()
+    header = re.search(r"<thead>.*?</thead>", table, re.S).group()
+    count = len(re.findall(r"<th\b", header))
+    assert count == (4 if owner_column else 3)
+    assert ("set by the client; the server does not check it" in header) == (markers and owner_column)
+    rows = re.findall(r"<tr\b.*?</tr>", table.split("<tbody>")[1], re.S)
+    assert len(rows) == 4
+    for i, qid in enumerate(["QM-a", "QM-b"]):
+        qm, rack = rows[i * 2:i * 2 + 2]
+        assert f'data-qm-id="{qid}"' in qm
+        assert 'data-label="FEMs"' in qm and "Ports in this QM's configuration" in qm
+        assert "data-opxmon-rack" not in qm
+        assert 'class="ui-opxmon-rack-row"' in rack
+        assert f'colspan="{count}"' in rack
+        assert 'data-label="QM rack"' in rack
+        assert f'id="opxmon-rack-{qid}"' in rack
+        assert len(re.findall(r"<td\b", qm)) == count
+    assert len(set(re.findall(r'id="(opxmon-rack-[^"]+)"', table))) == 2
+
+
+@pytest.mark.parametrize("ports", [False, True])
+def test_cleanup_has_actions_and_no_rack_rows(app_with, ports):
+    ans = _two_qms()
+    app = app_with(ans)
+    html = _page(app, "cleanup")
+    assert 'class="btn-sm outline ui-opxmon-close"' in html
+    assert "ui-opxmon-rack-row" not in html
+    assert "data-opxmon-rack" not in html
+
+    qms = ans["open_qms"]
+    context = {
+        "qm_states": {q["id"]: {"fact": "idle", "basis": "no jobs", "jobs": "none"} for q in qms},
+        "idle_states": {q["id"]: {"idle": True, "basis": "no jobs"} for q in qms},
+        "owners": {q["id"]: {"kind": "none"} for q in qms},
+        "qm_racks": {q["id"]: qm_rack(q["port_map"]) for q in qms},
+        "pc_names": {}, "this_tag": None, "any_marker": False,
+        "st": {"state": "ok"}, "last_job": lambda q: "none",
+    }
+    table = app.jinja_env.get_template("_opx_qm_table.html").make_module(context)
+    html = str(table.qm_table(qms, "Clean up", actions=True, ports=ports))
+    assert len(re.findall(r"<th\b", html)) == 5
+    assert "ui-opxmon-rack-row" not in html
+    assert "data-opxmon-rack" not in html
