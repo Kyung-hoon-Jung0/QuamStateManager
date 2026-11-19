@@ -1487,3 +1487,15 @@ def test_kit_sweep_generate_files_have_no_bare_controls():
         counts = measure()
         for path in sorted(files):
             assert counts.get(path, 0) == 0, (measure.__name__, path, counts.get(path))
+
+
+def test_port_play_popup_parts_are_accent_section_cards():
+    # A long dialog reads as separate parts: outputs, run settings, safety each sit in an accent-outlined card.
+    rules = {sel: dict(_decls(body)) for sel, body, _s in _ui_kit_rules()}
+    assert rules[".ui-item--accent.ui-item--accent"].get("border-color") == "var(--ui-accent-border)"
+    assert "var(--ui-accent-border)" in rules[".ui-item--accent > .ui-item-head"].get("border-bottom", "")
+    js = _read(_STATIC / "port-play.js")
+    for title in ("Outputs in this play", "Run settings", "Safety"):
+        m = re.search(r"<section class=\"([^\"]*)\"[^>]*>'? *\+?\s*'?<div class=\"ui-item-head\"><h4 class=\"ui-item-title\">"
+                      + re.escape(title) + "<", js)
+        assert m and "ui-item--accent" in m.group(1).split(), title
