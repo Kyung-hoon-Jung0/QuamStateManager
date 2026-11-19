@@ -2764,3 +2764,28 @@ def test_stale_monitor_badge_says_not_checked(env):
     clock.t += 3600
     st = m.status()
     assert st['state'] != 'ok' and st['badge_label'] == 'not checked'
+
+
+def _band_tag(html):
+    return re.search(r'<div [^>]*id="ui-opxmon-band"[^>]*>', html, re.S).group(0)
+
+
+def test_settings_tab_band_polls_alone_so_it_never_goes_stale_while_the_form_stays(env):
+    app, m, w, clock, _ = env
+    w.script[:] = [answer()]
+    m.poll_once()
+    html = page(app, 'settings')
+    body_tag = re.search(r'<div id="ui-opxmon-body"[^>]*>', html, re.S).group(0)
+    assert 'hx-get' not in body_tag
+    band = _band_tag(html)
+    assert 'hx-get="/opx-monitor/body?tab=settings"' in band and 'hx-select="#ui-opxmon-band"' in band
+    assert 'hx-trigger="every' in band and 'hx-swap="outerHTML"' in band
+
+
+def test_live_tab_band_does_not_poll_twice(env):
+    app, m, w, clock, _ = env
+    w.script[:] = [answer()]
+    m.poll_once()
+    html = page(app, 'live')
+    assert 'hx-get' not in _band_tag(html)
+    assert 'hx-get="/opx-monitor/body?tab=live' in html
