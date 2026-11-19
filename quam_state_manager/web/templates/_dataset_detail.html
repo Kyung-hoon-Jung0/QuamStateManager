@@ -300,11 +300,10 @@
                 <tr><td class="col-prop"><code>run_id</code></td><td class="col-val">#{{ run.run_id }}</td></tr>
                 <tr><td class="col-prop"><code>status</code></td>
                     <td class="col-val">
-                        {# v1.3.0: "finished" is the run's lifecycle, not its
-                           outcome -- neutral, like the run list; anything else
-                           (failed, aborted, running) keeps the warning colour. #}
-                        <span class="ui-badge ui-badge--{{ 'ok' if run.status == 'successful' else
-                            'neutral' if run.status == 'finished' else 'danger' }}">{{ run.status }}</span>
+                        {# Match the run list: successful uses ok, finished uses the
+                           base neutral badge, and other statuses use danger. #}
+                        <span class="ui-badge{{ ' ui-badge--ok' if run.status == 'successful' else
+                            '' if run.status == 'finished' else ' ui-badge--danger' }}">{{ run.status }}</span>
                     </td></tr>
                 <tr><td class="col-prop"><code>qubits</code></td><td class="col-val">{{ (run.qubit_pairs if run.qubit_pairs else run.qubits) | join(', ') if (run.qubit_pairs or run.qubits) else 'N/A' }}</td></tr>
                 {# docs/263: the run's INSTANT, in the viewer's zone; the run's own

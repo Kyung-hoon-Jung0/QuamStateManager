@@ -87,10 +87,12 @@ def test_dataset_search_keeps_a_usable_width():
 
 def test_dataset_success_matches_the_list_status_tone():
     tpl = read("templates/_dataset_detail.html")
-    badge = re.search(r'<span class="ui-badge ui-badge--[^<]+</span>', tpl).group()
+    badge = re.search(r'<span class="ui-badge[^<]+</span>', tpl).group()
     env = Environment(autoescape=True)
     for status, tone in (("successful", "ok"), ("finished", "neutral"), ("failed", "danger")):
-        assert f'ui-badge--{tone}' in env.from_string(badge).render(run={"status": status})
+        rendered = env.from_string(badge).render(run={"status": status})
+        classes = re.search(r'class="([^"]+)"', rendered).group(1).split()
+        assert classes == (["ui-badge"] if tone == "neutral" else ["ui-badge", f"ui-badge--{tone}"])
 
 
 def test_experiment_filters_use_regular_type_and_keep_names_together():

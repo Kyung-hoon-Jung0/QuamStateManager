@@ -89,7 +89,7 @@ async function main() {
       if (here === want) break;
     }
     await sleep(900);
-    await ev(`window.confirm=function(){return true};window.prompt=function(){return ''};1`);
+    await ev(`window.prompt=function(){return ''};1`);
   };
   // click a real element by selector (dispatches a trusted-ish click through the DOM)
   const click = async (sel, idx) => ev(`(function(){var n=document.querySelectorAll(${JSON.stringify(sel)}); var e=n[${idx || 0}]; if(!e) return 0; e.scrollIntoView({block:'center'}); e.click(); return 1;})()`);
@@ -225,6 +225,8 @@ async function main() {
     ctxOut.restoreTarget = target;
     const pressed = await ev(`(function(){var row=document.querySelector('.sh-entry[data-ts="${target}"]'); if(!row) return null;
       var b=row.querySelector('.sh-restore-live'); if(!b) return null; b.click(); return b.innerText.trim();})()`);
+    ok('Restore opens one in-page dialog', await count('#sm-confirm-overlay') === 1);
+    await click('.sm-confirm-ok');
     ok('P6 the Restore-to-live button exists', !!pressed, pressed);
     await sleep(4000);
     const s = snap('P6-after-restore-live');
@@ -255,7 +257,10 @@ async function main() {
     const es = await entriesOf();
     const t = es.find(e => !/PLANTED/.test(e.txt)).ts;
     const beforeSha = log[log.length - 1].sha_state;
-    await ev(`(function(){var row=document.querySelector('.sh-entry[data-ts="${t}"]'); var b=row.querySelector('.sh-restore-live'); b.click(); return 1;})()`);
+    await ev(`(function(){var row=document.querySelector('.sh-entry[data-ts="${t}"]');
+        var b=row.querySelector('.sh-restore-live'); b.click(); return 1;})()`);
+    ok('Restore opens one in-page dialog', await count('#sm-confirm-overlay') === 1);
+    await click('.sm-confirm-ok');
     await sleep(2600);
     const d1 = await detail();
     const s1 = snap('P7-gate1-unsaved-edits');
@@ -271,7 +276,10 @@ async function main() {
     const planted = (es2.find(e => /PLANTED/.test(e.txt)) || {}).ts;
     ok('P7 the planted topology-mismatch snapshot is listed', !!planted, es2.map(e => e.txt.slice(0, 50)));
     if (planted) {
-      await ev(`(function(){var row=document.querySelector('.sh-entry[data-ts="${planted}"]'); var b=row.querySelector('.sh-restore-live'); b.click(); return 1;})()`);
+      await ev(`(function(){var row=document.querySelector('.sh-entry[data-ts="${planted}"]');
+        var b=row.querySelector('.sh-restore-live'); b.click(); return 1;})()`);
+      ok('Restore opens one in-page dialog', await count('#sm-confirm-overlay') === 1);
+      await click('.sm-confirm-ok');
       await sleep(2600);
       const dA = await detail();
       ok('P7 …the unsaved-edits gate still fires first', /unsaved edits/i.test(String(dA)), String(dA).slice(0, 180));
@@ -592,15 +600,26 @@ async function main() {
     await shot('P14_autosync_stage');
   }
 
-  /* ═══ P15: restore-live pressed TWICE fast ═══════════════════════════ */
+  /* Three fast restore presses open one dialog and send one request on OK. */
   if (want('P15')) {
     await nav('/state-history');
     await sleep(1200);
     const es = await entriesOf();
     const t = (es.find(e => !/PLANTED/.test(e.txt)) || es[0]).ts;
     snap('P15-before');
-    await ev(`(function(){var row=document.querySelector('.sh-entry[data-ts="${t}"]'); var b=row.querySelector('.sh-restore-live'); b.click(); b.click(); b.click(); return 1;})()`);
+    await ev(`window.restoreRequestCount=0;
+      window.countRestoreRequest=function(e){
+        if(e.detail.elt.matches('.sh-restore-live')) window.restoreRequestCount++;
+      };
+      document.addEventListener('htmx:beforeRequest', window.countRestoreRequest);1`);
+    await ev(`(function(){var row=document.querySelector('.sh-entry[data-ts="${t}"]');
+        var b=row.querySelector('.sh-restore-live'); b.click(); b.click(); b.click(); return 1;})()`);
+    ok('Restore opens one in-page dialog', await count('#sm-confirm-overlay') === 1);
+    ok('Three fast presses send nothing before OK', await ev('window.restoreRequestCount') === 0);
+    await click('.sm-confirm-ok');
     await sleep(7000);
+    ok('Three fast presses send one request after OK', await ev('window.restoreRequestCount') === 1);
+    await ev(`document.removeEventListener('htmx:beforeRequest', window.countRestoreRequest);1`);
     const s = snap('P15-after-triple-press');
     const d = await detail();
     ctxOut.p15 = { changed: s.n_changed, paths: s.changed.slice(0, 6), msg: String(d).slice(0, 240) };

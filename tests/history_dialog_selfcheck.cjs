@@ -50,7 +50,27 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 20));
             assert.equal(sent.length, 0, "Escape must not send");
             assert(!w.document.querySelector("#sm-confirm-overlay"), "Escape closes the dialog");
             button.click();
+            w.document.querySelector("#sm-confirm-overlay").click();
+            await tick();
+            assert.equal(sent.length, 0, "backdrop click must not send");
+            assert(!w.document.querySelector("#sm-confirm-overlay"), "backdrop closes the dialog");
+            button.click();
+            const replacement = w.smConfirm("Another action");
+            await tick();
+            assert.equal(button._historyConfirmPending, false, "replacement releases the history button");
+            assert.equal(sent.length, 0, "replacement must not send");
+            w.document.querySelector(".sm-confirm-cancel").click();
+            assert.equal(await replacement, false, "the replacement can still be cancelled");
+            const superseded = w.smConfirm("Superseded action");
+            const latest = w.smConfirm("Latest action");
+            assert.equal(await superseded, false, "replacement cancels the previous caller");
+            w.document.querySelector(".sm-confirm-ok").click();
+            assert.equal(await latest, true, "the latest caller can still confirm");
+            button.click();
+            const overlay = w.document.querySelector("#sm-confirm-overlay");
             button.click(); // A second press must not make a second pending dialog/request.
+            assert.strictEqual(w.document.querySelector("#sm-confirm-overlay"), overlay,
+                "a second press must keep the same pending dialog");
             assert.equal(sent.length, 0);
             w.document.querySelector(".sm-confirm-ok").click();
             await tick();

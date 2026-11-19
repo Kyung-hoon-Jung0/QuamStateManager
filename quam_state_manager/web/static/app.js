@@ -4130,9 +4130,8 @@ window.trapFocus = function(container, onEscape) {
     return release;
 };
 
-/* In-page OK/Cancel for cases that used to call window.confirm (headless
-   Chrome and CDP journeys hang on native dialogs). Enter = OK, Escape =
-   Cancel; trapFocus on the card. Resolves true/false when the sheet closes. */
+/* Route data-history-confirm through the kit dialog.
+   issueRequest(true) resumes HTMX without its own confirm. */
 document.addEventListener("htmx:confirm", function (event) {
     var detail = event.detail || {};
     var button = detail.elt;
@@ -4147,10 +4146,15 @@ document.addEventListener("htmx:confirm", function (event) {
         if (yes && button.isConnected) detail.issueRequest(true);
     });
 });
+/* In-page OK/Cancel for cases that used to call window.confirm (headless
+   Chrome and CDP journeys hang on native dialogs). Enter = OK, Escape =
+   Cancel; trapFocus on the card. Resolves true/false when the sheet closes. */
 window.smConfirm = function (message) {
     return new Promise(function (resolve) {
         var prior = document.getElementById("sm-confirm-overlay");
-        if (prior) prior.remove();
+        // A replaced dialog answers its caller "no", so nothing waits on it forever.
+        if (prior && prior._smConfirmCancel) prior._smConfirmCancel();
+        else if (prior) prior.remove();
         var wrap = document.createElement("div");
         wrap.id = "sm-confirm-overlay";
         wrap.className = "kb-sheet-backdrop";
@@ -4185,6 +4189,7 @@ window.smConfirm = function (message) {
             wrap.remove();
             resolve(!!yes);
         }
+        wrap._smConfirmCancel = function () { finish(false); };
         okBtn.addEventListener("click", function () { finish(true); });
         cancelBtn.addEventListener("click", function () { finish(false); });
         wrap.addEventListener("click", function (ev) {

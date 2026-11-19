@@ -266,10 +266,10 @@ async function second(b, entry) {
   await waitFor(b, "document.readyState==='complete' && !!document.querySelector('.sh-timeline')", 60000);
   ok(await waitFor(b, "(function(){var t=document.querySelector('#pending-tray');return t.dataset.workingDirty==='1'||(+t.dataset.changeCount||0)>0;})()", 10000), 'the edit is pending (tray: 1 unapplied edit)');
   const sel = `.sh-entry[data-ts="${entry}"] .sh-restore-live`;
-  const d0 = dialogs;
   ok(await clickSel(b, sel), 'Restore to live pressed on a run version');
-  await sleep(800);
-  ok(dialogs > d0, 'its confirm asked first and was answered OK');
+  ok(await waitFor(b, "!!document.querySelector('#sm-confirm-overlay')", 5000),
+    'its in-page confirm appeared before the request');
+  ok(await clickSel(b, '.sm-confirm-ok'), 'Restore confirmation answered OK');
   const refused = await waitFor(b, "(document.getElementById('state-history-detail')||{}).innerText||''", 20000);
   ok(/unsaved edits/.test(refused || ''), 'refused first for the unsaved edits, with a separate confirm: ' + (refused || '').slice(0, 100).replace(/\s+/g, ' '));
   await b.shot(path.join(SHOTS, '09_restore_refused_unsaved.png'));
