@@ -351,6 +351,20 @@ def test_the_pulses_page_draws_its_sparklines_in_one_held_pass(tmp_path):
     assert lk.takes.get(me, 0) <= 12, ("short takes per page", lk.takes.get(me), "rows", rows)
 
 
+class _HandOverCountingRLock(threading._PyRLock):
+    """Counts the hand-overs of THIS lock (each one lets go of every level).
+    The module-wide ``activity.YIELDS`` also counts other stores' parks, e.g.
+    a search-index prewarm thread an earlier test's app left running."""
+
+    def __init__(self):
+        super().__init__()
+        self.handed = 0
+
+    def _release_save(self):
+        self.handed += 1
+        return super()._release_save()
+
+
 class _FakeStore:
     """The store surface activity reads: the lock and the content token."""
 
@@ -739,16 +753,24 @@ def test_a_page_walk_does_not_hand_over_when_only_walks_wait():
     """The waiting side walks cannot take the lock while a page's own walk
     runs, so a hand-over for them would be a 2 ms sleep nobody uses."""
     st = _FakeStore()
+    st._lock = _HandOverCountingRLock()
     steps = {"a": 0}
     a_in = threading.Event()
     out: dict = {}
     ta = _in_request("/bulk", _page_walk(st, steps, a_in, n=40), out, "a")
     assert a_in.wait(10)
-    y0 = activity.YIELDS[0]
     tw = _in_request("/diagnostics/summary", lambda: activity.single_flight(
         st, "lint", lambda: activity.MISS, lambda: "w"), out, "w")
+    # The side request is in flight a moment before it registers as a walk;
+    # a slice in that moment may hand over once. Count from the point both
+    # walks are registered, while the page walk still runs.
+    end = time.monotonic() + 10
+    while activity._WALKS.get(st, 0) < 2 and time.monotonic() < end:
+        time.sleep(0.001)
+    assert activity._WALKS.get(st, 0) == 2 and ta.is_alive()
+    y0 = st._lock.handed
     ta.join(30)
-    handed = activity.YIELDS[0] - y0
+    handed = st._lock.handed - y0
     tw.join(30)
     assert out == {"a": "a", "w": "w"}
     assert handed == 0, handed
