@@ -92,8 +92,8 @@
      the chip already imports. A class in a module the chip does not use yet is
      reachable only by NAMING the module -- the probe never walks a package
      blind (a lab module may talk to an instrument at import). #}
-  <details class="pulse-env-modules"{% if pulse_modules or modules_error %} open{% endif %}>
-    <summary class="muted">Your own pulse classes live in another module?</summary>
+  <details class="pulse-env-modules ui-disclosure"{% if pulse_modules or modules_error %} open{% endif %}>
+    <summary class="muted ui-disclosure-summary">Your own pulse classes live in another module?</summary>
     <p class="muted">SM already reads every pulse class in the modules this chip
       imports. Name a module here (e.g. <code>my_lab.cz_pulses</code>) and SM
       imports it in the selected environment and offers its pulse classes below.</p>
@@ -111,7 +111,8 @@
     <form class="pulse-env-module-form" hx-post="/pulse/class-modules"
           hx-target="#pulse-env-strip" hx-swap="outerHTML">
       <input type="hidden" name="action" value="add">
-      <input type="text" name="module" placeholder="package.module" aria-label="Module with your pulse classes"
+      <input class="ui-input" type="text" name="module" placeholder="package.module" aria-label="Module with your pulse
+        classes"
              pattern="[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*" required>
       <button type="submit" class="btn-sm">Add module</button>
     </form>

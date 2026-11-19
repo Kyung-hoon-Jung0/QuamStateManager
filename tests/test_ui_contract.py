@@ -1333,7 +1333,7 @@ def test_a_narrow_pulse_detail_neither_scrolls_nor_squeezes_its_header_tag_or_pi
     assert head.get("white-space") == "normal" and head.get("overflow-wrap") == "anywhere", head
     assert head.get("min-width") == "0", head
     detail = _read(_TPL / "_pulse_detail.html")
-    assert 'class="pulse-overlay-pick"' in detail and 'class="pulse-sec-role"' in detail
+    assert 'class="pulse-overlay-pick ui-select"' in detail and 'class="pulse-sec-role"' in detail
     assert "{% include '_inspector_header.html' %}" in detail
     assert "<strong>{{ inspector_label }}</strong>" in _read(_TPL / "_inspector_header.html")
     # every other inspector keeps its one-line clipped title
@@ -1462,3 +1462,17 @@ def test_raw_form_control_measure_can_fail(tmp_path):
     assert measure_raw_form_controls([tpl]) == {"_opx_x.html": [
         "fieldset", "legend", "label without a kit class", "input without ui-input",
         "checkbox outside label.ui-check", "textarea without ui-textarea"]}
+
+
+def test_kit_sweep_tools_files_have_no_bare_controls():
+    files = (
+        "templates/_pulse_create.html", "templates/_pulse_copy.html",
+        "templates/_pulse_detail.html", "templates/_pulse_env_strip.html",
+        "static/pulses.js", "templates/_autofit.html", "static/autofit.js",
+        "templates/_scheduler.html", "static/scheduler.js", "static/agent-setup.js",
+        "static/agent.js", "templates/workbench.html",
+    )
+    for measure in (measure_bare_controls, measure_script_controls, measure_bare_buttons):
+        counts = measure()
+        for file in files:
+            assert counts.get(file, 0) == 0, (measure.__name__, file, counts.get(file))

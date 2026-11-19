@@ -137,26 +137,32 @@
   <div id="wb-bar">
     <span class="title">⌗ Sync-Qualibrate</span>
     <div id="wb-seg" role="group" aria-label="View">
-      <button type="button" data-view="qb"    title="Qualibrate only — full width (Alt+1)">Qualibrate</button>
-      <button type="button" data-view="split" title="Split — both side by side (Alt+2)">Split</button>
-      <button type="button" data-view="sm"    title="State Manager only — full width (Alt+3)">State Manager</button>
+      <button class="btn-sm" type="button" data-view="qb"    title="Qualibrate only &#8212; full width
+        (Alt+1)">Qualibrate</button>
+      <button class="btn-sm" type="button" data-view="split" title="Split &#8212; both side by side
+        (Alt+2)">Split</button>
+      <button class="btn-sm" type="button" data-view="sm"    title="State Manager only &#8212; full width (Alt+3)">State
+        Manager</button>
     </div>
     <span id="wb-nudge" class="wb-nudge" hidden>
       <span class="dot"></span>
       Live chip changed &middot; <b id="wb-nudge-count">0</b>&nbsp;<span id="wb-nudge-unit">values</span>
-      <button id="wb-nudge-show" type="button"
+      <button class="btn-sm" id="wb-nudge-show" type="button"
               title="Open the sync panel in the State Manager: before/after, nothing written yet">Show</button>
-      <button id="wb-nudge-x" type="button" class="x" title="Dismiss">✕</button>
+      <button id="wb-nudge-x" type="button" class="x btn-sm" title="Dismiss">&#10005;</button>
     </span>
     <span id="wb-watch" class="wb-watch" title="Watching Qualibrate's live state files"></span>
     <span class="spacer"></span>
-    <label for="wb-url">Qualibrate&nbsp;URL</label>
-    <input id="wb-url" type="text" spellcheck="false" />
-    <button id="wb-go" title="Reload the left pane with this URL">Reload</button>
-    <label for="wb-viasm" title="Show Qualibrate through the State Manager: each run gets an Open in QSM link that opens it on the right"><input id="wb-viasm" type="checkbox" />&nbsp;Through&nbsp;SM</label>
+    <label class="ui-field-label" for="wb-url">Qualibrate&nbsp;URL</label>
+    <input class="ui-input" id="wb-url" type="text" spellcheck="false" />
+    <button class="btn-sm" id="wb-go" title="Reload the left pane with this URL">Reload</button>
+    <label class="ui-check" for="wb-viasm" title="Show Qualibrate through the State Manager: each run gets an Open in
+      QSM link that opens it on the right"><input id="wb-viasm" type="checkbox" />&nbsp;Through&nbsp;SM</label>
     <a id="wb-newtab" href="#" target="_blank" rel="noopener">open ↗</a>
-    <button id="wb-detach" class="ghost" title="Open Qualibrate in its own window (great on a second monitor)">⧉ detach</button>
-    <button id="wb-help" class="ghost" title="Alt+1/2/3 = views · Alt+[ / ] = nudge divider · Esc = back to split">?</button>
+    <button id="wb-detach" class="ghost btn-sm" title="Open Qualibrate in its own window (great on a second
+      monitor)">&#10697; detach</button>
+    <button id="wb-help" class="ghost btn-sm" title="Alt+1/2/3 = views &#183; Alt+[ / ] = nudge divider &#183; Esc =
+      back to split">?</button>
   </div>
 
   <div id="wb-link" title="Is SM viewing the same chip Qualibrate is writing?">
@@ -166,7 +172,7 @@
       <span class="wb-link-sep">↔</span>
       <span class="wb-link-app">State&nbsp;Manager</span> <code class="wb-link-chip" id="wb-link-sm" title="">—</code>
     </span>
-    <button id="wb-link-load" hidden>⤵ Load <span id="wb-link-load-name"></span> in SM</button>
+    <button class="btn-sm" id="wb-link-load" hidden>&#10549; Load <span id="wb-link-load-name"></span> in SM</button>
     <span class="wb-link-msg" id="wb-link-msg"></span>
     <span class="wb-link-msg" id="wb-qb-note" hidden></span>
   </div>
@@ -441,8 +447,10 @@
         wrap.className = "gutter-chevrons";
         // ›  = give the LEFT pane (Qualibrate) the whole width
         // ‹  = give the RIGHT pane (State Manager) the whole width
-        wrap.innerHTML = '<button type="button" data-view="qb" title="Qualibrate full width">›</button>' +
-                         '<button type="button" data-view="sm" title="State Manager full width">‹</button>';
+        wrap.innerHTML = '<button class="btn-sm" type="button" data-view="qb"' +
+          ' title="Qualibrate full width">&#8250;</button>' +
+                         '<button class="btn-sm" type="button" data-view="sm"' +
+                           ' title="State Manager full width">&#8249;</button>';
         wrap.addEventListener("mousedown", function (e) { e.stopPropagation(); }); // don't start a drag
         wrap.addEventListener("click", function (e) {
           var b = e.target.closest("button"); if (b) setView(b.getAttribute("data-view"));

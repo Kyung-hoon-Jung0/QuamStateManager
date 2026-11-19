@@ -74,7 +74,9 @@ window.AgentSetup = (function () {
   }
   function done(x) { return '<span class="as-done" title="done">✓</span>'; }
   function sec(id, title, doneFlag, body, keepOpen) {
-    return '<details class="as-sec" id="as-' + id + '"' + (doneFlag && !keepOpen ? "" : " open") + '><summary>' + (doneFlag ? done() : '<span class="as-todo">●</span>') + " " + esc(title) + "</summary><div class=\"as-body\">" + body + "</div></details>";
+    return '<details class="ui-disclosure as-sec" id="as-' + id + '"' + (doneFlag && !keepOpen ? "" : " open") +
+      '><summary class=\"ui-disclosure-summary\">' + (doneFlag ? done() : '<span class="as-todo">\u25cf</span>') +
+      " " + esc(title) + "</summary><div class=\"as-body\">" + body + "</div></details>";
   }
 
   /* docs/288: the setup page is a short list of CARDS a person can read once:
@@ -118,7 +120,8 @@ window.AgentSetup = (function () {
     var tested = ((d.record || {}).tested || {})[k];
     var acts = connected
       ? '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.test(\'' + k + '\')">Confirm by ' + esc(NAMES[k]) + "</button>"
-        + '<button type="button" class="asx-link" onclick="AgentSetup.disconnect(\'' + k + '\')">Disconnect</button>'
+        + '<button type="button" class="btn-sm asx-link" onclick="AgentSetup.disconnect(\'' + k +
+          '\')">Disconnect</button>'
       : '<button type="button" class="btn-sm asx-btn" onclick="AgentSetup.preview(\'' + k + '\')">Connect</button>';
     var warn = "";
     if (k === "claude" && d.calibrations_folder && c.allow_python && c.allow_python.length) {
@@ -134,7 +137,9 @@ window.AgentSetup = (function () {
       + '<div class="asx-tile-acts">' + acts + "</div>"
       // the pin is an option OF Connect (it is read once, by preview): on a
       // connected tile an unchecked box would claim a state SM never read
-      + (connected ? "" : '<label class="asx-opt" title="Without this, a terminal agent asks which SM window and chip to use when several are open."><input type="checkbox" id="as-pin-' + k + '"> Always use this window and chip</label>')
+      + (connected ? "" : '<label class="ui-check asx-opt" title="Without this, a terminal agent asks which SM ' +
+        'window and chip to use when several are open."><input type="checkbox" id="as-pin-' + k +
+          '"> Always use this window and chip</label>')
       + '<div id="as-prev-' + k + '" class="asx-prev"></div></div>';
   }
 
@@ -178,7 +183,8 @@ window.AgentSetup = (function () {
     return '<div class="asx-result asx-result-bad"><p><b>' + esc(who) + "</b> did not answer" + (rec.elapsed_s ? " (" + esc(rec.elapsed_s) + " s)" : "")
       + ': <span class="ag-err">' + esc(why) + "</span></p>"
       + (login ? '<p class="asx-small">Open a terminal on this PC, run <code>' + esc(rec.backend) + "</code> once and log in there; then press Confirm again. SM never sees your login.</p>" : "")
-      + (rec.raw ? '<details class="asx-tech"><summary>Show the raw answer</summary><pre class="as-diff">' + esc(rec.raw) + "</pre></details>" : "") + "</div>";
+      + (rec.raw ? '<details class="ui-disclosure asx-tech"><summary class=\"ui-disclosure-summary\">Show ' +
+        'the raw answer</summary><pre class="as-diff">' + esc(rec.raw) + "</pre></details>" : "") + "</div>";
   }
   function confirmResult(rec, P) {
     if (!rec) return "";
@@ -186,7 +192,8 @@ window.AgentSetup = (function () {
     if (rec.failed || !rec.done || rec.parse_error) {
       if (rec.done && !rec.failed && rec.parse_error) {
         return staleLine(rec, P) + '<div class="asx-result asx-result-bad"><p><b>' + esc(who) + "</b> answered in " + esc(rec.elapsed_s) + " s, but the answer was not in the expected form.</p>"
-          + (rec.raw ? '<details class="asx-tech"><summary>Show the raw answer</summary><pre class="as-diff">' + esc(rec.raw) + "</pre></details>" : "") + "</div>";
+          + (rec.raw ? '<details class="ui-disclosure asx-tech"><summary class=\"ui-disclosure-summary\">Show ' +
+            'the raw answer</summary><pre class="as-diff">' + esc(rec.raw) + "</pre></details>" : "") + "</div>";
       }
       return staleLine(rec, P) + askFail(rec);
     }
@@ -350,7 +357,8 @@ window.AgentSetup = (function () {
     env.push(pathRow("as-storage", "Data folder", P.data_folder, dataProv(P), null));
     if (P.project) env.push(pathRow("as-statepath", "State path", P.state_path && P.state_path.native, prov(P.state_path, P), null));
     env.push('<div class="asx-row" id="as-dryrun"><span class="asx-k">Hardware</span><span class="asx-v">'
-      + '<label class="asx-switch"><input type="checkbox" id="as-dryrun-box"' + (dry ? " checked" : "") + ' onchange="AgentSetup.dryRun(this)"><span class="asx-knob"></span>'
+      + '<label class="ui-check asx-switch"><input type="checkbox" id="as-dryrun-box"' + (dry ? " checked" : "") +
+        ' onchange="AgentSetup.dryRun(this)"><span class="asx-knob"></span>'
       + '<span class="asx-dry-text">' + dryText(dry) + "</span></label></span>"
       + '<span class="asx-tag" title="the Runner\'s global_simulate, one value for this machine">SM setting, this machine</span>'
       + '<span id="as-dryrun-msg"></span></div>');
@@ -362,7 +370,8 @@ window.AgentSetup = (function () {
       + (!j.configured && j.suggested ? '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.journal()">Use this folder</button>' : "")
       + "</span>" + '<span class="asx-tag">' + esc(j.configured ? "your choice (SM setting)" : "beside the data folder") + "</span>"
       + (j.configured ? state("ok", "Saved") : state("todo", "Not saved yet")) + "</div>"
-      + '<label class="asx-opt asx-indent"><input type="checkbox" id="as-jsays"' + (j.claude_says ? " checked" : "") + "> Also record what the agent says at the end of a turn</label>");
+      + '<label class="ui-check asx-opt asx-indent"><input type="checkbox" id="as-jsays"' +
+        (j.claude_says ? " checked" : "") + "> Also record what the agent says at the end of a turn</label>");
     env.push(checksHtml(P));
     env.push(confirmHtml(d));
     parts.push(card("env", 2, "Where runs and notes live", envDone, env.join("")));
@@ -379,15 +388,35 @@ window.AgentSetup = (function () {
       var lim = S.limits.limits, modes = S.limits.modes || ["auto", "ask-writes", "ask-all"];
       var v = function (x) { return esc(x === undefined || x === null ? "" : String(x)); };
       var delta = lim.max_delta && Object.keys(lim.max_delta).length ? JSON.stringify(lim.max_delta) : "";
-      parts.push('<details class="asx-card asx-fold" id="as-limits"' + (S.limitsMsg ? " open" : "") + '><summary><span class="asx-step asx-step-done">⚙</span><h3>Safety limits for ' + esc(d.chip) + '</h3><span class="asx-tag">' + esc(lim.mode || "") + "</span></summary>"
+      parts.push('<details class="ui-disclosure asx-card asx-fold" id="as-limits"' + (S.limitsMsg ? " open" : "") +
+        '><summary class=\"ui-disclosure-summary\"><span class="asx-step asx-step-done">' +
+        '\u2699</span><h3>Safety limits for ' + esc(d.chip) + '</h3><span class="asx-tag">' + esc(lim.mode || "") +
+          "</span></summary>"
         + '<div class="asx-card-body"><p class="asx-small muted">What SM enforces on the agent, whatever it is told. Only a person changes these, here; every change is recorded in the journal.</p>'
         + '<div class="as-limits asx-limits">'
-        + '<label>Default mode <select id="as-lim-mode">' + modes.map(function (m) { return '<option value="' + esc(m) + '"' + (m === lim.mode ? " selected" : "") + ">" + esc(m) + "</option>"; }).join("") + "</select></label>"
-        + '<label>Max writes per plan <input id="as-lim-maxw" type="number" min="0" value="' + v(lim.max_writes_per_plan) + '"> <span class="muted">0 = no cap</span></label>'
-        + '<label>Refuse a run within <input id="as-lim-recent" type="number" min="0" value="' + v(lim.human_recent_min) + '"> min of a person\'s run</label>'
-        + '<label>Stop by <input id="as-lim-stop" type="text" placeholder="HH:MM" value="' + v(lim.stop_by) + '"></label>'
-        + '<label>Webhook <input id="as-lim-hook" type="text" placeholder="https://..." value="' + v(lim.webhook_url) + '"></label>'
-        + '<label>Max |&Delta;| per family <input id="as-lim-delta" type="text" placeholder=\'{"ramsey": 2e6}\' value="' + v(delta) + '"></label>'
+        + '<div class="ui-field"><label class="ui-field-label" for="as-lim-mode">Default mode </label><select ' +
+          'aria-label="Default mode" class=\"ui-select\" id="as-lim-mode">' +
+            modes.map(function (m) { return '<option value="' + esc(m) + '"' + (m === lim.mode ? " selected" : "") +
+            ">" + esc(m) + "</option>"; }).join("") + "</select></div>"
+        + '<div class="ui-field"><label class="ui-field-label" for="as-lim-maxw">Max writes per plan </label><input ' +
+          'aria-label="Max writes per plan" class=\"ui-input ui-input--num\" id="as-lim-maxw" ' +
+          'type="number" min="0" value="' + v(lim.max_writes_per_plan) +
+            '"> <span class="ui-field-hint">0 = no cap</span></div>'
+        + '<div class="ui-field"><label class="ui-field-label" for="as-lim-recent">Refuse a run within </label>' +
+          '<span class="ui-input-unit"><input ' +
+          'aria-label="Refuse a run within" class=\"ui-input ui-input--num\" id="as-lim-recent" ' +
+          'type="number" min="0" value="' + v(lim.human_recent_min)
+          + '"><span class="ui-input-unit-text">min</span></span>'
+          + '<span class="ui-field-hint">of a person\'s run</span></div>'
+        + '<div class="ui-field"><label class="ui-field-label" for="as-lim-stop">Stop by </label><input ' +
+          'aria-label="Stop by" class=\"ui-input\" id="as-lim-stop" type="text" ' +
+          'placeholder="HH:MM" value="' + v(lim.stop_by) + '"></div>'
+        + '<div class="ui-field"><label class="ui-field-label" for="as-lim-hook">Webhook </label><input ' +
+          'aria-label="Webhook" class=\"ui-input\" id="as-lim-hook" type="text" ' +
+          'placeholder="https://..." value="' + v(lim.webhook_url) + '"></div>'
+        + '<div class="ui-field"><label class="ui-field-label" for="as-lim-delta">Max |&Delta;| per family </label>' +
+          '<input aria-label="Max |&Delta;| per family" class=\"ui-input\" id="as-lim-delta" ' +
+          'type="text" placeholder=\'{"ramsey": 2e6}\' value="' + v(delta) + '"></div>'
         + '</div><div class="asx-tile-acts"><button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.saveLimits()">Save limits</button></div>'
         + '<div id="as-lim-msg"></div></div></details>');
     }
@@ -399,7 +428,8 @@ window.AgentSetup = (function () {
     if (d.calibrations_folder) tech.push("<li>Allowed tools: <code>" + esc(d.calibrations_folder) + "\\.claude\\settings.local.json</code></li>");
     tech.push("<li>Journal: <code>" + esc(j.root || "") + "</code></li>");
     if (d.hook_command) tech.push("<li>Hook command: <code>" + esc(d.hook_command) + "</code></li>");
-    parts.push('<details class="asx-tech"><summary>Technical details</summary><ul>' + tech.join("") + "</ul>"
+    parts.push('<details class="ui-disclosure asx-tech"><summary class=\"ui-disclosure-summary\">' +
+      'Technical details</summary><ul>' + tech.join("") + "</ul>"
       + '<p class="asx-small muted">Each file SM changes gets a dated backup beside it (<code>*.sm-backup-YYYYMMDD-HHMMSS</code>). Login stays in the terminal on this PC\'s own account.</p></details>');
 
     root.innerHTML = '<div class="asx">' + parts.join("") + "</div>";
@@ -463,8 +493,10 @@ window.AgentSetup = (function () {
       host.innerHTML = '<div class="asx-confirm"><p>SM will change ' + esc(NAMES[k]) + "'s settings to:</p><ul>" + what + "</ul>"
         + '<p class="asx-small muted">A backup of each file is kept beside it; Disconnect takes the changes back.</p>'
         + '<div class="asx-tile-acts"><button type="button" class="btn-sm asx-btn ag-start" onclick="AgentSetup.connect(\'' + k + '\')">Connect ' + esc(NAMES[k]) + "</button>"
-        + '<button type="button" class="asx-link" onclick="AgentSetup.cancel(\'' + k + '\')">Cancel</button></div>'
-        + '<details class="asx-tech"><summary>Show exact changes</summary>' + diffs + "</details></div>";
+        + '<button type="button" class="btn-sm asx-link" onclick="AgentSetup.cancel(\'' + k +
+          '\')">Cancel</button></div>'
+        + '<details class="ui-disclosure asx-tech"><summary class=\"ui-disclosure-summary\">Show ' +
+          'exact changes</summary>' + diffs + "</details></div>";
     });
   }
   function asking(k, on) {
@@ -631,7 +663,7 @@ window.AgentSetup = (function () {
     var v = S.answers[q.id];
     if (q.kind === "choice") {
       // review r3 P2-5: "(detected)" only for what SM detected; nothing chosen = an empty choice
-      return '<select data-q="' + esc(q.id) + '" onchange="AgentSetup.answer(this)">'
+      return '<select class=\"ui-select\" data-q="' + esc(q.id) + '" onchange="AgentSetup.answer(this)">'
         + '<option value=""' + (v === undefined || v === null || v === "" ? " selected" : "") + ">— not answered —</option>"
         + q.options.map(function (o) {
         return '<option value="' + esc(o) + '"' + (o === v ? " selected" : "") + ">" + esc(optLabel(o)) + (q.detected !== null && q.detected !== undefined && o === q.detected ? " (SM detected)" : "") + "</option>";
@@ -641,11 +673,13 @@ window.AgentSetup = (function () {
     if (q.kind === "list") {
       // free text with the chip's own names offered; any text is accepted (D-20)
       var list = Array.isArray(v) ? v.join(", ") : String(v || "");
-      return '<input type="text" data-q="' + esc(q.id) + '" list="as-nt-tokens" value="' + esc(list) + '" placeholder="e.g. q3, twpa, qubits.q1.xy" onchange="AgentSetup.answer(this)">'
+      return '<input class=\"ui-input\" type="text" data-q="' + esc(q.id) + '" list="as-nt-tokens" value="' +
+        esc(list) + '" placeholder="e.g. q3, twpa, qubits.q1.xy" onchange="AgentSetup.answer(this)">'
         + ntInForce()
         + '<datalist id="as-nt-tokens">' + (q.tokens || []).map(function (t) { return '<option value="' + esc(t) + '">'; }).join("") + "</datalist>";
     }
-    return '<textarea data-q="' + esc(q.id) + '" rows="3" onchange="AgentSetup.answer(this)">' + esc(v || "") + "</textarea>";
+    return '<textarea class=\"ui-textarea\" data-q="' + esc(q.id) +
+      '" rows="3" onchange="AgentSetup.answer(this)">' + esc(v || "") + "</textarea>";
   }
   // decision D-25: SM states only what it checked mechanically -- never whether the
   // citation SUPPORTS the answer. Facts are neutral (no green, no red cross).
@@ -685,7 +719,8 @@ window.AgentSetup = (function () {
       + '<div class="ui-item-foot">'
       + (a.value !== null && a.value !== undefined ? '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.review(\'' + esc(a.id) + '\', \'accepted\')">Accept</button>' : "")
       + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.review(\'' + esc(a.id) + '\', \'edited\')">Edit</button>'
-      + '<button type="button" class="asx-link" onclick="AgentSetup.review(\'' + esc(a.id) + '\', \'rejected\')">Reject</button></div></article>';
+      + '<button type="button" class="btn-sm asx-link" onclick="AgentSetup.review(\'' + esc(a.id) +
+        '\', \'rejected\')">Reject</button></div></article>';
   }
   // review r4 P2-6: the popup says what SM detected and what the agent leaned towards; nothing is pre-selected
   function popupFacts(qid, q) {
@@ -708,7 +743,8 @@ window.AgentSetup = (function () {
     return '<div class="ui-dialog ui-dialog--s" role="dialog" id="as-popup" data-q="' + esc(qid) + '" aria-label="' + esc(q.question) + '">'
       + '<div class="ui-dialog-head"><b>Please answer</b></div>'
       + '<div class="ui-dialog-body"><p>' + esc(q.question) + "</p>" + popupFacts(qid, q) + body + "</div>"
-      + '<div class="ui-dialog-foot"><button type="button" class="asx-link" onclick="AgentSetup.popupSkip()">Later</button></div></div>';
+      + '<div class="ui-dialog-foot"><button type="button" class="btn-sm asx-link" ' +
+        'onclick="AgentSetup.popupSkip()">Later</button></div></div>';
   }
   function investigateHtml() {
     var rec = (S.asks || {}).investigate;
@@ -725,7 +761,9 @@ window.AgentSetup = (function () {
     if (!rec) return head;
     var out = [head, staleLine(rec)];
     if (rec.failed || !rec.done) return out.join("") + askFail(rec);
-    if (rec.parse_error) return out.join("") + '<p class="ag-err">the answer was not in the expected form</p>' + (rec.raw ? '<details class="asx-tech"><summary>Show the raw answer</summary><pre class="as-diff">' + esc(rec.raw) + "</pre></details>" : "");
+    if (rec.parse_error) return out.join("") + '<p class="ag-err">the answer was not in the expected form</p>' +
+      (rec.raw ? '<details class="ui-disclosure asx-tech"><summary class=\"ui-disclosure-summary\">Show ' +
+      'the raw answer</summary><pre class="as-diff">' + esc(rec.raw) + "</pre></details>" : "");
     out.push('<p class="asx-small muted">' + esc(NAMES[rec.backend] || rec.backend) + " answered in " + esc(rec.elapsed_s) + " s"
       + (rec.dropped_ids ? " · " + esc(rec.dropped_ids) + " answers outside the questions dropped" : "")
       + (rec.dropped_values ? " · " + esc(rec.dropped_values) + " values outside the options dropped" : "") + "</p>");
@@ -734,7 +772,8 @@ window.AgentSetup = (function () {
       var pending = (S.popupQueue || []).filter(function (id) { return !S.popupDone[id]; });
       if (pending.length) out.push(popupHtml(pending[0]));
     }
-    if (rec.raw) out.push('<details class="asx-tech"><summary>Show the raw answer</summary><pre class="as-diff">' + esc(rec.raw) + "</pre></details>");
+    if (rec.raw) out.push('<details class="ui-disclosure asx-tech"><summary class=\"ui-disclosure-summary\">Show ' +
+      'the raw answer</summary><pre class="as-diff">' + esc(rec.raw) + "</pre></details>");
     if (rec.also_asked && rec.also_asked.length) {
       out.push('<p class="asx-small muted" id="as-also-asked">The agent also asked (not saved): ' + rec.also_asked.map(esc).join(" · ") + "</p>");
     }
@@ -768,7 +807,9 @@ window.AgentSetup = (function () {
         var start = S.answers[q.id] !== undefined ? S.answers[q.id] : saved[q.id];
         if (start === null || start === undefined || (Array.isArray(start) && !start.length && q.kind !== "list")) delete S.answers[q.id];
         else S.answers[q.id] = start;
-        html.push('<div class="as-q" data-qid="' + esc(q.id) + '"><label>' + esc(q.question) + (q.why ? ' <span class="muted" title="' + esc(q.why) + '">(why?)</span>' : "") + "</label>" + ctrlHtml(q) + "</div>");
+        html.push('<div class="as-q ui-field" data-qid="' + esc(q.id) + '"><label class="ui-field-label">' +
+          esc(q.question) + (q.why ? ' <span class="muted" title="' + esc(q.why) + '">(why?)</span>' : "") +
+          "</label>" + ctrlHtml(q) + "</div>");
       });
       // D-23: a result kept for this SM session is re-read with the page
       var inv = (S.asks || {}).investigate;
@@ -776,9 +817,12 @@ window.AgentSetup = (function () {
       html.push('<div id="as-inv"></div>');
       // review r4 P3-9: one box per file, each with its own sentence
       html.push('<div class="as-acts"><span class="muted">Write the notes for:</span> '
-        + '<label class="ag-observer"><input type="checkbox" id="as-ctx-claude" checked> Claude Code</label> '
-        + '<label class="ag-observer"><input type="checkbox" id="as-ctx-local" checked> as CLAUDE.local.md (kept out of git)</label> '
-        + '<label class="ag-observer" title="Codex reads one project file per folder: AGENTS.md. It ignores AGENTS.local.md."><input type="checkbox" id="as-ctx-codex" checked> Codex (AGENTS.md)</label> ' +
+        + '<label class="ui-check ag-observer"><input type="checkbox" id="as-ctx-claude" checked> Claude Code</label> '
+        + '<label class="ui-check ag-observer"><input type="checkbox" id="as-ctx-local" checked> ' +
+          'as CLAUDE.local.md (kept out of git)</label> '
+        + '<label class="ui-check ag-observer" title="Codex reads one project file per folder: ' +
+          'AGENTS.md. It ignores AGENTS.local.md."><input type="checkbox" id="as-ctx-codex" ' +
+          'checked> Codex (AGENTS.md)</label> ' +
         '<button type="button" class="btn-sm" onclick="AgentSetup.previewContext()">Preview the block</button></div><div id="as-ctx-prev"></div>');
       host.innerHTML = html.join("");
       renderInvestigate();
