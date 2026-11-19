@@ -1169,6 +1169,29 @@ def _occupancy_verdict(answer, health_state, idle_states):
     return {'label': 'OPEN ' + str(len(qms)), 'reason': reason}
 
 
+def badge_label(answer, health_state, state):
+    """The top-bar badge word: the health result, or the occupancy when health is merely unassessed.
+
+    Health stays grey ("not assessed") while no admin URL and no limits are set, even though the
+    monitor reads the server fine; then a fresh read says busy / free / N open, from the same
+    occupancy rule as the page band. Stale, unconfigured or unknown reads stay "not checked".
+    """
+    if health_state.get('problem'):
+        return 'problem'
+    if health_state['color'] != 'grey':
+        return health_state['reason']
+    if state != 'ok' or 'no admin URL' not in health_state['reason'] or not answer:
+        return 'not checked'
+    occ = _occupancy_verdict(answer, health_state, {})['label']
+    if occ == 'BUSY':
+        return 'busy'
+    if occ == 'FREE':
+        return 'free'
+    if occ.startswith('OPEN '):
+        return occ.split(' ')[1] + ' open'
+    return 'not checked'
+
+
 def band_view(verdict_value, state, health, problem_details=None):
     """Display values of the page's verdict band, from the verdict already computed.
 
@@ -1744,6 +1767,7 @@ class Monitor:
                               else 'No good read yet.')
         return {"section_times": self.section_times, "section_errors": self.section_errors, "state": state, "sentence": sentence, "sentence_shown": sentence_shown or sentence, "age_s": age,
                 'health': health_state, 'admin': self.admin,
+                'badge_label': badge_label(self.last_answer, health_state, state),
                 "answer": self.last_answer, "target_label": target_label(s.get("target") or {}),
                 "target_kind": (s.get("target") or {}).get("kind"),
                 "target_source": s.get("target_source"),

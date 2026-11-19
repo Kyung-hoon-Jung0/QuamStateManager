@@ -2,7 +2,7 @@
 {%- set tip = h.reason ~ (': ' ~ h.details if h.details and h.details != h.reason else '') -%}
 {%- set unset = h.color == 'grey' and not h.problem and 'no admin URL' in h.reason -%}
 {%- set tip = tip ~ ('. Set an admin URL or temperature limits in Monitor settings.' if unset else '') -%}
-{%- set label = 'problem' if h.problem else ('not checked' if h.color == 'grey' else h.reason) -%}
+{%- set label = st.badge_label or ('problem' if h.problem else ('not checked' if h.color == 'grey' else h.reason)) -%}
 <a href="/opx-monitor/live" class="ui-opxmon-health" data-health="{{ h.color }}" data-valid-ms="{{ st.valid_for_ms }}"
    title="{{ tip }}"><span class="ui-opxmon-health-dot {{ 'ui-opxmon-health-dot--' ~ h.color }}"
    aria-hidden="true">&#9679;</span> OPX {{ label }}</a>

@@ -2729,8 +2729,38 @@ def test_unconfigured_top_bar_badge_is_short_and_the_tooltip_says_how_to_fix(env
     with app.test_request_context('/'):
         from flask import render_template
         pill = render_template('_opx_alarm_badge.html', st=st)
-    assert '> OPX not checked</a>' in pill
+    assert '> OPX busy</a>' in pill
     assert 'no admin URL / no limits set' not in pill.split('title="')[1].split('">', 1)[1]
     title = pill.split('title="')[1].split('"')[0]
     assert 'no admin URL / no limits set' in title
     assert 'Set an admin URL or temperature limits in Monitor settings.' in title
+
+
+GREY_UNSET = {'color': 'grey', 'reason': 'health not assessed: no admin URL / no limits set'}
+
+
+@pytest.mark.parametrize('ans, state, word', [
+    (answer(), 'ok', 'busy'),
+    (answer(qms=()), 'ok', 'free'),
+    (answer(qms=(("QM-a", [("j1", "Completed")], []), ("QM-b", [], []))), 'ok', '2 open'),
+    (answer(), 'stale', 'not checked'),
+    (None, 'ok', 'not checked'),
+    ({**answer(), 'open_qms': None}, 'ok', 'not checked'),
+])
+def test_unassessed_badge_says_the_occupancy_of_a_fresh_read(ans, state, word):
+    assert om.badge_label(ans, GREY_UNSET, state) == word
+
+
+def test_badge_keeps_health_words_when_health_is_assessed():
+    assert om.badge_label(answer(), {'color': 'red', 'problem': True, 'reason': 'x'}, 'ok') == 'problem'
+    assert om.badge_label(answer(), {'color': 'amber', 'reason': '1 open QM claims resources'}, 'ok')         == '1 open QM claims resources'
+    assert om.badge_label(answer(), {'color': 'grey', 'reason': 'health not assessed'}, 'ok') == 'not checked'
+
+
+def test_stale_monitor_badge_says_not_checked(env):
+    app, m, w, clock, _ = env
+    w.script[:] = [answer()]
+    m.poll_once()
+    clock.t += 3600
+    st = m.status()
+    assert st['state'] != 'ok' and st['badge_label'] == 'not checked'
