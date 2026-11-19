@@ -27,7 +27,7 @@ function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } else { pas
 
 // the real block, lifted out of the real template (no Jinja inside it)
 const tpl = fs.readFileSync(path.join(ROOT, 'templates', '_autofit.html'), 'utf8');
-const start = tpl.indexOf('<details class="autofit-profile autofit-ai"');
+const start = tpl.indexOf('<details class="autofit-profile autofit-ai ui-disclosure"');
 const end = tpl.indexOf('</details>', start) + '</details>'.length;
 if (start < 0 || end < start) { console.error('FAIL: block not found in template'); process.exit(1); }
 const block = tpl.slice(start, end);

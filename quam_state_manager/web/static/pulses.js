@@ -970,7 +970,7 @@ window.PulsesPage = (function () {
         tr.setAttribute('data-for', row.rowIndex);
         var td = document.createElement('td');
         td.colSpan = 2;
-        var slider = document.createElement('input');
+        var slider = document.createRange().createContextualFragment('<input type="range">').firstChild;
         slider.type = 'range';
         slider.min = bounds.min;
         slider.max = bounds.max;
@@ -1356,18 +1356,20 @@ window.PulsesPage = (function () {
         var wrap = document.getElementById('pulse-create-fields');
         if (!wrap) return;
         wrap.innerHTML = '';
-        var fs = document.createElement('fieldset');
-        fs.className = 'pulse-create-grid';
+        var fs = document.createElement('div');
+        fs.className = 'pulse-create-grid ui-field-grid';
         spec.params.forEach(function (p) {
             if (p.name === 'length' && spec.length_mode !== 'explicit') return;
             if (p.name === 'id' || p.name === 'digital_marker') return;
             if (!p.synth && !p.required && p.default === null) return;
-            var label = document.createElement('label');
-            label.className = 'pulse-create-field';
-            var span = document.createElement('span');
-            span.className = 'pulse-create-field-label';
-            span.textContent = p.label + (p.unit ? ' (' + p.unit + ')' : '');
-            var input = document.createElement('input');
+            var label = document.createElement('div');
+            label.className = 'pulse-create-field ui-field';
+            var span = document.createElement('label');
+            span.className = 'pulse-create-field-label ui-field-label';
+            span.textContent = p.label;
+            var input = document.createRange().createContextualFragment('<input class="ui-input">').firstChild;
+            input.id = 'pulse-create-param-' + p.name;
+            span.htmlFor = input.id;
             input.type = 'text';   // text, not number — pointer strings allowed
             input.name = p.name;
             input.setAttribute('data-kind', p.kind);
@@ -1378,14 +1380,25 @@ window.PulsesPage = (function () {
                 input.placeholder = 'none';
             }
             label.appendChild(span);
-            label.appendChild(input);
+            if (p.unit) {
+                var unit = document.createElement('span');
+                unit.className = 'ui-input-unit';
+                var unitText = document.createElement('span');
+                unitText.className = 'ui-input-unit-text';
+                unitText.textContent = p.unit;
+                unit.appendChild(input);
+                unit.appendChild(unitText);
+                label.appendChild(unit);
+            } else {
+                label.appendChild(input);
+            }
             if (_qubitDefault(p.name)) {
                 input.setAttribute('data-qubit-default', p.name);
                 if (p.default !== null && p.default !== undefined) {
                     input.setAttribute('data-catalog-default', input.value);
                 }
                 var note = document.createElement('span');
-                note.className = 'muted';
+                note.className = 'muted ui-field-hint';
                 note.setAttribute('data-field-note', '');
                 label.appendChild(note);
                 _applyQubitDefault(input);
@@ -1416,7 +1429,8 @@ window.PulsesPage = (function () {
         if (!d) return;
         input.value = d.value != null ? String(d.value)
             : (input.getAttribute('data-catalog-default') || '');
-        var note = input.parentNode && input.parentNode.querySelector('[data-field-note]');
+        var field = input.closest('.pulse-create-field');
+        var note = field && field.querySelector('[data-field-note]');
         if (note) note.textContent = d.note || '';
     }
 

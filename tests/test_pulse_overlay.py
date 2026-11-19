@@ -107,7 +107,7 @@ def test_compare_is_the_same_route_with_paths(client):
 
 def test_view_bar_markup_present(client):
     html, _ = _detail(client, f"path={PAIR}.flux_pulse_qubit")
-    assert 'class="pulse-overlay-bar pulse-view-bar"' in html and 'class="pulse-overlay-pick"' in html
+    assert 'class="pulse-overlay-bar pulse-view-bar"' in html and 'class="pulse-overlay-pick ui-select"' in html
     assert html.count('class="pulse-overlay-chip on"') == 2, "one chip per pulse in view"
     assert html.count("data-drop-path=") == 2, "with more than one pulse in view, every chip can be dropped"
     # docs/141 4l-review: a JSON list, never a comma-joined string

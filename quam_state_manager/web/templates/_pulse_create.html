@@ -28,22 +28,22 @@
     <div class="ui-zone-head"><span class="ui-zone-step" aria-hidden="true">1</span><h3 class="ui-zone-title">Where the pulse goes</h3></div>
     <div class="ui-zone-body">
 
-    <fieldset class="pulse-target-row">
-        <legend>Target</legend>
-        <label><input type="radio" name="target_kind" value="qubit" checked
+    <div class="pulse-target-row ui-field-grid" role="group" aria-label="Pulse target">
+        <span class="ui-field-label">Target</span>
+        <label class="ui-check"><input type="radio" name="target_kind" value="qubit" checked
                       onchange="PulsesPage.createTargetKind(this)"> Qubit channel</label>
-        <label><input type="radio" name="target_kind" value="pair"
+        <label class="ui-check"><input type="radio" name="target_kind" value="pair"
                       onchange="PulsesPage.createTargetKind(this)"
                       {% if not pairs_all %}disabled title="No gate on this chip has an empty flux slot with a channel to play it (a slot that links to a channel pulse is edited on that pulse)"{% endif %}> Empty gate slot</label>
-        <label><input type="radio" name="target_kind" value="pair_channel"
+        <label class="ui-check"><input type="radio" name="target_kind" value="pair_channel"
                       onchange="PulsesPage.createTargetKind(this)"
                       {% if not pair_channels_map %}disabled title="No CR/ZZ pair channels on this chip"{% endif %}> Pair CR/ZZ channel</label>
         <span data-target-kind="qubit" class="pulse-target-fields">
-            <select name="qubit" aria-label="Qubit"
+            <select class="ui-select" name="qubit" aria-label="Qubit"
                     onchange="PulsesPage.createValidateName()">
                 {% for q in qubit_names %}<option {% if q == sel_qubit %}selected{% endif %}>{{ q }}</option>{% endfor %}
             </select>
-            <select name="channel" aria-label="Channel"
+            <select class="ui-select" name="channel" aria-label="Channel"
                     onchange="PulsesPage.createValidateName()">
                 <option {% if sel_channel == 'xy' %}selected{% endif %}>xy</option>
                 <option {% if sel_channel == 'z' %}selected{% endif %}>z</option>
@@ -56,30 +56,30 @@
            ones disabled with an edit-instead link) → pulse type. Options are
            populated by JS from the pairs-info island. #}
         <span data-target-kind="pair" class="pulse-target-fields" hidden>
-            <select name="pair" aria-label="Pair" id="pulse-create-pair"
+            <select class="ui-select" name="pair" aria-label="Pair" id="pulse-create-pair"
                     onchange="PulsesPage.createPairSelected(this)">
                 {% for p in pairs_all %}<option>{{ p }}</option>{% endfor %}
             </select>
-            <select name="gate" aria-label="Gate" id="pulse-create-gate"
+            <select class="ui-select" name="gate" aria-label="Gate" id="pulse-create-gate"
                     onchange="PulsesPage.createGateSelected(this)"></select>
-            <select name="slot" aria-label="Slot" id="pulse-create-slot"
+            <select class="ui-select" name="slot" aria-label="Slot" id="pulse-create-slot"
                     onchange="PulsesPage.createSlotSelected(this)"></select>
-            <input type="text" name="new_gate_name" id="pulse-create-newgate-name"
+            <input class="ui-input" type="text" name="new_gate_name" id="pulse-create-newgate-name"
                    aria-label="New gate name" placeholder="new gate name, e.g. cz_snz"
                    pattern="{{ op_name_pattern }}" autocomplete="off" hidden
                    oninput="PulsesPage.createValidateGateName()">
         </span>
         <span data-target-kind="pair_channel" class="pulse-target-fields" hidden>
-            <select name="pc_pair" aria-label="Pair"
+            <select class="ui-select" name="pc_pair" aria-label="Pair"
                     onchange="PulsesPage.createPairChannels(this)">
                 {% for p in pair_channels_map %}<option>{{ p }}</option>{% endfor %}
             </select>
-            <select name="pc_channel" aria-label="Pair channel"
+            <select class="ui-select" name="pc_channel" aria-label="Pair channel"
                     onchange="PulsesPage.createValidateName()">
                 {% for ch in pair_channels_map.values() | first | default([]) %}<option>{{ ch }}</option>{% endfor %}
             </select>
         </span>
-    </fieldset>
+    </div>
 
     {# pair mode only: control/target with frequencies + the CZ-orientation
        check (control = higher f₀₁ — display + warn, never auto-flip: pair
@@ -94,9 +94,9 @@
     <div class="ui-zone-head"><span class="ui-zone-step" aria-hidden="true">2</span><h3 class="ui-zone-title">What pulse</h3></div>
     <div class="ui-zone-body">
 
-    <div class="pulse-create-row">
-        <label for="pulse-create-type">Pulse type</label>
-        <select name="pulse_type" id="pulse-create-type"
+    <div class="pulse-create-row ui-field">
+        <label class="ui-field-label" for="pulse-create-type">Pulse type</label>
+        <select class="ui-select" name="pulse_type" id="pulse-create-type"
                 onchange="PulsesPage.createTypeChanged(this)">
             {# The per-option env verdicts (✓ importable / not in this env)
                are decorated by JS from the catalog JSON's `verify` field —
@@ -110,19 +110,19 @@
             {% endfor %}
         </select>
         {% include '_pulse_class_find.html' %}
-        <p class="pulse-type-hint muted" id="pulse-create-hint"></p>
+        <p class="pulse-type-hint muted ui-field-hint" id="pulse-create-hint"></p>
     </div>
 
-    <div class="pulse-create-row" data-target-kind="qubit pair_channel">
-        <label for="pulse-create-name">Operation name</label>
-        <input type="text" name="op_name" id="pulse-create-name" required
+    <div class="pulse-create-row ui-field" data-target-kind="qubit pair_channel">
+        <label class="ui-field-label" for="pulse-create-name">Operation name</label>
+        <input class="ui-input" type="text" name="op_name" id="pulse-create-name" required
                pattern="{{ op_name_pattern }}" autocomplete="off"
                placeholder="e.g. x180_v2"
                oninput="PulsesPage.createValidateName()">
     </div>
 
-    <div class="pulse-create-row">
-        <label>Class path
+    <div class="pulse-create-row ui-field">
+        <label class="ui-field-label">Class path
             <span class="muted">(the <code>__class__</code> written to state.json)</span></label>
         {# r15 (docs/71 §2): READ-ONLY — users must never type class paths.
            The value is derived server-side (chip evidence > chip prefix >
@@ -130,7 +130,7 @@
            the id is kept so existing pins keep passing. #}
         <code class="pulse-qclass-display" id="pulse-create-qclass-display"></code>
         <input type="hidden" name="qclass" id="pulse-create-qclass">
-        <p class="pulse-qclass-hint muted" id="pulse-create-qclass-hint"></p>
+        <p class="pulse-qclass-hint muted ui-field-hint" id="pulse-create-qclass-hint"></p>
     </div>
 
     <div id="pulse-create-fields" class="pulse-create-fields">

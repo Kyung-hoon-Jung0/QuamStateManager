@@ -544,25 +544,26 @@
 
     // inline icon button (title + aria-label so screen readers announce it)
     function btn(act, label, glyph, extra) {
-      return '<button type="button" class="sched-mini" data-act="' + act + '" title="'
+      return '<button type="button" class="btn-sm sched-mini" data-act="' + act + '" title="'
         + esc(label) + '" aria-label="' + esc(label) + '"' + (extra || "") + ">" + glyph + "</button>";
     }
     // overflow-menu item — a text label (better a11y than a glyph)
     function menuItem(act, label, extra) {
-      return '<button type="button" data-act="' + act + '"' + (extra || "")
+      return '<button class=\"btn-sm\" type="button" data-act="' + act + '"' + (extra || "")
         + ' aria-label="' + esc(label) + '">' + esc(label) + "</button>";
     }
     var inlineActions =
       (canOverride ? btn("params", "Edit parameters", "⚙") : "") +
       (it.result_ref && it.result_ref.uid
-        ? '<button type="button" class="sched-mini sched-result-link" data-act="result" title="View run #'
+        ? '<button type="button" class="btn-sm sched-mini sched-result-link" data-act="result" title="View run #'
           + esc(it.result_ref.run_id) + ' in Datasets" aria-label="View run '
           + esc(it.result_ref.run_id) + ' in Datasets">↗</button>' : "") +
       // No Remove on the running item — its subprocess is driving hardware; the
       // server no-ops it too (removing the row wouldn't kill the run).
       (it.status === "running" ? "" : btn("remove", "Remove", "✕"));
     var overflowMenu =
-      '<details class="sched-overflow"><summary class="sched-mini" title="More actions"'
+      '<details class="ui-disclosure sched-overflow"><summary class="ui-disclosure-summary ' +
+        'sched-mini" title="More actions"'
         + ' aria-label="More actions for ' + nm + '">⋯</summary>'
       + '<div class="sched-overflow-menu" role="menu">'
         + menuItem("insert", "Insert node after…")
@@ -591,7 +592,7 @@
     row.innerHTML =
       '<span class="sched-item-gutter" aria-hidden="true">' + glyph + "</span>" +
       '<span class="sched-item-grip" aria-hidden="true" title="Drag to reorder">' + (draggable ? "⠿" : "") + "</span>" +
-      '<input type="checkbox" class="sched-item-enabled" ' + (it.enabled ? "checked" : "")
+      '<input type="checkbox" class="sched-item-enabled ui-check-box" ' + (it.enabled ? "checked" : "")
         + ' title="Enable / disable" aria-label="Enable / disable ' + nm + '">' +
       '<span class="sched-item-name"><span class="sched-item-name-text">' + nm + "</span>" +
         labelHtml + autoChip + ruleChip + noteChip +
@@ -635,8 +636,10 @@
         var earlierPresses = (rv.presses || []).filter(function (h) { return h && h.message; });
         if (earlierPresses.length) {
           var det = document.createElement("details");
+          det.className = "ui-disclosure";
           det.setAttribute("data-revert-presses", String(earlierPresses.length));
           var sm = document.createElement("summary");
+          sm.className = "ui-disclosure-summary";
           sm.textContent = "Earlier presses (" + earlierPresses.length + ")";
           det.appendChild(sm);
           earlierPresses.slice().reverse().forEach(function (h) {
@@ -721,9 +724,10 @@
     var chip = row.querySelector(".sched-item-targets-chip");
     if (!chip) return;
     function openEditor() {
-      var input = document.createElement("input");
+      var input = document.createRange()
+        .createContextualFragment('<input class="ui-input">').firstChild;
       input.type = "text";
-      input.className = "sched-item-targets-edit";
+      input.className = "sched-item-targets-edit ui-input";
       input.value = (it.targets || []).join(", ");
       input.placeholder = "all active (" + it.targets_name + ")";
       chip.replaceWith(input);
@@ -885,7 +889,7 @@
       row.classList.add("selected");
     }
     row.innerHTML =
-      '<button type="button" class="sched-env-pick"></button>' +
+      '<button type="button" class="btn-sm sched-env-pick"></button>' +
       '<span class="sched-env-name">' + esc(env.name) + "</span>" +
       '<span class="sched-env-path muted">' + esc(env.python) + "</span>" +
       '<span class="sched-env-status" data-state="checking">probing…</span>';
@@ -983,9 +987,10 @@
       ["calibration_library.folder", c.calibration_library_folder],
       ["editable install", ed.path || ed.url || (ed.dist ? "(no direct_url)" : "(none)")],
     ];
-    var html = '<table class="sched-config-table"><tbody>';
+    var html = '<table class="ui-table sched-config-table"><tbody>';
     rows.forEach(function (kv) {
-      html += "<tr><th>" + esc(kv[0]) + "</th><td><code>" + esc(kv[1] || "—") + "</code></td></tr>";
+      html += "<tr><th class=\"ui-table-head\">" + esc(kv[0]) + "</th><td class=\"ui-table-cell\"><code>" +
+        esc(kv[1] || "\u2014") + "</code></td></tr>";
     });
     html += "</tbody></table>";
     var v = r.versions || {};
@@ -1108,26 +1113,31 @@
     var val = (current === undefined) ? def : current;
     var valStr = (val === null || val === undefined) ? ""
       : (Array.isArray(val) ? JSON.stringify(val) : String(val));
-    var common = ' data-param="' + esc(name) + '" data-ptype="' + esc(ptype)
+    var fieldId = "sched-param-" + esc(name);
+    var common = ' id="' + fieldId + '" aria-label="' + esc(schema.title || name) + '" data-param="'
+      + esc(name) + '" data-ptype="' + esc(ptype)
       + '" data-default="' + esc(defStr) + '"';
     var input;
     if (ptype === "boolean") {
       input = '<input type="checkbox"' + common + (String(val) === "true" ? " checked" : "") + ">";
     } else if (schema.enum) {
-      input = '<select' + common + ">" + schema.enum.map(function (o) {
+      input = '<select class=\"ui-select\"' + common + ">" + schema.enum.map(function (o) {
         return '<option value="' + esc(String(o)) + '"' + (String(val) === String(o) ? " selected" : "")
           + ">" + esc(String(o)) + "</option>";
       }).join("") + "</select>";
     } else if (ptype === "integer" || ptype === "number") {
-      input = '<input type="number" step="' + (ptype === "integer" ? "1" : "any") + '"'
+      input = '<input class=\"ui-input ui-input--num\" type="number" step="' + (ptype === "integer" ? "1" : "any") + '"'
         + common + ' value="' + esc(valStr) + '">';
     } else {
-      input = '<input type="text"' + common + ' value="' + esc(valStr) + '">';
+      input = '<input class=\"ui-input\" type="text"' + common + ' value="' + esc(valStr) + '">';
     }
     var desc = schema.description
-      ? '<span class="sched-pdesc muted">' + esc(String(schema.description).split("\n")[0]) + "</span>" : "";
-    return '<label class="sched-pfield"><span class="sched-pname">' + esc(schema.title || name)
-      + "</span>" + input + desc + "</label>";
+      ? '<span class="sched-pdesc muted ui-field-hint">' + esc(String(schema.description).split("\n")[0]) +
+        "</span>" : "";
+    return '<div class="sched-pfield ui-field"><label class="sched-pname ui-field-label" for="' + fieldId + '">'
+      + esc(schema.title || name) + "</label>"
+      + (ptype === "boolean" ? '<label class="ui-check">' + input + "</label>" : input)
+      + desc + "</div>";
   };
 
   SchedulerUI.prototype.openParamEditor = function (it) {
@@ -1168,7 +1178,7 @@
     }).join("") || '<p class="muted">No editable parameters.</p>');
     card.innerHTML =
       '<header class="sched-modal-head"><strong id="sched-modal-title">Parameters — ' + esc(it.name) + "</strong>" +
-      '<button type="button" class="sched-modal-close" aria-label="Close">&times;</button></header>' +
+      '<button type="button" class="btn-sm sched-modal-close" aria-label="Close">&times;</button></header>' +
       '<div class="sched-modal-body">' + body + "</div>" +
       '<footer class="sched-modal-foot">' +
         '<button type="button" class="btn-sm outline sched-modal-reset">Reset all</button>' +
@@ -1241,25 +1251,26 @@
     card.setAttribute("role", "dialog");
     card.setAttribute("aria-modal", "true");
     var libHtml = lib.length ? lib.map(function (l) {
-      return '<label class="sched-rule-node"><input type="checkbox" data-rule-node="'
+      return '<label class="ui-check sched-rule-node"><input type="checkbox" data-rule-node="'
         + esc(l.name) + '"' + (chosen[l.name] ? " checked" : "") + "> "
         + esc(l.name) + "</label>";
     }).join("") : '<p class="muted">Scan a calibrations folder first — the node list is empty.</p>';
     card.innerHTML =
       '<header class="sched-modal-head"><strong>On-failure rule — ' + esc(it.name) + "</strong>"
-      + '<button type="button" class="sched-modal-close" aria-label="Close">&times;</button></header>'
+      + '<button type="button" class="btn-sm sched-modal-close" aria-label="Close">&times;</button></header>'
       + '<div class="sched-modal-body">'
-      + '<label class="sched-pfield"><input type="checkbox" id="sched-rule-on"'
+      + '<label class="ui-check sched-pfield"><input type="checkbox" id="sched-rule-on"'
         + (rule ? " checked" : "") + "> "
         + "<span>When any target's fit FAILS (fit_results.success == false), insert:</span></label>"
       + '<div class="sched-rule-nodes">' + libHtml + "</div>"
-      + '<label class="sched-pfield"><span class="sched-pname">Targets of inserted steps</span>'
-      + '<select id="sched-rule-mode">'
+      + '<div class="ui-field sched-pfield"><label class="ui-field-label" for="sched-rule-mode"><span ' +
+        'class="sched-pname">Targets of inserted steps</span>'
+      + '</label><select class=\"ui-select\" id="sched-rule-mode">'
         + '<option value="failed_only"' + (!rule || rule.targets_mode !== "inherit" ? " selected" : "")
         + ">only the failed qubits</option>"
         + '<option value="inherit"' + (rule && rule.targets_mode === "inherit" ? " selected" : "")
         + ">same targets as this step</option>"
-      + "</select></label>"
+      + "</select></div>"
       + '<p class="muted sched-rule-hint">Inserted steps land directly after this one, run in the listed order, '
         + "and never inherit rules themselves (loop-safe, depth ≤ 2). If the run can't be attributed "
         + "unambiguously, the rule no-ops and leaves a note on the step.</p>"
