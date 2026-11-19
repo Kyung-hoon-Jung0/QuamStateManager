@@ -298,7 +298,7 @@
    pointers name exactly one real pair -- never inferred from a name. #}
 {% if gi and not gi.error and not gi.warnings %}
 <details open class="detail-section gi-section gi-in-pulse ui-disclosure">
-    <summary class="section-header ui-disclosure-summary">Operating point &#183; {{ gi.pair_name }}</summary>
+    <summary class="section-header ui-disclosure-summary">Operating point · {{ gi.pair_name }}</summary>
     {% with pair_name=gi.pair_name, control_name=gi.control_name, target_name=gi.target_name,
             moving_role=gi.moving_role, current_moving=gi.current_moving,
             error=gi.error, warnings=gi.warnings, read_only=True, gate=gi.gate %}
