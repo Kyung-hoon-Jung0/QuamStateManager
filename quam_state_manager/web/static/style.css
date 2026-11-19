@@ -1538,7 +1538,7 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
    selector is required because the filter box is now an auto-grow <textarea>, not
    an <input> (the tag-scoped rule would otherwise stop matching). Scoped under
    .sidebar-filter so it never touches the datasets / inspector / JSON-tree search
-   boxes. The right padding for the ? button stays on #sidebar-filter-input below. */
+   boxes. The right padding for the ? button is owned by one rule in ui-kit.css. */
 .sidebar-filter input,
 .sidebar-filter textarea { font-size: 1.18em; padding: 0.2rem 0.3rem; margin: 0; }  /* r16 ⑨: query legibility — font up, padding frozen */
 .sidebar-filter textarea {
@@ -6673,12 +6673,9 @@ table.h5-vars-table tr.h5-var-selected .btn-sm { background: var(--pico-primary)
 }
 /* The sidebar workspace filter reuses this help panel. The sidebar is narrow
    and its tree area scrolls (which would clip an absolute popover), so the
-   sidebar's copy renders INLINE (pushes the tree down) rather than floating,
-   and the text input is padded for the ? button (which targets type=search
-   elsewhere, but the sidebar input is type=text). */
-/* v1.5.1 (U P2-7): room for the ? AND the box's own scrollbar once it wraps --
-   a wrapped run name ran on under the ? at 2rem */
-#sidebar-filter-input { padding-right: 2.7rem; }
+   sidebar's copy renders INLINE (pushes the tree down) rather than floating.
+   The filter box's right padding (room for the ? and its scrollbar) is owned by
+   one rule at the end of ui-kit.css. */
 #sidebar-search-help {
     position: static; left: auto; right: auto;
     width: auto; max-width: none;

@@ -269,7 +269,7 @@ class TestDatasetsExperimentChips:
 
     def test_experiment_list_is_numeric(self, tmp_path):
         html = self._client(tmp_path).get("/datasets").get_data(as_text=True)
-        chips = re.findall(r'class="exp-chip" data-exp="([^"]+)"', html)
+        chips = re.findall(r'class="(?:[^"]* )?exp-chip(?: [^"]*)?" data-exp="([^"]+)"', html)
         assert chips == ["1_readout_a", "2_readout_b", "10_readout_c"], chips
 
 

@@ -70,7 +70,7 @@ def test_the_stage_confirm_and_message_name_the_zone(env):
     c, ts = env["client"], env["ts"]
     want = local_text(to_utc(ts), ZONE)
     page = c.get("/state-history").get_data(as_text=True)
-    confirms = re.findall(r'hx-confirm="([^"]*)"', page)
+    confirms = re.findall(r'data-history-confirm="([^"]*)"', page)
     assert any(want in x for x in confirms), (want, confirms[:3])
     assert not any(" UTC?" in x or " UTC now" in x for x in confirms), confirms[:3]
     body = c.post(f"/state-history/{ts}/stage?force=1").get_data(as_text=True)
