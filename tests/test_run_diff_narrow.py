@@ -44,7 +44,8 @@ def _row(body, key):
 
 
 def test_the_existing_scroll_shell_contains_the_responsive_table(body):
-    assert re.search(r'<div class="ui-xscroll">\s*<table class="diff-wb-list ui-run-diff" data-run-diff>', body)
+    assert re.search(
+        r'<div class="ui-xscroll">\s*<table class="ui-table diff-wb-list ui-run-diff" data-run-diff>', body)
 
 
 def test_dotted_names_break_only_at_their_dots(body):
