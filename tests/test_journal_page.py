@@ -241,9 +241,9 @@ class TestACorrectionIsNotAnErasure:
                                           "note": "fridge still warming"}, headers=_H)
         assert r.status_code == 200
         html = c.get(f"/journal?day={DAY}").get_data(as_text=True)
-        assert 'class="jr-who" placeholder="your name" value="user-a"' in html, \
+        assert re.search(r'class="ui-input jr-who" placeholder="your name"\s+value="user-a"', html), \
             "the name box must arrive carrying the author it is about to replace"
-        assert 'class="jr-note-in" placeholder="optional" value="fridge still warming"' in html, \
+        assert re.search(r'class="ui-input jr-note-in" placeholder="optional"\s+value="fridge still warming"', html), \
             "the note box must arrive carrying the note it is about to replace"
 
     def test_a_claim_that_says_nothing_about_the_note_keeps_it(self, world):

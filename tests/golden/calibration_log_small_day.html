@@ -104,9 +104,16 @@
             
             <div class="jr-sec jr-claim" data-run="1" data-uid="KEY:1">
                 
-                <details class="jr-claim-form"><summary class="muted">I ran this</summary>
-                    <label>Who <input type="text" class="jr-who" placeholder="your name" value=""></label>
-                    <label>Note <input type="text" class="jr-note-in" placeholder="optional" value=""></label>
+                <details class="ui-disclosure jr-claim-form">
+                    <summary class="ui-disclosure-summary muted">
+                    I ran this
+                    </summary>
+                    <label class="ui-field"><span class="ui-field-label">Who</span>
+                        <input type="text" class="ui-input jr-who" placeholder="your name"
+                        value=""></label>
+                    <label class="ui-field"><span class="ui-field-label">Note</span>
+                        <input type="text" class="ui-input jr-note-in" placeholder="optional"
+                               value=""></label>
                     <button type="button" class="btn-sm" onclick="JournalPage.claim(this)">Save</button>
                 </details>
             </div>
@@ -157,9 +164,16 @@
             
             <div class="jr-sec jr-claim" data-run="2" data-uid="KEY:2">
                 
-                <details class="jr-claim-form"><summary class="muted">I ran this</summary>
-                    <label>Who <input type="text" class="jr-who" placeholder="your name" value=""></label>
-                    <label>Note <input type="text" class="jr-note-in" placeholder="optional" value=""></label>
+                <details class="ui-disclosure jr-claim-form">
+                    <summary class="ui-disclosure-summary muted">
+                    I ran this
+                    </summary>
+                    <label class="ui-field"><span class="ui-field-label">Who</span>
+                        <input type="text" class="ui-input jr-who" placeholder="your name"
+                        value=""></label>
+                    <label class="ui-field"><span class="ui-field-label">Note</span>
+                        <input type="text" class="ui-input jr-note-in" placeholder="optional"
+                               value=""></label>
                     <button type="button" class="btn-sm" onclick="JournalPage.claim(this)">Save</button>
                 </details>
             </div>
@@ -210,9 +224,16 @@
             
             <div class="jr-sec jr-claim" data-run="3" data-uid="KEY:3">
                 
-                <details class="jr-claim-form"><summary class="muted">I ran this</summary>
-                    <label>Who <input type="text" class="jr-who" placeholder="your name" value=""></label>
-                    <label>Note <input type="text" class="jr-note-in" placeholder="optional" value=""></label>
+                <details class="ui-disclosure jr-claim-form">
+                    <summary class="ui-disclosure-summary muted">
+                    I ran this
+                    </summary>
+                    <label class="ui-field"><span class="ui-field-label">Who</span>
+                        <input type="text" class="ui-input jr-who" placeholder="your name"
+                        value=""></label>
+                    <label class="ui-field"><span class="ui-field-label">Note</span>
+                        <input type="text" class="ui-input jr-note-in" placeholder="optional"
+                               value=""></label>
                     <button type="button" class="btn-sm" onclick="JournalPage.claim(this)">Save</button>
                 </details>
             </div>
@@ -291,9 +312,16 @@
             
             <div class="jr-sec jr-claim" data-run="4" data-uid="KEY:4">
                 
-                <details class="jr-claim-form"><summary class="muted">I ran this</summary>
-                    <label>Who <input type="text" class="jr-who" placeholder="your name" value=""></label>
-                    <label>Note <input type="text" class="jr-note-in" placeholder="optional" value=""></label>
+                <details class="ui-disclosure jr-claim-form">
+                    <summary class="ui-disclosure-summary muted">
+                    I ran this
+                    </summary>
+                    <label class="ui-field"><span class="ui-field-label">Who</span>
+                        <input type="text" class="ui-input jr-who" placeholder="your name"
+                        value=""></label>
+                    <label class="ui-field"><span class="ui-field-label">Note</span>
+                        <input type="text" class="ui-input jr-note-in" placeholder="optional"
+                               value=""></label>
                     <button type="button" class="btn-sm" onclick="JournalPage.claim(this)">Save</button>
                 </details>
             </div>
@@ -344,9 +372,16 @@
             
             <div class="jr-sec jr-claim" data-run="5" data-uid="KEY:5">
                 
-                <details class="jr-claim-form"><summary class="muted">I ran this</summary>
-                    <label>Who <input type="text" class="jr-who" placeholder="your name" value=""></label>
-                    <label>Note <input type="text" class="jr-note-in" placeholder="optional" value=""></label>
+                <details class="ui-disclosure jr-claim-form">
+                    <summary class="ui-disclosure-summary muted">
+                    I ran this
+                    </summary>
+                    <label class="ui-field"><span class="ui-field-label">Who</span>
+                        <input type="text" class="ui-input jr-who" placeholder="your name"
+                        value=""></label>
+                    <label class="ui-field"><span class="ui-field-label">Note</span>
+                        <input type="text" class="ui-input jr-note-in" placeholder="optional"
+                               value=""></label>
                     <button type="button" class="btn-sm" onclick="JournalPage.claim(this)">Save</button>
                 </details>
             </div>
@@ -369,7 +404,7 @@
     <button type="button" class="btn-sm outline" onclick="JournalPage.day('2026-10-04')"
              title="next day">›</button><button type="button" class="btn-sm outline" onclick="JournalPage.day('')">today</button>
 </span>
-<select name="author" id="jr-author" title="who" hx-swap-oob="true">
+<select name="author" id="jr-author" title="who" hx-swap-oob="true" class="ui-select">
     <option value="">everyone</option>
     <option value="human:user-a" >human:user-a</option><option value="unknown" >unknown</option>
 </select>

@@ -82,7 +82,9 @@
        hx-target="#sidebar-tree" hx-swap="innerHTML"
        hx-include="#sidebar-filter-input" hx-sync="#sidebar-filter-input:replace"><small>&#8987; {{ "{:,}".format(_pend) }} run{{ "" if _pend == 1 else "s" }} still being scanned &mdash; results may grow</small></p>
     {% else %}
-    <p class="muted" data-pending="{{ _pend }}"><small>&#9888; {{ "{:,}".format(_pend) }} run{{ "" if _pend == 1 else "s" }} not read yet &mdash; results may be incomplete</small></p>
+    {% set _runs = "run" if _pend == 1 else "runs" %}
+    <p class="muted" data-pending="{{ _pend }}"><small>&#9888; {{ "{:,}".format(_pend) }} {{ _runs }} not read yet
+       &mdash; results may be incomplete</small></p>
     {% endif %}
     {% endif %}
     {% for node in (nested or {}).get(root_path, []) %}
