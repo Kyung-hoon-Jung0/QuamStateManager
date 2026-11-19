@@ -2307,3 +2307,8 @@ summary:where(:not([class]), .muted, .section-header, .ph-drift-title):not(:wher
 .ui-dialog-foot:has(> #czg-check-hint) { flex-wrap: wrap; }
 .ui-dialog-foot > #czg-check-hint { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; }
 .ui-dialog-foot > #czg-check-hint[hidden] { display: none; }
+
+/* Kit sweep wave 2: final suite */
+/* The one rule that owns the sidebar filter box's right padding: room for the ? (1.5rem) and the box's own
+   scrollbar once a long query wraps. It outranks .ui-textarea in specificity and comes last in source order. */
+.sidebar-filter #sidebar-filter-input.ui-textarea--grow { padding-right: 2.7rem; }
