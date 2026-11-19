@@ -34,13 +34,15 @@
                     <summary class="ui-disclosure-summary muted">
                     {% if c.author == 'unknown' %}I ran this{% else %}Correct the author / add a note{% endif %}
                     </summary>
-                    <label class="ui-field"><span class="ui-field-label">Who</span>
+                    <div class="ui-toolbar">
+                    <label><span class="ui-field-label">Who</span>
                         <input type="text" class="ui-input jr-who" placeholder="your name"
                         value="{{ c.author[6:] if c.author and c.author.startswith('human:') else '' }}"></label>
-                    <label class="ui-field"><span class="ui-field-label">Note</span>
+                    <label><span class="ui-field-label">Note</span>
                         <input type="text" class="ui-input jr-note-in" placeholder="optional"
                                value="{{ c.note or '' }}"></label>
                     <button type="button" class="btn-sm" onclick="JournalPage.claim(this)">Save</button>
+                    </div>
                 </details>
             </div>
             <p class="muted jr-meta">{{ c.node }} · {{ c.duration_s or '?' }} s · <span title="{{ c.folder }}">folder</span></p>
