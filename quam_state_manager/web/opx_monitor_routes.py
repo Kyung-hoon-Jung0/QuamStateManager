@@ -198,6 +198,15 @@ LIST_CHANGED = "The list changed; check it again. Nothing was closed."
 STALE_STATUS = "The status is not fresh; wait for the next refresh. Nothing was closed."
 
 
+def _chip_rack_wiring():
+    try:
+        engine = _r()._engine()
+        return engine.get_instrument_wiring() if engine else None
+    except Exception:
+        logger.debug("Open chip wiring unavailable for QM rack", exc_info=True)
+        return None
+
+
 def _view(tab: str) -> dict:
     m = monitor()
     st = m.status()
@@ -214,12 +223,15 @@ def _view(tab: str) -> dict:
     except Exception:
         runs, run_reason = [], 'Dataset index unavailable; no estimated links.'
     open_qms = (st.get('answer') or {}).get('open_qms') or []
+    from quam_state_manager.web.opx_monitor_rack import qm_rack
+    wiring = _chip_rack_wiring() if tab == 'live' and open_qms else None
+    racks = {q['id']: qm_rack(q.get('port_map'), wiring) for q in open_qms} if tab == 'live' else {}
     owners = {q['id']: om.safe_owner_info(q) for q in open_qms}
     # labels are read at render time only and never leave the page
     with _PC_NAMES_LOCK:
         pc_names, pc_names_problem = om.load_pc_names()
     seen_tags = om.owner_tags(st.get('answer'))
-    owner_ctx = {'owners': owners, 'any_marker': any(o['markers'] for o in owners.values()),
+    owner_ctx = {'qm_racks': racks, 'owners': owners, 'any_marker': any(o['markers'] for o in owners.values()),
                  'pc_names': pc_names, 'pc_names_problem': pc_names_problem,
                  'this_tag': om.own_pc_tag(), 'seen_tags': seen_tags,
                  'pc_name_rows': sorted(t for t in set(pc_names) | set(seen_tags) if _TAG_RE.fullmatch(t)),

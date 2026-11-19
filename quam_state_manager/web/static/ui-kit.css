@@ -1941,3 +1941,12 @@ table.ui-pair-props { table-layout: fixed; width: 100%; }
 .app-shell:has(.ui-split-top) .topbar > nav > ul,
 .app-shell:has(.ui-split-top) .topbar > nav > ul > li { pointer-events: none; }
 .app-shell:has(.ui-split-top) .topbar > nav > ul > li > * { pointer-events: auto; }
+
+/* A configuration rack uses the shared wiring SVG at a compact, responsive size. */
+.ui-opxmon-rack-block { margin-block: var(--ui-gap-2); contain: inline-size; }
+.ui-opxmon-rack { min-width: 0; }
+.ui-opxmon-rack svg.instrument-svg { max-width: 100%; height: auto; }
+.ui-opxmon-port-dim { opacity: .3; }
+.ui-opxmon-port-active { opacity: 1; }
+.ui-opxmon-port-popup { position: fixed; z-index: var(--ui-menu-z); padding: var(--ui-gap-3); }
+.ui-opxmon-port-popup.hidden { display: none; }

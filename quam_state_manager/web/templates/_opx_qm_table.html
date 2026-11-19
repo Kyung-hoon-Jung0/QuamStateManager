@@ -1,7 +1,7 @@
 {#- The one open-QM table of Live and Clean up: QM | State | Owner | FEMs (| close action).
     State: the fact strong, what it is measured from quiet under it. -#}
 {%- from "_opx_owner.html" import owner_cell, owner_head, owner_text -%}
-{%- from "_opx_qm_ports.html" import ports_disclosure -%}
+{%- from "_opx_qm_ports.html" import ports_disclosure with context -%}
 {%- macro qm_table(qms, label, stale=False, age=None, actions=False, ports=False) -%}
 <table class="ui-table ui-opxmon-table{% if stale %} ui-opxmon-table--stale{% endif %}" aria-label="{{ label }}{% if stale %} (last good read, {{ age }}){% endif %}"{% if stale %} data-stale="1"{% endif %}>
   <thead><tr><th class="ui-table-head" scope="col">QM</th><th class="ui-table-head" scope="col">State</th>{{ owner_head(any_marker) }}<th class="ui-table-head" scope="col">FEMs</th>{% if actions %}<th class="ui-table-head" scope="col"><span class="ui-sr">Close</span></th>{% endif %}</tr></thead>

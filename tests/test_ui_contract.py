@@ -1026,6 +1026,9 @@ if __name__ == "__main__":
 # These selectors were reviewed together when their feature styles moved
 # into the kit. New selectors require an explicit addition, as in stage 4.
 _STAGE6_SELECTORS = {
+    '.ui-opxmon-rack-block', '.ui-opxmon-rack', '.ui-opxmon-rack svg.instrument-svg',
+    '.ui-opxmon-port-dim', '.ui-opxmon-port-active', '.ui-opxmon-port-popup',
+    '.ui-opxmon-port-popup.hidden',
     # the CZ gate dialog (cz-gate.js, _cz_gate_dialog.html)
     '.czg .czg-body', '.czg[data-czg-stacked] .czg-cols', '.czg[data-czg-stacked] .czg-evidence',
     '.czg[data-czg-stacked] [data-czg-lead]', '.czg[data-czg-stacked] .czg-form',

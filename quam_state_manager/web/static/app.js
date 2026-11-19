@@ -17147,6 +17147,14 @@ function _instrHideTinyLabels(svg, natW) {
 }
 
 function _applyInstrumentFit(container) {
+    var miniScale = container._iwArgs && container._iwArgs[3] && container._iwArgs[3].scale;
+    if (miniScale) {
+        container.querySelectorAll('svg.instrument-svg').forEach(function(svg) {
+            svg.setAttribute('width', Number(svg.dataset.natW) * miniScale);
+            svg.setAttribute('height', Number(svg.dataset.natH) * miniScale);
+        });
+        return;
+    }
     _watchInstrumentResize(container);   // armed even while it currently fits
     var svgs = container.querySelectorAll('svg.instrument-svg');
     var widest = 0;
@@ -17281,6 +17289,10 @@ function _watchInstrumentResize(container) {
 }
 
 var _iwDrawn = [];
+window.releaseInstrumentWiring = function(container) {
+    if (container._iwFitObs) container._iwFitObs.disconnect();
+    _iwDrawn = _iwDrawn.filter(function(el) { return el !== container; });
+};
 document.addEventListener('sm:themechange', function () {
     // Redraw every rack still on the page in the new theme's colours
     // (the floating panel redraws itself through FloatWiring.refresh).
@@ -17298,7 +17310,10 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
     if (_iwDrawn.indexOf(container) < 0) _iwDrawn.push(container);
     // editable: tag cells with data-* and skip the inspector click handlers
     // so a caller (the Generate Config wizard) can layer drag-drop on top.
-    var editable = !!(options && options.editable);
+    var readOnly = !!(options && options.readOnly);
+    var editable = !readOnly && !!(options && options.editable);
+    var highlight = options && options.highlight;
+    var selected = highlight ? new Set(highlight.map(function(p) { return JSON.stringify(p); })) : null;
     // onPortHover(assignment|null): in editable mode, route port hover to a
     // caller-supplied panel instead of the cursor-following popup.
     var onPortHover = options && options.onPortHover;
@@ -17335,7 +17350,7 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
                + '.')
             : 'No instrument wiring data found. Load a quam_state with wiring information.';
         var pEl = document.createElement('p');
-        pEl.style.cssText = 'padding:1rem;color:var(--pico-muted-color)';
+        pEl.className = 'ui-note';
         pEl.textContent = msg;
         container.innerHTML = '';
         container.appendChild(pEl);
@@ -17362,7 +17377,10 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
                 if (isFinite(n)) maxDig = Math.max(maxDig, n);
             });
         });
-        var femW = outSubW + inSubW + (hasDigital ? digSubW : 0);
+        var hasDigitalIn = femIds.some(function(fid) {
+            return Object.keys(fems[fid].digital_input_ports || {}).length > 0;
+        });
+        var femW = outSubW + inSubW + (hasDigital ? digSubW : 0) + (hasDigitalIn ? digSubW : 0);
         // Both FEM flavors physically carry 8 digital outputs (QM FEM guide),
         // so a visible DIG column shows all 8 slots — grid rows grow to fit.
         var nDig = hasDigital ? Math.max(8, maxDig) : 0;
@@ -17408,6 +17426,8 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
         var svgH = marginTop + (nBlocks - 1) * blockStride + rows * rowH + marginBottom + capH;
 
         var svg = _svgEl('svg');
+        svg._iwSelected = selected;
+        svg._iwReadOnly = readOnly;
         svg.setAttribute('width', svgW);
         svg.setAttribute('height', svgH);
         svg.setAttribute('class', 'instrument-svg');
@@ -17552,6 +17572,16 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
                 }
             }
 
+            if (hasDigitalIn) {
+                var diCx = digCx + digSubW;
+                svg.appendChild(_iwKeep(_svgText(diCx, top - 4, 'DIN', 10, '700', iw.subLabelColor, 'middle')));
+                for (var di = 1; di <= rows; di++) {
+                    _renderPortCell(svg, diCx, top + (di - 1) * rowH + rowH / 2, 13, roleColors,
+                        (femData.digital_input_ports || {})[String(di)] || [], rawWiring,
+                        {con: ctrlName, slot: femId, port: di, io: 'digital-input'}, editable, onPortHover);
+                }
+            }
+
             // Physical input port positions depend on FEM type:
             //   MW-FEM: port 1 at row 1 (top), port 2 at last row (bottom)
             //   LF-FEM: port 1 at second-to-last row, port 2 at last row (both at bottom)
@@ -17620,7 +17650,8 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
 
     // Keep popup alive when mouse enters it (cursor-popup mode only)
     var popup = onPortHover ? null : document.getElementById('port-popup');
-    if (popup) {
+    if (popup && !popup._iwHoverBound) {
+        popup._iwHoverBound = true;
         popup.addEventListener('mouseenter', function() { clearTimeout(_popupHideTimer); });
         popup.addEventListener('mouseleave', function() { _scheduleHidePopup(); });
     }
@@ -17734,6 +17765,15 @@ function _renderPortCell(svg, cx, cy, r, roleColors, assignments, rawWiring, por
     // group too, so they are valid drop targets.
     var cell = _svgEl('g');
     cell.setAttribute('class', 'iw-port');
+    cell._iwReadOnly = svg._iwReadOnly;
+    if (svg._iwReadOnly) onPortPlay = null;
+    if (svg._iwSelected && portInfo) {
+        var key = [String(portInfo.con), String(portInfo.slot), String(portInfo.port), portInfo.io];
+        var active = svg._iwSelected.has(JSON.stringify(key));
+        cell.classList.add(active ? 'ui-opxmon-port-active' : 'ui-opxmon-port-dim');
+        if (!active) assignments = [];
+        else if (!assignments.length) assignments = [{label: 'Declared port ' + portInfo.port}];
+    }
     if (portInfo) {
         cell.setAttribute('data-con', portInfo.con);
         cell.setAttribute('data-slot', portInfo.slot);
@@ -17937,7 +17977,7 @@ function _appendWiringLegend(container, roleColors) {
 var _IW_THEMED_FILL = {z: '--role-z-color', twpa_pump: '--role-twpa-pump-color'};
 /** Create a colored SVG circle for a port assignment with hover and double-click handlers. */
 function _appendPortCircle(svg, cx, cy, r, roleColors, assignment, rawWiring, editable, onPortHover) {
-    var color = roleColors[assignment.role] || '#999';
+    var color = roleColors[assignment.role] || UI_CONFIG.instrumentWiring.unassignedStroke;
     // docs/136 r2 — a bias-tee flux port is z + QDAC on one physical line, and
     // it gets its OWN colour. The first pass marked it with a dashed slate
     // ring over the z blue ("still a z port"), and the customer's verdict was
@@ -18002,7 +18042,7 @@ function _appendPortCircle(svg, cx, cy, r, roleColors, assignment, rawWiring, ed
     // Single click → open inspector; double-click → JSON panel (timer
     // distinguishes them). Skipped in any wizard context (editable, or a
     // read-only diagram with onPortHover) — the wizard has no loaded chip.
-    if (!editable && !onPortHover) {
+    if (!svg._iwReadOnly && !editable && !onPortHover) {
         var _clickDelay = null;
         g.addEventListener('click', function() {
             clearTimeout(_clickDelay);
@@ -18044,16 +18084,17 @@ function _showPortPopup(event, assignment) {
     document.getElementById('popup-label').textContent = assignment.label;
     var badge = document.getElementById('popup-role-badge');
     badge.textContent = (assignment.role || '').toUpperCase();
-    badge.className = 'role-badge ' + (assignment.role || '');
+    var compact = popup.classList.contains('ui-opxmon-port-popup');
+    badge.className = compact ? 'ui-badge' : 'role-badge ' + (assignment.role || '');
 
     var body = document.getElementById('popup-body');
     body.innerHTML = '';
     _getPopupFields(assignment).forEach(function(f) {
         var k = document.createElement('span');
-        k.className = 'popup-key';
+        k.className = compact ? 'ui-facts-label' : 'popup-key';
         k.textContent = f.key;
         var v = document.createElement('span');
-        v.className = 'popup-val';
+        v.className = compact ? 'ui-facts-value' : 'popup-val';
         v.textContent = (f.value !== null && f.value !== undefined) ? f.value : '—';
         body.appendChild(k);
         body.appendChild(v);
