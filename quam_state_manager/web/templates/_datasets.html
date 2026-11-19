@@ -86,7 +86,7 @@
            index format says how far it is, counted in memory (never a read). #}
         {% if reindex_progress %}<small class="muted ds-scan-note" id="ds-scan-note" title="This version indexes runs differently, so every run is read once more. Older runs appear as it continues. Nothing to do.">Re-indexing after upgrade: {{ '{:,}'.format(reindex_progress.done) }} of {{ '{:,}'.format(reindex_progress.total) }} runs</small>{% elif scan_partial %}<small class="muted ds-scan-note" id="ds-scan-note" title="The run index is still being built for this folder — older runs appear as the scan continues. Nothing to do.">&#8987; still indexing runs&hellip;</small>{% endif %}</h2>
     <div class="ds-head-controls">
-        <div class="table-filter ds-search-wrap" style="flex:1;position:relative">
+        <div class="table-filter ds-search-wrap ui-dataset-search">
             {# `data-preset` is the ARRIVAL marker, not a copy of the value: the
                client clears leftover picker/facet ticks only when a swap brings
                one, so a date tab or a Rescan never disturbs the user's own
@@ -97,7 +97,7 @@
                    title="{{ search_title('tag:flagged', 'is:bookmarked', 'run:', 'q:') }}"
                    value="{{ search_value | default(search | default('')) }}"
                    data-preset="{{ search | default('') }}"
-                   autocomplete="off" style="width:100%">
+                   autocomplete="off" aria-label="Search datasets">
             <button type="button" id="ds-search-help-toggle" class="ds-search-help-btn"
                     aria-label="Show search syntax help"
                     title="Show search syntax help">?</button>
@@ -105,7 +105,7 @@
 
             {# Persistent help panel — opens on first focus per browser session AND via the ? icon. #}
             {# Closes only on explicit X click; survives typing, sorting, filter chips, HTMX swaps. #}
-            <div id="ds-search-help" class="ds-search-help-panel" hidden>
+            <div id="ds-search-help" class="ds-search-help-panel ui-dataset-help" hidden>
                 <div class="ds-search-help-header">
                     <strong>Search syntax</strong>
                     <button type="button" id="ds-search-help-close"
@@ -217,7 +217,7 @@
                 title="Show or hide the experiment filter">
             <span class="exp-filter-toggle-caret" aria-hidden="true">&#9662;</span> Experiments
         </button>
-        <span class="exp-chip active" data-exp="" onclick="toggleExpFilter('', this)">All</span>
+        <span class="ui-experiment-chip exp-chip active" data-exp="" onclick="toggleExpFilter('', this)">All</span>
         <span class="exp-filter-summary">{{ experiments | length }} experiment type{{ '' if experiments | length == 1 else 's' }} — click to filter</span>
     </div>
     {% if exp_categories is defined and exp_categories %}
@@ -229,7 +229,8 @@
         </span>
         <div class="exp-section-chips">
         {% for exp in cat.experiments %}
-            <span class="exp-chip" data-exp="{{ exp }}" onclick="toggleExpFilter('{{ exp }}', this)"><span>{{ exp | soft_breaks }}</span></span>
+            <span class="ui-experiment-chip exp-chip" data-exp="{{ exp }}" title="{{ exp }}"
+                  onclick="toggleExpFilter('{{ exp }}', this)"><span>{{ exp | soft_breaks }}</span></span>
         {% endfor %}
         </div>
     </div>
@@ -238,7 +239,8 @@
     <div class="exp-filter-section">
         <div class="exp-section-chips">
         {% for exp in experiments %}
-            <span class="exp-chip" data-exp="{{ exp }}" onclick="toggleExpFilter('{{ exp }}', this)"><span>{{ exp | soft_breaks }}</span></span>
+            <span class="ui-experiment-chip exp-chip" data-exp="{{ exp }}" title="{{ exp }}"
+                  onclick="toggleExpFilter('{{ exp }}', this)"><span>{{ exp | soft_breaks }}</span></span>
         {% endfor %}
         </div>
     </div>

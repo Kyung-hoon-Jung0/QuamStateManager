@@ -4133,6 +4133,20 @@ window.trapFocus = function(container, onEscape) {
 /* In-page OK/Cancel for cases that used to call window.confirm (headless
    Chrome and CDP journeys hang on native dialogs). Enter = OK, Escape =
    Cancel; trapFocus on the card. Resolves true/false when the sheet closes. */
+document.addEventListener("htmx:confirm", function (event) {
+    var detail = event.detail || {};
+    var button = detail.elt;
+    if (!button || !button.hasAttribute("data-history-confirm")) return;
+    event.preventDefault();
+    if (button._historyConfirmPending) return;
+    button._historyConfirmPending = true;
+    var ask = window.smConfirm ? window.smConfirm(button.getAttribute("data-history-confirm"))
+        : Promise.resolve(false);
+    ask.then(function (yes) {
+        button._historyConfirmPending = false;
+        if (yes && button.isConnected) detail.issueRequest(true);
+    });
+});
 window.smConfirm = function (message) {
     return new Promise(function (resolve) {
         var prior = document.getElementById("sm-confirm-overlay");

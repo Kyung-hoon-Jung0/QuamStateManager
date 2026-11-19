@@ -56,8 +56,6 @@
         .chip-report .rep-off { color: var(--pico-muted-color); }
         .chip-report .rep-toolbar { display: flex; gap: 0.5rem; align-items: center;
                           justify-content: flex-end; margin: 0 0 0.4rem; flex-wrap: wrap; }
-        .chip-report .rep-toolbar button { width: auto; padding: 0.3rem 0.9rem;
-                          font-size: 0.85rem; margin: 0; }
         .chip-report .cmap { border: 1px solid var(--pico-muted-border-color); border-radius: 8px;
                           padding: 0.4rem 0.7rem; background: var(--pico-card-background-color); }
         .chip-report .rep-note { color: var(--pico-muted-color); font-size: 0.78rem; }
@@ -99,8 +97,6 @@
                           margin: 0.6rem 0 0.2rem; }
         .chip-report .rep-opts label { display: inline-flex; gap: 0.45rem; align-items: center; margin: 0;
                           font-size: 0.84rem; }
-        .chip-report .rep-opts select { width: auto; margin: 0; padding: 0.12rem 1.8rem 0.12rem 0.45rem;
-                          font-size: 0.8rem; height: auto; }
         .chip-report .rep-will { margin: 0.45rem 0 0; font-size: 0.8rem; }
         .chip-report ul.rep-contents { display: inline; margin: 0; padding: 0; }
         .chip-report ul.rep-contents li { display: inline; list-style: none; margin: 0; }
@@ -148,8 +144,6 @@
             body.chip-report { padding: 0.8rem 1rem 2rem; }
             .chip-report .rep-boxes { grid-template-columns: 1fr; }
         }
-        .chip-report .rep-theme { display: inline-flex; gap: 0.25rem; }
-        .chip-report .rep-theme [aria-pressed="true"] { background: var(--pico-primary-background); color: var(--pico-primary-inverse); border-color: var(--pico-primary-background); }
         @media print {
             .no-print { display: none !important; }
             /* paper is always light (beforeprint below); keep the drawn
@@ -162,7 +156,7 @@
         }
     </style>
 </head>
-<body class="chip-report">
+<body class="chip-report ui-report-controls">
 {% if not has_chip %}
     <h1>Chip report</h1>
     <p class="rep-meta">No chip is open in State Manager — open a state folder,
@@ -171,11 +165,11 @@
     <div class="rep-toolbar no-print">
         <a class="rep-back" href="/topology">&larr; Back to Chip Status</a>
         <span class="rep-note" id="rep-status">One offline .html file with the checked sections.</span>
-        <span class="rep-theme" role="group" aria-label="Theme on this screen"
+        <span class="rep-theme ui-segmented" role="group" aria-label="Theme on this screen"
               title="Theme on this screen only. Print and Download are always light.">
-            <button type="button" class="btn-sm outline" data-rep-theme="light">Light</button>
-            <button type="button" class="btn-sm outline" data-rep-theme="dark">Dark</button>
-            <button type="button" class="btn-sm outline" data-rep-theme="qm">QM</button>
+            <button type="button" class="ui-segmented-opt" data-rep-theme="light">Light</button>
+            <button type="button" class="ui-segmented-opt" data-rep-theme="dark">Dark</button>
+            <button type="button" class="ui-segmented-opt" data-rep-theme="qm">QM</button>
         </span>
         <button type="button" class="btn-sm" onclick="window.print()">Print</button>
         <button type="button" class="btn-sm outline" id="rep-download">Download HTML</button>
@@ -185,7 +179,7 @@
         <h2>Sections</h2>
         <div class="rep-boxes">
         {% for s in sections %}
-            <label class="{{ '' if s.available else 'rep-box-off' }}">
+            <label class="ui-check {{ '' if s.available else 'rep-box-off' }}">
                 <input type="checkbox" data-rep-box value="{{ s.key }}"
                        {{ 'checked' if s.key in checked }} {{ '' if s.available else 'disabled' }}
             class="ui-check-box">

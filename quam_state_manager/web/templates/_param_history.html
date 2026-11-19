@@ -75,8 +75,8 @@
   {# S10 walk (N4): the OPEN chip's live drift and its chip pill are not shown
      over an archived chip's history (the banner below names both chips) #}
   {% if is_loaded_chip %}
-  <details class="ph-drift-card" open>
-    <summary class="ph-drift-title">Live changes since baseline
+  <details class="ph-drift-card ui-disclosure" open>
+    <summary class="ph-drift-title ui-disclosure-summary">Live changes since baseline
       <small class="muted">— what the live chip changed</small></summary>
     <div id="live-drift-panel"
          hx-get="/state/drift/view?embed=1"

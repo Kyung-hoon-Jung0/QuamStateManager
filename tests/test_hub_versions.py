@@ -766,7 +766,7 @@ def test_a_ledger_rows_confirms_name_its_time_in_the_pages_zone(env):
     for row in rows:
         utc = re.search(r'data-utc="([^"]+)"', row).group(1)
         want = local_text(to_utc(utc), "America/Los_Angeles")
-        confirms = re.findall(r'hx-confirm="([^"]*)"', row.split('<span class="sh-time">')[0])
+        confirms = re.findall(r'data-history-confirm="([^"]*)"', row.split('<span class="sh-time">')[0])
         assert confirms and all(want in x for x in confirms if "version of" in x), (want, confirms)
         assert not any(" UTC " in x for x in confirms), confirms
 

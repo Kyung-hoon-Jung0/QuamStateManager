@@ -43,7 +43,7 @@
         hx-target="#param-history-root" hx-swap="outerHTML"
         hx-trigger="submit, keyup changed delay:400ms from:find input[name=prefix]">
     {% if archive_chip %}<input type="hidden" name="chip_key" value="{{ archive_chip.key }}">{% endif %}
-    <span class="tree-search-icon">&#128269;</span>
+    <span class="ui-history-search-icon" aria-hidden="true"></span>
     {#- RAM P8 (typing): the whole root swaps on every debounced keyup. With
         no id the focused input was replaced -- focus fell to <body> and every
         key after the first pause went nowhere (measured in real Chrome) --

@@ -2880,7 +2880,6 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
 /* P1-9: State History day headers and the go-to-date form */
 .sh-goto { display: inline-flex; align-items: center; gap: .35rem; margin: 0 0 0 auto; }
 .sh-goto-label { display: inline-flex; align-items: center; gap: .35rem; margin: 0; font-size: .85em; white-space: nowrap; }
-.sh-goto input[type=date] { margin: 0; padding: .15rem .4rem; width: auto; font-size: .9em; }
 .sh-goto button { margin: 0; }
 .sh-day { font-weight: 700; font-size: .82em; letter-spacing: .03em; margin: .7rem 0 .25rem;
     padding-bottom: .15rem; border-bottom: 1px solid var(--pico-muted-border-color); }
@@ -7750,7 +7749,7 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
 }
 .ph-drift-card > summary.ph-drift-title {
     cursor: pointer; font-weight: 600; font-size: 0.92em;
-    list-style: revert; margin: 0; padding: 0.15rem 0;
+    margin: 0; padding: 0.15rem 0;
 }
 .ph-drift-card .live-drift-embed { margin-top: 0.3rem; }
 .param-history { display: flex; flex-direction: column; gap: 1rem; }
@@ -11198,7 +11197,6 @@ table.prop-table .pulse-slider-row .pulse-slider-commit {
 .version-label-form { display: inline-flex; gap: 0.25rem; align-items: center; flex-wrap: wrap; max-width: 100%; margin: 0; }
 .version-label-edit [hidden] { display: none !important; }
 .version-label-form input { width: 12rem; max-width: 40vw; min-width: 0; flex: 1 1 8rem; margin: 0; padding: 0.15rem 0.3rem; font-size: 0.8rem; }
-.sh-restore-live { border-color: #c62828; }
 .sh-detail { margin: 0.5rem; }
 
 /* Custom-interpreter (venv) entry in the Generate-Config env step (B-env) */
