@@ -22,7 +22,7 @@ _CSS = (Path(__file__).resolve().parent.parent / "quam_state_manager" / "web" / 
 def test_the_pair_inspector_links_its_cz_operation(tmp_path):
     c = _client(tmp_path)
     html = c.get("/pair/q1-2", headers={"HX-Request": "true"}).get_data(as_text=True)
-    m = re.search(r'class="muted inspector-czplan-link" href="([^"]+)"', html)
+    m = re.search(r'class="muted inspector-czplan-link ui-plan-link" href="([^"]+)"', html)
     assert m, "the pair inspector has no CZ gate plan link"
     href = m.group(1).replace("&amp;", "&")
     assert href == "/cz-plan?op=qubit_pairs.q1-2.macros.cz", href     # its `cz`, the default

@@ -335,6 +335,8 @@
     --ui-rule-checkbox-size: 1.1rem;
     --ui-rule-control-7: 2px solid var(--ui-text-2);
     --ui-rule-control-8: 2px;
+    /* Bulk grid text: the kit small size times the user's grid scale (set on :root by bulk-edit.js). */
+    --ui-bulk-cell-fs: calc(var(--ui-fs-sm) * var(--bulk-fs, 1));
 }
 
 /* Stage 0 parts: roving scalar editor (D-1/D-2/D-7). */
@@ -2160,3 +2162,62 @@ summary:where(:not([class]), .muted, .section-header, .ph-drift-title):not(:wher
     .ui-dataset-help .ds-search-help-grid tr { display: block; margin-bottom: var(--ui-gap-2); }
     .ui-dataset-help .ds-search-help-grid td { display: block; width: auto; white-space: normal; }
 }
+
+/* Kit sweep wave 2: chrome */
+.ui-chrome-content { min-width: 0; }
+@media (max-width: 600px) {
+    .ui-chrome-content .gen-steps {
+        max-width: 100%; overflow-x: auto; flex-wrap: nowrap; padding-bottom: var(--ui-bw);
+    }
+    .ui-chrome-content .gen-steps > li { flex: 0 0 auto; white-space: nowrap; }
+}
+.ui-pulse-list .pagination { max-width: 100%; }
+.ui-pulse-list .pagination > ul { flex-wrap: wrap; gap: var(--ui-gap-2); }
+.ui-pulse-list .pagination a {
+    display: inline-flex; align-items: center; min-height: var(--ui-ctl-h);
+    padding: 0 var(--ui-gap-3); border: var(--ui-bw) solid var(--ui-border);
+    border-radius: var(--ui-r-sm); color: var(--ui-accent); font-size: var(--ui-fs-sm);
+}
+.ui-pulse-list .page-size-picker > .ui-field { flex-direction: row; align-items: center; }
+.ui-gate-summary { min-width: 0; flex-wrap: wrap; }
+.ui-gate-summary .ui-verdict {
+    display: flex;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    font-size: var(--ui-fs-sm);
+    padding: var(--ui-gap-1) var(--ui-gap-2);
+}
+
+.ui-plan-link.ui-plan-link { font-size: var(--ui-fs-sm); }
+.ui-bulk-compact .bulk-cell,
+.ui-bulk-compact .bulk-rowhead { font-size: var(--ui-bulk-cell-fs); }
+.ui-bulk-compact .ui-check { max-width: 100%; white-space: normal; }
+.ui-check input.ui-check-box { width: var(--ui-check-size); height: var(--ui-check-size); }
+.ui-fidelity-title.ui-fidelity-title { font-size: var(--ui-fs-md); overflow-wrap: anywhere; }
+.ui-folder-dialog .browser-toolbar { flex-wrap: wrap; }
+.ui-folder-dialog .browser-toolbar .ui-input { min-width: 0; font-family: inherit; }
+.ui-folder-dialog .browser-breadcrumbs {
+    font-size: var(--ui-fs-sm); background: var(--ui-surface-2); color: var(--ui-text);
+    overflow-wrap: anywhere;
+}
+.ui-folder-dialog .browser-recent { margin-bottom: 0; }
+.ui-folder-dialog .browser-folder {
+    padding: var(--ui-gap-2) var(--ui-gap-3); border-bottom: var(--ui-bw) solid var(--ui-border);
+    font-size: var(--ui-fs-sm); overflow-wrap: anywhere;
+}
+
+.ui-folder-dialog .ui-disclosure-summary { background: var(--ui-surface-2); color: var(--ui-text); }
+
+.ui-settings-targets .ui-field-grid { grid-template-columns: minmax(0, 1fr); }
+.ui-settings-targets .ui-input { min-width: 0; max-width: 100%; }
+
+.ui-gate-summary .ui-verdict > .ui-dot {
+    width: var(--ui-check-size); height: var(--ui-check-size); font-size: var(--ui-fs-xs);
+}
+.ui-gate-summary .ui-verdict-key { font-size: var(--ui-fs-sm); }
+.ui-textarea--grow.ui-textarea--grow { resize: none; overflow-y: auto; }
+.sidebar-filter .ui-textarea--grow {
+    max-height: calc(var(--ui-lh-read) * 3em + 2 * var(--ui-gap-1) + 2 * var(--ui-bw));
+}
+.ui-title-btn.btn-sm { font-size: var(--ui-fs-sm); }
+.ui-btn-icon.ui-btn-icon--warn { color: var(--ui-warn-text); }

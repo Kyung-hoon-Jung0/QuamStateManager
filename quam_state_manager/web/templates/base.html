@@ -932,7 +932,8 @@
                         <textarea rows="1" placeholder="{{ search_hint() }}"
                                   title="{{ search_title('name:', 'date:', 'status:', 'run:', 'param:', 'tag:', 'note:', '-' ~ 'negate') }}"
                                   id="sidebar-filter-input" aria-label="Filter experiments"
-                                  class="search-help-input" data-search-help="sidebar-search-help"
+                                  class="search-help-input ui-textarea ui-textarea--grow"
+                                  data-search-help="sidebar-search-help"
                                   hx-get="/workspace/tree" hx-trigger="input changed delay:250ms"
                                   hx-sync="this:replace"
                                   hx-target="#sidebar-tree" name="name" autocomplete="off"
@@ -1242,7 +1243,7 @@
         </div>
         {# FB-12 D-4: the saved port-test run targets (OPX / QM-SaaS), loaded on
            first open of this window; the password is only ever "saved" here. #}
-        <div class="settings-group" id="settings-port-targets">
+        <div class="settings-group ui-settings-targets" id="settings-port-targets">
         <small class="settings-label">Port test run targets</small>
         <div hx-get="/port-test/settings/panel" hx-trigger="load" hx-swap="outerHTML"><small class="muted">Loading&hellip;</small></div>
         </div>
@@ -1416,7 +1417,7 @@
         <main id="main">
             {% include '_chip_name_banner.html' %}
             {% include '_dataset_roots_banner.html' %}
-            <div id="content-area">
+            <div id="content-area" class="ui-chrome-content">
                 {# Per-page header collapse (Item 4): persistent toggle, OUTSIDE
                    #table-pane so it survives HTMX swaps and stays reachable when the
                    heading is collapsed. Hides each page's .table-header-row heading
@@ -1450,7 +1451,7 @@
         </main>
     </div>
 
-    <dialog id="folder-browser" class="folder-browser-dialog">
+    <dialog id="folder-browser" class="folder-browser-dialog ui-folder-dialog">
         <div class="browser-header">
             <strong>Browse Folders</strong>
             <button class="btn-close" onclick="document.getElementById('folder-browser').close()">&times;</button>
@@ -1468,7 +1469,7 @@
             <span class="browser-newfolder-err" id="browser-newfolder-err" aria-live="polite"></span>
         </div>
         <details class="ui-disclosure browser-recent" id="browser-recent" open>
-            <summary>Recent Folders</summary>
+            <summary class="ui-disclosure-summary">Recent Folders</summary>
             <div id="browser-recent-list" class="browser-recent-list"></div>
         </details>
         <div class="browser-breadcrumbs" id="browser-breadcrumbs"></div>

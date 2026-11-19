@@ -52,6 +52,7 @@ def test_light_theme_keeps_the_darker_wiring_fills():
 
 def test_a_theme_switch_redraws_the_racks():
     js = (TPL.parent / "static" / "app.js").read_text(encoding="utf-8")
-    i = js.index("var _iwDrawn = [];")
-    assert "sm:themechange" in js[i:i + 400] and "renderInstrumentWiring.apply" in js[i:i + 600]
+    start = js.index("document.addEventListener('sm:themechange'", js.index("var _iwDrawn = [];"))
+    handler = js[start:js.index("window.renderInstrumentWiring = function", start)]
+    assert "_iwDrawn.slice().forEach" in handler and "renderInstrumentWiring.apply" in handler
     assert "if (_iwDrawn.indexOf(container) < 0) _iwDrawn.push(container);" in js

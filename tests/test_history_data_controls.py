@@ -149,7 +149,7 @@ def test_dataset_tabs_use_the_shared_small_type():
 @pytest.mark.parametrize("theme", ["light", "dark"])
 def test_history_styles_use_available_theme_tokens_and_fit_phone(theme):
     css = read("static/ui-kit.css")
-    block = css.split("/* Kit sweep wave 2: history */")[1]
+    block = css.split("/* Kit sweep wave 2: history */")[1].split("/* Kit sweep wave 2:")[0]
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(", block)
     defined = set(re.findall(r"(--[\w-]+)\s*:", css))
     assert set(re.findall(r"var\((--[\w-]+)\)", block)) <= defined

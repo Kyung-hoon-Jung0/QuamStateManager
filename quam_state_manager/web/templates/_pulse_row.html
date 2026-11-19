@@ -8,7 +8,7 @@
             title="{{ r.summary }}"{% if r.fold_key %} data-pulse-fold-member="{{ r.fold_key }}" hidden{% endif %}>
             <td class="pulse-sel-col" onclick="event.stopPropagation()">
                 {%- if not r.is_alias and r.known -%}
-                <input type="checkbox" class="pulse-sel-chk" data-path="{{ r.path }}"
+                <input type="checkbox" class="pulse-sel-chk ui-check-box" data-path="{{ r.path }}"
                        onchange="window.pulseSelChanged(this)">
                 {%- endif -%}
             </td>

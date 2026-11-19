@@ -6929,7 +6929,7 @@ class TestRound13SidebarSearchBox:
         # The opening tag spans multiple lines; slice to its closing '>'.
         opening = base[tag:base.index(">", i)]
         assert 'name="name"' in opening
-        assert 'class="search-help-input"' in opening
+        assert 'search-help-input ui-textarea ui-textarea--grow' in opening
         assert 'data-search-help="sidebar-search-help"' in opening
         assert 'hx-get="/workspace/tree"' in opening
         assert 'hx-target="#sidebar-tree"' in opening

@@ -1843,7 +1843,9 @@ for (const [id, selector, matches] of data.cases) {
             markup = '<details class="ph-drift-card">' + markup + 'Summary</summary></details>'
         html += '<div class="app-shell">' + markup + '</div>'
         # An audited element that has since become a kit part keeps the kit look, not the default.
-        cases.append((element['id'], selector, 'ui-disclosure-summary' not in (element.get('class') or '')))
+        kit_parts = ('ui-disclosure-summary', 'ui-check-box')
+        classes = (element.get('class') or '').split()
+        cases.append((element['id'], selector, not any(part in classes for part in kit_parts)))
     result = subprocess.run([node, '-e', script], input=json.dumps({'html': html, 'cases': cases, 'report':
                                 '<body class="chip-report"><input id="report-check" type="checkbox">'
                                 '<details><summary id="report-summary">Report</summary></details></body>'}),

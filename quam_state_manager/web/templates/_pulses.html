@@ -33,7 +33,7 @@
 <div id="gate-recheck-slot" hx-get="/pulse/cz-gate/recheck-notice"
      hx-trigger="pulses-changed from:body, cellsReverted from:document, stateRestored from:document"
      hx-swap="innerHTML">{% include '_gate_recheck_notice.html' %}</div>
-<div class="table-header-row ui-head ui-head--data ui-pulses-head">
+<div class="table-header-row ui-head ui-head--data ui-head--page ui-pulses-head">
     <h2 class="ui-head-title">Pulses <small class="muted ui-count" id="pulses-total">({{ total }})</small></h2>
     <div class="table-filter">
         <input class="ui-search" type="search" name="q" value="{{ active_query or '' }}"
@@ -105,7 +105,7 @@
    delay: debounces (htmx restarts the countdown on every new event), so a
    run of per-field commits refetches the whole row set ONCE instead of once
    per keystroke-commit — the table flicker the user reported (docs/75). #}
-<div id="pulses-rows-wrap"
+<div id="pulses-rows-wrap" class="ui-pulse-list"
      hx-get="/pulses?rows=1&channel={{ active_channel }}&per_page={{ per_page }}{{ ('&q=' ~ (active_query | urlencode)) if active_query else '' }}{{ ('&owner=' ~ (active_owner | urlencode)) if active_owner else '' }}"
      hx-trigger="pulses-changed from:body delay:400ms"
      hx-swap="innerHTML">
