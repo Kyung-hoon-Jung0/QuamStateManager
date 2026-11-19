@@ -1474,3 +1474,16 @@ def test_kit_sweep_port_files_have_no_bare_controls():
         counts = measure()
         for file in files:
             assert counts.get(file, 0) == 0, (measure.__name__, file, counts.get(file))
+
+
+def test_kit_sweep_generate_files_have_no_bare_controls():
+    files = {
+        "templates/_generate.html", "static/generate.js", "static/gen-additions.js",
+        "templates/_diagram_add.html", "static/diagram-add.js", "templates/_cz_plan.html",
+        "static/cz-plan.js", "templates/_map_tools.html", "templates/_chip_name_banner.html",
+        "templates/_zline.html",
+    }
+    for measure in (measure_bare_controls, measure_script_controls, measure_bare_buttons):
+        counts = measure()
+        for path in sorted(files):
+            assert counts.get(path, 0) == 0, (measure.__name__, path, counts.get(path))

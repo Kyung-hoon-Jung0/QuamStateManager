@@ -38,6 +38,15 @@
       else if (k === "hidden") e.hidden = !!attrs[k];
       else e.setAttribute(k, attrs[k]);
     });
+    if (tag === "input" && (!attrs || !/^(hidden|checkbox|radio)$/.test(attrs.type || ""))) {
+      e.classList.add("ui-input");
+      if (attrs && attrs.type === "number") e.classList.add("ui-input--num");
+    }
+    if (tag === "select") e.classList.add("ui-select");
+    if (tag === "button") e.classList.add("btn-sm");
+    if (tag === "table") e.classList.add("ui-table");
+    if (tag === "details") e.classList.add("ui-disclosure");
+    if (tag === "summary") e.classList.add("ui-disclosure-summary");
     if (text != null) e.textContent = text;
     return e;
   }
@@ -194,7 +203,7 @@
     return JSON.stringify(v);
   }
 
-  // A class <select>: each option reads the class name and its origin, the module path on hover (P2-UX-4).
+  // A class selector: each option reads the class name and its origin, the module path on hover (P2-UX-4).
   function classSelect(classes, label, filter) {
     var sel = el("select", { className: "gen-add-class", "aria-label": label });
     sel.appendChild(el("option", { value: "" }, "Choose a class…"));
@@ -235,8 +244,8 @@
     Object.keys(cls.fields || {}).forEach(function (fn) {
       var f = cls.fields[fn];
       if (fn === "id" || skip.indexOf(fn) >= 0) return;
-      var lab = el("label", { className: "gen-add-field" + (f.has_default ? "" : " gen-add-required") });
-      var fname = el("span", { className: "gen-add-fname", title: f.doc || "" }, fn);
+      var lab = el("label", { className: "ui-field gen-add-field" + (f.has_default ? "" : " gen-add-required") });
+      var fname = el("span", { className: "ui-field-label gen-add-fname", title: f.doc || "" }, fn);
       if (!f.has_default) fname.appendChild(el("span", { className: "ui-dot gen-add-req-dot", role: "img", "aria-label": "required", title: "required" }));
       lab.appendChild(fname);
       var inferred = isInferred(f);
@@ -256,7 +265,8 @@
         inp.classList.add("gen-add-pointable");
       }
       lab.appendChild(inp);
-      if (inferred) lab.appendChild(el("span", { className: "gen-add-hint muted", title: INFERRED_HINT }, "inferred"));
+      if (inferred) lab.appendChild(el("span", { className: "ui-field-hint gen-add-hint muted",
+           title: INFERRED_HINT }, "inferred"));
       box.appendChild(lab);
     });
     return {
@@ -532,7 +542,7 @@
         if (item.on === "coupler" && !item.required) {
           var cb = el("input", { type: "checkbox", className: "gen-add-cz-use", "aria-label": "Add a coupler pulse" });
           cb.checked = !!(pre && pre.enabled !== false); part.enabled = cb.checked;
-          var cbl = el("label", { className: "gen-add-cz-usel" });
+          var cbl = el("label", { className: "ui-check gen-add-cz-usel" });
           cbl.appendChild(cb);
           cbl.appendChild(document.createTextNode("also a coupler pulse (optional)"));
           head.appendChild(cbl);
@@ -745,7 +755,7 @@
     if (withMacro) {
       cb = el("input", { type: "checkbox", className: "gen-add-ro-use", "aria-label": "Also a measure macro" });
       cb.checked = true;
-      var cbl = el("label", { className: "gen-add-cz-usel" });
+      var cbl = el("label", { className: "ui-check gen-add-cz-usel" });
       cbl.appendChild(cb);
       cbl.appendChild(document.createTextNode("also a measure macro (" + shortName(mpath) + ") on " + ch.qubit + " named"));
       mrow.appendChild(cbl);
@@ -841,7 +851,7 @@
       "channel, and the active TWPA list where the chip's root has one. The lab code that reads the flag " +
       "is yours; this only writes the state it reads."));
     var frow = el("div", { className: "gen-add-row" });
-    var flag = el("label", { className: "gen-add-cz-usel" });
+    var flag = el("label", { className: "ui-check gen-add-cz-usel" });
     var fcb = el("input", { type: "checkbox", className: "gen-add-tw-flag", "aria-label": "extras.twpa_pulse_mode" });
     fcb.checked = true;
     flag.appendChild(fcb);
@@ -854,8 +864,8 @@
     var len = el("input", { type: "text", className: "gen-add-tw-len", placeholder: "blank = the builder's length (ns)", "aria-label": "Pump length" });
     var amp = el("input", { type: "text", className: "gen-add-tw-amp", placeholder: "blank = the builder's amplitude", "aria-label": "Pump amplitude" });
     [["length", len], ["amplitude", amp]].forEach(function (x) {
-      var lab = el("label", { className: "gen-add-field" });
-      lab.appendChild(el("span", { className: "gen-add-fname" }, x[0]));
+      var lab = el("label", { className: "ui-field gen-add-field" });
+      lab.appendChild(el("span", { className: "ui-field-label gen-add-fname" }, x[0]));
       lab.appendChild(x[1]);
       pbox.appendChild(lab);
     });
@@ -870,7 +880,7 @@
     } else {
       acb = el("input", { type: "checkbox", className: "gen-add-tw-use-active", "aria-label": "Set active_twpa_names" });
       acb.checked = decl === true;
-      var al = el("label", { className: "gen-add-cz-usel" });
+      var al = el("label", { className: "ui-check gen-add-cz-usel" });
       al.appendChild(acb);
       al.appendChild(document.createTextNode(" active_twpa_names ="));
       arow.appendChild(al);
@@ -1311,7 +1321,8 @@
       chips.appendChild(el("span", { className: "muted gen-gate-none" }, "no gate yet"));
     td.appendChild(chips);
     var row = el("div", { className: "gen-gates-actions" });
-    var dl = el("label", { className: "gen-gate-deflabel" }, "Default ");
+    var dl = el("label", { className: "ui-field gen-gate-deflabel" });
+    dl.appendChild(el("span", { className: "ui-field-label" }, "Default "));
     var sel = el("select", { className: "gen-gate-default-sel", "aria-label": "Default gate of " + pid });
     var names = g.builder.filter(function (n) { return n !== DEFAULT_GATE; })
       .concat(g.added.map(function (a) { return a.name; }));
@@ -1516,8 +1527,8 @@
     });
     var inputs = {};
     (lint.needs_person || []).forEach(function (f) {
-      var lab = el("label", { className: "gen-add-field gen-add-required" });
-      lab.appendChild(el("span", null, f + " (yours to type)"));
+      var lab = el("label", { className: "ui-field gen-add-field gen-add-required" });
+      lab.appendChild(el("span", { className: "ui-field-label" }, f + " (yours to type)"));
       var inp = el("input", { type: "text", "data-needs": f, "aria-label": f });
       lab.appendChild(inp); r.appendChild(lab); inputs[f] = inp;
     });

@@ -30,8 +30,8 @@
     Where each CZ operation moves its qubits on the chip, and how lossy those frequencies were when measured.
     {% set has_snz = namespace(v=false) %}{% for r in rows %}{% for ln in (r.lines or []) %}{% if 'SNZ' in (ln.pulse_class or '') %}{% set has_snz.v = true %}{% endif %}{% endfor %}{% endfor %}
     <small class="muted czp-lede-caveat">Operating values describe the first lobe. Nearest resonance is the closest across all played lobes{% if has_snz.v %}, including a third SNZ level{% endif %}.</small>
-    <details class="czp-help">
-        <summary aria-label="How to read this page">?</summary>
+    <details class="czp-help ui-disclosure">
+        <summary aria-label="How to read this page" class="ui-disclosure-summary">?</summary>
         <div class="czp-help-body">
             Flux amplitude &rarr; frequency, the detuning &Delta; = f<sub>control</sub> &minus; f<sub>target</sub> it reaches,
             and the nearest resonance of the |11&rang; manifold (|11&rang;&ndash;|20&rang; at +|&alpha;<sub>c</sub>|,
@@ -52,18 +52,27 @@
 <p class="czp-warn-text">{{ reason }}</p>
 {% endfor %}
 <section class="ui-zone" aria-label="Chip frequency map" data-czp-zone="map">
-<div class="ui-zone-head"><h3 class="ui-zone-title" title="Click a pair on the small chip map to show or hide its frequencies; click a pair in the drawing below the columns to open its operation">Chip frequency map</h3></div>
+<div class="ui-zone-head"><h3 class="ui-zone-title"
+        title="{{ ('Click a pair on the small chip map to show or hide its ' ~
+          'frequencies; click a pair in the drawing below the columns to ' ~
+          'open its operation') | safe }}">Chip frequency map</h3></div>
 <div class="ui-zone-body">
 <section class="czp-map-box" aria-label="Chip frequency map">
     <div class="czp-controls czp-map-head">
-        <label>Operation
-            <select id="czp-map-op" aria-label="Operation drawn for every pair" title="cz per pair: each pair's cz, else its first CZ operation"><option value="">cz per pair</option></select>
+        <label class="ui-field"><span class="ui-field-label">Operation</span>
+<select id="czp-map-op" aria-label="Operation drawn for every pair"
+  title="cz per pair: each pair's cz, else its first CZ operation" class="ui-select" >
+<option value="">cz per pair</option></select>
         </label>
-        <label>Columns
-            <select id="czp-map-order" aria-label="Column order"><option value="chip" selected>By chip position</option><option value="name">By qubit name</option><option value="f01">By idle frequency</option></select>
+        <label class="ui-field"><span class="ui-field-label">Columns</span>
+<select id="czp-map-order" aria-label="Column order" class="ui-select">
+<option value="chip" selected>By chip position</option><option value="name">By qubit name</option>
+<option value="f01">By idle frequency</option></select>
         </label>
-        <label>Loss scale
-            <select id="czp-map-scale" aria-label="Population loss scale of each column"><option value="0.25" selected>0-25 % (paper)</option><option value="0.5">0-50 %</option><option value="1">0-100 %</option></select>
+        <label class="ui-field"><span class="ui-field-label">Loss scale</span>
+<select id="czp-map-scale" aria-label="Population loss scale of each column" class="ui-select">
+<option value="0.25" selected>0-25 % (paper)</option><option value="0.5">0-50 %</option>
+<option value="1">0-100 %</option></select>
         </label>
     </div>
     <div class="czp-controls">
@@ -80,41 +89,48 @@
     {% include '_component_map.html' %}
     <div id="czp-map" class="czp-map"></div>
     </div>
-    <details id="czp-map-detail" class="czp-map-detail">
-        <summary id="czp-map-detail-summary">Measured loss per qubit</summary>
+    <details id="czp-map-detail" class="czp-map-detail ui-disclosure">
+        <summary id="czp-map-detail-summary" class="ui-disclosure-summary">Measured loss per qubit</summary>
         <div id="czp-map-detail-body"></div>
     </details>
     <div class="czp-map-footer muted">
-        <details id="czp-map-key-box">
-            <summary>Key</summary>
+        <details id="czp-map-key-box" class="ui-disclosure">
+            <summary class="ui-disclosure-summary">Key</summary>
             <p id="czp-map-key" class="czp-map-key"></p>
         </details>
-        <details id="czp-map-notes-box" hidden>
-            <summary><span id="czp-map-notes-summary" aria-live="polite" aria-atomic="true">Notes (0)</span></summary>
+        <details id="czp-map-notes-box" hidden class="ui-disclosure">
+                        <summary class="ui-disclosure-summary">
+            <span id="czp-map-notes-summary" aria-live="polite" aria-atomic="true">Notes (0)</span></summary>
             <p id="czp-map-notes" class="czp-map-notes"></p>
         </details>
     </div>
 </section>
 </div>
 </section>
-<details class="czp-coupler-models"><summary>Coupler models ({{ coupler_forms | length }})</summary>
+<details class="ui-disclosure"><summary class="ui-disclosure-summary">Coupler models ({{ coupler_forms | length }})
+</summary>
 {% for f in coupler_forms %}
-<details><summary>Coupler model: {{ f.pair }}</summary>
+<details class="ui-disclosure"><summary class="ui-disclosure-summary">Coupler model: {{ f.pair }}</summary>
 <form class="czp-coupler-form" data-pair="{{ f.pair }}" data-create-extras="{{ 1 if f.create_extras else 0 }}">
 {% for field in coupler_model_fields %}
-<label>{{ field.label }}{% if field.unit %} ({{ field.unit }}){% endif %}
-<input required type="number" step="any" name="{{ field.key }}" data-scale="{{ field.scale }}" value="{{ f.model[field.key] / field.scale if field.key in f.model else '' }}" title="{{ field.help }}"></label>
+<label class="ui-field"><span class="ui-field-label">{{ field.label }}</span>
+{% if field.unit %}<span class="ui-input-unit">{% endif %}
+<input required type="number" step="any" name="{{ field.key }}" data-scale="{{ field.scale }}"
+       value="{{ f.model[field.key] / field.scale if field.key in f.model else '' }}"
+       title="{{ field.help }}" class="ui-input ui-input--num">
+{% if field.unit %}<span class="ui-input-unit-text">{{ field.unit }}</span></span>{% endif %}</label>
 {% endfor %}
-<label>Source <input required name="source" value="{{ f.model.get('source', 'manual') }}"></label>
+<label class="ui-field"><span class="ui-field-label">Source</span>
+<input required name="source" value="{{ f.model.get('source', 'manual') }}" class="ui-input"></label>
 <button type="submit" class="btn-sm">Stage coupler model</button><output></output>
 </form></details>
 {% endfor %}
 </details>
-<label><input type="checkbox" id="czp-include-coupler">include coupler shift</label>
+<label class="ui-check"><input type="checkbox" id="czp-include-coupler">include coupler shift</label>
 {% if rows %}
 <div class="czp-controls czp-table-controls">
-    <label>Listed operation
-        <select id="czp-table-op" aria-label="Listed operation"><option value="">cz per pair</option></select>
+    <label class="ui-field"><span class="ui-field-label">Listed operation</span>
+<select id="czp-table-op" aria-label="Listed operation" class="ui-select"><option value="">cz per pair</option></select>
     </label>
     <p class="muted czp-filter-note" id="czp-filter-note" role="status" hidden></p>
     <div class="muted czp-history-note" id="czp-history-note" role="status"></div>
@@ -123,19 +139,39 @@
     {%- endif %}
 </div>
 <div class="czp-table-wrap">
-<table id="czp-table" class="data-table czp-table" role="grid">
+<table id="czp-table" class="data-table czp-table ui-table" role="grid">
     <thead>
         <tr>
-            <th title="Click to sort." class="czp-stick" data-sort-key="pair" aria-sort="none"><button type="button" class="czp-sort">Pair</button></th>
-            <th title="Click to sort." class="czp-stick czp-stick-op" data-sort-key="op" aria-sort="none"><button type="button" class="czp-sort">Operation</button></th>
+                        <th title="Click to sort." class="czp-stick" data-sort-key="pair" aria-sort="none">
+            <button type="button" class="czp-sort btn-sm">Pair</button></th>
+                        <th title="Click to sort." class="czp-stick czp-stick-op" data-sort-key="op" aria-sort="none">
+            <button type="button" class="czp-sort btn-sm">Operation</button></th>
             <th title="Which qubits the operation flux-pulses">Moves</th>
-            <th title="Frequency each qubit reaches at the operation's amplitude (control / target). Sorts by the moving qubit's frequency. Click to sort." data-sort-key="freq" data-sort-num="1" aria-sort="none"><button type="button" class="czp-sort">At the operation (GHz)</button></th>
-            <th title="Played first-lobe Z output in volts (control / target); a plain number marked stored when the LF port or shape is unresolved. Click to sort." data-sort-key="amp" data-sort-num="1" aria-sort="none"><button type="button" class="czp-sort">Z amp</button></th>
-            <th title="f_control - f_target at the operating point. Click to sort." data-sort-key="delta" data-sort-num="1" aria-sort="none"><button type="button" class="czp-sort">&Delta; (MHz)</button></th>
-            <th title="The nearest |11> resonance and how far &Delta; is from it. Sorts by that distance's size. Click to sort." data-sort-key="near" data-sort-num="1" aria-sort="none"><button type="button" class="czp-sort">Nearest resonance</button></th>
+                        <th
+              title="{{ ('Frequency each qubit reaches at the operation\'s amplitude ' ~
+          '(control / target). Sorts by the moving qubit\'s frequency. Click ' ~
+          'to sort.') | safe }}"
+              data-sort-key="freq" data-sort-num="1" aria-sort="none" ><button type="button"
+              class="czp-sort btn-sm">At the operation (GHz)</button></th>
+                        <th
+              title="{{ ('Played first-lobe Z output in volts (control / target); a plain ' ~
+          'number marked stored when the LF port or shape is unresolved. ' ~
+          'Click to sort.') | safe }}"
+              data-sort-key="amp" data-sort-num="1" aria-sort="none" ><button type="button"
+              class="czp-sort btn-sm">Z amp</button></th>
+                        <th title="f_control - f_target at the operating point. Click to sort." data-sort-key="delta"
+              data-sort-num="1" aria-sort="none" ><button type="button" class="czp-sort btn-sm">&Delta; (MHz)</button>
+            </th>
+                        <th
+              title="{{ ('The nearest |11> resonance and how far &Delta; is from it. Sorts ' ~
+          'by that distance\'s size. Click to sort.') | safe }}"
+              data-sort-key="near" data-sort-num="1" aria-sort="none" ><button type="button"
+              class="czp-sort btn-sm">Nearest resonance</button></th>
             <th title="How the frequency was obtained">Estimate</th>
-            <th title="Validity of every moving qubit: measured model or quadratic range; generic quadratic limits are identified">Validity</th>
-            <th title="Click to sort." data-sort-key="irb" data-sort-num="1" aria-sort="none"><button type="button" class="czp-sort">IRB</button></th>
+            <th title="{{ ('Validity of every moving qubit: measured model or quadratic ' ~
+          'range; generic quadratic limits are identified') | safe }}">Validity</th>
+                        <th title="Click to sort." data-sort-key="irb" data-sort-num="1" aria-sort="none">
+            <button type="button" class="czp-sort btn-sm">IRB</button></th>
             <th title="When the operation's amplitudes were last set (from this chip's history)">Last set</th>
         </tr>
     </thead>
@@ -172,13 +208,16 @@
 <section class="czp-detail" aria-live="polite">
     <div class="czp-controls">
         <h3 id="czp-title" class="czp-title">&nbsp;</h3>
-        <button type="button" id="czp-stale-chip" class="czp-stale-chip" hidden></button>
-        <label>Operation
-            <select id="czp-op" aria-label="Operation of this pair"></select>
+        <button type="button" id="czp-stale-chip" class="czp-stale-chip btn-sm" hidden></button>
+        <label class="ui-field"><span class="ui-field-label">Operation</span>
+<select id="czp-op" aria-label="Operation of this pair" class="ui-select"></select>
         </label>
     </div>
     <p id="czp-status" class="czp-status" role="status" hidden></p>
-    <p id="czp-match" class="czp-match" role="status" title="Plot detuning is f_control - f_target; the signed resonance follows the pair roles. Difference is required minus stored amplitude."></p>
+    <p id="czp-match" class="czp-match" role="status"
+        title="{{ ('Plot detuning is f_control - f_target; the signed resonance ' ~
+          'follows the pair roles. Difference is required minus stored ' ~
+          'amplitude.') | safe }}"></p>
     <div id="czp-match-stats" class="ui-stats" role="group" aria-label="Required and stored amplitude" hidden></div>
     <p id="czp-pair-coupler-note" class="czp-caveat" hidden></p>
     <div class="czp-plots">
@@ -188,15 +227,29 @@
             <div id="czp-flux" class="czp-plot"></div>
         </figure>
         <figure class="czp-fig">
-            <figcaption title="From the operation waveforms as commanded, before the port's output filters; the dotted traces are each moving line's signed Z amplitude; frequency traces are available below">Detuning Δ and Z amplitude during the gate <span class="muted">&mdash; from the operation's own waveforms, commanded (before output filters)</span></figcaption>
+            <figcaption title="{{ ('From the operation waveforms as commanded, before the port\'s ' ~
+          'output filters; the dotted traces are each moving line\'s signed ' ~
+          'Z amplitude; frequency traces are available below') | safe }}">Detuning &#916; and Z amplitude during the
+            gate
+            <span
+        class="muted">&mdash; from the operation's own waveforms, commanded (before output filters)</span>
+        </figcaption>
             <p id="czp-time-caveat" class="czp-caveat" hidden></p>
-            <label title="Draw each moving line's output after its LF port's exponential and FIR filters, by the same model as the Z-line distortion page (QOP 3.5+ sum model; DC offset excluded)"><input type="checkbox" id="czp-filtered-toggle"> Also draw the port output after its filters</label>
+                        <label
+              title="{{ ('Draw each moving line\'s output after its LF port\'s exponential ' ~
+          'and FIR filters, by the same model as the Z-line distortion page ' ~
+          '(QOP 3.5+ sum model; DC offset excluded)') | safe }}"
+              class="ui-check" ><input type="checkbox" id="czp-filtered-toggle">
+             Also draw the port output after its filters</label>
             <div id="czp-time" class="czp-plot"></div>
-            <details id="czp-frequency-box"><summary>Frequency during the gate <span class="muted">(commanded, before output filters)</span></summary><div id="czp-frequency" class="czp-plot"></div></details>
+                        <details id="czp-frequency-box" class="ui-disclosure"><summary class="ui-disclosure-summary">
+            Frequency during the gate <span class="muted">(commanded, before output filters)</span></summary>
+            <div id="czp-frequency" class="czp-plot"></div></details>
         </figure>
     </div>
     <div id="czp-card" class="czp-card"></div>
-    <details class="czp-solve-box"><summary>Solve amplitude and stage a proposal</summary><div id="czp-solve"></div></details>
+        <details class="czp-solve-box ui-disclosure"><summary class="ui-disclosure-summary">
+    Solve amplitude and stage a proposal</summary><div id="czp-solve"></div></details>
     <details id="czp-notes-box" class="czp-notes-box ui-disclosure">
         <summary id="czp-notes-summary" class="ui-disclosure-summary">Notes</summary>
         <ul id="czp-notes" class="zline-notes czp-notes"></ul>
@@ -204,8 +257,6 @@
 </section>
 </div>
 </section>
-
-
 {% else %}
 <p class="ui-state ui-state--empty">No CZ operations on this chip &mdash; no qubit pair has a macro of a CZ gate class.</p>
 {% endif %}
