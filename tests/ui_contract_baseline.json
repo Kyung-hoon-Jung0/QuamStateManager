@@ -724,7 +724,9 @@
   "templates/_trend_picker.html": 2,
   "templates/_type_fix_plan.html": 2,
   "templates/ui_kit.html": 2,
+  "static/app.js": 3,
   "static/bulk-edit.js": 4,
+  "static/dataset-virtual.js": 5,
   "static/pair-edit.js": 1,
   "static/scheduler.js": 1
  },

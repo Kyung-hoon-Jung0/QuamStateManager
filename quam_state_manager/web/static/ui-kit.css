@@ -1979,7 +1979,7 @@ table.ui-pair-props { table-layout: fixed; width: 100%; }
 
 /* Kit sweep wave 2: defaults */
 /* App chrome only. Explicit parts retain their own sizing, states and markers. */
-/* The repeated app scope outranks legacy summary headings without changing explicit kit parts. */
+/* Only bare summaries and audited headings inherit markers; feature carets keep their own rules. */
 .app-shell input:is([type="checkbox"], [type="radio"]):not(:where(
     .ui-check > input, .ui-check-box, .gen-rule-row input, .gen-rule-grp-cb)) {
     -webkit-appearance: none;
@@ -2055,8 +2055,10 @@ table.ui-pair-props { table-layout: fixed; width: 100%; }
     .ui-check > input, .ui-check-box, .gen-rule-row input, .gen-rule-grp-cb)):where([type="radio"]) {
     border-radius: var(--ui-r-round);
 }
-.app-shell.app-shell details > summary:not(:where(
-    [class*="ui-"], .ui-opxmon-tile summary, .tree-root > summary, .btn-sm)) {
+.app-shell.app-shell details >
+summary:where(:not([class]), .muted, .section-header, .ph-drift-title):not(:where(
+    [class*="ui-"], .ui-opxmon-tile summary, .tree-root > summary, .btn-sm,
+    :is(.manual-cat, .manual-class, .wc-feat, .h5-coords) > summary)) {
     display: flex;
     align-items: center;
     gap: var(--ui-gap-2);
@@ -2069,21 +2071,29 @@ table.ui-pair-props { table-layout: fixed; width: 100%; }
     max-width: 100%;
     overflow-wrap: anywhere;
 }
-.app-shell.app-shell details > summary:not(:where(
-    [class*="ui-"], .ui-opxmon-tile summary, .tree-root > summary, .btn-sm))::-webkit-details-marker {
+.app-shell.app-shell details >
+summary:where(:not([class]), .muted, .section-header, .ph-drift-title):not(:where(
+    [class*="ui-"], .ui-opxmon-tile summary, .tree-root > summary, .btn-sm,
+    :is(.manual-cat, .manual-class, .wc-feat, .h5-coords) > summary))::-webkit-details-marker {
     display: none;
 }
-.app-shell.app-shell details > summary:not(:where(
-    [class*="ui-"], .ui-opxmon-tile summary, .tree-root > summary, .btn-sm))::after {
+.app-shell.app-shell details >
+summary:where(:not([class]), .muted, .section-header, .ph-drift-title):not(:where(
+    [class*="ui-"], .ui-opxmon-tile summary, .tree-root > summary, .btn-sm,
+    :is(.manual-cat, .manual-class, .wc-feat, .h5-coords) > summary))::after {
     display: none;
 }
-.app-shell.app-shell details > summary:not(:where(
-    [class*="ui-"], .ui-opxmon-tile summary, .tree-root > summary, .btn-sm))::before {
+.app-shell.app-shell details >
+summary:where(:not([class]), .muted, .section-header, .ph-drift-title):not(:where(
+    [class*="ui-"], .ui-opxmon-tile summary, .tree-root > summary, .btn-sm,
+    :is(.manual-cat, .manual-class, .wc-feat, .h5-coords) > summary))::before {
     content: var(--ui-disclosure-marker);
     color: var(--ui-text-2);
     flex: 0 0 auto;
 }
-.app-shell.app-shell details[open] > summary:not(:where(
-    [class*="ui-"], .ui-opxmon-tile summary, .tree-root > summary, .btn-sm))::before {
+.app-shell.app-shell details[open] >
+summary:where(:not([class]), .muted, .section-header, .ph-drift-title):not(:where(
+    [class*="ui-"], .ui-opxmon-tile summary, .tree-root > summary, .btn-sm,
+    :is(.manual-cat, .manual-class, .wc-feat, .h5-coords) > summary))::before {
     content: var(--ui-disclosure-marker-open);
 }

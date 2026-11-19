@@ -233,6 +233,10 @@ def _markup_elements(text):
     from html.parser import HTMLParser
 
     class Elements(HTMLParser):
+        # Tags in JS strings/comments must not hide later markup as raw text.
+        def set_cdata_mode(self, elem, **kwargs):
+            pass
+
         def __init__(self):
             super().__init__()
             self.stack, self.elements = [], []
@@ -324,6 +328,41 @@ def test_bare_part_measures_detect_unstyled_markup_and_respect_parent_boundaries
     monkeypatch.setattr(sys.modules[__name__], "_rel", lambda p: p.name)
     assert measure_bare_checks({"ui-check-box", "feature"}) == {p.name: 3 for p in paths}
     assert measure_bare_disclosures() == {p.name: 2 for p in paths}
+
+
+@pytest.mark.parametrize("raw_tag", ["script", "style", "textarea", "title"])
+def test_markup_elements_keep_scanning_after_raw_text_tag_mentions(raw_tag):
+    markup = '// Mention <' + raw_tag + '> in JS text.\n'
+    markup += '<input type="checkbox"><details><summary>Bare</summary></details>'
+    elements = _markup_elements(markup)
+    assert sum(tag == "input" for tag, _, _ in elements) == 1
+    assert sum(tag == "summary" for tag, _, _ in elements) == 1
+
+
+def test_bare_part_measures_detect_appended_markup_in_every_source(monkeypatch):
+    paths = _templates() + _scripts()
+    texts = {p: _read(p) for p in paths}
+    known = _known_classes()
+    monkeypatch.setattr(sys.modules[__name__], "_known_classes", lambda: known)
+    before = [measure_bare_checks(), measure_bare_disclosures()]
+    extra = '<input type="checkbox"><details><summary>Bare</summary></details>'
+    monkeypatch.setattr(sys.modules[__name__], "_read", lambda p: texts[p] + extra)
+    for original, measured in zip(before, [measure_bare_checks(), measure_bare_disclosures()]):
+        assert sum(measured.values()) == sum(original.values()) + len(paths)
+        for p in paths:
+            assert measured.get(_rel(p), 0) == original.get(_rel(p), 0) + 1, _rel(p)
+
+
+@pytest.mark.parametrize("filename", ["app.js", "dataset-virtual.js"])
+def test_script_bare_markup_additions_fail_both_ratchets(monkeypatch, filename):
+    path = _STATIC / filename
+    read = _read
+    extra = '<input type="checkbox"><details><summary>Bare</summary></details>'
+    monkeypatch.setattr(sys.modules[__name__], "_read", lambda p: read(p) + (extra if p == path else ""))
+    with pytest.raises(AssertionError, match=filename):
+        test_no_new_bare_checks()
+    with pytest.raises(AssertionError, match=filename):
+        test_no_new_bare_disclosures()
 
 
 def measure_select_tags():
@@ -1679,8 +1718,10 @@ def test_kit_sweep_pages_files_have_no_bare_controls():
 # Element defaults get their own narrow allowlist, like the existing element/button section.
 _DEFAULT_CHECK = ('.app-shell input:is([type="checkbox"], [type="radio"]):not(:where( '
                   '.ui-check > input, .ui-check-box, .gen-rule-row input, .gen-rule-grp-cb))')
-_DEFAULT_SUMMARY = ('.app-shell.app-shell details > summary:not(:where( '
-                    '[class*="ui-"], .ui-opxmon-tile summary, .tree-root > summary, .btn-sm))')
+_DEFAULT_SUMMARY = ('.app-shell.app-shell details > summary:where(:not([class]), .muted, '
+                    '.section-header, .ph-drift-title):not(:where( '
+                    '[class*="ui-"], .ui-opxmon-tile summary, .tree-root > summary, .btn-sm, '
+                    ':is(.manual-cat, .manual-class, .wc-feat, .h5-coords) > summary))')
 _CHECK_STATES = ('', ':hover', ':focus-visible', ':checked', ':indeterminate', '::before',
                  ':checked::before', ':indeterminate::before', ':disabled')
 
@@ -1759,6 +1800,22 @@ for (const [id, selector, matches] of data.cases) {
     cases += [(id, _DEFAULT_SUMMARY, expected) for id, expected in (
         ('kit-summary', False), ('panel-summary', False), ('plain-summary', True), ('drift-summary', True),
         ('config-summary', True), ('report-summary', False))]
+    custom_summaries = (
+        'jargon-q', 'tree-date-label', 'tree-dirname', 'sync-marker-peers', 'archive-btn',
+        'sort-badge', 'tray-op-pill', 'manual-cat', 'manual-class', 'wc-feat', 'h5-coords',
+        'notes-summary', 'cmap-summary', 'landing-cfg-summary',
+    )
+    for cls in custom_summaries:
+        html += ('<div class="app-shell"><details class="jargon" open>'
+                 '<summary id="custom-' + cls + '" class="' + cls + '">Custom</summary></details></div>')
+        cases.append(('custom-' + cls, _DEFAULT_SUMMARY, False))
+    for cls in ('manual-cat', 'manual-class', 'wc-feat', 'h5-coords'):
+        for state in ('', ' open'):
+            id = 'caret-' + cls + ('-open' if state else '-closed')
+            html += ('<div class="app-shell"><details class="' + cls + '"' + state + '>'
+                     '<summary id="' + id + '">Custom caret</summary></details></div>')
+            cases.append((id, _DEFAULT_SUMMARY, False))
+            cases.append((id, _DEFAULT_SUMMARY.replace('details >', 'details[open] >'), False))
     # Use the audited elements' current attributes, including legacy feature classes.
     from html import escape
     sources = (
@@ -1806,3 +1863,11 @@ def test_migrated_audit_elements_keep_their_existing_kit_parts():
     report = _read(_TPL / 'chip_report.html')
     assert 'class="ui-check-box"' in report
     assert '<label class="ui-check"><input type="checkbox" id="rep-redact"' in report
+
+
+def test_gallery_agent_tick_uses_the_same_box_part_as_the_agent():
+    gallery = _markup_elements(_read(_TPL / 'ui_kit.html'))
+    ticks = [attrs for tag, attrs, _ in gallery
+             if tag == 'input' and 'ui-agent-tick' in (attrs.get('class') or '').split()]
+    assert ticks
+    assert all('ui-check-box' in attrs['class'].split() for attrs in ticks)
