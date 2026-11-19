@@ -50,28 +50,64 @@
 <form id="pt-form" class="pt-card" onsubmit="return false">
   <input type="hidden" name="element" value="{{ i.element }}">
   <fieldset class="pt-row"><legend>Test</legend>
-    <label><input type="radio" name="test" value="cw" checked> CW tone (spectrum analyser)</label>
-    <label><input type="radio" name="test" value="pulse"> Pulse train + scope trigger</label>
-    <label {% if not i.has_measurement %}title="This element has no measurement operation and input port"{% endif %}>
+    <label class="ui-check"><input type="radio" name="test" value="cw" checked> CW tone (spectrum analyser)</label>
+    <label class="ui-check"><input type="radio" name="test" value="pulse"> Pulse train + scope trigger</label>
+    <label
+        class="ui-check"
+        {% if not i.has_measurement %}
+        title="This element has no measurement operation and input port"{% endif %}>
       <input type="radio" name="test" value="loopback" {% if not i.has_measurement %}disabled{% endif %}> Loopback raw ADC (needs a cable out&rarr;in)</label>
   </fieldset>
   <fieldset class="pt-row"><legend>Basis</legend>
-    <label title="The chip's own element entry from generate_config(): proves the chip's mapping"><input type="radio" name="basis" value="chip" checked> Chip (this element as the chip config defines it)</label>
-    <label title="Only this port with its settings, and a fresh element: proves the hardware and cable"><input type="radio" name="basis" value="raw"> Raw port (independent of the chip)</label>
+    <label class="ui-check" title="The chip's own element entry from generate_config(): proves the chip's mapping">
+<input type="radio" name="basis" value="chip" checked> Chip (this element as the chip config defines it)</label>
+    <label
+        class="ui-check" title="Only this port with its settings, and a fresh element: proves the hardware and cable">
+<input type="radio" name="basis" value="raw"> Raw port (independent of the chip)</label>
   </fieldset>
-  <div class="pt-row">
-    <label class="pt-cw">CW amplitude <input type="number" name="amp" step="0.01" min="-1" max="1" value="0.25"></label>
-    <label class="pt-op">Operation <select name="op">
+  <div class="ui-field-grid">
+    <label class="ui-field ui-field--inline ui-field-wide pt-cw">
+<span class="ui-field-head">
+<span class="ui-field-label">CW amplitude</span>
+</span>
+<input class="ui-input ui-input--num" type="number" name="amp" step="0.01" min="-1" max="1" value="0.25">
+</label>
+    <label class="ui-field ui-field--inline ui-field-wide pt-op">
+<span class="ui-field-head">
+<span class="ui-field-label">Operation</span>
+</span>
+<select class="ui-select" name="op">
       {% for o in i.operations %}<option value="{{ o.name }}" {% if o.name in ("x180", "readout") %}selected{% endif %}
         data-measure="{{ 1 if o.measurement else 0 }}">{{ o.name }} &middot; {{ o.length }} ns &middot; peak {{ "%.4g" % o.peak if o.peak is not none else "?" }}{% if o.dbm is not none %} &middot; {{ "%.1f" % o.dbm }} dBm{% endif %}</option>{% endfor %}
     </select></label>
-    <label class="pt-period">Period (ns) <input type="number" name="period" step="4" min="16" value="10000"></label>
-    <label class="pt-marker">Scope trigger (DIG out) <select name="marker">
+    <label class="ui-field ui-field--inline ui-field-wide pt-period">
+<span class="ui-field-head">
+<span class="ui-field-label">Period</span>
+</span>
+<span class="ui-input-unit">
+<input class="ui-input ui-input--num" type="number" name="period" step="4" min="16" value="10000">
+<span class="ui-input-unit-text">ns</span>
+</span>
+</label>
+    <label class="ui-field ui-field--inline ui-field-wide pt-marker">
+<span class="ui-field-head">
+<span class="ui-field-label">Scope trigger (DIG out)</span>
+</span>
+<select class="ui-select" name="marker">
       {% for m in pt_markers %}<option value="{{ m | join('/') }}">{{ m | join('/') }}</option>{% endfor %}</select></label>
-    <label>Amplitude cap <input type="number" name="cap" step="0.05" min="0.05" max="{{ pt_cap_max }}" value="{{ pt_settings.amp_cap }}"></label>
+    <label class="ui-field ui-field--inline ui-field-wide">
+<span class="ui-field-head">
+<span class="ui-field-label">Amplitude cap</span>
+</span>
+<input
+        class="ui-input ui-input--num"
+        type="number"
+        name="cap" step="0.05" min="0.05" max="{{ pt_cap_max }}"
+        value="{{ pt_settings.amp_cap }}">
+</label>
   </div>
   <p id="pt-plan" class="ui-note" aria-live="polite"></p>
-  <div class="pt-row">
+  <div class="ui-actions ui-actions--start">
     <a id="pt-download" class="btn-sync" href="#" download>&darr; Download script (.py)</a>
   </div>
 </form>
@@ -79,14 +115,41 @@
 <section class="pt-card">
   <h3>Run from SM</h3>
   <fieldset class="pt-row"><legend>Run target</legend>
-    <label><input type="radio" name="pt-target" value="saas" {% if pt_settings.target == "saas" %}checked{% endif %}> QM-SaaS simulator</label>
-    <label><input type="radio" name="pt-target" value="opx" {% if pt_settings.target == "opx" %}checked{% endif %}> Real OPX</label>
+    <label class="ui-check">
+<input
+        type="radio"
+        name="pt-target"
+        value="saas" {% if pt_settings.target == "saas" %}checked{% endif %}> QM-SaaS simulator</label>
+    <label class="ui-check">
+<input
+        type="radio"
+        name="pt-target"
+        value="opx" {% if pt_settings.target == "opx" %}checked{% endif %}> Real OPX</label>
   </fieldset>
-  <div class="pt-row pt-t-saas">
-    <label>Email <input name="saas_email" value="{{ pt_settings.saas.email }}" autocomplete="off"></label>
-    <label>Host <input name="saas_host" value="{{ pt_settings.saas.host }}" autocomplete="off"></label>
-    <label>QOP version <input name="saas_version" value="{{ pt_settings.saas.version }}" placeholder="latest" size="8"></label>
-    <label>Password <input type="password" name="saas_password" autocomplete="new-password"
+  <div class="ui-field-grid pt-t-saas">
+    <label class="ui-field ui-field--inline ui-field-wide">
+<span class="ui-field-head">
+<span class="ui-field-label">Email</span>
+</span>
+<input class="ui-input" name="saas_email" value="{{ pt_settings.saas.email }}" autocomplete="off">
+</label>
+    <label class="ui-field ui-field--inline ui-field-wide">
+<span class="ui-field-head">
+<span class="ui-field-label">Host</span>
+</span>
+<input class="ui-input" name="saas_host" value="{{ pt_settings.saas.host }}" autocomplete="off">
+</label>
+    <label class="ui-field ui-field--inline ui-field-wide">
+<span class="ui-field-head">
+<span class="ui-field-label">QOP version</span>
+</span>
+<input class="ui-input" name="saas_version" value="{{ pt_settings.saas.version }}" placeholder="latest" size="8">
+</label>
+    <label class="ui-field ui-field--inline ui-field-wide">
+<span class="ui-field-head">
+<span class="ui-field-label">Password</span>
+</span>
+<input class="ui-input" type="password" name="saas_password" autocomplete="new-password"
       {% if not pt_settings.keyring_available %}disabled{% endif %}
       placeholder="{{ '•••••••• saved (' ~ pt_settings.saas.password_where ~ ')' if pt_settings.saas.password_saved else 'not saved' }}"></label>
     {% if pt_settings.saas.password_saved %}<button type="button" class="btn-sync" id="pt-pw-remove">Remove saved password</button>{% endif %}
@@ -94,17 +157,42 @@
   {% if not pt_settings.keyring_available %}<p class="ui-note pt-t-saas pt-warn" id="pt-nokeyring">No OS keyring is available
     to SM, so the SaaS password cannot be saved: SM stores passwords only in the OS keyring, never in a file.</p>{% endif %}
   <p class="ui-note">Saved targets can also be edited in Settings.</p>
-  <div class="pt-row pt-t-opx">
-    <label title="The hardware run halts and closes its QM after this long, even without Stop">Maximum seconds <input name="max_s" type="number" min="1" max="3600" value="120"></label>
-    <label>Host / IP <input name="opx_host" value="{{ pt_settings.opx.host }}" autocomplete="off"></label>
-    <label>Cluster name <input name="opx_cluster" value="{{ pt_settings.opx.cluster }}" autocomplete="off"></label>
-    <label>Port <input name="opx_port" value="{{ pt_settings.opx.port }}" size="6" placeholder="default"></label>
+  <div class="ui-field-grid pt-t-opx">
+    <label
+        class="ui-field ui-field--inline ui-field-wide"
+        title="The hardware run halts and closes its QM after this long, even without Stop">
+<span class="ui-field-head">
+<span class="ui-field-label">Maximum time</span>
+</span>
+<span class="ui-input-unit">
+<input class="ui-input ui-input--num" name="max_s" type="number" min="1" max="3600" value="120">
+<span class="ui-input-unit-text">s</span>
+</span>
+</label>
+    <label class="ui-field ui-field--inline ui-field-wide">
+<span class="ui-field-head">
+<span class="ui-field-label">Host / IP</span>
+</span>
+<input class="ui-input" name="opx_host" value="{{ pt_settings.opx.host }}" autocomplete="off">
+</label>
+    <label class="ui-field ui-field--inline ui-field-wide">
+<span class="ui-field-head">
+<span class="ui-field-label">Cluster name</span>
+</span>
+<input class="ui-input" name="opx_cluster" value="{{ pt_settings.opx.cluster }}" autocomplete="off">
+</label>
+    <label class="ui-field ui-field--inline ui-field-wide">
+<span class="ui-field-head">
+<span class="ui-field-label">Port</span>
+</span>
+<input class="ui-input" name="opx_port" value="{{ pt_settings.opx.port }}" size="6" placeholder="default">
+</label>
   </div>
   <p class="ui-note pt-t-opx pt-warn"><label class="ui-check"><input type="checkbox" id="pt-hw-ok">
     I know this plays on the real line: a CW tone or pulse train into a fridge line heats it and drives the qubits.</label>
     SM first checks the OPX for running jobs and for another QM holding these ports, and refuses if either;
     it never closes another QM. Ticking this asks the server for a one-time confirmation valid for 60 s and one run.</p>
-  <div class="pt-row">
+  <div class="ui-actions ui-actions--start">
     <button type="button" class="btn-sync" id="pt-save">Save target</button>
     <button type="button" class="btn-sync" id="pt-run">&#9654; Run</button>
     <button type="button" class="btn-sync pt-stop" id="pt-stop" hidden>&#9632; Stop</button>

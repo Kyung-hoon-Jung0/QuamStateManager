@@ -110,7 +110,17 @@ const MW3 = [{slot: 1, fem: 'mw'}, {slot: 2, fem: 'mw'}, {slot: 3, fem: 'lf'}];
   ok(/Hold the QM open \(advanced\)/.test(p.querySelector('[data-hold-qm] summary').textContent), 'D-9 disclosure label');
   ok(/Saved to this wizard draft only; the open chip and the instrument do not change until Build\./.test(p.querySelector('[data-save-wrap]').textContent), 'D-9 save sentence');
   ok(p.querySelector('details[data-loopcal]') && !p.querySelector('[data-loopcal]').open, 'D-9 loopback collapsed');
-  ok(/Auto-stop after \(s\)/.test(p.textContent) && !/Max time/.test(p.textContent), 'D-9 auto-stop label');
+  const secondsField = p.querySelector('[data-seconds]').closest('.ui-field');
+  ok(/Auto-stop after/.test(secondsField.textContent), 'Auto-stop field label');
+  p.querySelectorAll('select, input[type="number"], input[type="text"]').forEach(control => {
+    ok(control.matches('.ui-input, .ui-select'), 'Every popup field uses a compact kit control');
+    ok(control.closest('.ui-field--inline'), 'Every popup field keeps its inline label association');
+  });
+  for (const [selector, unit] of [['[data-seconds]', 's'], ['[data-max-in]', 'dBm'],
+                                 ['[data-sim-ns]', 'ns'], ['[data-offset]', 'V']]) {
+    ok(p.querySelector(selector).closest('.ui-input-unit').textContent === unit, 'Unit for ' + selector);
+  }
+  ok(secondsField.querySelector('.ui-input-unit-text').textContent === 's', 'Auto-stop unit');
   ok(/Refused if another program holds any of these ports\./.test(p.textContent), 'D-9 refusal sentence');
   ok(!p.querySelector('[data-sim]').closest('[data-run-actions]') && p.querySelector('[data-play]').closest('[data-run-actions]'), 'D-9 simulate apart from Play/Stop');
   PP.renderOffsets({port_offsets: {}}, () => {});

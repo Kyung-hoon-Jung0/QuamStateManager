@@ -1325,7 +1325,8 @@ def test_stress_d8_busy_empty_version(env):
     html = page(app, 'live')
     assert '2 QMs with active jobs' in html and 'QOP  (server)' not in html
     import re
-    empty = next(x for x in re.findall(r'<details class="ui-opxmon-tile".*?</details>',html,re.S) if 'empty slot' in x)
+    tiles = re.findall(r'<details\b[^>]*data-fold="tile-[^"]*"[^>]*>.*?</details>', html, re.S)
+    empty = next(x for x in tiles if 'empty slot' in x)
     assert 'limit 70' not in empty
 
 

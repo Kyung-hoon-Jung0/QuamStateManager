@@ -1462,3 +1462,15 @@ def test_raw_form_control_measure_can_fail(tmp_path):
     assert measure_raw_form_controls([tpl]) == {"_opx_x.html": [
         "fieldset", "legend", "label without a kit class", "input without ui-input",
         "checkbox outside label.ui-check", "textarea without ui-textarea"]}
+
+
+def test_kit_sweep_port_files_have_no_bare_controls():
+    files = {
+        "static/port-play.js", "templates/port_play.html", "templates/_port_test.html",
+        "templates/_port_test_targets.html", "templates/base.html",
+        "templates/_opx_monitor_body.html", "templates/ui_kit.html",
+    }
+    for measure in (measure_bare_controls, measure_script_controls, measure_bare_buttons):
+        counts = measure()
+        for file in files:
+            assert counts.get(file, 0) == 0, (measure.__name__, file, counts.get(file))

@@ -1744,7 +1744,7 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 .pt-choices { padding-left: var(--ui-gap-4); }
 .pt-res-head { margin-bottom: var(--ui-gap-1); font-weight: var(--ui-fw); }
 .pt-targets { display: flex; flex-direction: column; gap: var(--ui-gap-2); }
-.pt-tg-field { display: inline-flex; align-items: center; gap: var(--ui-gap-2); }
+.pt-tg-field { display: inline-flex; align-items: center; gap: var(--ui-gap-2); white-space: nowrap; }
 .ui-field { display: flex; flex-direction: column; gap: var(--ui-gap-1); }
 .ui-field-label { color: var(--ui-text-2); font-size: var(--ui-fs-sm); }
 .sm-confirm-message { white-space: pre-wrap; margin: 0 0 var(--ui-gap-3); font: inherit; }
@@ -1956,3 +1956,4 @@ table.ui-pair-props { table-layout: fixed; width: 100%; }
 .ui-opxmon-port-active { opacity: 1; }
 .ui-opxmon-port-popup { position: fixed; z-index: var(--ui-menu-z); padding: var(--ui-gap-3); }
 .ui-opxmon-port-popup.hidden { display: none; }
+
