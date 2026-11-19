@@ -2718,3 +2718,19 @@ def test_names_invalid_keys_merge_only_when_the_names_match(names_file, labels):
         assert ('This save gives more than one name to tag lab1; keep one of them. '
                 'Nothing was saved.') in response.get_data(as_text=True)
         assert path.read_bytes() == before and not path.with_suffix('.json.bak').exists()
+
+
+def test_unconfigured_top_bar_badge_is_short_and_the_tooltip_says_how_to_fix(env):
+    app, m, w, clock, _ = env
+    w.script[:] = [answer()]
+    m.poll_once()
+    st = m.status()
+    assert st['health']['color'] == 'grey' and 'no admin URL' in st['health']['reason']
+    with app.test_request_context('/'):
+        from flask import render_template
+        pill = render_template('_opx_alarm_badge.html', st=st)
+    assert '> OPX not checked</a>' in pill
+    assert 'no admin URL / no limits set' not in pill.split('title="')[1].split('">', 1)[1]
+    title = pill.split('title="')[1].split('"')[0]
+    assert 'no admin URL / no limits set' in title
+    assert 'Set an admin URL or temperature limits in Monitor settings.' in title
