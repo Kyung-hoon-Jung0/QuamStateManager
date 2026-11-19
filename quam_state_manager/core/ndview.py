@@ -349,7 +349,8 @@ class _NcReader:
 
     def __init__(self, path: Path):
         try:
-            from scipy.io import netcdf_file
+            from quam_state_manager.core.scipy_import import import_scipy
+            netcdf_file = import_scipy("scipy.io").netcdf_file
         except ImportError as exc:                      # pragma: no cover
             raise OSError(f"scipy is required to read NetCDF-classic data files: {exc}")
         st_size = path.stat().st_size

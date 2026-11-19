@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 import numpy as np
-from scipy.ndimage import gaussian_filter, map_coordinates
-from scipy.optimize import least_squares
-from scipy.signal import find_peaks
+
+from quam_state_manager.core.scipy_import import import_scipy
+
+gaussian_filter = import_scipy("scipy.ndimage").gaussian_filter
+map_coordinates = import_scipy("scipy.ndimage").map_coordinates
+least_squares = import_scipy("scipy.optimize").least_squares
+find_peaks = import_scipy("scipy.signal").find_peaks
 
 from .caps import erroramp_caps
 from .contour import contours
@@ -275,7 +279,7 @@ def extremum(z,x,y,meta=None,raw=None):
     filled = np.where(valid,signed,np.nanmax(signed))
     located = gaussian_filter(filled,1,mode="nearest")
     candidates = []
-    from scipy.ndimage import minimum_filter
+    minimum_filter = import_scipy("scipy.ndimage").minimum_filter
     local = (located==minimum_filter(located,size=7)) & (located<=np.min(located)+.05*np.ptp(located))
     for ci,cj in np.argwhere(local):
         if min(ci,cj,a.shape[0]-1-ci,a.shape[1]-1-cj)>=2:
