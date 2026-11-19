@@ -55,7 +55,7 @@
     }
     function failed(event) {
         var elt = event.detail && event.detail.elt;
-        if (!elt || (elt.id !== "ui-opxmon-body" && elt.id !== "ui-opxmon-alarm-slot")) return;
+        if (!elt || ["ui-opxmon-body", "ui-opxmon-band", "ui-opxmon-alarm-slot"].indexOf(elt.id) < 0) return;
         document.querySelectorAll(".ui-opxmon-health, .ui-opxmon-verdict[data-valid-ms]").forEach(function (node) { unknown(node, "SM did not answer the refresh"); });
     }
     document.addEventListener("DOMContentLoaded", watch);

@@ -119,6 +119,16 @@ const tick = () => new Promise(r => setTimeout(r, 20));
   ok(dot.getAttribute('data-health') === 'grey' && /SM did not answer/.test(dot.title)
      && / OPX unknown$/.test(dot.textContent), 'D-14 a failed top-bar refresh immediately becomes unknown');
   ok(!dot.classList.contains('ui-opxmon-verdict--red'), 'expired health clears the red verdict modifier');
+  {
+    const bw = new JSDOM('<div id="ui-opxmon-body" data-tab="settings"><div id="ui-opxmon-band" class="ui-verdict ui-opxmon-verdict"'
+      + ' data-valid-ms="0"><strong class="ui-verdict-key">BUSY</strong><span class="ui-verdict-why">x</span></div></div>',
+      {runScripts: 'outside-only'}).window;
+    bw.eval(fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', 'opx-health.js'), 'utf8'));
+    bw.document.dispatchEvent(new bw.CustomEvent('htmx:sendError', {detail: {elt: bw.document.getElementById('ui-opxmon-band')}}));
+    ok(bw.document.querySelector('.ui-verdict-key').textContent === 'UNKNOWN'
+       && /SM did not answer/.test(bw.document.querySelector('.ui-verdict-why').textContent),
+       'a failed refresh of the settings tab band alone becomes unknown');
+  }
   const tile = w.document.createElement('details');
   tile.className = 'ui-opxmon-tile';
   w.document.body.appendChild(tile);
