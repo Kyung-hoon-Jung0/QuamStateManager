@@ -109,12 +109,15 @@ const tick = () => new Promise(r => setTimeout(r, 20));
   ok(timers.length === 1 && timers[0][1] === 6000, 'health expiry is tied to the snapshot and cannot be extended by another swap');
   timers[0][0]();
   const expired = healthWorld.document.querySelector('.ui-opxmon-health');
-  ok(healthWorld.document.querySelector('[data-health="grey"]') && /freshness expired/.test(expired.title) && / OPX unknown$/.test(expired.textContent), 'D-14 health expires to grey without a server response; the badge stays short, the reason is its tooltip');
+  ok(healthWorld.document.querySelector('[data-health="grey"]') && /freshness expired/.test(expired.title)
+     && / OPX unknown$/.test(expired.textContent),
+     'D-14 health expires to grey without a server response; the badge stays short, the reason is its tooltip');
   const dot = healthWorld.document.querySelector('.ui-opxmon-health');
   dot.classList.add('ui-opxmon-verdict--red');
   dot.setAttribute('data-health', 'green');
   healthWorld.document.dispatchEvent(new healthWorld.CustomEvent('htmx:sendError', {detail: {elt: healthWorld.document.getElementById('ui-opxmon-alarm-slot')}}));
-  ok(dot.getAttribute('data-health') === 'grey' && /SM did not answer/.test(dot.title) && / OPX unknown$/.test(dot.textContent), 'D-14 a failed top-bar refresh immediately becomes unknown');
+  ok(dot.getAttribute('data-health') === 'grey' && /SM did not answer/.test(dot.title)
+     && / OPX unknown$/.test(dot.textContent), 'D-14 a failed top-bar refresh immediately becomes unknown');
   ok(!dot.classList.contains('ui-opxmon-verdict--red'), 'expired health clears the red verdict modifier');
   const tile = w.document.createElement('details');
   tile.className = 'ui-opxmon-tile';

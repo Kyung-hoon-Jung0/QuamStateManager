@@ -1,4 +1,11 @@
-<a href="/opx-monitor/live" class="ui-opxmon-health" data-health="{{ st.health.color }}" data-valid-ms="{{ st.valid_for_ms }}" title="{{ st.health.reason }}{% if st.health.details and st.health.details != st.health.reason %}: {{ st.health.details }}{% endif %}{% if st.health.color == 'grey' and not st.health.problem and 'no admin URL' in st.health.reason %}. Set an admin URL or temperature limits in Monitor settings.{% endif %}"><span class="ui-opxmon-health-dot {{ 'ui-opxmon-health-dot--' ~ st.health.color }}" aria-hidden="true">&#9679;</span> OPX {{ 'problem' if st.health.problem else ('not checked' if st.health.color == 'grey' else st.health.reason) }}</a>
+{%- set h = st.health -%}
+{%- set tip = h.reason ~ (': ' ~ h.details if h.details and h.details != h.reason else '') -%}
+{%- set unset = h.color == 'grey' and not h.problem and 'no admin URL' in h.reason -%}
+{%- set tip = tip ~ ('. Set an admin URL or temperature limits in Monitor settings.' if unset else '') -%}
+{%- set label = 'problem' if h.problem else ('not checked' if h.color == 'grey' else h.reason) -%}
+<a href="/opx-monitor/live" class="ui-opxmon-health" data-health="{{ h.color }}" data-valid-ms="{{ st.valid_for_ms }}"
+   title="{{ tip }}"><span class="ui-opxmon-health-dot {{ 'ui-opxmon-health-dot--' ~ h.color }}"
+   aria-hidden="true">&#9679;</span> OPX {{ label }}</a>
 {%- if st.alarms_armed and st.alarms -%}
 <a class="ui-opxmon-alarm-badge" href="/opx-monitor/live" hx-get="/opx-monitor/live" hx-target="#table-pane" hx-push-url="true"
    title="{% for a in st.alarms %}{{ a.controller }} {{ a.label }} = {{ value_vs_limit(a.value, a.limit) }} {{ a.unit }} ({{ a.direction }} limit {{ '%g'|format(a.limit) }} {{ a.unit }})&#10;{% endfor %}">&#9888; OPX alarm ({{ st.alarms|length }})</a>
