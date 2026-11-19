@@ -3306,7 +3306,7 @@
     host.innerHTML = "";
     Array.prototype.forEach.call(sel.options, function (opt) {
       var lab = document.createElement("label");
-      lab.className = "ui-check gen-arch-radio" + (opt.disabled ? " gen-arch-radio-off" : "");
+      lab.className = "ui-check ui-check--radio gen-arch-radio" + (opt.disabled ? " gen-arch-radio-off" : "");
       var r = kitElement("input", "radio");
       r.type = "radio";
       r.name = "gen-chip-arch-radio";
@@ -3324,9 +3324,13 @@
         sel.dispatchEvent(new Event("change", { bubbles: true }));
       });
       lab.appendChild(r);
-      lab.appendChild(document.createTextNode(" " + opt.textContent +
-        ((opt.value === "fixed_tunable_coupler" || opt.value === "fixed_tunable_coupler_lab")
-          && opt.title ? " - " + opt.title : "")));
+      lab.appendChild(document.createTextNode(" " + opt.textContent));
+      if ((opt.value === "fixed_tunable_coupler" || opt.value === "fixed_tunable_coupler_lab") && opt.title) {
+        var hint = document.createElement("span");
+        hint.className = "ui-field-hint";
+        hint.textContent = _couplerCzCheck === "checking" ? "Checking environment..." : opt.title;
+        lab.appendChild(hint);
+      }
       host.appendChild(lab);
     });
     renderCrOptions();
@@ -3365,7 +3369,7 @@
       "the QM fixed-transmon reference layout. Uses half the MW ports."]]
       .forEach(function (opt) {
         var lab = document.createElement("label");
-        lab.className = "ui-check gen-arch-radio";
+        lab.className = "ui-check ui-check--radio gen-arch-radio";
         lab.title = opt[2];
         var r = kitElement("input", "radio");
         r.type = "radio";

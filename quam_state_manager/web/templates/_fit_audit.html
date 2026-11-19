@@ -1,9 +1,10 @@
 {# Fit-Auditor surface — gate-migration triage (docs/50). All styling lives in
    static/style.css under `#fit-audit`; this partial ships classes only. #}
 <div id="fit-audit">
-  <div class="table-header-row">
-    <h2>Fit Replay <small class="muted">read-only · replays saved fits, never changes chip values</small></h2>
+  <div class="table-header-row ui-head ui-head--data">
+    <h2 class="ui-head-title">Fit Replay</h2>
   </div>
+  <p class="ui-note">Read-only. Replays saved fits, never changes chip values.</p>
 
   {# always-visible verdict legend (glyph + token color, colorblind-safe) #}
   <div class="fa-legend">

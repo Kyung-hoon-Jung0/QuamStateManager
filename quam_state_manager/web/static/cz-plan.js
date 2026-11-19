@@ -1515,9 +1515,48 @@
         return m ? m[1] : null;
     }
 
+    /* The shared gate dialog owns eligibility (cz-gate.js refresh): idle, a valid
+       first plan, and no invalid fields. Explain it here without changing that state. */
+    function mountGateHint() {
+        var host = document.getElementById('czg-host');
+        if (!host) {
+            host = document.createElement('div');
+            host.id = 'czg-host';
+            document.body.appendChild(host);
+        }
+        if (host._czPlanHint) return;
+        function showHint() {
+            var button = host.querySelector('#czg-primary');
+            var foot = button && button.closest('.ui-dialog-foot');
+            if (!foot) return;
+            var hint = host.querySelector('#czp-check-hint');
+            if (!hint) {
+                hint = document.createElement('span');
+                hint.id = 'czp-check-hint';
+                hint.className = 'ui-field-hint';
+                hint.textContent = 'Check needs a valid gate plan and no invalid fields. ' +
+                    'Wait for any active request to finish.';
+                foot.prepend(hint);
+            }
+            var shown = button.disabled && button.textContent.trim() === 'Check';
+            hint.hidden = !shown;
+            var ids = (button.getAttribute('aria-describedby') || '').split(/\s+/).filter(function (id) {
+                return id && id !== hint.id;
+            });
+            if (shown) ids.push(hint.id);
+            if (ids.length) button.setAttribute('aria-describedby', ids.join(' '));
+            else button.removeAttribute('aria-describedby');
+        }
+        host._czPlanHint = new MutationObserver(showHint);
+        host._czPlanHint.observe(host, { childList: true, subtree: true,
+            attributes: true, attributeFilter: ['disabled'] });
+        showHint();
+    }
+
     function mount() {
         var root = document.getElementById('czp-root');
         if (!root || root._czMounted) return;
+        mountGateHint();
         root._czMounted = true;
         var host = root.querySelector('.czp-plots');
         if (host && window.PlotHost) window.PlotHost.observe(host);
@@ -1602,7 +1641,8 @@
             });
     }
 
-    window.CzPlan = { mount: mount, refresh: refresh, _esc: esc, _deltaRange: deltaRange, _planCounts: planCounts,
+    window.CzPlan = { mount: mount, refresh: refresh, _mountGateHint: mountGateHint,
+                      _esc: esc, _deltaRange: deltaRange, _planCounts: planCounts,
                       drawMap: function (root) { return window.CzMap ? window.CzMap.draw(root) : Promise.resolve(); } };
     document.addEventListener('DOMContentLoaded', mount);
     document.addEventListener('htmx:afterSwap', mount);

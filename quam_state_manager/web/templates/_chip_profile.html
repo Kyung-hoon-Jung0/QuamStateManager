@@ -1,19 +1,18 @@
 {# Chip profile — the design facts a human knows before calibrating (docs/135).
    Enumerated cases only; answers live in state.json extras.sm_profile so the
    profile travels with the chip. Staging only — Apply to live makes it real. #}
-<div id="chip-profile-panel" class="chip-profile-panel">
-  <h3 style="margin:0.2rem 0 0.4rem">Chip profile
-    <small class="muted">{{ answers|length }} of {{ fields|length }} answered
-      — answers travel with the chip in state.json</small></h3>
+<div id="chip-profile-panel" class="chip-profile-panel ui-config-profile">
+  <p class="ui-note">{{ answers|length }} of {{ fields|length }} answered.
+    Answers travel with the chip in state.json.</p>
   {% if readonly %}
   <p class="muted">Read-only archive — open the live chip to declare its profile.</p>
   {% endif %}
   <form hx-post="/chip-profile/set" hx-target="#chip-profile-status" hx-swap="innerHTML">
-    <table class="ui-table chip-profile-table" style="width:100%">
+    <table class="ui-table chip-profile-table">
       <tbody>
       {% for f in fields %}
         <tr>
-          <td style="vertical-align:top; padding:0.35rem 0.5rem 0.35rem 0; width:55%">
+          <td class="ui-table-cell">
             <label class="ui-field-label" for="cp-{{ f.key }}"><strong>{{ f.question }}</strong></label>
             <div class="ui-field-hint">{{ f.help }}</div>
             {% if f.key in invalid %}
@@ -21,7 +20,7 @@
               <code>{{ invalid[f.key] }}</code> — not a listed case; pick one below.</div>
             {% endif %}
           </td>
-          <td style="vertical-align:top; padding:0.35rem 0">
+          <td class="ui-table-cell">
             <select id="cp-{{ f.key }}" name="{{ f.key }}" {% if readonly %}disabled{% endif %}
             class="ui-select">
               <option value="unknown" {% if f.key not in answers %}selected{% endif %}>unknown — ask me later</option>

@@ -9,8 +9,8 @@
      data-bucket="{{ bucket }}" data-preset="{{ preset }}"
      data-ref="{{ ref_idx }}" data-sources="{{ sources_count }}">
 
-  <div class="cmp-hub-header">
-    <h2>Compare</h2>
+  <div class="cmp-hub-header ui-head ui-head--data">
+    <h2 class="ui-head-title">Compare</h2>
     {% if result and not compare_error %}
     <span class="cmp-hub-headline-mini muted">
       {% if result.identical %}✓ identical{% elif result.needs_confirm %}mapping needed{% else %}{{ result.headline.changed | groupdigits }} changed{% endif %}
@@ -29,7 +29,7 @@
       <span class="cmp-setup-edit muted">Edit sources</span>
     </summary>
 
-    <section class="cmp-sources" aria-label="Comparison sources">
+    <section class="cmp-sources ui-config-sources" aria-label="Comparison sources">
       <div class="cmp-basket">
         {% for row in basket %}
         <div class="cmp-src-row{% if row.error %} cmp-src-error{% endif %}"
@@ -45,7 +45,7 @@
           {% endif %}
           {% else %}
           <button type="button"
-                  class="cmp-src-star{% if row.valid_idx == ref_idx %} active{% endif %}"
+                  class="ui-btn-icon cmp-src-star{% if row.valid_idx == ref_idx %} active{% endif %}"
                   title="Use as the reference (Δ and added/removed are vs this source)"
                   onclick="cmpHub.setRef(this)">★</button>
           <span class="cmp-src-ord">{{ row.valid_idx + 1 }}</span>
@@ -56,7 +56,7 @@
                 title="wiring.json missing — wiring-backed values classify as not-in-source, never as differences">no wiring</span>
           {% endif %}
           {% endif %}
-          <button type="button" class="cmp-src-x" title="Remove"
+          <button type="button" class="ui-btn-icon cmp-src-x" title="Remove"
                   onclick="cmpHub.removeAt(this)">&times;</button>
         </div>
         {% endfor %}

@@ -1976,3 +1976,89 @@ table.ui-pair-props { table-layout: fixed; width: 100%; }
 .ui-opxmon-port-popup { position: fixed; z-index: var(--ui-menu-z); padding: var(--ui-gap-3); }
 .ui-opxmon-port-popup.hidden { display: none; }
 
+
+/* Kit sweep wave 2: config */
+.ui-config-profile .ui-table { table-layout: fixed; width: 100%; }
+.ui-config-profile .ui-table-cell { vertical-align: top; overflow-wrap: anywhere; }
+.ui-config-profile .ui-select { min-width: 0; max-width: 100%; }
+.ui-config-location > .ui-disclosure-body { padding-inline: 0; }
+.ui-config-advanced > .ui-disclosure-body { padding-inline: 0; }
+/* The wizard IDs otherwise override the shared control height with height:auto. */
+.ui-generate #gen-pair-gate.ui-select, .ui-generate #gen-naming-preset.ui-select {
+    height: var(--ui-ctl-h); min-height: var(--ui-ctl-h); font-size: var(--ui-fs-sm);
+    padding: 0 var(--ui-ctl-chevron-room) 0 var(--ui-ctl-pad-x); max-width: 100%; min-width: 0;
+}
+.ui-config-environments .sched-env-row {
+    grid-template-columns: auto minmax(0, 1fr) auto; min-width: 0; max-width: 100%;
+    border: 0; border-bottom: var(--ui-bw) solid var(--ui-border); border-radius: 0;
+    padding: var(--ui-gap-2); gap: var(--ui-gap-2); font-size: var(--ui-fs-sm);
+}
+.ui-config-environments .sched-env-row.selected { background: var(--ui-surface-2); }
+.ui-config-environments .sched-env-pick {
+    width: var(--ui-check-size); height: var(--ui-check-size); min-height: 0; padding: 0;
+    border: var(--ui-bw-check) solid var(--ui-check-border); border-radius: var(--ui-r-round);
+    background: var(--ui-check-bg); box-shadow: none;
+}
+.ui-config-environments .selected .sched-env-pick {
+    border-color: var(--ui-accent); background: var(--ui-accent);
+}
+.ui-config-environments .sched-env-pick:focus-visible {
+    outline: 0; box-shadow: var(--ui-check-ring);
+}
+.ui-config-environments .sched-env-name { overflow-wrap: anywhere; }
+.ui-config-environments .sched-env-path {
+    font-family: var(--ui-font-mono); font-size: var(--ui-fs-sm); min-width: 0;
+}
+.ui-config-environments .sched-env-status {
+    grid-column: 2 / -1; font-size: var(--ui-fs-sm); white-space: normal; overflow-wrap: anywhere;
+}
+.ui-config-sources .ui-select.ui-select { width: var(--ui-input-w); min-width: 0; max-width: 100%; }
+.ui-config-sources .ui-btn-icon {
+    opacity: 1; color: var(--ui-text-2); font-size: var(--ui-fs-md); flex-shrink: 0;
+    width: var(--ui-ctl-h); height: var(--ui-ctl-h); padding: 0;
+}
+.ui-config-sources .ui-btn-icon.active, .ui-config-sources .ui-btn-icon:hover { color: var(--ui-accent); }
+/* Shared includes keep their public classes; these page scopes apply the kit parts. */
+.ui-config-location .locate-form { flex-wrap: wrap; min-width: 0; gap: var(--ui-gap-2); }
+.ui-config-location .locate-input {
+    box-sizing: border-box; flex: 1 1 var(--ui-input-w); min-width: 0; max-width: 100%;
+    height: var(--ui-ctl-h); min-height: var(--ui-ctl-h); margin: 0; padding: 0 var(--ui-ctl-pad-x);
+    font-family: inherit; font-size: var(--ui-fs-sm); line-height: var(--ui-lh-tight);
+    border: var(--ui-bw) solid var(--ui-ctl-border); border-radius: var(--ui-r-btn);
+    background: var(--ui-ctl-bg); color: var(--ui-text); box-shadow: none;
+}
+.ui-config-location .locate-input:focus {
+    outline: 0; border-color: var(--ui-accent); box-shadow: var(--ui-ctl-ring);
+}
+.ui-config-location .locate-input::placeholder { color: var(--ui-text-2); opacity: 1; }
+.ui-config-location .btn-sm { height: var(--ui-ctl-h); min-height: var(--ui-ctl-h); margin: 0; }
+.ui-config-diagnostics .diag-checks-dialog {
+    width: var(--ui-dialog-m); max-width: 100%; max-height: var(--ui-dialog-max-h);
+    border: var(--ui-bw) solid var(--ui-border); border-radius: var(--ui-r-lg);
+    background: var(--ui-surface-1); color: var(--ui-text); box-shadow: var(--ui-shadow);
+    font-size: var(--ui-fs-sm);
+}
+.ui-config-diagnostics .diag-checks-dialog::backdrop { background: var(--ui-backdrop); }
+.ui-config-diagnostics .diag-checks-head, .ui-config-diagnostics .diag-checks-body {
+    padding: var(--ui-gap-3) var(--ui-gap-4); background: var(--ui-surface-1);
+}
+.ui-config-diagnostics .diag-checks-head { border-bottom: var(--ui-bw) solid var(--ui-border); }
+.ui-config-diagnostics .diag-checks-title { font-size: var(--ui-fs-lg); font-weight: var(--ui-fw); }
+.ui-config-diagnostics .diag-checks-sub, .ui-config-diagnostics .diag-checks-desc {
+    font-size: var(--ui-fs-sm); line-height: var(--ui-lh-read); color: var(--ui-text-2);
+}
+.ui-config-diagnostics .diag-checks-name, .ui-config-diagnostics .diag-checks-group-title {
+    font-size: var(--ui-fs-sm); color: var(--ui-text);
+}
+
+/* A radio shares the check part's states and focus ring, with a round mark. */
+.ui-check--radio > input { border-radius: var(--ui-r-round); }
+.ui-check--radio > input::after {
+    border: 0; border-radius: var(--ui-r-round); background: var(--ui-on-accent);
+    width: var(--ui-gap-2); height: var(--ui-gap-2); left: 50%; top: 50%; transform: translate(-50%, -50%);
+}
+.ui-generate .gen-chassis-count-field > .ui-field-label { font-weight: var(--ui-fw-normal); }
+
+.ui-dialog-foot:has(> #czp-check-hint) { flex-wrap: wrap; }
+.ui-dialog-foot > #czp-check-hint { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; }
+.ui-dialog-foot > #czp-check-hint[hidden] { display: none; }
