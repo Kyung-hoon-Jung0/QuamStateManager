@@ -378,7 +378,8 @@
       '<p class="ui-head-gist" data-chip-note hidden>Read-only test: the open chip is not changed; filters and crosstalk are not applied.</p>' +
       '</header></div>' +
       '<div class="ui-dialog-body">' +
-      '<section class="ui-item port-test" data-together><div class="ui-item-head"><h4 class="ui-item-title">Outputs in this play</h4></div>' +
+      '<section class="ui-item ui-item--accent port-test" data-together>' +
+      '<div class="ui-item-head"><h4 class="ui-item-title">Outputs in this play</h4></div>' +
       '<p class="ui-note">Closing this popup stops every output; the set itself is kept. ' +
       'All outputs play in one QM and one program, starting together; Stop stops every output.</p>' +
       '<p class="ui-note">Refused if another program holds any of these ports.</p>' +
@@ -391,7 +392,9 @@
       '<button type="button" class="btn-sm outline" data-add-fem>Add the other outputs of this FEM</button>' +
       '<button type="button" class="btn-sm outline" data-add-every></button>' +
       '<button type="button" class="btn-sm outline" data-apply-kind="lf">Apply to all LF rows</button>' +
-      '<button type="button" class="btn-sm outline" data-apply-kind="mw">Apply to all MW rows</button></div>' +
+      '<button type="button" class="btn-sm outline" data-apply-kind="mw">Apply to all MW rows</button></div></section>' +
+      '<section class="ui-item ui-item--accent" data-run-settings>' +
+      '<div class="ui-item-head"><h4 class="ui-item-title">Run settings</h4></div>' +
       '<div class="ui-field-grid">' +
       '<label class="ui-field ui-field--inline ui-field-wide"><span class="ui-field-head">' +
         '<span class="ui-field-label">Auto-stop after, whole run</span></span><span class="ui-input-unit">' +
@@ -411,7 +414,7 @@
         '<input class="ui-input ui-input--num" data-sim-ns type="number" min="1000" max="200000" step="1">' +
         '<span class="ui-input-unit-text">ns</span></span></label></div>' +
       '<div class="ui-callout ui-callout--danger" data-power-warn hidden><p class="ui-callout-text"></p></div></section>' +
-      '<section class="ui-item"><div class="ui-item-head"><h4 class="ui-item-title">Safety</h4></div>' +
+      '<section class="ui-item ui-item--accent"><div class="ui-item-head"><h4 class="ui-item-title">Safety</h4></div>' +
       '<label class="ui-check"><input data-hwok type="checkbox"> Safe to drive: a ' + (lf ? 'scope' : 'spectrum analyser or scope') +
       ' is on every port of this play</label>' +
       '<p class="ui-note">Play: ' + (lf ? 'LF ports go to their offsets' : 'CW tones at LO + IF') +
@@ -430,7 +433,7 @@
         '<button type="button" class="btn-sm outline" data-close-qm>Close QM</button></div></div></details>' +
         '<section class="ui-item" data-save-wrap><div class="ui-actions ui-actions--start"><button type="button" class="btn-sm outline" data-save>Save offset</button></div>' +
         '<p class="ui-note">Saved to this wizard draft only; the open chip and the instrument do not change until Build.</p></section>' : '') +
-      '<section class="ui-item port-test" data-sim-result hidden></section>' +
+      '<section class="ui-item ui-item--accent port-test" data-sim-result hidden></section>' +
       '<details class="ui-disclosure" data-sim-prev hidden><summary class="ui-disclosure-summary">Previous simulation</summary>' +
       '<div class="ui-disclosure-body"></div></details>' +
       (lf ? '<details class="ui-disclosure" data-loopcal><summary class="ui-disclosure-summary">Loopback calibration</summary><div class="ui-disclosure-body"><div class="ui-field-grid">' +

@@ -492,6 +492,10 @@
 .ui-item-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-gap-2); }
 .ui-item-title { color: var(--ui-text-2); font-size: var(--ui-fs-sm); }
 .ui-item-head > .ui-count { margin-left: auto; font-size: var(--ui-fs-sm); }
+/* A section card in a long dialog: accent outline and a ruled head, so each part reads as its own block. */
+.ui-item--accent.ui-item--accent { border-color: var(--ui-accent-border); }
+.ui-item--accent > .ui-item-head { padding-bottom: var(--ui-gap-2); border-bottom: var(--ui-bw) solid var(--ui-accent-border); }
+.ui-item--accent > .ui-item-head > .ui-item-title { margin: 0; color: var(--ui-accent); font-weight: var(--ui-fw-bold); }
 .ui-item .ui-head-title { font-size: var(--ui-fs-lg); }
 .ui-head-title > .ui-badge { margin-left: var(--ui-gap-2); vertical-align: middle; }
 .ui-item-body { margin: 0; max-width: var(--ui-measure); }
