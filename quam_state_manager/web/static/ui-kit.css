@@ -948,16 +948,19 @@
    arrows, the one-line run header. */
 .ui-inspector-docked { flex-shrink: 0; overflow: hidden; }
 .ui-inspector-docked > * { display: none; }
-.ui-inspector-docked > .ui-dock-bar { display: flex; }
+.ui-inspector-docked > .ui-dock-bar { display: grid; }
+/* Title, then the buttons at the bar's centre, a short reach from the split bar's. */
 .ui-dock-bar {
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     align-items: center; gap: var(--ui-gap-2);
     margin: calc(-1 * var(--inspector-pane-pad-v)) calc(-1 * var(--inspector-pane-pad-h));
     padding: var(--ui-gap-1) var(--ui-gap-3);
     border-top: var(--ui-bw-strip) solid var(--ui-accent-fill);
     background: var(--ui-surface-2); font-size: var(--ui-fs-sm);
 }
+.ui-dock-actions { display: inline-flex; align-items: center; gap: var(--ui-gap-2); }
 .ui-dock-title {
-    flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     color: var(--ui-text); font-weight: var(--ui-fw);
 }
 .ui-dock-btn {
@@ -981,17 +984,16 @@
 .ui-ds-head-wrap > .inspector-actions { order: 2; margin-left: auto; }
 .ui-ds-head-wrap > .ui-ds-meta { order: 3; flex: 1 1 100%; flex-wrap: wrap; overflow: visible; }
 .ui-ds-folder { margin: 0; max-width: 16rem; min-width: 5rem; flex: 0 1 auto; }
-.ui-pane-sliver { overflow-x: hidden; }
-.ui-pane-sliver * { visibility: hidden; }
-.ui-pane-sliver h1, .ui-pane-sliver h1 *, .ui-pane-sliver h2, .ui-pane-sliver h2 * { visibility: visible; }
 /* The panel expanded to the very top (base.html markTop): the page above it is
    less than a bar tall, so it gives the panel all of its height. Without this the
    page's padding (2 x --table-pane-pad-v) stayed as a strip between the top bar
-   and the panel's head row. The bar keeps its own 12 px row, moved down just
-   enough that the page area's clip leaves its taller buttons whole; the
-   page-heading toggle has no heading to fold. */
+   and the panel's head row. The bar's buttons hang from the bar's top edge, because
+   the page area's clip would cut them when centred; the page-heading toggle has no
+   heading to fold. */
 .ui-split-top > #table-pane { padding-top: 0; padding-bottom: 0; max-height: 0; overflow: hidden; flex-grow: 0; }
-.ui-split-top > .gutter { margin-top: calc((var(--inspector-toggle-h) - var(--split-gutter-size)) / 2); }
+.ui-split-top > .gutter > .gutter-controls {
+    transform: translate(-50%, calc(-50% + (var(--inspector-toggle-h) - var(--split-gutter-size)) / 2));
+}
 .ui-split-top > #inspector-pane { flex-grow: 1; flex-shrink: 1; }
 .ui-split-top > .pageheader-toggle { visibility: hidden; }
 .ui-ds-tags { margin: 0; gap: var(--ui-gap-1); }
@@ -1930,3 +1932,12 @@ table.ui-pair-props { table-layout: fixed; width: 100%; }
    note the line under it. An open list is never cut by the zone it sits in. */
 .ui-select.ui-select.ui-menu-trigger:has(> .ui-menu-note) { flex-wrap: wrap; height: auto; padding-top: var(--ui-gap-1); padding-bottom: var(--ui-gap-1); white-space: normal; }
 .ui-zone:has(.ui-menu-trigger[aria-expanded="true"]) { overflow: visible; }
+/* The panel at the very top: the top bar gives up the empty space under its pills
+   (its items stay where they are, a wrapped bar too), so the split line sits just
+   below them. */
+.app-shell:has(.ui-split-top) .topbar > nav { margin-bottom: -0.6rem; }
+/* The bar's rows now reach past its edge: only their controls take the pointer. */
+.app-shell:has(.ui-split-top) .topbar > nav,
+.app-shell:has(.ui-split-top) .topbar > nav > ul,
+.app-shell:has(.ui-split-top) .topbar > nav > ul > li { pointer-events: none; }
+.app-shell:has(.ui-split-top) .topbar > nav > ul > li > * { pointer-events: auto; }

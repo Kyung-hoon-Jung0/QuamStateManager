@@ -11,6 +11,8 @@
  *     back         -- the circle: last drag after an up and after a down, from the
  *                     bar and the docked bar; no drag -> the default; seeded from an
  *                     old stored drag; an arrow press never overwrites the drag
+ *     opens_full   -- no remembered choice -> a panel opens at the full height,
+ *                     except over the Datasets run list
  *     drag         -- a drag -> the next inspector opens at the dragged height
  *     up_next      -- an up press after a drag -> the next one opens at the full height
  *     down_next    -- a down press after a drag -> the next one opens at the fixed min
@@ -66,6 +68,7 @@ const SPLIT = {
 const FULL = [0, 100];   // the up arrow: the panel takes the whole height
 const RUN = '<div id="ds-detail-root" data-uid="run-a">run</div>';
 const QUBIT = '<div class="qubit-detail">qubit</div>';
+const DATASETS_PAGE = '<h2>Datasets</h2><input id="dataset-search">';
 
 async function boot({ storage = {}, inspector = '' } = {}) {
     // v1.4.0: root URL -> Datasets URL, navigation pins start on the run's page.
@@ -129,8 +132,10 @@ async function boot({ storage = {}, inspector = '' } = {}) {
         // Split.js calls onDragStart on the gutter mousedown, onDragEnd on mouseup.
         drag(to) {
             const inst = last();
-            inst.options.onDragStart(inst.getSizes());
+            // the bar starts where the previous drag left it
+            inst.options.onDragStart(inst.dragged || inst.getSizes());
             inst.options.onDragEnd(to.slice());
+            inst.dragged = to.slice();
         },
         press(which) {
             const btn = d.querySelector('.gutter-controls .split-' + which + '-btn');
@@ -160,7 +165,8 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     for (const choice of choices) {
         const s = await boot();
         s.swap('inspector-pane', RUN);
-        if (Array.isArray(choice)) s.drag(choice);
+        // from mid-page: the panel opens at the full height, and a drag must move the bar
+        if (Array.isArray(choice)) { s.drag([50, 50]); s.drag(choice); }
         else if (choice) s.press(choice);
         const before = s.user();
         s.d.getElementById('nav-qubits').click();
@@ -168,13 +174,13 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
         s.swap('table-pane', 'other page');
         s.d.getElementById('nav-datasets').click();
         s.w.history.pushState({}, '', '/datasets');
-        s.swap('table-pane', 'datasets page');
+        s.swap('table-pane', DATASETS_PAGE);
         // the up arrow is the full height, above every expanded share
         const expected = mode === 'nav_reopen_high' ? choice : choice === 'up' ? FULL : SPLIT.datasetExpandedSizes;
         s.swap('inspector-pane', RUN);
         eq(s.sizes(), expected, 'after navigation the run opens at max(user share, expanded share)');
         assert.equal(s.user(), before, 'reopening preserves the remembered choice');
-        s.swap('table-pane', 'concurrent workspace selection');
+        s.swap('table-pane', DATASETS_PAGE);
         eq(s.sizes(), expected, 'a concurrent table swap keeps the reopened height');
         s.swap('inspector-pane', RUN_B);
         // compact D-1: the down arrow docks and is not a remembered choice
@@ -238,7 +244,7 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     s.swap('inspector-pane', QUBIT);
     eq(s.sizes(), [80, 20], 'a qubit still opens at the remembered height');
     s.swap('inspector-pane', RUN);
-    eq(s.sizes(), SPLIT.datasetExpandedSizes, 'only a run consumes the post-navigation expanded minimum');
+    eq(s.sizes(), FULL, 'only a run consumes the post-navigation minimum');
     assert.equal(s.user(), before, 'the qubit and run opens preserve memory');
 } else if (mode === 'nav_sidebar') {
     for (const sizes of [[80, 20], [40, 60], [10, 90]]) {
@@ -282,7 +288,7 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     s.swap('table-pane', 'concurrent swap');
     assert.ok(s.docked(), 'later table swaps retain the pushed navigation collapse');
     s.swap('inspector-pane', RUN_B);
-    eq(s.sizes(), SPLIT.datasetExpandedSizes, 'the next run after pushed navigation gets the expanded minimum');
+    eq(s.sizes(), FULL, 'the next run after pushed navigation gets the opening height');
 } else if (mode === 'nav_history') {
     for (const event of ['popstate', 'htmx:historyRestore']) {
         const s = await boot();
@@ -471,7 +477,7 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
         assert.ok(s.docked(), first + ': the concurrent table-pane initSplit keeps the collapse');
         assert.equal(s.user(), before, first + ': the table-pane initSplit leaves it alone');
         s.d.getElementById('nav-datasets').click();
-        s.swap('table-pane', 'datasets page');
+        s.swap('table-pane', DATASETS_PAGE);
         s.swap('inspector-pane', RUN);
         // v1.4.0: plain last choice -> expanded minimum, so a reopened run has room after navigation.
         eq(s.sizes(), first === 'drag' ? SPLIT.datasetExpandedSizes : FULL,
@@ -497,21 +503,21 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     assert.equal(s.w.localStorage.getItem('quam_split_expanded'), null, 'the set-high key is removed');
     assert.equal(s.w.localStorage.getItem('quam_split_collapsed'), null, 'the set-low key is removed');
     s.swap('inspector-pane', QUBIT);
-    eq(s.sizes(), SPLIT.expandedSizes, 'and it no longer decides where an inspector opens');
+    eq(s.sizes(), FULL, 'and it no longer decides where an inspector opens');
     s.press('down');
     assert.ok(s.docked(), 'nor where the down arrow goes (it docks)');
 } else if (mode === 'defaults') {
     const s = await boot();
     s.swap('inspector-pane', RUN);
-    eq(s.sizes(), SPLIT.datasetExpandedSizes, 'no choice yet: a run opens at the dataset default');
+    eq(s.sizes(), FULL, 'no choice yet: a run opens at the full height');
     s.swap('inspector-pane', QUBIT);
-    eq(s.sizes(), SPLIT.expandedSizes, 'no choice yet: a qubit opens at the expanded default');
+    eq(s.sizes(), FULL, 'no choice yet: a qubit opens at the full height');
     assert.equal(s.user(), null, 'opening never writes the last choice');
     const r = await boot({ storage: { quam_split_sizes: '[50,50]' }, inspector: QUBIT });
     eq(r.sizes(), [50, 50], 'no choice yet: a reload keeps the current split, as before');
     const bad = await boot({ storage: { quam_split_user: '"sideways"' } });
     bad.swap('inspector-pane', QUBIT);
-    eq(bad.sizes(), SPLIT.expandedSizes, 'an unreadable stored choice falls back to the default');
+    eq(bad.sizes(), FULL, 'an unreadable stored choice falls back to the default');
 } else if (mode === 'trend_chart') {
     const TRENDS = '<div class="topo-trends-grid"><div class="topo-trend-box" id="box-a">'
         + '<div class="topo-trend-chart" id="chart-a"></div></div></div>';
@@ -537,7 +543,7 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     const t = await boot();
     t.d.getElementById('table-pane').innerHTML = TRENDS;
     t.swap('inspector-pane', RUN);
-    eq(t.sizes(), SPLIT.datasetExpandedSizes, 'a run opened elsewhere keeps the run position');
+    eq(t.sizes(), FULL, 'a run opened elsewhere opens like any other panel');
     // a remembered choice that already leaves room wins
     const u = await boot({ storage: { quam_split_user: '[60,40]' } });
     u.d.getElementById('table-pane').innerHTML = TRENDS;
@@ -573,7 +579,7 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     assert.equal(scrolled, 1, 'a row still in view is left alone');
     const q = await boot();
     q.swap('inspector-pane', QUBIT);
-    eq(q.sizes(), SPLIT.expandedSizes, 'another page keeps the expanded default');
+    eq(q.sizes(), FULL, 'another page opens at the full height');
     const u = await boot({ storage: { quam_split_user: '"up"' } });
     u.d.getElementById('table-pane').innerHTML = PULSES;
     u.swap('inspector-pane', QUBIT);
@@ -652,13 +658,13 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     assert.ok(/default height/.test(n.d.querySelector('.split-back-btn').title), 'the title says so');
     n.press('up');
     n.back();
-    eq(n.sizes(), SPLIT.expandedSizes, 'no drag: a qubit at its default');
+    eq(n.sizes(), SPLIT.defaultSizes, 'no drag: the default split, so the circle still moves the panel');
     assert.equal(n.user(), null, 'and no choice is left behind');
     assert.equal(n.drag_key(), null, 'nor a drag invented');
     n.swap('inspector-pane', RUN);
     n.press('up');
     n.back();
-    eq(n.sizes(), SPLIT.datasetExpandedSizes, 'no drag: a run at its default');
+    eq(n.sizes(), SPLIT.defaultSizes, 'no drag: a run at the default split too');
     // an older session's stored drag (quam_split_user sizes) seeds the circle
     const o = await boot({ storage: { quam_split_user: '[25,75]' } });
     o.swap('inspector-pane', RUN);
@@ -678,6 +684,8 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     assert.equal(s.d.getElementById('table-pane').style.height, '', 'the page gets everything else');
     assert.equal(s.d.getElementById('inspector-pane').style.height, '', 'the panel is only its bar');
     assert.ok(bar.querySelector('.ui-dock-back'), 'the docked bar carries the circle too');
+    assert.equal(bar.querySelectorAll(':scope > .ui-dock-actions > button').length, 3,
+        'up, circle and close sit together in the group the bar centres');
     s.restore();
     eq(s.sizes(), FULL, 'the docked bar\'s up arrow: the full height');
     assert.equal(s.user(), '"up"', 'stored as the up choice');
@@ -723,30 +731,24 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     top = 0;
     s.swap('table-pane', 'at the top');
     assert.equal(top, 0, 'a reader at the top stays at the top');
-} else if (mode === 'heading') {
-    // compact D-2: with no choice, the page keeps only the top half of its title
+} else if (mode === 'opens_full') {
+    // With no remembered choice no strip of the page stays above a new panel
     const s = await boot();
     const pane = s.d.getElementById('table-pane');
-    // F1: a breadcrumb heading above the title must not be measured
-    pane.innerHTML = '<h2 id="crumb">Notes</h2><h1>Live edit - Json Tree view</h1><p>text</p>';
-    pane.querySelector('#crumb').getBoundingClientRect = () => ({ top: 102, bottom: 108, height: 6 });
-    Object.defineProperty(pane.parentElement, 'clientHeight', { value: 812, configurable: true });
-    pane.getBoundingClientRect = () => ({ top: 100, bottom: 912, height: 812 });
-    pane.querySelector('h1').getBoundingClientRect = () => ({ top: 110, bottom: 150, height: 40 });
+    pane.innerHTML = '<h1>Live edit - Json Tree view</h1><p>text</p>';
     s.swap('inspector-pane', QUBIT);
-    // (30 px to the title's middle + half the 12 px gutter) of the 812 px parent
-    eq(s.sizes(), [4.43, 95.57], 'the top pane ends halfway down the title');
+    eq(s.sizes(), FULL, 'a qubit opens at the full height');
     assert.equal(s.user(), null, 'SM\'s move is not a choice');
-    assert.ok(pane.classList.contains('ui-pane-sliver'), 'the title sliver hides its own horizontal scrollbar');
+    assert.ok(pane.parentElement.classList.contains('ui-split-top'), 'and it is marked as the top state');
     s.swap('inspector-pane', RUN);
-    eq(s.sizes(), [4.43, 95.57], 'a run opened over another page too');
+    eq(s.sizes(), FULL, 'a run opened over another page too');
     s.drag([50, 50]);
     s.swap('inspector-pane', QUBIT);
     eq(s.sizes(), [50, 50], 'a remembered drag still wins');
-    assert.ok(!pane.classList.contains('ui-pane-sliver'), 'a real split is not a sliver');
+    assert.ok(!pane.parentElement.classList.contains('ui-split-top'), 'a real split is not the top state');
     // the Datasets run list keeps its rows
     const t = await boot();
-    t.d.getElementById('table-pane').innerHTML = '<h2>Datasets</h2><input id="dataset-search">';
+    t.d.getElementById('table-pane').innerHTML = DATASETS_PAGE;
     t.swap('inspector-pane', RUN);
     eq(t.sizes(), SPLIT.datasetExpandedSizes, 'the Datasets list keeps the run position');
 } else if (mode === 'top_edge') {
@@ -769,7 +771,9 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
         Object.defineProperty(host, 'clientHeight', { value: 845, configurable: true });
         const top = () => host.classList.contains('ui-split-top');
         s.swap('inspector-pane', html);
-        assert.ok(!top(), name + ': a panel opened mid-page is not at the top');
+        assert.ok(top(), name + ': a first panel opens at the top');
+        s.drag([40, 60]);
+        assert.ok(!top(), name + ': a panel dragged to mid-page is not at the top');
         s.calls[s.calls.length - 1].options.onDrag([0, 100]);
         assert.ok(top(), name + ': while the bar is still held at the top, the strip is already gone');
         s.drag([0, 100]);

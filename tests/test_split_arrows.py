@@ -41,7 +41,7 @@ MODES = ["buttons", "arrows", "drag", "up_next", "down_next", "drag_after_arrow"
          "nav_sidebar", "nav_boost", "nav_push", "nav_history", "nav_same_page",
          "nav_collapse_low", "nav_collapse_high",
          "nav_reopen_low", "nav_reopen_high", "nav_run_only", "table_first", "trend_chart",
-         "dock_bar", "back", "heading", "keeps_scroll", "top_edge"]
+         "dock_bar", "back", "opens_full", "keeps_scroll", "top_edge"]
 
 
 def _node(*args: str) -> subprocess.CompletedProcess:
@@ -134,12 +134,32 @@ def test_the_bar_is_a_visible_line_with_centred_arrows():
     head = _rule(style, ".inspector-header")
     assert int(controls["z-index"]) > int(head["z-index"]), "the sticky panel head would cut the buttons"
     kit = (WEB / "static" / "ui-kit.css").read_text(encoding="utf-8")
-    assert _rule(kit, ".ui-split-top > .gutter") == {
-        "margin-top": "calc((var(--inspector-toggle-h) - var(--split-gutter-size)) / 2)"
-    }, "at the top the bar only moves down by what its taller buttons stick out"
+    hung = _rule(kit, ".ui-split-top > .gutter > .gutter-controls")
+    assert "calc(-50% + (var(--inspector-toggle-h) - var(--split-gutter-size)) / 2)" in hung.get("transform", ""), \
+        "at the top the buttons hang from the bar's top edge, whole under the page area's clip"
     base = (WEB / "templates" / "base.html").read_text(encoding="utf-8")
     assert 'classList.toggle("gutter-dragging", on)' in base
     assert "markDragging(true)" in base and "markDragging(false)" in base
+
+
+def test_at_the_top_the_line_sits_just_under_the_top_bar_pills():
+    """The top bar gives up the empty space under its pills, and only while a panel is at the top."""
+    kit = (WEB / "static" / "ui-kit.css").read_text(encoding="utf-8")
+    nav = ".app-shell:has(.ui-split-top) .topbar > nav"
+    assert _rule(kit, nav) == {"margin-bottom": "-0.6rem"}
+    # The bar's rows reach past its edge: they must not swallow clicks on the split buttons.
+    assert _rule(kit, f"{nav},\n{nav} > ul,\n{nav} > ul > li") == {"pointer-events": "none"}
+    assert _rule(kit, f"{nav} > ul > li > *") == {"pointer-events": "auto"}, "the bar's own controls stay usable"
+
+
+def test_the_docked_buttons_sit_at_the_centre():
+    """Centre column between two equal ones, so a long panel title cannot push the buttons aside."""
+    kit = (WEB / "static" / "ui-kit.css").read_text(encoding="utf-8")
+    assert _rule(kit, ".ui-inspector-docked > .ui-dock-bar").get("display") == "grid"
+    assert _rule(kit, ".ui-dock-bar").get("grid-template-columns") == "minmax(0, 1fr) auto minmax(0, 1fr)"
+    assert _rule(kit, ".ui-dock-actions").get("display") == "inline-flex"
+    base = (WEB / "templates" / "base.html").read_text(encoding="utf-8")
+    assert 'actions.className = "ui-dock-actions"' in base
 
 
 def test_the_top_panel_leaves_no_strip():
@@ -165,13 +185,12 @@ def test_the_top_panel_leaves_no_strip():
     top_pad = _px(pane.get("padding-top", str(pad) + "px"), tokens)
     bottom_pad = _px(pane.get("padding-bottom", str(pad) + "px"), tokens)
     content = _px(pane["max-height"], tokens) if "max-height" in pane else 0.0
-    assert "margin-bottom" not in gutter and "background" not in gutter, \
-        "the bar no longer overlays the head row or hides its line at the top"
+    assert gutter == {}, "the bar keeps its own row and its line at the top, with no offset"
     strip = top_pad + bottom_pad + content
     assert abs(strip) <= 1, f"{strip:g} px of page between the top bar and the bar (was 2 x {pad:g})"
     assert pane.get("overflow") == "hidden", "the page's own content cannot spill over the panel"
     panel = _rule(kit, ".ui-split-top > #inspector-pane")
     assert panel.get("flex-grow") == "1", "the panel takes the height the page gave up, to the window's bottom"
-    assert panel.get("flex-shrink") == "1", "the bar's top margin comes out of the panel, not past the window"
+    assert panel.get("flex-shrink") == "1", "the panel ends at the window's bottom, not past it"
     base = (WEB / "templates" / "base.html").read_text(encoding="utf-8")
     assert 'classList.toggle("ui-split-top"' in base, "the split script marks the top state"

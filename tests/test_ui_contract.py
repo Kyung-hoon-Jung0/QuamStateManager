@@ -1270,6 +1270,11 @@ _STAGE6_SELECTORS = {
     '.topbar.tb-fit-11 .sync-control .state-status-badge.sync-control-main',
     '.topbar.tb-fit-11 .sync-control-text',
     '.topbar.tb-fit-11 #pending-tray .sync-control-act',
+    # the panel at the very top: the split line sits just below the top bar's pills
+    '.app-shell:has(.ui-split-top) .topbar > nav',
+    '.app-shell:has(.ui-split-top) .topbar > nav > ul',
+    '.app-shell:has(.ui-split-top) .topbar > nav > ul > li',
+    '.app-shell:has(.ui-split-top) .topbar > nav > ul > li > *',
 }
 
 
