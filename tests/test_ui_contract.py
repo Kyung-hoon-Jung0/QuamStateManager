@@ -224,6 +224,147 @@ def measure_bare_controls(known=None):
     return out
 
 
+# Markup debt remains visible even when the element defaults make it compact.
+_MARKUP_TAG = re.compile(r"</?[a-zA-Z][\w-]*\b[^<>]*>")
+_VOID_TAGS = {"input", "img", "br", "hr", "meta", "link", "source", "wbr", "area", "embed", "param", "col"}
+
+
+def _markup_elements(text):
+    from html.parser import HTMLParser
+
+    class Elements(HTMLParser):
+        # Tags in JS strings/comments must not hide later markup as raw text.
+        def set_cdata_mode(self, elem, **kwargs):
+            pass
+
+        def __init__(self):
+            super().__init__()
+            self.stack, self.elements = [], []
+
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            self.elements.append((tag, attrs, self.stack.copy()))
+            if tag not in _VOID_TAGS:
+                self.stack.append((tag, attrs))
+
+        def handle_endtag(self, tag):
+            for i in range(len(self.stack) - 1, -1, -1):
+                if self.stack[i][0] == tag:
+                    del self.stack[i:]
+                    break
+
+        def handle_startendtag(self, tag, attrs):
+            self.handle_starttag(tag, attrs)
+            if tag not in _VOID_TAGS:
+                self.handle_endtag(tag)
+
+    text = _JINJA.sub(" ", text).replace('\\"', '"').replace("\\'", "'")
+    text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
+    parser = Elements()
+    parser.feed("".join(_MARKUP_TAG.findall(text)))
+    return parser.elements
+
+
+def _measure_bare_parts(kind, known=None):
+    known = known if known is not None else _known_classes()
+    out = {}
+    for p in _templates() + _scripts():
+        count = 0
+        for tag, attrs, parents in _markup_elements(_read(p)):
+            classes = set(_literal_tokens(attrs.get("class") or ""))
+            if kind == "checks":
+                if tag != "input" or attrs.get("type", "").lower() not in {"checkbox", "radio"}:
+                    continue
+                sized_parent = parents and "ui-check" in (parents[-1][1].get("class") or "").split()
+                sized_parent = sized_parent or any(
+                    "gen-rule-row" in (a.get("class") or "").split() for _, a in parents)
+                if not (classes & known or sized_parent):
+                    count += 1
+            elif tag == "summary" and parents and parents[-1][0] == "details":
+                kit_summary = classes & {"ui-disclosure-summary", "ui-panel-head", "ui-zone-head", "btn-sm"}
+                kit_parent = any("ui-opxmon-tile" in (a.get("class") or "").split() for _, a in parents)
+                if not (kit_summary or kit_parent):
+                    count += 1
+        if count:
+            out[_rel(p)] = count
+    return out
+
+
+def measure_bare_checks(known=None):
+    """Checkbox/radio markup without a ruled class or a parent part that sizes it."""
+    return _measure_bare_parts("checks", known)
+
+
+def measure_bare_disclosures():
+    """Details/summary markup without the kit's summary part, in templates and JS."""
+    return _measure_bare_parts("disclosures")
+
+
+def test_no_new_bare_checks():
+    _ratchet("bare checkbox/radio", measure_bare_checks(), _baseline()["bare_checks"])
+
+
+def test_no_new_bare_disclosures():
+    _ratchet("bare details/summary", measure_bare_disclosures(), _baseline()["bare_disclosures"])
+
+
+def test_bare_part_measures_detect_unstyled_markup_and_respect_parent_boundaries(tmp_path, monkeypatch):
+    markup = (
+        '<input type="checkbox"><input type="radio" class="unknown">'
+        '<label class="ui-check"><input type="checkbox"></label><input type="radio">'
+        '<div class="gen-rule-row"><span><input type="checkbox"></span></div>'
+        '<input type="checkbox" class="ui-check-box"><input type="checkbox" class="feature">'
+        '<details><summary class="muted">Bare</summary></details>'
+        '<details class="ui-disclosure"><summary>Still bare</summary></details>'
+        '<details><summary class="ui-disclosure-summary">Kit</summary></details>'
+        '<details class="ui-panel"><summary class="ui-panel-head">Panel</summary></details>'
+        '<!-- <input type="checkbox"> -->{# <input type="radio"> #}'
+    )
+    paths = [tmp_path / "example.html", tmp_path / "example.js"]
+    for p in paths:
+        p.write_text(markup, encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "_templates", lambda: paths[:1])
+    monkeypatch.setattr(sys.modules[__name__], "_scripts", lambda: paths[1:])
+    monkeypatch.setattr(sys.modules[__name__], "_rel", lambda p: p.name)
+    assert measure_bare_checks({"ui-check-box", "feature"}) == {p.name: 3 for p in paths}
+    assert measure_bare_disclosures() == {p.name: 2 for p in paths}
+
+
+@pytest.mark.parametrize("raw_tag", ["script", "style", "textarea", "title"])
+def test_markup_elements_keep_scanning_after_raw_text_tag_mentions(raw_tag):
+    markup = '// Mention <' + raw_tag + '> in JS text.\n'
+    markup += '<input type="checkbox"><details><summary>Bare</summary></details>'
+    elements = _markup_elements(markup)
+    assert sum(tag == "input" for tag, _, _ in elements) == 1
+    assert sum(tag == "summary" for tag, _, _ in elements) == 1
+
+
+def test_bare_part_measures_detect_appended_markup_in_every_source(monkeypatch):
+    paths = _templates() + _scripts()
+    texts = {p: _read(p) for p in paths}
+    known = _known_classes()
+    monkeypatch.setattr(sys.modules[__name__], "_known_classes", lambda: known)
+    before = [measure_bare_checks(), measure_bare_disclosures()]
+    extra = '<input type="checkbox"><details><summary>Bare</summary></details>'
+    monkeypatch.setattr(sys.modules[__name__], "_read", lambda p: texts[p] + extra)
+    for original, measured in zip(before, [measure_bare_checks(), measure_bare_disclosures()]):
+        assert sum(measured.values()) == sum(original.values()) + len(paths)
+        for p in paths:
+            assert measured.get(_rel(p), 0) == original.get(_rel(p), 0) + 1, _rel(p)
+
+
+@pytest.mark.parametrize("filename", ["app.js", "dataset-virtual.js"])
+def test_script_bare_markup_additions_fail_both_ratchets(monkeypatch, filename):
+    path = _STATIC / filename
+    read = _read
+    extra = '<input type="checkbox"><details><summary>Bare</summary></details>'
+    monkeypatch.setattr(sys.modules[__name__], "_read", lambda p: read(p) + (extra if p == path else ""))
+    with pytest.raises(AssertionError, match=filename):
+        test_no_new_bare_checks()
+    with pytest.raises(AssertionError, match=filename):
+        test_no_new_bare_disclosures()
+
+
 def measure_select_tags():
     """All <select> tags in templates (the migration backlog, for the report)."""
     return {_rel(p): n for p in _templates() if (n := len(re.findall(r"<select\b", _read(p))))}
@@ -285,6 +426,8 @@ def measure_all():
         "color_literals": measure_colors(),
         "bare_buttons": measure_bare_buttons(known),
         "bare_controls": measure_bare_controls(known),
+        "bare_checks": measure_bare_checks(known),
+        "bare_disclosures": measure_bare_disclosures(),
         "bare_script_controls": measure_script_controls(),
         "unruled_classes": measure_unruled_classes(known),
         "inline_styles": measure_inline_styles(),
@@ -510,6 +653,7 @@ _STAGE5_MARK = "/* ===== stage 5:"
 
 _STAGE4_MARK = "/* ===== stage 4:"
 _STAGE6_MARK = "/* ===== stage 6:"
+_DEFAULTS_MARK = "/* Kit sweep wave 2: defaults */"
 
 
 def _ui_kit_parts():
@@ -523,13 +667,20 @@ def _ui_kit_parts():
     mid, last = tail.split(_STAGE5_MARK, 1)
     s5, s4 = last.split(_STAGE4_MARK, 1)
     s4, s6 = s4.split(_STAGE6_MARK, 1)
+    s6 = s6.split(_DEFAULTS_MARK, 1)[0]
     return (list(_blocks(_strip_comments(head))), list(_blocks(_strip_comments(_STAGE1_MARK + mid))),
             list(_blocks(_strip_comments(_STAGE5_MARK + s5))), list(_blocks(_strip_comments(_STAGE4_MARK + s4))),
             list(_blocks(_strip_comments(_STAGE6_MARK + s6))))
 
 
+def _default_rules():
+    raw = _read(_UI_KIT)
+    assert raw.count(_DEFAULTS_MARK) == 1
+    return list(_blocks(_strip_comments(raw.split(_DEFAULTS_MARK, 1)[1])))
+
+
 def _ui_kit_rules():
-    return [block for part in _ui_kit_parts() for block in part]
+    return [block for part in _ui_kit_parts() for block in part] + _default_rules()
 
 
 def test_7b_stage0_boundary_only_ui_selectors_and_one_token_block():
@@ -1286,7 +1437,7 @@ def _kit_rule(selector: str) -> dict:
     """The declarations of the one ui-kit.css rule whose selector list names ``selector``."""
     out = {}
     for sel, body, _stack in _blocks(_strip_comments(_read(_UI_KIT))):
-        if selector in [p.strip() for p in sel.split(",")]:
+        if selector in _split_top(sel):
             out.update(dict(_decls(body)))
     return out
 
@@ -1562,3 +1713,161 @@ def test_kit_sweep_pages_files_have_no_bare_controls():
         counts = measure()
         for file in files:
             assert counts.get(file, 0) == 0, (measure.__name__, file, counts.get(file, 0))
+
+
+# Element defaults get their own narrow allowlist, like the existing element/button section.
+_DEFAULT_CHECK = ('.app-shell input:is([type="checkbox"], [type="radio"]):not(:where( '
+                  '.ui-check > input, .ui-check-box, .gen-rule-row input, .gen-rule-grp-cb))')
+_DEFAULT_SUMMARY = ('.app-shell.app-shell details > summary:where(:not([class]), .muted, '
+                    '.section-header, .ph-drift-title):not(:where( '
+                    '[class*="ui-"], .ui-opxmon-tile summary, .tree-root > summary, .btn-sm, '
+                    ':is(.manual-cat, .manual-class, .wc-feat, .h5-coords) > summary))')
+_CHECK_STATES = ('', ':hover', ':focus-visible', ':checked', ':indeterminate', '::before',
+                 ':checked::before', ':indeterminate::before', ':disabled')
+
+
+def _default_declarations():
+    return {" ".join(sel.split()): dict(_decls(body)) for sel, body, _ in _default_rules()}
+
+
+def test_element_defaults_have_only_reviewed_selectors():
+    allowed = {_DEFAULT_CHECK + state for state in _CHECK_STATES}
+    allowed.add(_DEFAULT_CHECK + ':where([type="radio"])')
+    allowed.update(_DEFAULT_SUMMARY + state for state in ('', '::-webkit-details-marker', '::after', '::before'))
+    allowed.add(_DEFAULT_SUMMARY.replace('details >', 'details[open] >') + '::before')
+    assert set(_default_declarations()) == allowed
+    for _, body, stack in _default_rules():
+        assert not stack
+        assert not any(k.startswith('--') for k, _ in _decls(body))
+
+
+@pytest.mark.parametrize('state', _CHECK_STATES)
+def test_plain_checkbox_defaults_match_kit_size_colour_and_feedback(state):
+    # Compare every state to the actual part, rather than a second set of copied values.
+    defaults = _default_declarations()
+    assert defaults[_DEFAULT_CHECK + state] == _kit_rule('.ui-check-box' + state.replace('::before', '::after'))
+    assert defaults[_DEFAULT_CHECK]['flex'] == '0 0 auto'
+    assert defaults[_DEFAULT_CHECK]['width'] == 'var(--ui-check-size)'
+    assert defaults[_DEFAULT_CHECK]['height'] == 'var(--ui-check-size)'
+
+
+def test_plain_summary_defaults_match_kit_and_wrap_inside_a_narrow_card():
+    defaults = _default_declarations()
+    for state in ('', '::-webkit-details-marker', '::after', '::before'):
+        actual = defaults[_DEFAULT_SUMMARY + state]
+        for prop, value in _kit_rule('.ui-disclosure-summary' + state).items():
+            assert actual[prop] == value
+    assert defaults[_DEFAULT_SUMMARY]['min-width'] == '0'
+    assert defaults[_DEFAULT_SUMMARY]['max-width'] == '100%'
+    assert defaults[_DEFAULT_SUMMARY]['overflow-wrap'] == 'anywhere'
+    opened = _DEFAULT_SUMMARY.replace('details >', 'details[open] >') + '::before'
+    assert defaults[opened]['content'] == 'var(--ui-disclosure-marker-open)'
+
+
+@pytest.mark.parametrize('audit_index', range(5), ids=[
+    'pulse_checkbox', 'frequency_sync_checkbox', 'topology_metadata_checkbox',
+    'config_location_summary', 'live_changes_summary'])
+def test_element_defaults_are_scoped_and_leave_existing_parts_unchanged(ui_kit_html, audit_index):
+    node = shutil.which('node')
+    if node is None:
+        pytest.skip('node not available')
+    script = r"""
+const {JSDOM} = require('jsdom');
+const data = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+const doc = new JSDOM(data.html).window.document;
+for (const [id, selector, matches] of data.cases) {
+    const element = id.startsWith('report-')
+        ? new JSDOM(data.report).window.document.getElementById(id) : doc.getElementById(id);
+    if (!element || element.matches(selector) !== matches) throw Error(id + ': default selector mismatch');
+}
+"""
+    html = ui_kit_html[0] + (
+        '<div class="app-shell"><label class="ui-check"><input id="kit-check" type="checkbox"></label>'
+        '<input id="kit-box" class="ui-check-box" type="checkbox">'
+        '<div class="gen-rule-row"><input id="rule-check" type="checkbox"></div>'
+        '<div class="gen-rule-grpwrap"><input id="rule-group" class="gen-rule-grp-cb" type="checkbox"></div>'
+        '<details><summary id="kit-summary" class="ui-disclosure-summary">Kit</summary></details>'
+        '<details class="ui-panel"><summary id="panel-summary" class="ui-panel-head">Panel</summary></details>'
+        '<details><summary id="plain-summary">Plain</summary></details>'
+        '<details class="ph-drift-card"><summary id="drift-summary" class="ph-drift-title">Drift</summary></details>'
+        '<details><summary id="config-summary" class="muted">Config</summary></details></div>'
+        '<div class="chip-report"><input id="report-check" type="checkbox">'
+        '<details><summary id="report-summary">Report</summary></details></div>'
+    )
+    cases = [(id, _DEFAULT_CHECK, expected) for id, expected in (
+        ('uk-default-check', True), ('uk-default-radio', True), ('kit-check', False), ('kit-box', False),
+        ('rule-check', False), ('rule-group', False), ('report-check', False))]
+    cases += [(id, _DEFAULT_SUMMARY, expected) for id, expected in (
+        ('kit-summary', False), ('panel-summary', False), ('plain-summary', True), ('drift-summary', True),
+        ('config-summary', True), ('report-summary', False))]
+    custom_summaries = (
+        'jargon-q', 'tree-date-label', 'tree-dirname', 'sync-marker-peers', 'archive-btn',
+        'sort-badge', 'tray-op-pill', 'manual-cat', 'manual-class', 'wc-feat', 'h5-coords',
+        'notes-summary', 'cmap-summary', 'landing-cfg-summary',
+    )
+    for cls in custom_summaries:
+        html += ('<div class="app-shell"><details class="jargon" open>'
+                 '<summary id="custom-' + cls + '" class="' + cls + '">Custom</summary></details></div>')
+        cases.append(('custom-' + cls, _DEFAULT_SUMMARY, False))
+    for cls in ('manual-cat', 'manual-class', 'wc-feat', 'h5-coords'):
+        for state in ('', ' open'):
+            id = 'caret-' + cls + ('-open' if state else '-closed')
+            html += ('<div class="app-shell"><details class="' + cls + '"' + state + '>'
+                     '<summary id="' + id + '">Custom caret</summary></details></div>')
+            cases.append((id, _DEFAULT_SUMMARY, False))
+            cases.append((id, _DEFAULT_SUMMARY.replace('details >', 'details[open] >'), False))
+    # Use the audited elements' current attributes, including legacy feature classes.
+    from html import escape
+    sources = (
+        (_TPL / '_pulse_row.html', 'input', 'pulse-sel-chk', _DEFAULT_CHECK),
+        (_TPL / '_bulkedit.html', 'input', 'bulk-freq-sync', _DEFAULT_CHECK),
+        (_STATIC / 'chip-status.js', 'input', 'topo-meta-cb', _DEFAULT_CHECK),
+        (_TPL / '_qualibrate.html', 'summary', 'muted', _DEFAULT_SUMMARY),
+        (_TPL / '_param_history.html', 'summary', 'ph-drift-title', _DEFAULT_SUMMARY),
+    )
+    for i, (path, tag, marker, selector) in enumerate(sources):
+        if i != audit_index:
+            continue
+        element = next(attrs for name, attrs, _ in _markup_elements(_read(path))
+                       if name == tag and marker in ((attrs.get('class') or '') + ' ' + (attrs.get('id') or '')))
+        element['id'] = 'audited-' + str(i)
+        attrs = ' '.join(k + '="' + escape(v, quote=True) + '"' for k, v in element.items() if v is not None)
+        markup = '<' + tag + ' ' + attrs + '>'
+        if tag == 'summary':
+            markup = '<details class="ph-drift-card">' + markup + 'Summary</summary></details>'
+        html += '<div class="app-shell">' + markup + '</div>'
+        cases.append((element['id'], selector, True))
+    result = subprocess.run([node, '-e', script], input=json.dumps({'html': html, 'cases': cases, 'report':
+                                '<body class="chip-report"><input id="report-check" type="checkbox">'
+                                '<details><summary id="report-summary">Report</summary></details></body>'}),
+                            text=True, capture_output=True, cwd=_ROOT, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize('theme', ['light', 'dark'])
+def test_element_default_colours_resolve_through_kit_theme_tokens(theme):
+    env = theme_env(theme)
+    for token in ('--ui-check-border', '--ui-check-bg', '--ui-accent', '--ui-on-accent', '--ui-text', '--ui-text-2'):
+        assert len(_resolve('var(' + token + ')', env)) == 4
+
+
+def test_migrated_audit_elements_keep_their_existing_kit_parts():
+    autofit = _read(_TPL / '_autofit.html')
+    assert '<summary class="ui-disclosure-summary">AI judge' in autofit
+    assert '<summary class="ui-disclosure-summary">Chip profile' in autofit
+    generate = _read(_STATIC / 'generate.js')
+    assert 'lab.className = "ui-check gen-arch-radio"' in generate
+    assert 'var r = kitElement("input", "radio");' in generate
+    scheduler = _read(_STATIC / 'scheduler.js')
+    assert '<button type="button" class="btn-sm sched-env-pick">' in scheduler
+    report = _read(_TPL / 'chip_report.html')
+    assert 'class="ui-check-box"' in report
+    assert '<label class="ui-check"><input type="checkbox" id="rep-redact"' in report
+
+
+def test_gallery_agent_tick_uses_the_same_box_part_as_the_agent():
+    gallery = _markup_elements(_read(_TPL / 'ui_kit.html'))
+    ticks = [attrs for tag, attrs, _ in gallery
+             if tag == 'input' and 'ui-agent-tick' in (attrs.get('class') or '').split()]
+    assert ticks
+    assert all('ui-check-box' in attrs['class'].split() for attrs in ticks)
