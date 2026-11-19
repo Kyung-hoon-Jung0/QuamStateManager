@@ -20,7 +20,9 @@ _STATIC = _ROOT / "quam_state_manager" / "web" / "static"
 
 def _stage5_css() -> str:
     css = (_STATIC / "ui-kit.css").read_text(encoding="utf-8")
-    return re.sub(r"/\*.*?\*/", "", css.split("/* ===== stage 5:", 1)[1], flags=re.DOTALL)
+    # Only the stage 5 block: it ends where the next section mark of the stylesheet starts.
+    block = re.split(r"/\* (?:=====|Kit sweep)", css.split("/* ===== stage 5:", 1)[1], maxsplit=1)[0]
+    return re.sub(r"/\*.*?\*/", "", block, flags=re.DOTALL)
 
 
 def _rules(css: str):
