@@ -628,7 +628,7 @@
            LOCAL cold column again: out of the document, its values kept in
            `vals` for the whole-chip search, and back (the same nodes, no
            fetch) the moment the window reaches it. Out of layout was not
-           enough: every <input> still in the document is walked by Chrome's
+           enough: every input element still in the document is walked by Chrome's
            own form scan after each landing (a native 150-230 ms task on the
            30Q rig that grows with every column a scroll has hydrated). Only
            clean, fully landed columns (tailRecollapse filtered the held and

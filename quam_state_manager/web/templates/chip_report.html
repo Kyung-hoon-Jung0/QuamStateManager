@@ -187,17 +187,19 @@
         {% for s in sections %}
             <label class="{{ '' if s.available else 'rep-box-off' }}">
                 <input type="checkbox" data-rep-box value="{{ s.key }}"
-                       {{ 'checked' if s.key in checked }} {{ '' if s.available else 'disabled' }}>
+                       {{ 'checked' if s.key in checked }} {{ '' if s.available else 'disabled' }}
+            class="ui-check-box">
                 <span><b>{{ s.label }}</b>{% if s.note %} <i class="rep-note">— {{ s.note }}</i>{% endif %}
                     <span class="rep-box-desc">{{ s.desc }}</span></span>
             </label>
         {% endfor %}
         </div>
         <div class="rep-opts">
-            <label><input type="checkbox" id="rep-redact" {{ 'checked' if redact }}>
+            <label class="ui-check"><input type="checkbox" id="rep-redact" {{ 'checked' if redact }}>
                 Hide network addresses and local folder paths</label>
-            <label>Trends window
-                <select id="rep-window" aria-label="Trends window">
+            <label class="ui-field"><span class="ui-field-label">Trends window</span>
+        <select id="rep-window" aria-label="Trends window"
+            class="ui-select">
                 {% for v, lab in windows %}<option value="{{ v }}"{{ ' selected' if v == window }}>{{ lab }}</option>{% endfor %}
                 </select></label>
         </div>

@@ -19,7 +19,8 @@
             hx-swap="innerHTML">Take Snapshot</button>
     <small class="muted hp-ledger-count">{{ version_count(lv) }}{% if lv.rows | length < lv.total %} &middot; {% if page == 1 %}newest {% endif %}{{ '{:,}'.format(lv.rows | length) }} shown{% endif %}</small>
     <select aria-label="States per page" name="per_page"
-            hx-get="/api/history" hx-target="#history-content" hx-swap="innerHTML">
+            hx-get="/api/history" hx-target="#history-content" hx-swap="innerHTML"
+    class="ui-select">
         {% for size in (20, 50, 100, 0) %}
         <option value="{{ size }}"{% if per_page == size %} selected{% endif %}>{{ size if size else 'All' }}</option>
         {% endfor %}

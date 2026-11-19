@@ -56,7 +56,7 @@ def two_roots(tmp_path):
 
 
 def _roots(html):
-    return len(re.findall(r'class="tree-root"', html)), html.count("btn-remove")
+    return len(re.findall(r'class="ui-disclosure tree-root\s*"', html)), html.count("btn-remove")
 
 
 @pytest.mark.parametrize("q", ["zzzzqq", "date:2030"])
@@ -79,7 +79,7 @@ def test_a_partial_match_keeps_the_unmatched_root(two_roots):
     html = two_roots.get("/workspace/tree?name=exp7").get_data(as_text=True)
     assert _roots(html) == (2, 2), "rootA's header and x no longer vanish"
     assert html.count(NOMATCH) == 1
-    blocks = html.split('class="tree-root"')[1:]
+    blocks = re.split(r'class="ui-disclosure tree-root\s*"', html)[1:]
     a = next(b for b in blocks if "rootA" in b.split("</summary>", 1)[0])
     b = next(b for b in blocks if "rootB" in b.split("</summary>", 1)[0])
     assert NOMATCH in a and NOMATCH not in b

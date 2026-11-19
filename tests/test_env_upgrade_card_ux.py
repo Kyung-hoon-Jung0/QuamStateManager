@@ -140,7 +140,7 @@ def test_references_show_env_name_local_minute_and_size(loaded, monkeypatch):
     assert re.search(r"<code[^>]*>testenv</code>", html) and "903 KB" in html and "924191" not in html
     assert re.search(r"2026-10-30 \d\d:\d\d\b", html) and ".456789" not in html
     assert 'title="' + "a" * 64 in html
-    assert '<select class="env-reference-python">' in html and 'type="text" value=' not in html
+    assert '<select class="ui-select env-reference-python">' in html and 'type="text" value=' not in html
 
 
 def test_compare_refuses_an_interpreter_sm_did_not_discover(loaded, monkeypatch):

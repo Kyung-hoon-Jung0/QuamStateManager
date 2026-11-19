@@ -30,8 +30,9 @@
         {% endif %}
 
         <li class="page-size-picker">
-            <label>Show
-            <select onchange="setPageSize(this, '{{ base_url }}', '{{ extra_qs }}', '{{ storage_key }}')">
+            <label class="ui-field"><span class="ui-field-label">Show</span>
+        <select onchange="setPageSize(this, '{{ base_url }}', '{{ extra_qs }}', '{{ storage_key }}')"
+            class="ui-select">
                 {% for opt in [25, 50, 100] %}
                 <option value="{{ opt }}" {% if per_page == opt %}selected{% endif %}>{{ opt }}</option>
                 {% endfor %}

@@ -39,8 +39,8 @@
        adjacent pair says the one thing the row is for. #}
     {% if i >= 1 and _ref %}<span class="diff-vs" aria-hidden="true"
          title="older on the left, newer on the right">&rarr;</span>{% endif %}
-    <label class="diff-side{% if i >= 2 %} diff-side-c{% endif %}">
-      <span class="diff-side-tag">{{ slots[i] | upper }}</span>
+    <label class="ui-field diff-side{% if i >= 2 %} diff-side-c{% endif %}">
+      <span class="ui-field-label diff-side-tag">{{ slots[i] | upper }}</span>
       {# Drop THIS source. It clears the select and lets the form's own change
          trigger do the rest: the server compacts the remaining slots, so no
          URL is hand-built here and no gap is left behind. Offered only while
@@ -52,7 +52,8 @@
               aria-label="Remove column {{ slots[i] | upper }}"
               data-slot="{{ slots[i] }}">&#128465;</button>
       {% endif %}
-      <select name="{{ slots[i] }}">
+      <select name="{{ slots[i] }}"
+    class="ui-select">
         <option value="">{{ '— pick a source —' if i < 2 else ('— optional third —' if i == 2 else '— optional —') }}</option>
         {% for o in options %}
         <option value="{{ o.ref }}" {% if o.ref == _ref %}selected{% endif %}>{{ o.label }}</option>
@@ -234,7 +235,7 @@
       <div id="diff-list" class="diff-list-wrap" data-more="{{ more }}">
       <div class="diff-panes-tools">{% include '_diff_search.html' %}</div>
       <div class="ui-xscroll">
-      <table class="diff-wb-list ui-run-diff" data-run-diff>
+      <table class="ui-table diff-wb-list ui-run-diff" data-run-diff>
         <thead><tr><th>Parameter</th><th>A</th><th></th><th>B</th><th>Δ</th>{% if _take_from %}<th></th>{% endif %}</tr></thead>
         <tbody>
         {% for r in rows %}
@@ -289,7 +290,7 @@
     {% else %}
       <div class="tree-toolbar diff-tree-toolbar">
         <span class="tree-search-icon">&#128269;</span>
-        <input type="text" class="tree-search ui-search" id="diff-tree-search"
+        <input type="text" class="ui-input tree-search ui-search" id="diff-tree-search"
                placeholder="{{ search_hint() }}" title="{{ search_title() }}" autocomplete="off"
                oninput="jsonTreeSearch('diff-tree', this.value)">
         <div class="tree-depth-group">

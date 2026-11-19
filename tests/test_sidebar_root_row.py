@@ -68,7 +68,7 @@ def test_the_row_carries_name_then_dimmed_parent_and_the_full_path_as_title(clie
     assert 'class="tree-root-name">CS_installations_2026</span>' in html
     parent = str(deep.parent) + ("\\" if "\\" in str(deep) else "/")
     assert f'class="tree-root-dir">{parent}</span>' in html
-    assert f'<summary class="tree-root-label" title="{deep}">' in html
+    assert f'<summary class="ui-disclosure-summary tree-root-label" title="{deep}">' in html
     # no server-side truncation any more: the text is whole, CSS clips it
     span = html.split('class="tree-root-path"', 1)[1].split("</summary>", 1)[0]
     assert "..." not in span

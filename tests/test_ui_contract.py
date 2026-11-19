@@ -1523,3 +1523,42 @@ def test_a_multiple_select_shows_its_rows_instead_of_a_one_line_control():
         for tag in re.findall(r"<select\s[^>]*>", _read(tpl)):
             if " multiple" in tag and "ui-select" in tag:
                 assert "ui-select--list" in tag, (tpl.name, tag)
+
+
+def test_kit_sweep_pages_files_have_no_bare_controls():
+    files = (
+        'static/app.js',
+        'static/bulk-edit.js',
+        'static/chip-status.js',
+        'static/dataset-virtual.js',
+        'static/all-values.js',
+        'static/grid-virt.js',
+        'templates/_diff.html',
+        'templates/_compare_hub.html',
+        'templates/_compare_hub_map_editor.html',
+        'templates/_compare_diff.html',
+        'templates/_chip_compare.html',
+        'templates/_chip_compare_picker.html',
+        'templates/_chip_compare_topology.html',
+        'templates/_chip_profile.html',
+        'templates/_env_upgrade_references.html',
+        'templates/_journal.html',
+        'templates/_journal_card.html',
+        'templates/_journal_day_swap.html',
+        'templates/_trends.html',
+        'templates/_diff_workbench.html',
+        'templates/_disk_page.html',
+        'templates/_fit_audit.html',
+        'templates/_history_panel_ledger.html',
+        'templates/_landing_project_tz.html',
+        'templates/_landing_projects.html',
+        'templates/_pagination.html',
+        'templates/_sidebar_tree.html',
+        'templates/_snapshot_source.html',
+        'templates/_table.html',
+        'templates/chip_report.html',
+    )
+    for measure in (measure_bare_controls, measure_script_controls, measure_bare_buttons):
+        counts = measure()
+        for file in files:
+            assert counts.get(file, 0) == 0, (measure.__name__, file, counts.get(file, 0))

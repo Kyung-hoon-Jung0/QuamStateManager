@@ -20,8 +20,8 @@
   </div>
 
   {# ── [A] SOURCES — collapses to a one-line toolbar once results exist ── #}
-  <details class="cmp-setup" {% if not result %}open{% endif %}>
-    <summary class="cmp-setup-summary">
+  <details class="ui-disclosure cmp-setup" {% if not result %}open{% endif %}>
+    <summary class="ui-disclosure-summary cmp-setup-summary">
       <span class="cmp-setup-line">
         {{ sources_count }} source{{ '' if sources_count == 1 else 's' }}
         {%- for row in basket if not row.error %}{% if loop.index <= 3 %} · {{ row.label | truncate(26) }}{% elif loop.index == 4 %} · …{% endif %}{% endfor %}
@@ -79,21 +79,24 @@
         </span>
         {% endif %}
         <select id="cmp-workspace-select" aria-label="Add a workspace chip"
-                onchange="cmpHubPickWorkspace(this)">
+                onchange="cmpHubPickWorkspace(this)"
+          class="ui-select">
           <option value="">Workspace…</option>
           {% for chip in workspace_chips %}
           <option value="{{ chip.path }}" data-name="{{ chip.name }}">{{ chip.name }}{% if chip.snapshot_ts %} — run {{ chip.snapshot_ts }}{% endif %}</option>
           {% endfor %}
         </select>
         <select id="cmp-history-select" aria-label="Add from Param/State logs"
-                onchange="cmpHubPickHistory(this)">
+                onchange="cmpHubPickHistory(this)"
+          class="ui-select">
           <option value="">History…</option>
           {% for chip in history_chips %}
           <option value="{{ chip.key }}" data-name="{{ chip.key }}">{{ chip.key }} ({{ chip.snapshot_count }} snapshots)</option>
           {% endfor %}
         </select>
         <select id="cmp-recent-select" aria-label="Add a recent folder"
-                onchange="cmpHubPickRecent(this)">
+                onchange="cmpHubPickRecent(this)"
+          class="ui-select">
           <option value="">Recent…</option>
           {# populated client-side from localStorage.recentFolders #}
         </select>
@@ -169,5 +172,5 @@
   </section>
 </div>
 
-<input type="hidden" id="cmp-hub-browse-target" onchange="cmpHubBrowsePicked(this)">
+        <input type="hidden" id="cmp-hub-browse-target" onchange="cmpHubBrowsePicked(this)">
 <script>window.cmpHub && window.cmpHub._rescan && window.cmpHub._rescan();</script>

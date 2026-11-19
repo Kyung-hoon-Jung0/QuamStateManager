@@ -2585,9 +2585,11 @@
             var mm = state.paramKeyMinMax[key] || [null, null];
             var cur = state.paramRangeFilter.get(key) || {};
             body = '<div class="param-group-body param-range" data-param-range="' + escapeHtml(key) + '">' +
-                   '<input type="number" class="param-range-min" placeholder="min" value="' + (cur.min != null ? cur.min : '') + '">' +
+                   '<input type="number" class="ui-input ui-input--num param-range-min" placeholder="min"' +
+                   ' value="' + (cur.min != null ? cur.min : '') + '">' +
                    '<span class="param-range-sep">–</span>' +
-                   '<input type="number" class="param-range-max" placeholder="max" value="' + (cur.max != null ? cur.max : '') + '">' +
+                   '<input type="number" class="ui-input ui-input--num param-range-max" placeholder="max"' +
+                   ' value="' + (cur.max != null ? cur.max : '') + '">' +
                    '<span class="muted param-range-hint">data: ' + _fmtNum(mm[0]) + ' … ' + _fmtNum(mm[1]) + '</span></div>';
         } else if (expanded) {
             var vals = state.paramFacets[key];
@@ -2771,7 +2773,7 @@
         else state.paramRangeFilter.set(key, {min: min, max: max});
         markInteraction();
         applyFilters();
-        // NB: don't rebuild the banner here — that would re-render the <input> the
+        // NB: don't rebuild the banner here; that would re-render the input element the
         // user is typing in and drop focus. The head's active-dot updates on the
         // next natural rebuild (toggle/collapse); the filtering applies live.
     }
