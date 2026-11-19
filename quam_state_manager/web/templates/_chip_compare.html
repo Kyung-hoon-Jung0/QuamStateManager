@@ -23,14 +23,13 @@
     {# Relative tolerance for the Differences tab — same field style as /diff.
        Different chips store 40 vs 40.0 / sub-ppb float noise; exact != would
        flag every such cell. Changing it re-opens the Differences tab. #}
-    <span class="diff-field diff-field-sm chip-compare-tol-field"
-          style="display:inline-flex;align-items:center;gap:0.35rem;margin-left:auto;">
-        <label for="chip-compare-tolerance" class="muted"
-               style="margin:0;font-size:0.8em;"
+    <span class="ui-field ui-field--inline chip-compare-tol-field">
+        <label for="chip-compare-tolerance" class="ui-field-label"
                title="Relative tolerance for the Differences tab — numeric values closer than this (relative) count as equal; 0 = exact.">Tolerance</label>
         <input type="number" name="tolerance" id="chip-compare-tolerance" step="any"
-               min="0" value="1e-9" style="width:6.5rem;margin:0;"
-               onchange="var t=document.getElementById('chip-compare-diff-tab'); if(t) t.click();">
+               min="0" value="1e-9"
+               onchange="var t=document.getElementById('chip-compare-diff-tab'); if(t) t.click();"
+    class="ui-input ui-input--num">
     </span>
 </div>
 

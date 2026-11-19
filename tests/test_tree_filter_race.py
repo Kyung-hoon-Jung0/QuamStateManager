@@ -27,7 +27,7 @@ from quam_state_manager.web import routes
 from quam_state_manager.web.app import create_app
 
 NOMATCH = "tree-nomatch-note"
-PENDING = "tree-pending-note"
+PENDING = 'data-pending="'
 
 
 def _run(root, rid, *, matches=True, name=None, day="2026-01-01"):

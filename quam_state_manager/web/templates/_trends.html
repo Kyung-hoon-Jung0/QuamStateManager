@@ -31,16 +31,18 @@
 </div>
 {% endif %}
 <div class="trends-filters">
-    <label>Experiment:
-        <select id="trend-exp-select" onchange="loadTrendData()">
+    <label class="ui-field"><span class="ui-field-label">Experiment:</span>
+        <select id="trend-exp-select" onchange="loadTrendData()"
+        class="ui-select">
             <option value="">Select an experiment</option>
             {% for exp in experiments %}
             <option value="{{ exp }}">{{ exp }}</option>
             {% endfor %}
         </select>
     </label>
-    <label>Qubit:
-        <select id="trend-qubit-select" onchange="loadTrendData()">
+    <label class="ui-field"><span class="ui-field-label">Qubit:</span>
+        <select id="trend-qubit-select" onchange="loadTrendData()"
+        class="ui-select">
             <option value="">All qubits</option>
             {% for q in qubits %}
             <option value="{{ q }}">{{ q }}</option>

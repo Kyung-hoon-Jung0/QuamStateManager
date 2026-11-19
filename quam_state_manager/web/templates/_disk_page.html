@@ -34,15 +34,21 @@
                 title="Deletes only the caches SM rebuilds by itself">
             Clear rebuildable cache{% if disk.reclaimable_bytes >= RECLAIM_FLOOR %}
             ({{ sz(disk.reclaimable_bytes) }}){% endif %}</button>
-        <label class="disk-limit">Warn me above
-            <input type="number" id="disk-limit-gb" min="0.5" step="0.5"
+        <label class="ui-field disk-limit">
+            <span class="ui-field-label">Warn me above</span>
+            <span class="ui-input-unit">
+                <input type="number" id="disk-limit-gb" min="0.5" step="0.5"
                    value="{{ '%g'|format(disk.limit_gb) }}"
-                   onchange="diskGuardLimit(this.value)"> GB</label>
+                   onchange="diskGuardLimit(this.value)"
+        class="ui-input ui-input--num">
+                <span class="ui-input-unit-text">GB</span>
+            </span>
+        </label>
         <button type="button" class="btn-sm outline" onclick="diskGuardRefresh()">Re-measure</button>
         <span class="muted" id="disk-msg" aria-live="polite"></span>
     </div>
 
-    <table class="disk-table">
+    <table class="ui-table disk-table">
         <thead><tr><th>Folder</th><th class="num">Size</th><th class="num">Files</th><th>What it is</th></tr></thead>
         <tbody>
             {% for d in disk.dirs %}

@@ -62,8 +62,9 @@
 </div>
 
 <div class="chip-compare-ref-selector">
-    <label class="muted">Reference chip:</label>
-    <select onchange="changeChipCompareRef(this)">
+    <label class="ui-field-label muted">Reference chip:</label>
+    <select onchange="changeChipCompareRef(this)"
+    class="ui-select">
         {% for label in labels %}
         <option value="{{ loop.index0 }}" {% if loop.index0 == ri %}selected{% endif %}>{{ label | truncate(30) }}{% if loop.index0 == ri %} (ref){% endif %}</option>
         {% endfor %}

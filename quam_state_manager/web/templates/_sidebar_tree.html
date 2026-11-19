@@ -25,11 +25,12 @@
 {# R4 B3/b6: a folder whose drive or share does not answer keeps its runs as
    last read, stated the way the Datasets page states it #}
 {% set _away = not _gone and root_path in (tree_unreachable or ()) %}
-<details class="tree-root{% if _gone %} tree-root-missing{% endif %}{% if _away %} tree-root-unreachable{% endif %}" open>
-    <summary class="tree-root-label" title="{{ root_path }}">
+<details class="ui-disclosure tree-root{% if _gone %} tree-root-missing{% endif %}
+{% if _away %} tree-root-unreachable{% endif %}" open>
+    <summary class="ui-disclosure-summary tree-root-label" title="{{ root_path }}">
         <span class="tree-root-path"><span class="tree-root-name">{{ _name }}</span>{% if _dir %}<span class="tree-root-dir">{{ _dir }}</span>{% endif %}</span><span class="tree-root-folded ui-count" title="Folded: click to show its runs">{{ _n_runs }} run{{ '' if _n_runs == 1 else 's' }}</span>{% if _gone %}<span class="tree-root-missing-tag">not found</span>{% elif _away %}<span class="tree-root-missing-tag">unreachable</span>{% endif %}
     </summary>
-    {# Button kept out of <summary> (not a valid summary descendant) — CSS
+    {# Button kept out of the summary (not a valid summary descendant); CSS
        pins it to the summary row. #}
     <button type="button" hx-post="/workspace/remove" hx-target="#sidebar-tree"
             hx-vals='{"folder": {{ root_path | string | tojson }}}' class="btn-remove" title="Remove">&times;</button>
@@ -39,7 +40,8 @@
         <form class="tree-repoint" hx-post="/workspace/add" hx-target="#sidebar-tree" hx-swap="innerHTML">
             <input type="hidden" name="replace" value="{{ root_path }}">
             <input type="text" name="folder" required placeholder="Its new location"
-                   aria-label="New location of {{ _name }}">
+                   aria-label="New location of {{ _name }}"
+            class="ui-input">
             <button type="submit" class="btn-sm" title="Use this folder instead of the one that is gone">Re-point</button>
         </form>
         <button type="button" class="btn-sm outline tree-missing-remove" hx-post="/workspace/remove" hx-target="#sidebar-tree"
@@ -47,7 +49,7 @@
     </div>
     {% else %}
     {% if _away %}
-    <div class="tree-missing-note tree-unreachable-note" role="status">
+    <div class="tree-missing-note" role="status">
         <small>&#9888; Folder unreachable: its drive or network share does not answer. Its runs show as last read.</small>
     </div>
     {% endif %}
@@ -57,13 +59,13 @@
     {# docs/142: listing-first scan -- names/ids are real, statuses and qubit
        search fill in when the background parse lands. The div refetches the
        tree after a short delay until the note stops rendering. #}
-    <p class="muted tree-hydrating-note" hx-get="/workspace/tree"
+    <p class="muted" hx-get="/workspace/tree"
        hx-trigger="load delay:2s" hx-target="#sidebar-tree" hx-swap="innerHTML"
        hx-include="#sidebar-filter-input"><small>&#8987; indexing runs&hellip;
       statuses and qubit search fill in shortly</small></p>
     {% endif %}
     {% if (tree_truncated or {}).get(root_path) %}
-    <p class="muted tree-truncated-note"><small>&#9888; scan stopped at the
+    <p class="muted"><small>&#9888; scan stopped at the
       50,000-directory bound &mdash; some runs may be missing (a symlink may
       point at a very large tree)</small></p>
     {% endif %}
@@ -75,12 +77,12 @@
     {% set _pend = (tree_pending or {}).get(root_path, 0) %}
     {% if name_filter and _pend %}
     {% if root_path in (tree_pending_live or ()) %}
-    <p class="muted tree-pending-note" data-pending="{{ _pend }}"
+    <p class="muted" data-pending="{{ _pend }}"
        hx-get="/workspace/tree" hx-trigger="load delay:2s"
        hx-target="#sidebar-tree" hx-swap="innerHTML"
        hx-include="#sidebar-filter-input" hx-sync="#sidebar-filter-input:replace"><small>&#8987; {{ "{:,}".format(_pend) }} run{{ "" if _pend == 1 else "s" }} still being scanned &mdash; results may grow</small></p>
     {% else %}
-    <p class="muted tree-pending-note" data-pending="{{ _pend }}"><small>&#9888; {{ "{:,}".format(_pend) }} run{{ "" if _pend == 1 else "s" }} not read yet &mdash; results may be incomplete</small></p>
+    <p class="muted" data-pending="{{ _pend }}"><small>&#9888; {{ "{:,}".format(_pend) }} run{{ "" if _pend == 1 else "s" }} not read yet &mdash; results may be incomplete</small></p>
     {% endif %}
     {% endif %}
     {% for node in (nested or {}).get(root_path, []) %}

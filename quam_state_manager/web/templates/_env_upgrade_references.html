@@ -13,13 +13,14 @@
     {% if reference.other_json %}<tr><th class="ui-table-head" scope="row">Not part of this comparison</th><td class="ui-table-cell">{% for file in reference.other_json %}<code class="ui-chip">{{ file }}</code> {% endfor %}</td></tr>{% endif %}
   </tbody></table>
   <div class="ui-item-foot env-reference-foot">
-    <label class="env-reference-field">Compare with
-      <select class="env-reference-python">
+    <label class="ui-field env-reference-field"><span class="ui-field-label">Compare with</span>
+        <select class="ui-select env-reference-python">
         {% set ns = namespace(found=false) %}
         {% for env in envs %}<option value="{{ env.python }}" {% if env.python == selected %}selected{% set ns.found = true %}{% endif %}>{{ env.name }}</option>{% endfor %}
         {% if selected and not ns.found %}<option value="{{ selected }}" selected title="{{ selected }}">{{ selected_name }}</option>{% endif %}
       </select></label>
-    <label class="env-reference-field">Name filter <input class="env-reference-filter" type="text"></label>
+    <label class="ui-field env-reference-field"><span class="ui-field-label">Name filter</span>
+        <input class="ui-input env-reference-filter" type="text"></label>
     <div class="ui-actions">
       <button class="btn-sm outline" data-key="{{ reference.key }}" onclick="EnvUpgrade.compare(this)">Compare</button>
       <button class="btn-sm danger" data-key="{{ reference.key }}" onclick="EnvUpgrade.removeReference(this)">Delete</button>

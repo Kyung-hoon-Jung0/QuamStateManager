@@ -1,7 +1,7 @@
 <form id="chip-compare-form" hx-post="/chip-compare" hx-target="#table-pane"
       class="chip-compare-picker" hx-push-url="true">
     <div class="chip-compare-picker-row">
-        <label class="chip-compare-picker-label">Selected chips</label>
+        <label class="ui-field-label chip-compare-picker-label">Selected chips</label>
         <div id="chip-compare-tags" class="chip-compare-tags" role="list">
             {% for sel in selected %}
             <span class="chip-compare-tag" role="listitem" data-path="{{ sel.path }}">
@@ -18,9 +18,11 @@
     </div>
 
     <div class="chip-compare-picker-row">
-        <label class="chip-compare-picker-label" for="chip-compare-workspace-select">From workspace</label>
+        <label class="ui-field-label chip-compare-picker-label"
+               for="chip-compare-workspace-select">From workspace</label>
         <select id="chip-compare-workspace-select"
-                onchange="addChipFromSelect(this, 'workspace')">
+                onchange="addChipFromSelect(this, 'workspace')"
+                class="ui-select">
             <option value="">— pick a chip —</option>
             {% for chip in workspace_chips %}
             {# snapshot_ts is set only when the chip has no live quam_state and
@@ -31,9 +33,10 @@
             {% endfor %}
         </select>
 
-        <label class="chip-compare-picker-label" for="chip-compare-recent-select">Recent</label>
+        <label class="ui-field-label chip-compare-picker-label" for="chip-compare-recent-select">Recent</label>
         <select id="chip-compare-recent-select"
-                onchange="addChipFromSelect(this, 'recent')">
+                onchange="addChipFromSelect(this, 'recent')"
+                class="ui-select">
             <option value="">— pick a recent path —</option>
             {# populated client-side from localStorage.recentFolders #}
         </select>
@@ -52,7 +55,7 @@
     </div>
 </form>
 
-<input type="hidden" id="chip-compare-browse-target"
+        <input type="hidden" id="chip-compare-browse-target"
        onchange="window.addChipFromInput && window.addChipFromInput(this)">
 
 <script>

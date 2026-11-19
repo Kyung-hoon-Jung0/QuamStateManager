@@ -2472,9 +2472,11 @@ window.ChipStatus.mount = function (opts) {
             body += '<p class="muted ov-pop-note">Computed tile \u2014 its number is not one metric, so key/statistic cannot change here.</p>';
         } else {
             if (isAdd || isCustom) {
-                body += '<label>Metric<select id="ov-pop-key">' + keyOpts + '</select></label>';
+                body += '<label class="ui-field"><span class="ui-field-label">Metric</span>'
+                + '<select class="ui-select" id="ov-pop-key">' + keyOpts + '</select></label>';
             }
-            body += '<label>Statistic<select id="ov-pop-stat">' + statOpts + '</select></label>';
+            body += '<label class="ui-field"><span class="ui-field-label">Statistic</span>'
+                + '<select class="ui-select" id="ov-pop-stat">' + statOpts + '</select></label>';
         }
         // QA F-23: a removed default panel comes back under its own id and
         // title (a custom copy of its metric is not the same tile).
@@ -2482,7 +2484,8 @@ window.ChipStatus.mount = function (opts) {
             return prefs.removed.indexOf(t.id) >= 0;
         }) : [];
         if (restorable.length) {
-            body += '<label>Restore a removed panel<select id="ov-pop-restore">'
+            body += '<label class="ui-field"><span class="ui-field-label">Restore a removed panel</span>'
+                + '<select class="ui-select" id="ov-pop-restore">'
                  + restorable.map(function(t) {
                        return '<option value="' + _esc(t.id) + '">' + _esc(t.title) + '</option>';
                    }).join('')
@@ -6420,10 +6423,12 @@ window.ChipStatus.mount = function (opts) {
                     // docs/192 CS02: the SAVED value rides on the field, so
                     // "typed but not applied" is a comparison rather than a flag
                     // that can drift out of step with the server.
-                    '<input class="thresh-in" type="number" step="any" data-metric="' + k + '" data-bound="warn" data-saved="' +
+                    '<input class="ui-input ui-input--num thresh-in" type="number" step="any"' +
+                    ' data-metric="' + k + '" data-bound="warn" data-saved="' +
                     (th.warn * disp.scale).toFixed(disp.dec) + '" value="' +
                     (th.warn * disp.scale).toFixed(disp.dec) + '">' +
-                    '<input class="thresh-in" type="number" step="any" data-metric="' + k + '" data-bound="fail" data-saved="' +
+                    '<input class="ui-input ui-input--num thresh-in" type="number" step="any"' +
+                    ' data-metric="' + k + '" data-bound="fail" data-saved="' +
                     (th.fail * disp.scale).toFixed(disp.dec) + '" value="' +
                     (th.fail * disp.scale).toFixed(disp.dec) + '">' +
                     '<span class="thresh-unit">' + disp.unit + '</span>' + prov;

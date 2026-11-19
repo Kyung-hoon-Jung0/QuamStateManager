@@ -46,6 +46,7 @@ const a1 = app.indexOf('// Network-level failure', a0);
 check(() => assert.ok(a0 > 0 && a1 > a0, 'the shared error-text helper and the toast listener are in app.js'));
 const toasts = [];
 w.showToast = (msg) => { toasts.push(msg); return null; };
+w.eval(app.match(/function _kitPageControl\([\s\S]*?\n\}/)[0]);
 w.eval(app.slice(a0, a1));
 const reason = 'This pulse would not run: SNZPulse at q.z.op \u2014 flat_length must be even. Every node would fail.';
 const xhr = (status) => ({ status, responseText: '<div><p>Nothing was written \u2014 ' + reason + '</p></div>',

@@ -13,7 +13,7 @@
  * {p,d} (xref), {dims} (uniform matrix), {ty:{t,s}} (expected-type chip).
  *
  * Forked from dataset-virtual.js (the proven scroller) + pair-edit.js (path-model
- * dirty + atomic apply), HARDENED for a body that holds <input>s:
+ * dirty + atomic apply), HARDENED for a body that holds input elements:
  *  - ROW_HEIGHT MUST equal the rendered row height. Base is 28px; the r6
  *    row-spacing slider scales BOTH sides through one source of truth
  *    (JS ROW_HEIGHT + the --av-rh CSS var the tr height reads), so the
@@ -375,7 +375,7 @@
         ov.innerHTML = '<div class="av-modal-card" role="dialog" aria-modal="true" aria-label="Edit JSON value">'
             + '<div class="av-modal-head"><span class="av-modal-path" title="' + esc(path) + '">' + esc(path) + '</span>'
             + '<span class="muted av-modal-keys">Ctrl+Enter save · Esc cancel</span></div>'
-            + '<textarea class="av-modal-ta" spellcheck="false" aria-label="JSON value"></textarea>'
+            + '<textarea class="ui-textarea av-modal-ta" spellcheck="false" aria-label="JSON value"></textarea>'
             + '<div class="av-modal-err" hidden></div>'
             + '<div class="av-modal-actions">'
             + '<button type="button" class="btn-sm" data-av-save>Save</button>'

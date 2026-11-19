@@ -71,6 +71,7 @@ function world(opts) {
     w.copyWithFeedback = (t) => copies.push(t);
     w._swapPendingTray = (h) => swaps.push(h);
     w.ValueDelta = { chipHtml: function () { return '<span class="val-delta">Δ</span>'; } };
+    w.eval(SRC.match(/function _kitPageControl\([\s\S]*?\n\}/)[0]);
     w.eval(grab('window.DsPick = (function () {'));
     const d = w.document;
     const c = d.getElementById('ds-state-tree-state');

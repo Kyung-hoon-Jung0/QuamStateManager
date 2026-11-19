@@ -1,7 +1,7 @@
 <div class="table-header-row">
     <h2>Comparison Table</h2>
     <div class="table-filter">
-        <input class="ui-search" type="search" placeholder="{{ search_hint() }}" title="{{ search_title() }}"
+        <input class="ui-input ui-search" type="search" placeholder="{{ search_hint() }}" title="{{ search_title() }}"
                aria-label="Filter rows" autocomplete="off"
                oninput="filterTable(this, 'comparison-table')">
         <small id="comparison-table-filter-count" class="muted"></small>
@@ -17,7 +17,7 @@
         </div>
         {% for group in prop_groups %}
         <div class="prop-group" data-group="{{ group.name }}">
-            <input type="checkbox" class="prop-group-toggle"
+            <input type="checkbox" class="ui-check-box prop-group-toggle"
                    onchange="toggleGroup(this.closest('.prop-group'), this.checked)"
                    {% set ns = namespace(all=true, none=true) %}
                    {% for p in group.props %}
@@ -30,7 +30,8 @@
                 <label class="prop-check">
                     <input type="checkbox" name="props" value="{{ prop }}"
                            onchange="syncGroupCheckbox(this.closest('.prop-group'))"
-                           {% if prop in selected_props %}checked{% endif %}>
+                           {% if prop in selected_props %}checked{% endif %}
+        class="ui-check-box">
                     <small>{{ prop }}</small>
                 </label>
                 {% endfor %}
@@ -40,7 +41,8 @@
     </div>
     <div class="table-actions">
         {% if chains is defined and chains %}
-        <select name="chain" onchange="this.form.requestSubmit()">
+        <select name="chain" onchange="this.form.requestSubmit()"
+        class="ui-select">
             <option value="">All Chains</option>
             {% for ch in chains %}
             <option value="{{ ch }}" {% if active_chain == ch %}selected{% endif %}>Chain {{ ch }}</option>
@@ -84,7 +86,10 @@ function syncGroupCheckbox(groupEl) {
 {% include "_pagination.html" %}
 
 <div class="table-scroll">
-<table id="comparison-table" data-refresh-rows data-refresh-url="{{ refresh_url('/table') }}" class="data-table comparison-table" role="grid">
+<table id="comparison-table" data-refresh-rows
+    data-refresh-url="{{ refresh_url('/table') }}"
+    class="ui-table data-table comparison-table"
+    role="grid">
     <thead>
         <tr>
             <th>ID</th>

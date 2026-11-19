@@ -1,3 +1,9 @@
+function _kitPageControl(tag, cls) {
+    var control = document.createElement(tag);
+    control.className = cls;
+    return control;
+}
+
 /* A document keeps one window id across swaps. A reload starts a new
  * recipient, so an earlier replacement notice cannot replay there. */
 (function () {
@@ -301,7 +307,7 @@ function _debounce(key, fn, delay) {
 /* ------------------------------------------------------------------ */
 
 /**
- * Called by the page-size <select> in _pagination.html.
+ * Called by the page-size select element in _pagination.html.
  * Persists the user's choice in localStorage, then navigates to page 1
  * with the new per_page value via HTMX.
  */
@@ -481,7 +487,7 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
         var _pdc = t.closest ? t.closest('.pulse-delete-confirm') : null;
         var _pdp = null;
         if (_pdm) {
-            var _pdt = document.createElement('textarea');
+            var _pdt = _kitPageControl('textarea', '');
             _pdt.innerHTML = _pdm[1];            // the body is Jinja-escaped
             _pdp = _pdt.value;
         }
@@ -524,7 +530,7 @@ window.htmxErrorText = function (xhr) {
     if (!m) return '';
     // docs/190 F30: the body is Jinja-autoescaped; textContent of a
     // parsed element decodes &#39; / &#34; / &amp; back to characters
-    var ta = document.createElement('textarea');
+    var ta = _kitPageControl('textarea', '');
     ta.innerHTML = m[1].replace(/<[^>]+>/g, '');
     return ta.value.trim();
 };
@@ -1605,7 +1611,7 @@ window.showWaveformPlot = function(btn) {
  * Instant client-side filter for data tables.
  *
  * Usage in a template:
- *   <input type="search" oninput="filterTable(this, 'my-table-id')"
+ *   <input class="ui-input" type="search" oninput="filterTable(this, 'my-table-id')"
  *          placeholder="Filter rows...">
  *   <table id="my-table-id"> ... </table>
  *
@@ -2190,7 +2196,7 @@ window.setFontSize = function(size) {
             el.parentNode.removeChild(el);
         });
         off.forEach(function(v) {
-            var el = document.createElement('input');
+            var el = _kitPageControl('input', '');
             el.type = 'hidden'; el.name = 'paths'; el.value = v;
             el.className = 'sidebar-sel-offscreen';
             form.appendChild(el);
@@ -3658,7 +3664,8 @@ function _dsBasketRender() {
     var chips = window._dsBasket.map(function(u) {
         var rid = u.split(':')[1] || u;
         return '<span class="ds-basket-chip">#' + rid +
-               '<button type="button" data-drop="' + u + '" title="Remove">&times;</button></span>';
+               '<button class="btn-sm outline" type="button" data-drop="' + u
+               + '" title="Remove">&times;</button></span>';
     }).join('');
     bar.innerHTML = '<span class="ds-basket-label">Compare:</span>' + chips +
         (window._dsBasket.length >= 2
@@ -4312,7 +4319,7 @@ window.ToastHold = (function () {
         return Promise.resolve(fallback(text));
     }
     function fallback(text) {
-        var ta = document.createElement("textarea");
+        var ta = _kitPageControl("textarea", "");
         ta.value = text;
         ta.setAttribute("readonly", "");
         ta.style.position = "fixed"; ta.style.left = "-9999px";
@@ -11555,7 +11562,7 @@ window.SidebarKwFold = (function() {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 
-// The sidebar filter is an auto-grow <textarea>, so it grows by width-wrapping,
+// The sidebar filter is an auto-grow textarea element, so it grows by width-wrapping,
 // NOT by Enter. Swallow Enter so it never injects a blank line (which would also
 // flow into the hx-get `name` param). HTMX still filters on keyup. Delegated on
 // document so it survives sidebar re-renders.
@@ -11614,7 +11621,7 @@ window.filterTable = function(inputEl, tableId) {
 /* Filters rows inside the inspector pane's `.qubit-detail` /          */
 /* `.pair-detail` <article>. Space-separated tokens, AND semantics —   */
 /* matches what filterTable does above, but spans multiple <details>   */
-/* sections and includes section names + editable <input> values in    */
+/* sections and includes section names + editable input element values in    */
 /* the haystack. The search bar lives in _inspector_header.html        */
 /* (sibling of <article>); we locate the article via the stable        */
 /* #inspector-pane container.                                           */
@@ -11655,7 +11662,7 @@ window.filterDetailPanel = function(inputEl) {
                     continue;
                 }
                 // Haystack = row textContent + parent section name + every
-                // input's typed value (editable cells render as <input>,
+                // input's typed value (editable cells render as input element,
                 // their .value isn't in textContent).
                 var hay = rows[i].textContent.toLowerCase() + " " + sectionName;
                 var inputs = rows[i].querySelectorAll("input");
@@ -13434,9 +13441,9 @@ window.clearDetailPanelSearch = function(btnEl) {
             drafts.get(path).mount(el);
             return;
         }
-        var input = document.createElement("input");
+        var input = _kitPageControl("input", "ui-input");
         input.type = "text";
-        input.className = "tree-edit-input ui-tree-editor";
+        input.className = "ui-input tree-edit-input ui-tree-editor";
         input.autocomplete = "off";
         input.tabIndex = -1;
         input.setAttribute("role", "textbox");
@@ -14088,8 +14095,8 @@ window.clearDetailPanelSearch = function(btnEl) {
 
         var editor = document.createElement("div");
         editor.className = "tree-json-editor";
-        var ta = document.createElement("textarea");
-        ta.className = "tree-json-textarea";
+        var ta = _kitPageControl("textarea", "");
+        ta.className = "ui-textarea tree-json-textarea";
         ta.spellcheck = false;
         try { ta.value = JSON.stringify(value, null, 2); } catch (e) { ta.value = String(value); }
         ta.defaultValue = ta.value;   // R3 MINOR 5: the leave guard's "unchanged"
@@ -14535,7 +14542,7 @@ window.clearDetailPanelSearch = function(btnEl) {
 
     function _copyClipboardFallback(txt) {
         try {
-            var ta = document.createElement("textarea");
+            var ta = _kitPageControl("textarea", "");
             ta.value = txt; ta.style.position = "fixed"; ta.style.opacity = "0";
             document.body.appendChild(ta); ta.select();
             var ok = document.execCommand("copy");
@@ -14744,12 +14751,12 @@ window.clearDetailPanelSearch = function(btnEl) {
         panel.className = "tree-crud-panel";
         var listId = "crud-keys-" + Math.abs((m.path || "").length) + "-" + Date.now();
         panel.innerHTML =
-            '<input class="tree-crud-key" placeholder="new key" list="' + listId + '">' +
+            '<input class="ui-input tree-crud-key" placeholder="new key" list="' + listId + '">' +
             '<datalist id="' + listId + '"></datalist>' +
-            '<select class="tree-crud-type">' + _TYPE_CHOICES.map(function (t) {
+            '<select class="ui-select tree-crud-type">' + _TYPE_CHOICES.map(function (t) {
                 return '<option value="' + t + '">' + (t === "infer" ? "type: infer" : t) + "</option>";
             }).join("") + "</select>" +
-            '<input class="tree-crud-val" placeholder="value (empty = null; JSON for lists/dicts)">' +
+            '<input class="ui-input tree-crud-val" placeholder="value (empty = null; JSON for lists/dicts)">' +
             '<button type="button" class="btn-sm tree-crud-ok">Add</button>' +
             '<button type="button" class="btn-sm outline tree-crud-cancel">Cancel</button>' +
             '<span class="tree-crud-err"></span>';
@@ -15465,9 +15472,9 @@ window.TreeMulti = (function () {
         x.addEventListener('click', function () { clear(); });
         head.appendChild(x);
         p.appendChild(head);
-        var pr = el('label', 'tree-multi-pat');
-        pr.appendChild(el('span', 'muted tree-multi-pat-label', 'Path'));
-        var pat = el('input', 'tree-multi-pattern');
+        var pr = el('label', 'ui-field tree-multi-pat');
+        pr.appendChild(el('span', 'ui-field-label muted tree-multi-pat-label', 'Path'));
+        var pat = el('input', 'ui-input tree-multi-pattern');
         pat.type = 'text'; pat.spellcheck = false; pat.autocomplete = 'off';
         pat.placeholder = 'qubits.*.xy.operations.x180_DragCosine.amplitude   (* = any one level)';
         pat.addEventListener('input', function () { setPattern(pat.value.trim(), true); });
@@ -15475,7 +15482,7 @@ window.TreeMulti = (function () {
         p.appendChild(pr);
         p.appendChild(el('div', 'tree-multi-list'));
         var foot = el('div', 'tree-multi-foot');
-        var inp = el('input', 'tree-multi-value');
+        var inp = el('input', 'ui-input tree-multi-value');
         inp.type = 'text'; inp.spellcheck = false; inp.autocomplete = 'off';
         inp.placeholder = 'new value, or *1.1  /2  +5e6  -1e6  +10%';
         inp.addEventListener('input', function () { if (st) { st.editing = true; st.emptyArmed = false; } preview(); });
@@ -17028,7 +17035,7 @@ function _buildInstrumentSizeBar(container, key) {
         return b;
     }
     btn('out', '\u2212', 'Smaller');
-    var sl = document.createElement('input');
+    var sl = _kitPageControl('input', '');
     sl.type = 'range';
     sl.className = 'iw-size-slider';
     sl.min = String(_INSTR_SIZE_MIN);
@@ -18496,7 +18503,7 @@ window.filterDatasetTable = function(input) {
  * classes + data-attributes (currently the sidebar workspace filter):
  *   ? icon:  class="search-help-toggle"  data-search-help="<panel-id>"
  *   × close: class="search-help-close"   data-search-help="<panel-id>"
- *   example: class="search-help-example" data-search-help-input="<input-id>" data-example="…"
+ *   example: class="search-help-example" data-search-help-input="CONTROL_ID" data-example="example"
  * The ? TOGGLES; × closes. Delegated on document (app.js loads in <head>).
  * The Datasets page keeps its own id-based handler above.
  *
@@ -20702,7 +20709,7 @@ function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExp
           + '<span class="plot-apply-old-wrap ui-pp-wrap"><span class="plot-apply-old-val ui-tnum muted">…</span>'
           + '<span class="plot-apply-unit plot-apply-old-unit ui-pp-unit" hidden></span></span></div>'
           + '<div class="plot-apply-row-new"><span class="muted">new</span> '
-          + '<input type="text" class="plot-apply-new-input ui-tnum" value="' + _ppEscape(String(u.value))
+          + '<input type="text" class="ui-input plot-apply-new-input ui-tnum" value="' + _ppEscape(String(u.value))
           + '" title="' + _ppEscape(String(u.value)) + '">'
           + '<span class="plot-apply-delta val-delta ui-tnum" hidden></span></div>'
           + '<div class="plot-apply-row-action">'
@@ -20878,7 +20885,8 @@ function _renderPointerRow(row, info, rawValue) {
               + _ppEscape(info.resolved_path) + '">' + _ppEscape(String(rawPtr)) + '</span>';
     }
     if (cands.length > 1) {
-        html += ' <label class="plot-apply-chain">write target: <select class="plot-apply-target">';
+        html += ' <label class="ui-field plot-apply-chain"><span class="ui-field-label">write target:</span>'
+              + '<select class="ui-select plot-apply-target">';
         cands.forEach(function(c, idx) {
             html += '<option value="' + _ppEscape(c.path) + '"'
                   + (idx === cands.length - 1 ? ' selected' : '') + '>'
@@ -21448,9 +21456,9 @@ window._openFspPopup = (function () {
             // then commit. RAW value (never _fmt) — thousands separators would
             // not parse back.
             var inTd = _el("td");
-            var inp = document.createElement("input");
+            var inp = _kitPageControl("input", "ui-input");
             inp.type = "text";
-            inp.className = "fsp-amp-input" + (a.clips ? " fsp-amp-clip" : "");
+            inp.className = "ui-input ui-input--num fsp-amp-input" + (a.clips ? " fsp-amp-clip" : "");
             // Readable, not raw. `a.new` is amp*factor, so it arrives as
             // 0.15848931924611134 — which overflowed the field and read as
             // noise beside a nicely formatted "amplitude now". Amplitudes are
@@ -22625,7 +22633,7 @@ function _showTagPicker(runId, btnEl, td, allTags, currentTags) {
 
     // New tag input
     listHtml += '<div class="tag-picker-new">' +
-        '<input type="text" placeholder="New tag..." id="tag-picker-new-input">' +
+        '<input class="ui-input" type="text" placeholder="New tag..." id="tag-picker-new-input">' +
     '</div>';
 
     picker.innerHTML = listHtml;
@@ -22926,7 +22934,7 @@ window.addEventListener('beforeunload', _flushDirtyNotes);
 window.addEventListener('pagehide', _flushDirtyNotes);
 
 /**
- * Resize the note <textarea> to fit its content: one line by default, taller
+ * Resize the note textarea element to fit its content: one line by default, taller
  * only when the user wraps a long line or presses Enter. height='auto' first so
  * a shrinking note collapses back down. Bails if hidden (scrollHeight would be 0).
  */
@@ -25332,7 +25340,7 @@ function paramHistoryCloseDrawer() {
 }
 
 // ---- filter form UX (debounced submit) --------------------------------
-// The filter chips hide their <input> (CSS display:none) — the lit state is
+// The filter chips hide their input element (CSS display:none); the lit state is
 // the label's .active class, which the SERVER renders. The form's submit is
 // debounced (hx-trigger="change delay:500ms" in _param_history.html), so
 // without an immediate echo a chip click would show nothing until the swap
@@ -26773,7 +26781,7 @@ document.addEventListener('click', function(evt) {
         x.innerHTML = "&times;";
         x.onclick = function() { window.removeChipFromCompare(x); };
 
-        var hidden = document.createElement("input");
+        var hidden = _kitPageControl("input", "");
         hidden.type = "hidden";
         hidden.name = "paths";
         hidden.value = path;
@@ -28702,7 +28710,7 @@ function _pulsesSyncUrl(push) {
         document.querySelectorAll("#pulses-rows-wrap tr[data-pulse-path]"),
         function (tr) { return tr.getAttribute("data-pulse-path") === open0; }));
     if (cur && (cur !== "1" || offPage)) parts.push("page=" + cur);
-    // The page-size <select> in _pagination.html carries NO name attribute, so
+    // The page-size select element in _pagination.html carries NO name attribute, so
     // the old select[name='per_page'] lookup never matched and every rows /
     // inspector swap dropped per_page from the URL ("All" -> open a pulse ->
     // reload came back at 50 rows). Read the picker itself; with no picker
@@ -29498,7 +29506,7 @@ window.FieldHistory = (function () {
        length×char-width monospace fallback where canvas is unavailable). */
     var _measureCanvas = null;
     function _cellTextWidth(input, geom) {
-        // an <input> has .value; the list-preview span (docs/159) has text
+        // an input element has .value; the list-preview span (docs/159) has text
         var value = (input.value !== undefined ? input.value : input.textContent) || "";
         // `geom` carries the font already measured for this cell (docs/120 item
         // 24) — asking the engine again per keystroke is a forced style recalc
@@ -30848,9 +30856,9 @@ window.StateVersions = (function () {
         if (existing) { existing.focus(); existing.select(); return; }
         var src = holder.querySelector('.sv-take-src');
         if (!src) return;
-        var input = document.createElement('input');
+        var input = _kitPageControl('input', 'ui-input');
         input.type = 'text';
-        input.className = 'sv-take-input';
+        input.className = 'ui-input sv-take-input';
         input.value = src.textContent.trim();
         input.setAttribute('aria-label', 'Edited value to accept');
         input.size = Math.max(input.value.length + 1, 8);
@@ -31690,8 +31698,8 @@ window.ExplorerChips = (function () {
                     _paint(bar);
                 } else if (t.classList.contains('bulk-chip-add')) {
                     if (bar.querySelector('.bulk-chip-add-input')) return;
-                    var inp = document.createElement('input');
-                    inp.className = 'bulk-chip-add-input';
+                    var inp = _kitPageControl('input', 'ui-input');
+                    inp.className = 'ui-input bulk-chip-add-input';
                     inp.placeholder = 'new patch…';
                     inp.setAttribute('aria-label', 'New filter patch');
                     bar.insertBefore(inp, t);
@@ -32424,9 +32432,9 @@ window.DsPick = (function () {
             if (row.querySelector(':scope > input.ds-pick')) return;
             var p = row.parentNode.getAttribute('data-path');
             if (p === '') return;
-            var cb = document.createElement('input');
+            var cb = _kitPageControl('input', 'ui-check-box');
             cb.type = 'checkbox';
-            cb.className = 'ds-pick';
+            cb.className = 'ui-check-box ds-pick';
             cb.tabIndex = 0;
             cb.title = 'Tick to bring this (and everything under it) into the open chip';
             cb.setAttribute('aria-label', 'Select ' + p);
@@ -32563,7 +32571,7 @@ window.DsPick = (function () {
                 ' Apply anyway</label>';
         }
         if (d.capped) html += '<p class="ds-pick-warn">Only the first 20,000 fields are shown and applied — select less.</p>';
-        html += '<div class="ds-pick-table-wrap"><table class="ds-pick-table"><thead><tr>' +
+        html += '<div class="ds-pick-table-wrap"><table class="ui-table ds-pick-table"><thead><tr>' +
             '<th>Field</th><th>Open chip</th><th>This run</th><th>Δ</th><th></th></tr></thead><tbody>';
         var order = { change: 0, 'new': 1, skip: 2, same: 3 };
         rows.slice().sort(function (a, b) { return order[a.status] - order[b.status] || (a.path < b.path ? -1 : 1); })

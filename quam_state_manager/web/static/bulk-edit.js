@@ -17,6 +17,12 @@
 (function () {
     'use strict';
 
+    function _kitBulkControl(tag, cls) {
+        var control = document.createElement(tag);
+        control.className = cls;
+        return control;
+    }
+
     // r17 one-time reset. The server defaults flipped from "31 curated columns
     // hidden" (T1/T2/χ/f₁₂/ports) to "show everything", but a PERSISTED hidden
     // set outranks the server default (_hiddenSet), so anyone who had ever
@@ -554,8 +560,8 @@
         function _openAdd() {
             var b = bar(); var scroll = b && b.querySelector('.bulk-chip-scroll');
             if (!scroll || scroll.querySelector('.bulk-chip-add-input')) return;
-            var inp = document.createElement('input');
-            inp.className = 'bulk-chip-add-input';
+            var inp = _kitBulkControl('input', 'ui-input');
+            inp.className = 'ui-input bulk-chip-add-input';
             inp.placeholder = 'new patch…';
             inp.setAttribute('aria-label', 'New filter patch');
             scroll.insertBefore(inp, scroll.querySelector('.bulk-chip-add'));
@@ -883,8 +889,8 @@
             dynOrder.forEach(function (sec) {
                 var cs = dynBySec[sec];
                 var nHidden = cs.filter(function (c) { return hidden[c.key]; }).length;
-                html += '<details class="bulk-colvis-dyn"' + (nHidden ? ' open' : '') +
-                    '><summary>' + _esc(sec) + ' <span class="muted">(' +
+                html += '<details class="ui-disclosure bulk-colvis-dyn"' + (nHidden ? ' open' : '') +
+                    '><summary class="ui-disclosure-summary">' + _esc(sec) + ' <span class="muted">(' +
                     (nHidden ? (cs.length - nHidden) + ' of ' : '') + cs.length + ')</span></summary>';
                 cs.forEach(function (c) {
                     html += '<label class="bulk-colvis-item"><input type="checkbox" data-dyn-toggle="' + _esc(c.key) + '"' +
@@ -1639,7 +1645,7 @@
         var rows = _rows();
         function keyOf(r) {
             if (key === '__id__') return (r.getAttribute('data-qubit') || '');
-            // data-col-key is on the <td>, NOT the .bulk-cell <input>; the old guard
+            // data-col-key is on the <td>, NOT the .bulk-cell input element; the old guard
             // (`.bulk-cell[data-col-key]`) was always falsy so keyOf returned '' and
             // nothing ever sorted.
             var cell = r.querySelector('[data-col-key="' + (window.CSS && CSS.escape ? CSS.escape(key) : key) + '"] .bulk-cell');
@@ -3013,10 +3019,10 @@
             el.id = 'bulk-arith-bar';
             el.className = 'bulk-arith-bar';
             el.hidden = true;
-            var inp = document.createElement('input');
+            var inp = _kitBulkControl('input', 'ui-input');
             inp.type = 'text';
             inp.id = 'bulk-arith-expr';
-            inp.className = 'bulk-arith-expr';
+            inp.className = 'ui-input bulk-arith-expr';
             inp.placeholder = '*1.1';
             inp.title = 'Scale the selected cells: *1.1  /2  +5e6  -1.2e6  +10%'
                       + '\nA percentage is always of each cell’s OWN value, '
@@ -3083,7 +3089,7 @@
                   + ' Apply.</p>');
         var body = '';
         if (plan.rows.length) {
-            body += '<table class="ch-table"><thead><tr><th>Cell</th><th>Now</th>'
+            body += '<table class="ui-table ch-table"><thead><tr><th>Cell</th><th>Now</th>'
                  + '<th></th><th>New</th></tr></thead><tbody>'
                  + plan.rows.map(function (r) {
                      return '<tr><td title="' + esc(r.path || '') + '">' + esc(r.label) + '</td><td>' + esc(r.now)
@@ -3100,7 +3106,7 @@
         }
         if (plan.skipped.length) {
             body += '<p class="muted bulk-arith-note">Skipped ' + plan.skipped.length
-                 + ':</p><table class="ch-table"><tbody>'
+                 + ':</p><table class="ui-table ch-table"><tbody>'
                  + plan.skipped.map(function (k) {
                      return '<tr><td title="' + esc(k.path || '') + '">' + esc(k.label) + '</td><td class="muted">'
                           + esc(k.reason) + '</td></tr>';
@@ -4222,7 +4228,7 @@
             ov.innerHTML = '<div class="bulk-json-card" role="dialog" aria-modal="true" aria-label="Edit JSON value">'
                 + '<div class="bulk-json-head"><span class="bulk-json-path" title="' + _esc(path) + '">' + _esc(path) + '</span>'
                 + '<span class="muted bulk-json-keys">Ctrl+Enter save · Esc cancel</span></div>'
-                + '<textarea class="bulk-json-ta" spellcheck="false" aria-label="JSON value"></textarea>'
+                + '<textarea class="ui-textarea bulk-json-ta" spellcheck="false" aria-label="JSON value"></textarea>'
                 + '<div class="bulk-json-err" hidden></div>'
                 + '<div class="bulk-json-actions">'
                 + '<button type="button" class="btn-sm" data-bulk-json-save>Save</button>'

@@ -21,8 +21,9 @@
 
 {% if has_any %}
 <div class="ref-selector">
-    <label class="muted">Reference state:</label>
-    <select onchange="changeRef(this)">
+    <label class="ui-field-label muted">Reference state:</label>
+    <select onchange="changeRef(this)"
+    class="ui-select">
         {% for label in labels %}
         <option value="{{ loop.index0 }}" {% if loop.index0 == ri %}selected{% endif %}>{{ label | truncate(30) }}</option>
         {% endfor %}
@@ -31,10 +32,11 @@
 
 {# ── Section 1: Metadata ── #}
 {% if metadata_list is defined and metadata_list | length > 0 %}
-<details class="compare-section" open>
-    <summary>Metadata <small class="muted">({{ labels | length }} experiments)</small></summary>
+<details class="ui-disclosure compare-section" open>
+    <summary class="ui-disclosure-summary">Metadata
+        <small class="muted">({{ labels | length }} experiments)</small></summary>
     <div class="table-scroll">
-    <table class="data-table" role="grid">
+    <table class="ui-table data-table" role="grid">
         <thead>
             <tr>
                 <th>Field</th>
@@ -60,10 +62,11 @@
 
 {# ── Section 2: Parameter Differences ── #}
 {% if param_diff_rows is defined and param_diff_rows | length > 0 %}
-<details class="compare-section" open>
-    <summary>Parameter Differences <small class="muted">({{ param_count }})</small></summary>
+<details class="ui-disclosure compare-section" open>
+    <summary class="ui-disclosure-summary">Parameter Differences
+        <small class="muted">({{ param_count }})</small></summary>
     <div class="table-scroll">
-    <table class="data-table" role="grid">
+    <table class="ui-table data-table" role="grid">
         <thead>
             <tr>
                 <th>Parameter</th>
@@ -98,10 +101,11 @@
 
 {# ── Section 3: Fit Result Differences ── #}
 {% if fit_diff_rows is defined and fit_diff_rows | length > 0 %}
-<details class="compare-section" open>
-    <summary>Fit Result Differences <small class="muted">({{ fit_count }})</small></summary>
+<details class="ui-disclosure compare-section" open>
+    <summary class="ui-disclosure-summary">Fit Result Differences
+        <small class="muted">({{ fit_count }})</small></summary>
     <div class="table-scroll">
-    <table class="data-table" role="grid">
+    <table class="ui-table data-table" role="grid">
         <thead>
             <tr>
                 <th>Qubit</th>
@@ -137,16 +141,17 @@
 
 {# ── Section 4: State Property Differences ── #}
 {% if diff_rows %}
-<details class="compare-section" open>
-    <summary>State Property Differences <small class="muted">({{ diff_count }})</small></summary>
+<details class="ui-disclosure compare-section" open>
+    <summary class="ui-disclosure-summary">State Property Differences
+        <small class="muted">({{ diff_count }})</small></summary>
     <div class="table-filter">
-        <input class="ui-search" type="search" oninput="filterTable(this, 'diff-table')"
+        <input class="ui-input ui-search" type="search" oninput="filterTable(this, 'diff-table')"
                placeholder="{{ search_hint() }}" title="{{ search_title() }}"
                aria-label="Filter the differences">
         <small id="diff-table-filter-count" class="muted"></small>
     </div>
     <div class="table-scroll">
-    <table class="data-table" id="diff-table" role="grid">
+    <table class="ui-table data-table" id="diff-table" role="grid">
         <thead>
             <tr>
                 <th>Qubit</th>

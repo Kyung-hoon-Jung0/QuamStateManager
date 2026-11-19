@@ -3,39 +3,43 @@
 
 <form hx-post="/diff" hx-target="#table-pane" class="diff-form">
     <div class="diff-inputs">
-        <div class="diff-field">
-            <label>State A</label>
+        <div class="ui-field diff-field">
+            <label class="ui-field-label">State A</label>
             <div class="path-input-group">
                 <input type="text" name="path_a" id="diff-path-a" placeholder="quam_state folder path A..."
-                       value="{{ path_a | default('', true) }}" autocomplete="off">
+                       value="{{ path_a | default('', true) }}" autocomplete="off"
+                class="ui-input">
                 <button type="button" class="outline btn-sm btn-browse"
                         onclick="openFolderBrowser('diff-path-a')" title="Browse folders">&#128193;</button>
             </div>
         </div>
-        <div class="diff-field">
-            <label>State B</label>
+        <div class="ui-field diff-field">
+            <label class="ui-field-label">State B</label>
             <div class="path-input-group">
                 <input type="text" name="path_b" id="diff-path-b" placeholder="quam_state folder path B..."
-                       value="{{ path_b | default('', true) }}" autocomplete="off">
+                       value="{{ path_b | default('', true) }}" autocomplete="off"
+                class="ui-input">
                 <button type="button" class="outline btn-sm btn-browse"
                         onclick="openFolderBrowser('diff-path-b')" title="Browse folders">&#128193;</button>
             </div>
         </div>
-        <div class="diff-field diff-field-sm">
-            <label>Tolerance</label>
+        <div class="ui-field diff-field diff-field-sm">
+            <label class="ui-field-label">Tolerance</label>
             <input type="number" name="tolerance" step="any"
-                   value="{{ tolerance | default(1e-12, true) }}">
+                   value="{{ tolerance | default(1e-12, true) }}"
+                class="ui-input ui-input--num">
         </div>
-        <div class="diff-field diff-field-sm">
-            <label>Filter</label>
-            <select name="filter_type">
+        <div class="ui-field diff-field diff-field-sm">
+            <label class="ui-field-label">Filter</label>
+            <select name="filter_type"
+                class="ui-select">
                 <option value="all" {% if not filter_type or filter_type == 'all' %}selected{% endif %}>All</option>
                 <option value="modified" {% if filter_type == 'modified' %}selected{% endif %}>Modified</option>
                 <option value="added" {% if filter_type == 'added' %}selected{% endif %}>Added</option>
                 <option value="removed" {% if filter_type == 'removed' %}selected{% endif %}>Removed</option>
             </select>
         </div>
-        <div class="diff-field diff-field-sm" style="align-self:flex-end;">
+        <div class="ui-field diff-field diff-field-sm" style="align-self:flex-end;">
             <button type="submit" class="btn-sm">Compare</button>
         </div>
     </div>
@@ -74,7 +78,7 @@
 
 {% if entries | length > 0 %}
 <div class="table-scroll">
-<table class="data-table diff-table" role="grid">
+<table class="ui-table data-table diff-table" role="grid">
     <thead><tr><th>Type</th><th>Path</th><th>State A</th><th>State B</th><th>Delta</th></tr></thead>
     <tbody>
     {% for e in entries %}

@@ -35,7 +35,8 @@
           hx-post="/state-history/{{ m.timestamp }}/label?{{ query }}"
           hx-target="{{ target }}" hx-swap="innerHTML">
         <input type="text" name="label" maxlength="80" value="{{ m.label or '' }}"
-               aria-label="Version label" title="Enter saves; Escape cancels; empty clears">
+               aria-label="Version label" title="Enter saves; Escape cancels; empty clears"
+    class="ui-input">
         <button type="submit" class="outline btn-xs">Save</button>
         <button type="button" class="outline btn-xs" data-version-label-cancel>Cancel</button>
     </form>

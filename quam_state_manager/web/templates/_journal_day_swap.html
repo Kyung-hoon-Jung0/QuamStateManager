@@ -3,7 +3,8 @@
    it (docs/191 N01). The author list is the day's own, so it rides along too. #}
 {% include '_journal_body.html' %}
 {% with oob = true %}{% include '_journal_daynav.html' %}{% endwith %}
-<select name="author" id="jr-author" title="who" hx-swap-oob="true">
+        <select name="author" id="jr-author" title="who" hx-swap-oob="true"
+class="ui-select">
     <option value="">everyone</option>
     {% for a in story.authors %}<option value="{{ a }}" {% if story.filters.author == a %}selected{% endif %}>{{ a }}</option>{% endfor %}
 </select>

@@ -6,10 +6,10 @@
 <div class="cmp-map-editor" data-cmp-map-editor>
   <div class="cmp-map-grid">
     {% for a in ed.ref_names %}
-    <label class="cmp-map-row">
-      <span class="cmp-map-a">{{ a }}</span>
-      <span class="cmp-map-arrow">&harr;</span>
-      <select data-map-a="{{ a }}" aria-label="Counterpart of {{ a }}">
+    <label class="ui-field cmp-map-row"><span class="ui-field-label"><span class="cmp-map-a">{{ a }}</span>
+      <span class="cmp-map-arrow">&harr;</span></span>
+        <select data-map-a="{{ a }}" aria-label="Counterpart of {{ a }}"
+      class="ui-select">
         <option value="">&mdash;</option>
         {% for b in ed.other_names %}
         <option value="{{ b }}"{% if ed.pairs.get(a) == b %} selected{% endif %}>{{ b }}</option>

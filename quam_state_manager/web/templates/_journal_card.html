@@ -30,9 +30,16 @@
             {% endif %}
             <div class="jr-sec jr-claim" data-run="{{ c.run_id }}" data-uid="{{ c.card_uid or '' }}">
                 {% if c.note %}<p class="jr-note-text"><b>Note:</b> {{ c.note }}</p>{% endif %}
-                <details class="jr-claim-form"><summary class="muted">{% if c.author == 'unknown' %}I ran this{% else %}Correct the author / add a note{% endif %}</summary>
-                    <label>Who <input type="text" class="jr-who" placeholder="your name" value="{{ c.author[6:] if c.author and c.author.startswith('human:') else '' }}"></label>
-                    <label>Note <input type="text" class="jr-note-in" placeholder="optional" value="{{ c.note or '' }}"></label>
+                <details class="ui-disclosure jr-claim-form">
+                    <summary class="ui-disclosure-summary muted">
+                    {% if c.author == 'unknown' %}I ran this{% else %}Correct the author / add a note{% endif %}
+                    </summary>
+                    <label class="ui-field"><span class="ui-field-label">Who</span>
+                        <input type="text" class="ui-input jr-who" placeholder="your name"
+                        value="{{ c.author[6:] if c.author and c.author.startswith('human:') else '' }}"></label>
+                    <label class="ui-field"><span class="ui-field-label">Note</span>
+                        <input type="text" class="ui-input jr-note-in" placeholder="optional"
+                               value="{{ c.note or '' }}"></label>
                     <button type="button" class="btn-sm" onclick="JournalPage.claim(this)">Save</button>
                 </details>
             </div>
@@ -61,10 +68,18 @@
 {% macro card(c, day, lazy=False, paged=False) %}
     {% if c.kind == 'run' %}
     {% set dom_id = c.card_id or ('card-' ~ c.run_id) %}
-    <details class="jr-card jr-run jr-by-{{ (c.author or 'unknown').split(':')[0] }}{% if c.other_chip %} jr-other-chip{% endif %}" id="{{ dom_id }}" data-ts="{{ c.ts or 0 }}" data-run="{{ c.run_id }}" data-jr-order="{{ c.search_order }}"{% if not paged %} data-jr-search="{{ c.search_hay }}" data-jr-author="{{ c.author }}"{% endif %}>
+    <details
+        class="ui-disclosure jr-card jr-run
+        jr-by-{{ (c.author or 'unknown').split(':')[0] }}{% if c.other_chip %} jr-other-chip{% endif %}"
+        id="{{ dom_id }}"
+        data-ts="{{ c.ts or 0 }}"
+        data-run="{{ c.run_id }}"
+        data-jr-order="{{ c.search_order }}"{% if not paged %}
+        data-jr-search="{{ c.search_hay }}"
+        data-jr-author="{{ c.author }}"{% endif %}>
         {# The row is a grid: time, node, targets, pills, run, who;
            every cell in its column, so the eye scans down instead of hunting pills left and right #}
-        <summary>
+        <summary class="ui-disclosure-summary">
             <span class="jr-time">{{ c.time }}</span>
             <span class="jr-family" title="{{ c.node }}">{{ c.family_label or c.node }}</span>
             <span class="jr-targets">{{ c.targets|join(' ') }}</span>
@@ -84,10 +99,17 @@
     </details>
     {% elif c.kind == 'agent_run' %}
     {% set folder_text = 'run folder #' ~ c.missing_run_id ~ ' is not in the chip history' if c.missing_run_id is not none else ('not run' if c.outcome == 'not run' else 'no run folder') %}
-    <details class="jr-card jr-run jr-agent-run jr-by-{{ (c.author or 'unknown').split(':')[0] }}" id="agent-{{ c.id }}" data-ts="{{ c.ts }}" data-jr-order="{{ c.search_order }}"{% if not paged %} data-jr-search="{{ c.search_hay }}" data-jr-author="{{ c.author }}"{% endif %}>
+    <details
+        class="ui-disclosure jr-card jr-run jr-agent-run
+        jr-by-{{ (c.author or 'unknown').split(':')[0] }}"
+        id="agent-{{ c.id }}"
+        data-ts="{{ c.ts }}"
+        data-jr-order="{{ c.search_order }}"{% if not paged %}
+        data-jr-search="{{ c.search_hay }}"
+        data-jr-author="{{ c.author }}"{% endif %}>
         {# the run row's own columns, so it scans like every run: node, targets,
            what happened, "-" where the run number sits, who #}
-        <summary>
+        <summary class="ui-disclosure-summary">
             <span class="jr-time">{{ c.time }}</span>
             <span class="jr-family" title="{{ c.sentence }}">{{ c.node }}<span class="muted jr-no-folder"> &middot; {{ folder_text }}</span></span>
             <span class="jr-targets">{{ c.targets|join(' ') }}</span>
@@ -102,8 +124,15 @@
     </details>
     {% else %}
     {% set n = c.entries|length %}
-    <details class="jr-card jr-write jr-by-{{ (c.author or 'unknown').split(':')[0] }}" data-ts="{{ c.ts or 0 }}" id="write-{{ c.id }}" data-jr-order="{{ c.search_order }}"{% if not paged %} data-jr-search="{{ c.search_hay }}" data-jr-author="{{ c.author }}"{% endif %}>
-        <summary>
+    <details
+        class="ui-disclosure jr-card jr-write
+        jr-by-{{ (c.author or 'unknown').split(':')[0] }}"
+        data-ts="{{ c.ts or 0 }}"
+        id="write-{{ c.id }}"
+        data-jr-order="{{ c.search_order }}"{% if not paged %}
+        data-jr-search="{{ c.search_hay }}"
+        data-jr-author="{{ c.author }}"{% endif %}>
+        <summary class="ui-disclosure-summary">
             <span class="jr-time">{{ c.time }}</span>
             <span class="jr-family">{{ c.label or 'SM write' }}: {{ n }} value{{ 's' if n != 1 }}</span>{% if c.source %}{% from '_snapshot_source.html' import source_badge %}{{ source_badge(c.source, 'jr-src') }}{% endif %}
             <span class="jr-targets"></span>
