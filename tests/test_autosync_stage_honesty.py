@@ -129,7 +129,7 @@ class TestTheNote:
             return frag[j:frag.index('"', j)]
 
         assert note.strip() in _attr("title"), _attr("title")
-        assert note.strip() in _attr("hx-confirm"), _attr("hx-confirm")
+        assert note.strip() in _attr("data-history-confirm"), _attr("data-history-confirm")
 
         # …and it is gone again once nothing is armed, so the warning stays
         # meaningful rather than becoming furniture.

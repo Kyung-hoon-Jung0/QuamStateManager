@@ -10,15 +10,16 @@
 {% from '_history_pager.html' import history_pager %}
 {% set lv = ledger_versions %}
 {% if lv.rows %}
-<div class="sh-toolbar">
+<div class="sh-toolbar ui-history-toolbar">
     <button id="sh-compare-btn" class="outline btn-sm" disabled
             onclick="StateHistory.compareSelected()">Compare (0 of 2 ticked)</button>
     <small class="muted sh-count">{{ version_count(lv) }}</small>
     {# P1-9 (UX round): jump to the page holding a day, instead of guessing pages #}
-    <form class="sh-goto" hx-get="/state-history" hx-target="#table-pane" hx-swap="innerHTML"
+    <form class="sh-goto ui-history-date" hx-get="/state-history" hx-target="#table-pane" hx-swap="innerHTML"
           hx-sync="#table-pane:replace" hx-push-url="true">
         <label class="sh-goto-label">Go to date
-            <input type="date" name="date" value="{{ goto_day or '' }}" required aria-label="Go to date"></label>
+            <input class="ui-input" type="date" name="date" value="{{ goto_day or '' }}"
+                   required aria-label="Go to date"></label>
         <input type="hidden" name="per_page" value="{{ per_page }}">
         <button type="submit" class="outline btn-sm">Go</button>
     </form>
@@ -59,7 +60,7 @@
     {% if r.why_diff %}<p class="sh-state-unavailable muted">{{ r.why_diff }}</p>{% endif %}
     {% if r.why_write and r.why_write != r.why_diff %}<p class="sh-state-unavailable muted">{{ r.why_write }}</p>{% endif %}
 
-    <div class="sh-entry-actions">
+    <div class="sh-entry-actions ui-history-actions">
         {{ version_label(r, 'body=1&page=' ~ current_page ~ '&per_page=' ~ per_page, '#state-history-body') }}
         {% if chip_origin == 'live' %}
         {# A pin sends no label (the door keeps a label it is not sent) and
@@ -84,12 +85,16 @@
         <button class="outline btn-sm sh-stage"
                 hx-post="/state-history/{{ r.ts }}/stage?target=status&amp;chip_key={{ hist_chip_key | urlencode }}"
                 hx-target="#status-bar" hx-swap="innerHTML"
-                hx-confirm="Load the version of {{ r.when | format_ts_zone }} for review? It replaces SM's working state; the live chip changes only when you press Apply.{{ auto_push_note }}"
+                data-history-confirm="{{ 'Load the version of ' ~ (r.when | format_ts_zone)
+                    ~ " for review? It replaces SM's working state; "
+                    ~ 'the live chip changes only when you press Apply.'
+                    ~ auto_push_note }}"
                 title="Load this version into SM to review it; the live chip is untouched until you press Apply.{{ auto_push_note }}">Load for review</button>
-        <button class="outline btn-sm sh-restore-live"
+        <button class="outline btn-sm danger sh-restore-live"
                 hx-post="/state-history/{{ r.ts }}/restore-live?chip_key={{ hist_chip_key | urlencode }}"
                 hx-target="#state-history-detail" hx-swap="innerHTML"
-                hx-confirm="Restore the LIVE chip to the version of {{ r.when | format_ts_zone }} now? The current state is snapshotted first (reversible)."
+                data-history-confirm="{{ 'Restore the LIVE chip to the version of ' ~ (r.when | format_ts_zone)
+                    ~ ' now? The current state is snapshotted first (reversible).' }}"
                 title="Write this version to the live chip now (the current live state is snapshotted first, so this can be undone)">&#8593; Restore to live</button>
         {% endif %}
         {% if hist_chip_key and not r.why_diff %}

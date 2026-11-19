@@ -96,7 +96,7 @@ def client(app, tmp_path):
 def test_the_page_has_go_to_date_and_day_headers(client):
     _take_snapshot(client)
     html = client.get("/state-history").get_data(as_text=True)
-    assert re.search(r'<form class="sh-goto" hx-get="/state-history"', html)
+    assert re.search(r'<form class="sh-goto ui-history-date" hx-get="/state-history"', html)
     assert 'type="date" name="date"' in html
     heads = re.findall(r'class="sh-day" id="sh-day-(\d{4}-\d{2}-\d{2})"', html)
     assert heads and len(heads) == len(set(heads)), heads

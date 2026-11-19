@@ -438,4 +438,29 @@
 {{ ui.ui_disclosure('Kit disclosure', body=[{'part': 'note', 'text': 'Existing kit part.'}]) }}
 </section>
 
+
+<section class="ui-disclosure">
+    <h2>History and data layouts</h2>
+    <div class="ui-history-toolbar ui-toolbar">
+        <button class="btn-sm outline">Compare (0 of 2 ticked)</button>
+        <form class="ui-history-date ui-actions">
+            <label class="ui-field-label">Go to date <input class="ui-input" type="date"></label>
+            <button class="btn-sm outline">Go</button>
+        </form>
+    </div>
+    <div class="ui-history-actions ui-actions">
+        <span class="version-label-form"><input class="ui-input" aria-label="Version label">
+            <button class="btn-sm outline">Save</button><button class="btn-sm outline">Cancel</button></span>
+    </div>
+    <div class="ui-dataset-search">
+        <input class="ui-search" aria-label="Search datasets" placeholder="{{ search_hint() }}">
+        <div class="ui-dataset-help"><strong>Search syntax</strong><p class="ui-note">Mix text with key:value.</p></div>
+    </div>
+    <span class="ui-experiment-chip exp-chip"><span>experiment_name</span></span>
+    <nav class="ui-dataset-tabs dataset-tabs"><a class="active">Overview</a><a>Results</a></nav>
+    <div class="ui-report-controls"><div class="rep-opts">
+        <label class="ui-check"><input type="checkbox" checked>Include section</label>
+        <span class="ui-history-search-icon" aria-hidden="true"></span>
+    </div></div>
+</section>
 {% endblock %}

@@ -371,6 +371,11 @@ class TestL25FinishedIsNotSuccess:
         assert "var(--pico-muted-color)" in _block(css, ".ds-status-done, .ds-status-unknown {")
         assert "var(--pico-muted-color)" in _block(css, ".status-finished {")
         tpl = _tpl("_dataset_detail.html")
-        assert ('<span class="outcome-badge{% if run.status != \'finished\' %} outcome-fail{% endif %}">'
-                '{{ run.status }}</span>') in tpl
+        from jinja2 import Environment
+        badge = re.search(r'<span class="ui-badge[^<]+</span>', tpl).group()
+        # finished is the base (neutral) badge; the others carry their tone modifier.
+        for status, tone in (("finished", None), ("successful", "ok"), ("failed", "danger")):
+            rendered = Environment().from_string(badge).render(run={"status": status})
+            classes = re.search(r'class="([^"]+)"', rendered).group(1).split()
+            assert classes == (["ui-badge"] if tone is None else ["ui-badge", f"ui-badge--{tone}"])
         assert "outcome-ok{% else %}outcome-fail" not in tpl.split("<code>status</code>", 1)[1][:400]

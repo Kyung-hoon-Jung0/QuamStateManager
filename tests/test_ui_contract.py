@@ -667,7 +667,7 @@ def _ui_kit_parts():
     mid, last = tail.split(_STAGE5_MARK, 1)
     s5, s4 = last.split(_STAGE4_MARK, 1)
     s4, s6 = s4.split(_STAGE6_MARK, 1)
-    s6 = s6.split(_DEFAULTS_MARK, 1)[0]
+    s6 = s6.split("/* Kit sweep wave 2:", 1)[0]
     return (list(_blocks(_strip_comments(head))), list(_blocks(_strip_comments(_STAGE1_MARK + mid))),
             list(_blocks(_strip_comments(_STAGE5_MARK + s5))), list(_blocks(_strip_comments(_STAGE4_MARK + s4))),
             list(_blocks(_strip_comments(_STAGE6_MARK + s6))))
@@ -676,11 +676,17 @@ def _ui_kit_parts():
 def _default_rules():
     raw = _read(_UI_KIT)
     assert raw.count(_DEFAULTS_MARK) == 1
-    return list(_blocks(_strip_comments(raw.split(_DEFAULTS_MARK, 1)[1])))
+    body = raw.split(_DEFAULTS_MARK, 1)[1].split("/* Kit sweep wave 2:", 1)[0]
+    return list(_blocks(_strip_comments(body)))
 
 
 def _ui_kit_rules():
-    return [block for part in _ui_kit_parts() for block in part] + _default_rules()
+    rules = [block for part in _ui_kit_parts() for block in part]
+    raw = _read(_UI_KIT)
+    if "/* Kit sweep wave 2:" in raw:
+        tail = "/* Kit sweep wave 2:" + raw.split("/* Kit sweep wave 2:", 1)[1]
+        rules.extend(_blocks(_strip_comments(tail)))
+    return rules
 
 
 def test_7b_stage0_boundary_only_ui_selectors_and_one_token_block():
@@ -1836,7 +1842,8 @@ for (const [id, selector, matches] of data.cases) {
         if tag == 'summary':
             markup = '<details class="ph-drift-card">' + markup + 'Summary</summary></details>'
         html += '<div class="app-shell">' + markup + '</div>'
-        cases.append((element['id'], selector, True))
+        # An audited element that has since become a kit part keeps the kit look, not the default.
+        cases.append((element['id'], selector, 'ui-disclosure-summary' not in (element.get('class') or '')))
     result = subprocess.run([node, '-e', script], input=json.dumps({'html': html, 'cases': cases, 'report':
                                 '<body class="chip-report"><input id="report-check" type="checkbox">'
                                 '<details><summary id="report-summary">Report</summary></details></body>'}),
