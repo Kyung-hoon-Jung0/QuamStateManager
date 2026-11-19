@@ -1044,7 +1044,8 @@
 .ui-input-unit > .ui-input.ui-input, .ui-input-unit > .ui-input.ui-input:hover {
     height: auto; min-height: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; outline: 0;
 }
-.ui-input-unit > .ui-input.ui-input:focus { outline: var(--ui-focus-w) solid var(--ui-accent); outline-offset: var(--ui-focus-inset); box-shadow: none; }
+/* One box: the wrapper draws the focus ring (focus-within above), the input inside draws none. */
+.ui-input-unit > .ui-input.ui-input:focus { outline: 0; box-shadow: none; }
 .ui-input-unit-text { padding-left: var(--ui-gap-1); color: var(--ui-text-2); font-size: var(--ui-fs-xs); line-height: var(--ui-lh-tight); white-space: nowrap; user-select: none; }
 .ui-input-unit--invalid.ui-input-unit--invalid { border-color: var(--ui-danger-text); }
 .ui-input-unit--invalid:focus-within { box-shadow: var(--ui-ctl-ring-danger); }
@@ -1074,6 +1075,18 @@
 .ui-field.ui-field--inline { display: grid; grid-template-columns: var(--ui-field-label-w) minmax(0, 1fr); align-items: center; column-gap: var(--ui-gap-3); row-gap: var(--ui-gap-1); }
 .ui-field--inline > .ui-field-head { grid-column: 1; }
 .ui-field--inline > .ui-field-hint, .ui-field--inline > .ui-field-error { grid-column: 2; }
+/* an inline field's control keeps its own width too; --block fills the column */
+.ui-field--inline > .ui-input-unit, .ui-field--inline > .ui-input,
+.ui-field--inline > .ui-select, .ui-field--inline > .ui-menu { justify-self: start; }
+.ui-field--inline > .ui-input-unit--block, .ui-field--inline > .ui-input--block,
+.ui-field--inline > .ui-select--block, .ui-field--inline > .ui-menu--block { justify-self: stretch; }
+/* In a table cell a field's control is never squeezed below its own width (the table scrolls instead):
+   the control column is as wide as its control, and a select or a number keeps its full value visible. */
+.ui-table-cell .ui-field.ui-field--inline { grid-template-columns: var(--ui-field-label-w) auto; }
+.ui-table-cell .ui-field--inline > .ui-select, .ui-table-cell .ui-field--inline > .ui-input,
+.ui-table-cell .ui-field--inline > .ui-input-unit, .ui-table-cell .ui-input-unit > .ui-input {
+    max-width: none; flex: none;
+}
 .ui-field-control { min-width: 0; }
 /* a control in a stacked field keeps its own width; --block fills the column */
 .ui-field > .ui-input-unit, .ui-field > .ui-input, .ui-field > .ui-select, .ui-field > .ui-menu { align-self: flex-start; }
@@ -1744,7 +1757,7 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 .pt-choices { padding-left: var(--ui-gap-4); }
 .pt-res-head { margin-bottom: var(--ui-gap-1); font-weight: var(--ui-fw); }
 .pt-targets { display: flex; flex-direction: column; gap: var(--ui-gap-2); }
-.pt-tg-field { display: inline-flex; align-items: center; gap: var(--ui-gap-2); }
+.pt-tg-field { display: inline-flex; align-items: center; gap: var(--ui-gap-2); white-space: nowrap; }
 .ui-field { display: flex; flex-direction: column; gap: var(--ui-gap-1); }
 .ui-field-label { color: var(--ui-text-2); font-size: var(--ui-fs-sm); }
 .sm-confirm-message { white-space: pre-wrap; margin: 0 0 var(--ui-gap-3); font: inherit; }
@@ -1956,3 +1969,4 @@ table.ui-pair-props { table-layout: fixed; width: 100%; }
 .ui-opxmon-port-active { opacity: 1; }
 .ui-opxmon-port-popup { position: fixed; z-index: var(--ui-menu-z); padding: var(--ui-gap-3); }
 .ui-opxmon-port-popup.hidden { display: none; }
+

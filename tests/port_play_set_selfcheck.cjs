@@ -110,13 +110,55 @@ const MW3 = [{slot: 1, fem: 'mw'}, {slot: 2, fem: 'mw'}, {slot: 3, fem: 'lf'}];
   ok(/Hold the QM open \(advanced\)/.test(p.querySelector('[data-hold-qm] summary').textContent), 'D-9 disclosure label');
   ok(/Saved to this wizard draft only; the open chip and the instrument do not change until Build\./.test(p.querySelector('[data-save-wrap]').textContent), 'D-9 save sentence');
   ok(p.querySelector('details[data-loopcal]') && !p.querySelector('[data-loopcal]').open, 'D-9 loopback collapsed');
-  ok(/Auto-stop after \(s\)/.test(p.textContent) && !/Max time/.test(p.textContent), 'D-9 auto-stop label');
+  const secondsField = p.querySelector('[data-seconds]').closest('.ui-field');
+  ok(/Auto-stop after/.test(secondsField.textContent), 'Auto-stop field label');
+  p.querySelectorAll('select, input[type="number"], input[type="text"]').forEach(control => {
+    ok(control.matches('.ui-input, .ui-select'), 'Every popup field uses a compact kit control');
+    const namedPin = control.matches('[data-pin]') && control.getAttribute('aria-label') === 'Port';
+    ok(control.closest('.ui-field--inline') || namedPin,
+      'Every popup field keeps its inline label association (the port select is named by its column)');
+  });
+  for (const [selector, unit] of [['[data-seconds]', 's'], ['[data-max-in]', 'dBm'],
+                                 ['[data-sim-ns]', 'ns'], ['[data-offset]', 'V']]) {
+    ok(p.querySelector(selector).closest('.ui-input-unit').textContent === unit, 'Unit for ' + selector);
+  }
+  ok(secondsField.querySelector('.ui-input-unit-text').textContent === 's', 'Auto-stop unit');
+  // One box per unit field: the wrapper is the kit part, the number input sits directly in it with the unit beside it.
+  const unitShape = (popup) => Array.from(popup.querySelectorAll('.ui-input-unit')).map(wrap => {
+    const kids = Array.from(wrap.children);
+    ok(kids.length === 2 && kids[0].matches('input.ui-input.ui-input--num') &&
+      kids[1].matches('span.ui-input-unit-text'),
+      'Unit field is .ui-input-unit > input.ui-input--num + unit text');
+    ok(!wrap.matches('.ui-input, .ui-select') && !wrap.parentElement.closest('.ui-input-unit, .ui-input'),
+      'Unit wrapper is not itself a bordered input and is not wrapped again');
+    return kids[0].getAttributeNames().filter(n => /^data-/.test(n)).join();
+  });
+  const lfUnits = unitShape(p);
+  ['data-offset', 'data-seconds', 'data-max-in', 'data-sim-ns']
+    .forEach(n => ok(lfUnits.indexOf(n) >= 0, 'LF unit field ' + n));
+  // The port table is four cells per row: Port select | Kind | Parameters | Remove.
+  const tableShape = (popup) => rowsOf(popup).forEach(row => {
+    const cells = Array.from(row.children);
+    ok(cells.length === 4 && cells.every(c => c.matches('td.ui-table-cell')), 'Set row has four kit cells');
+    ok(cells[0].querySelector('[data-pin]') &&
+      !cells[0].querySelector('[data-kind-cell], [data-line], .ui-field--inline'),
+      'Port cell holds only the port select (no inline label, no kind)');
+    ok(cells[1].matches('[data-kind-cell]') && /^(MW|LF)$/.test(cells[1].textContent), 'Kind is its own cell');
+    ok(cells[2].querySelector('[data-line]') && cells[3].querySelector('[data-remove]'), 'Parameters then Remove');
+  });
+  tableShape(p);
   ok(/Refused if another program holds any of these ports\./.test(p.textContent), 'D-9 refusal sentence');
   ok(!p.querySelector('[data-sim]').closest('[data-run-actions]') && p.querySelector('[data-play]').closest('[data-run-actions]'), 'D-9 simulate apart from Play/Stop');
   PP.renderOffsets({port_offsets: {}}, () => {});
   ok(/No saved offsets yet/.test(d.getElementById('gen-port-offsets').textContent), 'D-9 empty-state row');
   // D-10: actions live in the sticky dialog foot.
   ok(['[data-play]', '[data-stop]', '[data-sim]'].every(s => p.querySelector(s).closest('.ui-dialog-foot')), 'D-10 actions in .ui-dialog-foot');
+  PP.close();
+  fresh(MW3);
+  p = openAt(1, 1, 'mw');
+  const mwUnits = unitShape(p);
+  ['data-rf', 'data-fsp', 'data-lo', 'data-if'].forEach(n => ok(mwUnits.indexOf(n) >= 0, 'MW unit field ' + n));
+  tableShape(p);
   PP.close();
 
   // D-11 + D-12: RF primary, inline validation, max input; one port notation.

@@ -325,10 +325,12 @@
   // Mirror of run_build._BAND_TO_DELAY_NS, pinned by tests/test_regen_populate.py.
   var BAND_DELAY_NS = {1: 141, 2: 161, 3: 141};
   var MAX_DELAY_NS = 16000;  // QM docs Guides/features.md "## Analog Delay": up to 16 us
-  var MW_LO_GHZ = {1: [0, 5.5], 2: [4.5, 7.5], 3: [6.5, 11]};
   // Band ranges: QM docs Guides/opx1000_fems.md "### Bands" (1: 50 MHz - 5.5 GHz,
-  // 2: 4.5 GHz - 7.5 GHz, 3: 6.5 GHz - 10.5 GHz). One list for every band select.
+  // 2: 4.5 GHz - 7.5 GHz, 3: 6.5 GHz - 10.5 GHz): the specified range, shown on every band select.
   var BAND_RF_GHZ = {1: [0.05, 5.5], 2: [4.5, 7.5], 3: [6.5, 10.5]};
+  // Settable upconverter range, same doc, Note under the band example ("Band 1: 0 - 5.5 GHz ... Band 3: 6.5 - 11 GHz");
+  // values between the two ranges are accepted by the hardware but do not meet the specification.
+  var MW_LO_GHZ = {1: [0, 5.5], 2: [4.5, 7.5], 3: [6.5, 11]};
   var BAND_LABEL = {1: '1 (50 MHz - 5.5 GHz)', 2: '2 (4.5 - 7.5 GHz)', 3: '3 (6.5 - 10.5 GHz)'};
   var MAX_IN_KEY = 'quam_port_play_max_in_dbm';
   var SET_KEY = 'quam_gen_port_play_set';
@@ -369,7 +371,7 @@
     var node = document.createElement('dialog');
     node.id = 'port-play-dialog'; node.setAttribute('aria-labelledby', 'port-play-title');
     var lf = kind0 === 'lf';
-    node.innerHTML = '<article class="ui-dialog ui-dialog--m">' +
+    node.innerHTML = '<article class="ui-dialog ui-dialog--l">' +
       '<div class="ui-dialog-head"><header class="ui-head"><h3 class="ui-head-title" id="port-play-title"></h3>' +
       '<div class="ui-actions"><button type="button" class="btn-sm outline" data-prev title="Previous output (P)">Previous output</button>' +
       '<button type="button" class="btn-sm outline" data-next title="Next output (N)">Next output</button></div>' +
@@ -380,9 +382,9 @@
       '<p class="ui-note">Closing this popup stops every output; the set itself is kept. ' +
       'All outputs play in one QM and one program, starting together; Stop stops every output.</p>' +
       '<p class="ui-note">Refused if another program holds any of these ports.</p>' +
-      '<table class="ui-table" data-set-table><thead><tr>' +
+      '<div class="ui-xscroll"><table class="ui-table" data-set-table><thead><tr>' +
       '<th class="ui-table-head">Port</th><th class="ui-table-head">Kind</th><th class="ui-table-head">Parameters</th><th class="ui-table-head"></th>' +
-      '</tr></thead><tbody data-rows></tbody></table>' +
+      '</tr></thead><tbody data-rows></tbody></table></div>' +
       '<p class="ui-note" data-delay-note hidden></p>' +
       '<div class="ui-actions ui-actions--start">' +
       '<button type="button" class="btn-sm outline" data-add-port>+ Add port</button>' +
@@ -391,11 +393,23 @@
       '<button type="button" class="btn-sm outline" data-apply-kind="lf">Apply to all LF rows</button>' +
       '<button type="button" class="btn-sm outline" data-apply-kind="mw">Apply to all MW rows</button></div>' +
       '<div class="ui-field-grid">' +
-      '<label>Auto-stop after (s), whole run<input data-seconds type="number" min="0.1" max="3600" step="0.1" value="300" required></label>' +
-      '<label>Instrument max input (dBm), optional<input data-max-in type="number" step="0.1"></label>' +
-      '<label>Waveform<select data-waveform><option value="">' + (lf ? 'DC at the offset' : 'CW tone') + ' (default)</option>' +
+      '<label class="ui-field ui-field--inline ui-field-wide"><span class="ui-field-head">' +
+        '<span class="ui-field-label">Auto-stop after, whole run</span></span><span class="ui-input-unit">' +
+        '<input class="ui-input ui-input--num" data-seconds type="number" min="0.1" max="3600"' +
+        ' step="0.1" value="300" required>' +
+        '<span class="ui-input-unit-text">s</span></span></label>' +
+      '<label class="ui-field ui-field--inline ui-field-wide"><span class="ui-field-head">' +
+        '<span class="ui-field-label">Instrument max input, optional</span></span><span class="ui-input-unit">' +
+        '<input class="ui-input ui-input--num" data-max-in type="number" step="0.1">' +
+        '<span class="ui-input-unit-text">dBm</span></span></label>' +
+      '<label class="ui-field ui-field--inline ui-field-wide"><span class="ui-field-head">' +
+        '<span class="ui-field-label">Waveform</span></span><select class="ui-select" data-waveform>' +
+        '<option value="">' + (lf ? 'DC at the offset' : 'CW tone') + ' (default)</option>' +
       '<option value="edge" title="1000 ns on, every 10000 ns">Edge (1 us every 10 us)</option></select></label>' +
-      '<label>Simulation length (ns), optional<input data-sim-ns type="number" min="1000" max="200000" step="1"></label></div>' +
+      '<label class="ui-field ui-field--inline ui-field-wide"><span class="ui-field-head">' +
+        '<span class="ui-field-label">Simulation length, optional</span></span><span class="ui-input-unit">' +
+        '<input class="ui-input ui-input--num" data-sim-ns type="number" min="1000" max="200000" step="1">' +
+        '<span class="ui-input-unit-text">ns</span></span></label></div>' +
       '<div class="ui-callout ui-callout--danger" data-power-warn hidden><p class="ui-callout-text"></p></div></section>' +
       '<section class="ui-item"><div class="ui-item-head"><h4 class="ui-item-title">Safety</h4></div>' +
       '<label class="ui-check"><input data-hwok type="checkbox"> Safe to drive: a ' + (lf ? 'scope' : 'spectrum analyser or scope') +
@@ -407,7 +421,9 @@
       (source.setCheck ? '<div class="ui-actions ui-actions--start" data-check>' +
         '<button type="button" class="btn-sm outline" data-verdict="ok">\u2713 Works</button>' +
         '<button type="button" class="btn-sm outline" data-verdict="bad">\u2717 Fails</button>' +
-        '<label>Note<input data-check-note type="text"></label></div>' : '') + '</section>' +
+        '<label class="ui-field ui-field--inline ui-field-wide"><span class="ui-field-head">' +
+        '<span class="ui-field-label">Note</span></span><input class="ui-input" data-check-note type="text"></label>' +
+        '</div>' : '') + '</section>' +
       (lf ? '<details class="ui-disclosure" data-hold-qm><summary class="ui-disclosure-summary">Hold the QM open (advanced)</summary>' +
         '<div class="ui-disclosure-body"><p class="ui-note">Open QM: the ports go to their offsets with no program running. Close QM: back to 0 V.</p>' +
         '<div class="ui-actions ui-actions--start" data-qm-actions><button type="button" class="btn-sm outline" data-open-qm>Open QM</button>' +
@@ -418,7 +434,9 @@
       '<details class="ui-disclosure" data-sim-prev hidden><summary class="ui-disclosure-summary">Previous simulation</summary>' +
       '<div class="ui-disclosure-body"></div></details>' +
       (lf ? '<details class="ui-disclosure" data-loopcal><summary class="ui-disclosure-summary">Loopback calibration</summary><div class="ui-disclosure-body"><div class="ui-field-grid">' +
-        '<label>Analog input (same FEM)<select data-ai><option value="1">AI 1</option><option value="2">AI 2</option></select></label></div>' +
+        '<label class="ui-field ui-field--inline ui-field-wide"><span class="ui-field-head">' +
+        '<span class="ui-field-label">Analog input (same FEM)</span></span><select class="ui-select" data-ai>' +
+        '<option value="1">AI 1</option><option value="2">AI 2</option></select></label></div>' +
         '<ol class="ui-note" data-cal-steps></ol>' +
         '<p class="ui-note" data-ai-saved></p>' +
         '<div class="ui-actions ui-actions--start"><button type="button" class="btn-sm outline" data-cal-input>Calibrate input</button>' +
@@ -489,21 +507,48 @@
       }
       return {values: lv, chip: !!chip && !saved};
     }
-    var DELAY_FIELD = '<label data-delay-wrap hidden>LF delay (ns)<input data-lf-delay type="number" step="1" min="0" max="16000"></label>';
+    var DELAY_FIELD = '<label class="ui-field ui-field--inline ui-field-wide" data-delay-wrap hidden>' +
+        '<span class="ui-field-head">' +
+        '<span class="ui-field-label">LF delay</span></span><span class="ui-input-unit">' +
+        '<input class="ui-input ui-input--num" data-lf-delay type="number" step="1" min="0" max="16000">' +
+        '<span class="ui-input-unit-text">ns</span></span></label>';
     function fields(row, kind, values, chip) {
       var box = row.querySelector('[data-line]');
       box.innerHTML = kind === 'mw'
-        ? '<label>RF (GHz)<input data-rf type="number" step="0.000001" required></label>' +
-          '<label>Band<select data-band>' + bandOptions() + '</select></label>' +
-          '<label>Full-scale power (dBm)<input data-fsp type="number" step="1" min="-11" max="18" required></label>' +
-          '<label>Amplitude (|a| &lt; 1)<input data-amp type="number" step="0.001" min="-0.999" max="0.999" required></label>' +
-          '<details class="ui-disclosure" data-advanced><summary class="ui-disclosure-summary">Advanced</summary><div class="ui-disclosure-body pt-row">' +
-          '<label>LO (GHz)<input data-lo type="number" step="0.000001" required></label>' +
-          '<label>IF (MHz)<input data-if type="number" step="0.001" min="-500" max="500" required></label></div></details>' +
+        ? '<label class="ui-field ui-field--inline ui-field-wide"><span class="ui-field-head">' +
+        '<span class="ui-field-label">RF</span></span><span class="ui-input-unit">' +
+        '<input class="ui-input ui-input--num" data-rf type="number" step="0.000001" required>' +
+        '<span class="ui-input-unit-text">GHz</span></span></label>' +
+          '<label class="ui-field ui-field--inline ui-field-wide"><span class="ui-field-head">' +
+        '<span class="ui-field-label">Band</span></span>' +
+        '<select class="ui-select" data-band>' + bandOptions() + '</select></label>' +
+          '<label class="ui-field ui-field--inline ui-field-wide"><span class="ui-field-head">' +
+        '<span class="ui-field-label">Full-scale power</span></span><span class="ui-input-unit">' +
+        '<input class="ui-input ui-input--num" data-fsp type="number" step="1" min="-11" max="18" required>' +
+        '<span class="ui-input-unit-text">dBm</span></span></label>' +
+          '<label class="ui-field ui-field--inline ui-field-wide"><span class="ui-field-head">' +
+        '<span class="ui-field-label">Amplitude (|a| &lt; 1)</span></span>' +
+        '<input class="ui-input ui-input--num" data-amp type="number" step="0.001" min="-0.999" max="0.999" required>' +
+        '</label>' +
+          '<details class="ui-disclosure" data-advanced><summary class="ui-disclosure-summary">Advanced</summary>' +
+        '<div class="ui-disclosure-body ui-field-stack">' +
+          '<label class="ui-field ui-field--inline ui-field-wide"><span class="ui-field-head">' +
+        '<span class="ui-field-label">LO</span></span><span class="ui-input-unit">' +
+        '<input class="ui-input ui-input--num" data-lo type="number" step="0.000001" required>' +
+        '<span class="ui-input-unit-text">GHz</span></span></label>' +
+          '<label class="ui-field ui-field--inline ui-field-wide"><span class="ui-field-head">' +
+        '<span class="ui-field-label">IF</span></span><span class="ui-input-unit">' +
+        '<input class="ui-input ui-input--num" data-if type="number" step="0.001" min="-500" max="500" required>' +
+        '<span class="ui-input-unit-text">MHz</span></span></label></div></details>' +
           '<span class="ui-note" role="status" data-power></span><span class="ui-note" data-lo-reason></span>'
-        : '<label>Output mode<select data-mode><option value="direct">direct (|offset| &lt;= 0.5 V)</option>' +
+        : '<label class="ui-field ui-field--inline ui-field-wide"><span class="ui-field-head">' +
+        '<span class="ui-field-label">Output mode</span></span><select class="ui-select" data-mode>' +
+        '<option value="direct">direct (|offset| &lt;= 0.5 V)</option>' +
           '<option value="amplified">amplified (|offset| &lt;= 2.5 V)</option></select></label>' +
-          '<label>Offset (V)<input data-offset type="number" step="0.000001" required></label>' + DELAY_FIELD;
+          '<label class="ui-field ui-field--inline ui-field-wide"><span class="ui-field-head">' +
+        '<span class="ui-field-label">Offset</span></span><span class="ui-input-unit">' +
+        '<input class="ui-input ui-input--num" data-offset type="number" step="0.000001" required>' +
+        '<span class="ui-input-unit-text">V</span></span></label>' + DELAY_FIELD;
       row.setAttribute('data-kind', kind);
       row.querySelector('[data-kind-cell]').textContent = kind.toUpperCase();
       setValues(row, values);
@@ -522,7 +567,7 @@
         if (Number.isFinite(lo) && range && (lo < range[0] || lo > range[1])) {
           var b = bandOfRf(Number.isFinite(rf) ? rf : lo, band);
           reason = 'Band ' + band + ' (' + BAND_LABEL[band].replace(/^\d+ \(|\)$/g, '') + '): LO must be ' + range[0] + '..' +
-            range[1] + ' GHz.' + (b && b !== band ? ' RF ' + (Number.isFinite(rf) ? rf : lo) + ' GHz is in band ' + b + '.' : '');
+            range[1] + ' GHz (settable range).' + (b && b !== band ? ' RF ' + (Number.isFinite(rf) ? rf : lo) + ' GHz is in band ' + b + '.' : '');
         }
         if (reason) q('[data-lo]').setAttribute('aria-invalid', 'true'); else q('[data-lo]').removeAttribute('aria-invalid');
         q('[data-lo-reason]').textContent = reason;
@@ -584,9 +629,11 @@
       if (!all.some(function (x) { return pinOf(x) === pinOf(o); })) all.push(o);
       var row = document.createElement('tr');
       row.setAttribute('data-row', '');
-      row.innerHTML = '<td class="ui-table-cell"><label>Port<select class="pt-pin" data-pin></select></label>' +
-        '<span class="ui-badge ui-badge--accent" data-chip-badge hidden>chip values</span></td>' +
-        '<td class="ui-table-cell" data-kind-cell></td><td class="ui-table-cell"><div class="pt-row" data-line></div></td>' +
+      row.innerHTML = '<td class="ui-table-cell"><div class="ui-field">' +
+        '<select class="ui-select pt-pin" data-pin aria-label="Port"></select>' +
+        '<span class="ui-badge ui-badge--accent" data-chip-badge hidden>chip values</span></div></td>' +
+        '<td class="ui-table-cell" data-kind-cell></td><td class="ui-table-cell">' +
+        '<div class="ui-field-stack ui-field-stack--dense" data-line></div></td>' +
         '<td class="ui-table-cell"><button type="button" class="btn-sm outline" data-remove aria-label="Remove this port">Remove</button></td>';
       var sel = row.querySelector('[data-pin]');
       fillSelect(sel, all);

@@ -131,7 +131,8 @@ const ok = (c, m) => { assert(c, m); n++; };
   const opts = Array.from(row.querySelectorAll('[data-band] option')).map(o => o.textContent);
   ok(opts.length === 3 && opts.every(t => /GHz/.test(t)), 'F6 row band options carry ranges: ' + opts);
   const line = row.querySelector('[data-line]');
-  ok(row.matches('tr') && line.classList.contains('pt-row') && sec.classList.contains('port-test'), 'F6 one table row per port (S1 D-3)');
+  ok(row.matches('tr') && line.classList.contains('ui-field-stack') && sec.classList.contains('port-test'),
+     'One table row per port');
   ok(row.lastElementChild.querySelector('[data-remove]'), 'F6 Remove is the last cell of its own row');
   ok(line.querySelectorAll(':scope > label').length >= 4, 'F6 fields sit in the row (LO/IF under Advanced, S1 D-11)');
   pin.value = Array.from(pin.options).find(o => o.getAttribute('data-kind') === 'lf').value;

@@ -13,8 +13,11 @@
    where Port play plays the draft.</p>
 <div id="pp-body" data-has-chip="{{ '1' if pp_has_chip else '' }}"{% if not pp_has_chip %} hidden{% endif %}>
 <div class="ui-field-grid" data-pp-source-row hidden>
-  <label>Rack source
-    <select id="pp-source" data-pp-source>
+  <label class="ui-field ui-field--inline ui-field-wide">
+<span class="ui-field-head">
+<span class="ui-field-label">Rack source</span>
+</span>
+<select class="ui-select" id="pp-source" data-pp-source>
       {% if pp_has_chip %}<option value="chip">Open chip</option>{% endif %}
       <option value="draft">Wizard draft (unsaved)</option>
     </select></label>
@@ -22,16 +25,29 @@
 <p class="ui-note" data-pp-draft-note hidden>Playing the Generate wizard's unsaved draft chassis. Nothing here changes the draft.</p>
 <section class="ui-item">
   <div class="ui-field-grid">
-    <label>Python environment
-      <select id="pp-env" data-pp-env>
+    <label class="ui-field ui-field--inline ui-field-wide">
+<span class="ui-field-head">
+<span class="ui-field-label">Python environment</span>
+</span>
+<select class="ui-select" id="pp-env" data-pp-env>
         {% if not pp_python %}<option value="">Choose an environment</option>{% endif %}
         {% for e in pp_envs %}<option value="{{ e.python }}" {% if e.python == pp_python %}selected{% endif %}>{{ e.name }}</option>{% endfor %}
         {% if pp_python and pp_python not in pp_envs | map(attribute='python') | list %}<option value="{{ pp_python }}" selected>{{ pp_python }}</option>{% endif %}
       </select></label>
-    <label>Host<input id="pp-host" type="text" value="{{ pp_host }}" placeholder="QOP host address"></label>
-    <label>Cluster<input id="pp-cluster" type="text" value="{{ pp_cluster }}" placeholder="cluster name (optional)"></label>
+    <label class="ui-field ui-field--inline ui-field-wide">
+<span class="ui-field-head">
+<span class="ui-field-label">Host</span>
+</span>
+<input class="ui-input" id="pp-host" type="text" value="{{ pp_host }}" placeholder="QOP host address">
+</label>
+    <label class="ui-field ui-field--inline ui-field-wide">
+<span class="ui-field-head">
+<span class="ui-field-label">Cluster</span>
+</span>
+<input class="ui-input" id="pp-cluster" type="text" value="{{ pp_cluster }}" placeholder="cluster name (optional)">
+</label>
   </div>
-  <p class="ui-note">{% if pp_env_source == "project" %}The environment this project remembers.{% elif pp_env_source == "selected" %}The app's selected environment (this project remembers none).{% else %}No environment chosen yet.{% endif %}
+  <p class="ui-note">{% if pp_env_source == "project" %}The environment this project remembers.{% elif pp_env_source == "selected" %}The app's selected environment (this project remembers none).{% else %}<span data-pp-env-none{% if pp_python %} hidden{% endif %}>No environment chosen yet.</span>{% endif %}
      Test connection opens one connection to the host and reads its version; it opens no QM and plays nothing.</p>
   <div class="ui-actions ui-actions--start"><button type="button" class="btn-sm outline" id="pp-test-conn">Test connection</button></div>
   <p class="ui-note" role="status" id="pp-conn-status"></p>
@@ -52,6 +68,9 @@
   var pick = document.getElementById('pp-source'), draft = null, mode = 'chip';
   var spec = chipSpec, data = chipData;
   var env = document.getElementById('pp-env');
+  function envNote() { var n = document.querySelector('[data-pp-env-none]'); if (n) n.hidden = !!(env && env.value); }
+  if (env) env.addEventListener('change', envNote);
+  envNote();
   function chooseSource() {
     draft = window.PortPlay && window.PortPlay.wizardDraft ? window.PortPlay.wizardDraft() : null;
     if (!draft) { mode = 'chip'; }
