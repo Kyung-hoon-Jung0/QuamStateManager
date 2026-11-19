@@ -325,10 +325,12 @@
   // Mirror of run_build._BAND_TO_DELAY_NS, pinned by tests/test_regen_populate.py.
   var BAND_DELAY_NS = {1: 141, 2: 161, 3: 141};
   var MAX_DELAY_NS = 16000;  // QM docs Guides/features.md "## Analog Delay": up to 16 us
-    // Band ranges: QM docs Guides/opx1000_fems.md "### Bands" (1: 50 MHz - 5.5 GHz,
-  // 2: 4.5 GHz - 7.5 GHz, 3: 6.5 GHz - 10.5 GHz). One list for every band select.
+  // Band ranges: QM docs Guides/opx1000_fems.md "### Bands" (1: 50 MHz - 5.5 GHz,
+  // 2: 4.5 GHz - 7.5 GHz, 3: 6.5 GHz - 10.5 GHz): the specified range, shown on every band select.
   var BAND_RF_GHZ = {1: [0.05, 5.5], 2: [4.5, 7.5], 3: [6.5, 10.5]};
-  var MW_LO_GHZ = BAND_RF_GHZ; // the same documented band ranges check the upconverter frequency
+  // Settable upconverter range, same doc, Note under the band example ("Band 1: 0 - 5.5 GHz ... Band 3: 6.5 - 11 GHz");
+  // values between the two ranges are accepted by the hardware but do not meet the specification.
+  var MW_LO_GHZ = {1: [0, 5.5], 2: [4.5, 7.5], 3: [6.5, 11]};
   var BAND_LABEL = {1: '1 (50 MHz - 5.5 GHz)', 2: '2 (4.5 - 7.5 GHz)', 3: '3 (6.5 - 10.5 GHz)'};
   var MAX_IN_KEY = 'quam_port_play_max_in_dbm';
   var SET_KEY = 'quam_gen_port_play_set';
@@ -565,7 +567,7 @@
         if (Number.isFinite(lo) && range && (lo < range[0] || lo > range[1])) {
           var b = bandOfRf(Number.isFinite(rf) ? rf : lo, band);
           reason = 'Band ' + band + ' (' + BAND_LABEL[band].replace(/^\d+ \(|\)$/g, '') + '): LO must be ' + range[0] + '..' +
-            range[1] + ' GHz.' + (b && b !== band ? ' RF ' + (Number.isFinite(rf) ? rf : lo) + ' GHz is in band ' + b + '.' : '');
+            range[1] + ' GHz (settable range).' + (b && b !== band ? ' RF ' + (Number.isFinite(rf) ? rf : lo) + ' GHz is in band ' + b + '.' : '');
         }
         if (reason) q('[data-lo]').setAttribute('aria-invalid', 'true'); else q('[data-lo]').removeAttribute('aria-invalid');
         q('[data-lo-reason]').textContent = reason;
