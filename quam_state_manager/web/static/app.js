@@ -27390,7 +27390,7 @@ document.addEventListener('click', function(evt) {
         var ic = row.querySelector('.tree-warn-icon');
         if (!ic) {
             ic = document.createElement('span');
-            ic.className = 'tree-warn-icon';
+            ic.className = 'tree-warn-icon ui-btn-icon ui-btn-icon--warn';
             ic.textContent = '⚠';
             ic.title = message || 'Hardware spec warning';
             ic.setAttribute('role', 'button');

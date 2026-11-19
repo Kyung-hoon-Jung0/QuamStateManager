@@ -4,7 +4,7 @@
 {%- set pair_cold_keys = pair_cold_keys or [] -%}
 {%- set note_rows = note_rows or {} -%}
 {%- set pair_note_rows = pair_note_rows or {} -%}
-<div class="bulk-panel" id="bulk-panel">
+<div class="bulk-panel ui-bulk-compact" id="bulk-panel">
     {# docs/167: notes live above the grid because this is the daily-driver
        surface and the page already has the data (the row markers below read
        the same dicts) -- so the panel costs one include and no extra request.
@@ -134,7 +134,7 @@
                 title="Download the visible columns of the qubit grid as CSV (stored values)">Export CSV</button>
         {% endif %}
         {% if rows %}
-        <label class="bulk-freqsync-ctl"
+        <label class="bulk-freqsync-ctl ui-check"
                title="When on, editing a qubit/readout frequency mirrors its f₀₁↔RF twin — but only when the two are currently equal. RF_frequency is what the hardware actually plays (the config's IF is inferred from it); f_01 is bookkeeping the calibration keeps equal to it. An already-detuned pair is left untouched. Turn off to detune one deliberately.">
             <input type="checkbox" id="bulk-freq-sync" checked onchange="BulkEdit.setFreqSync(this.checked)">
             &#128279;&nbsp;Sync f&#8320;&#8321;&#8596;RF</label>

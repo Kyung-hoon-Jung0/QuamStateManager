@@ -1,3 +1,5 @@
+{% if request.headers.get('HX-Request') != 'true' %}{% extends 'base.html' %}{% endif %}
+{% block table_content %}
 {% if query %}
 {% set inspector_type = "search" %}
 {% set inspector_label = query %}
@@ -74,3 +76,5 @@
     {% endif %}
 </div>
 {% endif %}
+
+{% endblock %}

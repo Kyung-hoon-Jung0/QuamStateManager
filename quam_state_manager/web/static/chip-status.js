@@ -184,9 +184,9 @@ window.ChipStatus.metaInfo = (function () {
     // the toggle a builder puts right of the panel's S / M / L
     function toggleHtml(key) {
         var k = _cssKey(key);
-        return '<label class="topo-meta-toggle" title="Show, inside this panel, when each value was last'
+        return '<label class="topo-meta-toggle ui-check" title="Show, inside this panel, when each value was last'
             + ' measured and which run wrote it (hover any tile for the same)">'
-            + '<input type="checkbox" class="topo-meta-cb" data-meta-panel="' + k + '"'
+            + '<input type="checkbox" class="topo-meta-cb ui-check-box" data-meta-panel="' + k + '"'
             + (isOn(k) ? ' checked' : '') + '>Show Meta Info</label>';
     }
     function init() {
@@ -4014,7 +4014,8 @@ window.ChipStatus.mount = function (opts) {
                 // Stat line is its OWN block below the title (not inside the <h4>) so
                 // at narrow width it wraps cleanly instead of lapping onto the grid.
                 var _tmap = hasGrid;
-                sectionHtml += '<h4 class="topo-metric-panel-title">' + gateLabel + (_tmap ? ' (%)' : '')
+                sectionHtml += '<h4 class="topo-metric-panel-title ui-fidelity-title">'
+                    + gateLabel + (_tmap ? ' (%)' : '')
                     + window.ChipStatus.density.controlHtml(dKey)
                     + window.ChipStatus.metaInfo.toggleHtml(dKey) + '</h4>';
                 sectionHtml += '<div class="topo-metric-panel-stat">'

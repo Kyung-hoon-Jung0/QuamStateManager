@@ -34,7 +34,18 @@
     <div class="ui-zone-head">
         <h3 class="ui-zone-title">CZ gates</h3>
         <button type="button" class="btn-sm outline" data-czg-open data-czg-pair="{{ gate_lines.pair }}" title="Create a new CZ gate on this pair">+ Gate</button>
-        <div class="ui-panel-sum"><span class="ui-count">{{ count }}</span>{% if gate_lines.no_active %}<span class="ui-text-warn" title="The pair's cz alias is not set">{{ ui.ui_pill('no active gate', 'warn') }}</span>{% endif %}{% if count %}{{ ui.ui_verdict('warn' if totals.warning or not totals.active else 'neutral', totals.active ~ ' active, ' ~ (count - totals.active) ~ ' not active, ' ~ (totals.checked ~ ' checked' if totals.checked else 'none checked'), strong=True) }}{% else %}<span class="ui-text-quiet">No CZ gate on this pair yet.</span>{% endif %}</div>
+        <div class="ui-panel-sum ui-gate-summary">
+            <span class="ui-count">{{ count }}</span>
+            {% if gate_lines.no_active %}
+            <span class="ui-text-warn" title="The pair's cz alias is not set">
+                {{ ui.ui_pill('no active gate', 'warn') }}</span>
+            {% endif %}
+            {% if count %}
+            {{ ui.ui_verdict('warn' if totals.warning or not totals.active else 'neutral',
+                totals.active ~ ' active, ' ~ (count - totals.active) ~ ' not active, ' ~
+                (totals.checked ~ ' checked' if totals.checked else 'none checked'), strong=True) }}
+            {% else %}<span class="ui-text-quiet">No CZ gate on this pair yet.</span>{% endif %}
+        </div>
     </div>
     <div class="ui-zone-body">
         <div data-gate-zone-slot role="status" aria-live="polite"></div>

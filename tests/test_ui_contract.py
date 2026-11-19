@@ -523,13 +523,19 @@ def _ui_kit_parts():
     mid, last = tail.split(_STAGE5_MARK, 1)
     s5, s4 = last.split(_STAGE4_MARK, 1)
     s4, s6 = s4.split(_STAGE6_MARK, 1)
+    s6 = s6.split("/* Kit sweep wave 2:", 1)[0]
     return (list(_blocks(_strip_comments(head))), list(_blocks(_strip_comments(_STAGE1_MARK + mid))),
             list(_blocks(_strip_comments(_STAGE5_MARK + s5))), list(_blocks(_strip_comments(_STAGE4_MARK + s4))),
             list(_blocks(_strip_comments(_STAGE6_MARK + s6))))
 
 
 def _ui_kit_rules():
-    return [block for part in _ui_kit_parts() for block in part]
+    rules = [block for part in _ui_kit_parts() for block in part]
+    raw = _read(_UI_KIT)
+    if "/* Kit sweep wave 2:" in raw:
+        tail = raw[raw.index("/* Kit sweep wave 2:"):]
+        rules.extend(_blocks(_strip_comments(tail)))
+    return rules
 
 
 def test_7b_stage0_boundary_only_ui_selectors_and_one_token_block():

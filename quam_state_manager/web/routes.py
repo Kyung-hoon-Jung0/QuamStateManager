@@ -30859,24 +30859,25 @@ def _search_pages(query: str) -> list[dict]:
 
 @bp.route("/search")
 def search():
+    context = {} if request.headers.get("HX-Request") == "true" else _ctx(page="search")
     index = _index()
     query = request.args.get("q", "").strip()
 
     if not query:
-        return render_template("_search_results.html", results=[], query=query, active_category=None)
+        return render_template("_search_results.html", **context, results=[], query=query, active_category=None)
     pages = _search_pages(query)
     if not index:
         # Distinguish "no chip loaded" from a genuine miss so the user isn't told
         # "No results" (which reads as: the value isn't in this chip) when in fact
         # nothing is loaded to search.
-        return render_template("_search_results.html", results=[], query=query,
+        return render_template("_search_results.html", **context, results=[], query=query,
                                active_category=None, no_state=True, pages=pages)
 
     category = request.args.get("category")
     limit = _int_arg("limit", 50, minimum=1)
     results = index.search(query, limit=limit, category=category)
 
-    return render_template("_search_results.html", results=results, query=query,
+    return render_template("_search_results.html", **context, results=results, query=query,
                            active_category=category, pages=pages,
                            ptr_targets=_search_pointer_targets(results))
 
