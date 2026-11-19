@@ -30,11 +30,11 @@
 {#- K9 pill: a human label (D-44). -#}
 {%- macro ui_pill(text, tone='neutral') -%}<span class="ui-pill ui-pill--{{ tone }}">{{ text }}</span>{%- endmacro -%}
 
-{#- K9 path: the middle gives way, the last segment (from the last . or /)
+{#- K9 path: the middle gives way, the last segment (from the last ., / or \)
     never does; the whole path is the title. -#}
 {%- macro ui_path(path) -%}
 {%- set _p = path | string -%}
-{%- set _i = [_p.rfind('.'), _p.rfind('/')] | max -%}
+{%- set _i = [_p.rfind('.'), _p.rfind('/'), _p.rfind('\\')] | max -%}
 {%- set _i = _i if _i > 0 else _p | length -%}
 <span class="ui-path" title="{{ _p }}"><span class="ui-path-head">{{ _p[:_i] }}</span><span class="ui-path-tail">{{ _p[_i:] }}</span></span>
 {%- endmacro -%}

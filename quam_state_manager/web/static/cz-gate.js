@@ -126,7 +126,8 @@
         simButton();
         var b = $('czg-primary');
         if (!b) return;
-        if (S.phase === 'done') { b.textContent = 'Close'; b.disabled = false; return; }
+        if (S.phase === 'done') { b.textContent = 'Close'; b.disabled = false; checkHint(false); return; }
+        checkHint(false);
         if (S.phase === 'create') {
             var ok = allowedPairs();
             var nun = ok.filter(function (p) { return p.verdict.state !== 'verified'; }).length;
@@ -140,6 +141,32 @@
         b.disabled = S.busy || !fp || !fp.ok || hasInvalid();
         changedAlert();
         markedFooter(b.disabled);
+        checkHint(b.disabled);
+    }
+    /* A held Check says why above the buttons. A marked field already has its own line under
+       them, so the general hint steps aside while that line shows. */
+    var CHECK_HINT = 'Check needs a valid gate plan and no invalid fields. Wait for any active request to finish.';
+    function checkHint(held) {
+        var b = $('czg-primary');
+        var foot = b && b.closest('.ui-dialog-foot');
+        if (!foot) return;
+        var hint = $('czg-check-hint');
+        if (!hint) {
+            hint = document.createElement('span');
+            hint.id = 'czg-check-hint';
+            hint.className = 'ui-field-hint';
+            hint.textContent = CHECK_HINT;
+            foot.prepend(hint);
+        }
+        var s = $('czg-status');
+        var shown = !!held && !(s && s.textContent === MARKED_FOOTER);
+        hint.hidden = !shown;
+        var ids = (b.getAttribute('aria-describedby') || '').split(/\s+/).filter(function (id) {
+            return id && id !== hint.id;
+        });
+        if (shown) ids.push(hint.id);
+        if (ids.length) b.setAttribute('aria-describedby', ids.join(' '));
+        else b.removeAttribute('aria-describedby');
     }
     /* Check is held back by a field the form marks: the status line under the buttons says so,
        and the line goes once nothing is marked. */

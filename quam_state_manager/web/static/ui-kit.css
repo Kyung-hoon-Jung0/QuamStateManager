@@ -2059,6 +2059,6 @@ table.ui-pair-props { table-layout: fixed; width: 100%; }
 }
 .ui-generate .gen-chassis-count-field > .ui-field-label { font-weight: var(--ui-fw-normal); }
 
-.ui-dialog-foot:has(> #czp-check-hint) { flex-wrap: wrap; }
-.ui-dialog-foot > #czp-check-hint { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; }
-.ui-dialog-foot > #czp-check-hint[hidden] { display: none; }
+.ui-dialog-foot:has(> #czg-check-hint) { flex-wrap: wrap; }
+.ui-dialog-foot > #czg-check-hint { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; }
+.ui-dialog-foot > #czg-check-hint[hidden] { display: none; }

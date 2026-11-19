@@ -48,7 +48,8 @@ CASES = [
     ("analysis_root_uses_compact_field_label", "templates/_fit_audit.html",
      '<label class="ui-field-label" for="fa-source-root">'),
     ("storage_path_is_separate_from_heading", "templates/_disk_page.html", '{{ ui_path(disk.root) }}'),
-    ("diff_source_picker_uses_kit_select", "templates/_diff_workbench.html", 'class="ui-select"'),
+    ("diff_source_picker_uses_kit_select", "templates/_diff_workbench.html",
+     '<select name="{{ slots[i] }}"\n    class="ui-select">'),
 ]
 
 
@@ -119,14 +120,23 @@ def test_architecture_radios_use_round_kit_marks_and_quiet_labels():
     assert '.ui-generate .gen-chassis-count-field > .ui-field-label { font-weight: var(--ui-fw-normal); }' in css
 
 
-def test_gate_check_hint_tracks_disabled_state_and_dialog_reopening():
-    import os
-    import subprocess
-    result = subprocess.run(["node", str(Path(__file__).with_name("config_gate_hint_selfcheck.cjs"))],
-                            capture_output=True, text=True, encoding="utf-8", timeout=30, env=os.environ.copy())
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "all checks passed" in result.stdout
+def test_gate_check_hint_lives_in_the_shared_dialog():
+    # The behaviour (held, busy, Create, marked field) is pinned in cz_gate_dialog_selfcheck.cjs.
     source = read("static/cz-gate.js")
     assert 'b.disabled = S.busy || !fp || !fp.ok || hasInvalid();' in source
+    assert 'checkHint(b.disabled);' in source
+    assert 'czg-check-hint' not in read("static/cz-plan.js")
     css = read("static/ui-kit.css")
-    assert '.ui-dialog-foot > #czp-check-hint { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; }' in css
+    assert '.ui-dialog-foot > #czg-check-hint { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; }' in css
+
+
+@pytest.mark.parametrize("path, tail", [
+    ("D:\\data\\runs\\chip_a", "\\chip_a"),
+    ("/home/lab/runs/chip_a", "/chip_a"),
+    ("qubits.q1.xy", ".xy"),
+])
+def test_path_keeps_its_last_segment_for_either_separator(path, tail):
+    env = Environment(loader=FileSystemLoader(WEB / "templates"), autoescape=True)
+    macro = env.from_string('{% from "_ui.html" import ui_path %}{{ ui_path(p) }}')
+    html = macro.render(p=path)
+    assert '<span class="ui-path-tail">' + tail + '</span>' in html

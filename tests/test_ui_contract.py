@@ -1420,9 +1420,9 @@ _STAGE6_SELECTORS |= {
     '.ui-check--radio > input',
     '.ui-check--radio > input::after',
     '.ui-generate .gen-chassis-count-field > .ui-field-label',
-    '.ui-dialog-foot:has(> #czp-check-hint)',
-    '.ui-dialog-foot > #czp-check-hint',
-    '.ui-dialog-foot > #czp-check-hint[hidden]',
+    '.ui-dialog-foot:has(> #czg-check-hint)',
+    '.ui-dialog-foot > #czg-check-hint',
+    '.ui-dialog-foot > #czg-check-hint[hidden]',
 }
 
 
