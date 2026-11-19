@@ -1019,6 +1019,8 @@
     background-image: var(--ui-chevron); background-position: var(--ui-chevron-pos);
     background-size: var(--ui-chevron-size); background-repeat: no-repeat;
 }
+/* A list select (multiple, size > 1) shows its rows: no fixed control height, no chevron lane. */
+.ui-select--list.ui-select--list { height: auto; padding: var(--ui-gap-1) var(--ui-ctl-pad-x); background-image: none; }
 .ui-input.ui-input { width: var(--ui-input-w); }
 .ui-input--num.ui-input--num { width: var(--ui-input-num-w); text-align: right; font-family: var(--ui-font-mono); font-variant-numeric: tabular-nums; -moz-appearance: textfield; }
 .ui-input--num::-webkit-inner-spin-button, .ui-input--num::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }

@@ -1476,3 +1476,12 @@ def test_kit_sweep_tools_files_have_no_bare_controls():
         counts = measure()
         for file in files:
             assert counts.get(file, 0) == 0, (measure.__name__, file, counts.get(file))
+
+def test_a_multiple_select_shows_its_rows_instead_of_a_one_line_control():
+    # A kit select has a fixed one-line height; a multiple select keeps its rows through the list modifier.
+    rule = _kit_rule(".ui-select--list.ui-select--list")
+    assert rule.get("height") == "auto" and rule.get("background-image") == "none", rule
+    for tpl in sorted(_TPL.glob("*.html")):
+        for tag in re.findall(r"<select\s[^>]*>", _read(tpl)):
+            if " multiple" in tag and "ui-select" in tag:
+                assert "ui-select--list" in tag, (tpl.name, tag)
