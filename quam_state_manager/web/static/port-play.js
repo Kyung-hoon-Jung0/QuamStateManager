@@ -371,7 +371,7 @@
     var node = document.createElement('dialog');
     node.id = 'port-play-dialog'; node.setAttribute('aria-labelledby', 'port-play-title');
     var lf = kind0 === 'lf';
-    node.innerHTML = '<article class="ui-dialog ui-dialog--m">' +
+    node.innerHTML = '<article class="ui-dialog ui-dialog--l">' +
       '<div class="ui-dialog-head"><header class="ui-head"><h3 class="ui-head-title" id="port-play-title"></h3>' +
       '<div class="ui-actions"><button type="button" class="btn-sm outline" data-prev title="Previous output (P)">Previous output</button>' +
       '<button type="button" class="btn-sm outline" data-next title="Next output (N)">Next output</button></div>' +
@@ -629,10 +629,9 @@
       if (!all.some(function (x) { return pinOf(x) === pinOf(o); })) all.push(o);
       var row = document.createElement('tr');
       row.setAttribute('data-row', '');
-      row.innerHTML = '<td class="ui-table-cell"><label class="ui-field ui-field--inline ui-field-wide">' +
-        '<span class="ui-field-head"><span class="ui-field-label">Port</span></span>' +
-        '<select class="ui-select pt-pin" data-pin></select></label>' +
-        '<span class="ui-badge ui-badge--accent" data-chip-badge hidden>chip values</span></td>' +
+      row.innerHTML = '<td class="ui-table-cell"><div class="ui-field">' +
+        '<select class="ui-select pt-pin" data-pin aria-label="Port"></select>' +
+        '<span class="ui-badge ui-badge--accent" data-chip-badge hidden>chip values</span></div></td>' +
         '<td class="ui-table-cell" data-kind-cell></td><td class="ui-table-cell">' +
         '<div class="ui-field-stack ui-field-stack--dense" data-line></div></td>' +
         '<td class="ui-table-cell"><button type="button" class="btn-sm outline" data-remove aria-label="Remove this port">Remove</button></td>';
