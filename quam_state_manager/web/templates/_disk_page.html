@@ -11,8 +11,9 @@
    someone's copy of what their chip was; the only thing worse than a full disk
    is a tool that quietly threw away the version they needed. #}
 <div class="disk-page">
-    <h2 style="margin:0 0 .2rem">SM storage
-        <span class="muted" style="font-size:.6em">— {{ disk.root }}</span></h2>
+    {% from '_ui.html' import ui_path %}
+    <header class="ui-head ui-head--data"><h2 class="ui-head-title">SM storage</h2></header>
+    {{ ui_path(disk.root) }}
     <p class="muted" style="margin:0 0 .6rem;font-size:.85em">
         <b>{{ sz(disk.bytes) }}</b> in {{ '{:,}'.format(disk.files) }} files.
         Warning at <b>{{ '%g'|format(disk.limit_gb) }} GB</b>.

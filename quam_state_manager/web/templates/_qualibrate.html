@@ -41,10 +41,10 @@
        Manager without touching any qualibrate config.</p>
     {# docs/63 §B — the config LOCATION is the one thing the user can steer
        (an SM-side memo; the tree itself stays untouched). #}
-    <details class="qualibrate-locate-details">
-        <summary class="muted">Config location&hellip;
+    <details class="qualibrate-locate-details ui-disclosure ui-config-location">
+        <summary class="ui-disclosure-summary">Config location&hellip;
             {% if listing.source == 'sm-override' %}<span class="locate-src-chip">chosen in SM</span>{% endif %}</summary>
-        <div class="qualibrate-locate-body">
+        <div class="qualibrate-locate-body ui-disclosure-body">
             {% include '_qualibrate_locate.html' %}
             {% if listing.source == 'sm-override' %}
             {% include '_qualibrate_env_note.html' %}

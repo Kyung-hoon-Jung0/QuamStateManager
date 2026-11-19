@@ -201,7 +201,8 @@ def test_connection_fields_come_first_and_admin_url_sits_in_advanced(rig):
     _open(app, "c1", _ctx("10.9.8.7"))
     html = _body(app, "settings")
     host, admin = html.index('name="host"'), html.index('name="admin_url"')
-    fold = html.rindex('<details class="ui-disclosure"', 0, admin)
+    fold = html.rindex('<details class="ui-disclosure', 0, admin)
+    assert html.startswith('<details class="ui-disclosure ui-config-advanced"', fold)
     assert host < fold < admin and 'Advanced</summary>' in html[fold:admin]
     assert "<details" not in html[host:fold] and " open>" not in html[fold:admin].split(">")[0] + ">"
 

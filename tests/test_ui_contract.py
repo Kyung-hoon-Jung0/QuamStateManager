@@ -1539,6 +1539,61 @@ def test_the_apply_to_other_pairs_why_column_keeps_a_readable_width():
     assert '"ui-table-muted gen-rule-c-why"' in js
 
 
+# Configuration surfaces use the existing kit parts with these scoped layout rules.
+_CONFIG_SELECTORS = {
+    '.ui-config-profile .ui-table',
+    '.ui-config-profile .ui-table-cell',
+    '.ui-config-profile .ui-select',
+    '.ui-config-location > .ui-disclosure-body',
+    '.ui-config-advanced > .ui-disclosure-body',
+    '.ui-generate #gen-pair-gate.ui-select',
+    '.ui-generate #gen-naming-preset.ui-select',
+    '.ui-config-environments .sched-env-row',
+    '.ui-config-environments .sched-env-row.selected',
+    '.ui-config-environments .sched-env-pick',
+    '.ui-config-environments .selected .sched-env-pick',
+    '.ui-config-environments .sched-env-pick:focus-visible',
+    '.ui-config-environments .sched-env-name',
+    '.ui-config-environments .sched-env-path',
+    '.ui-config-environments .sched-env-status',
+    '.ui-config-sources .ui-select.ui-select',
+    '.ui-config-sources .ui-btn-icon',
+    '.ui-config-sources .ui-btn-icon.active',
+    '.ui-config-sources .ui-btn-icon:hover',
+    '.ui-config-location .locate-form',
+    '.ui-config-location .locate-input',
+    '.ui-config-location .locate-input:focus',
+    '.ui-config-location .locate-input::placeholder',
+    '.ui-config-location .btn-sm',
+    '.ui-config-diagnostics .diag-checks-dialog',
+    '.ui-config-diagnostics .diag-checks-dialog::backdrop',
+    '.ui-config-diagnostics .diag-checks-head',
+    '.ui-config-diagnostics .diag-checks-body',
+    '.ui-config-diagnostics .diag-checks-title',
+    '.ui-config-diagnostics .diag-checks-sub',
+    '.ui-config-diagnostics .diag-checks-desc',
+    '.ui-config-diagnostics .diag-checks-name',
+    '.ui-config-diagnostics .diag-checks-group-title',
+    '.ui-check--radio > input',
+    '.ui-check--radio > input::after',
+    '.ui-generate .gen-chassis-count-field > .ui-field-label',
+    '.ui-dialog-foot:has(> #czg-check-hint)',
+    '.ui-dialog-foot > #czg-check-hint',
+    '.ui-dialog-foot > #czg-check-hint[hidden]',
+}
+
+
+def test_config_selectors_are_reviewed_and_tokenized():
+    raw = _read(_UI_KIT)
+    body = raw.split("/* Kit sweep wave 2: config */", 1)[1].split("/* Kit sweep wave 2:", 1)[0]
+    seen = set()
+    for sel, decls, stack in _blocks(_strip_comments(body)):
+        assert not stack
+        assert not any(k.startswith("--") for k, _ in _decls(decls))
+        seen.update(part.strip() for part in sel.split(","))
+    assert seen == _CONFIG_SELECTORS
+
+
 def test_stage6_feature_selectors_are_reviewed_and_tokenized():
     parts = _ui_kit_parts()
     assert len(parts) == 5 and parts[4]
@@ -1828,7 +1883,7 @@ for (const [id, selector, matches] of data.cases) {
         (_TPL / '_pulse_row.html', 'input', 'pulse-sel-chk', _DEFAULT_CHECK),
         (_TPL / '_bulkedit.html', 'input', 'bulk-freq-sync', _DEFAULT_CHECK),
         (_STATIC / 'chip-status.js', 'input', 'topo-meta-cb', _DEFAULT_CHECK),
-        (_TPL / '_qualibrate.html', 'summary', 'muted', _DEFAULT_SUMMARY),
+        (_TPL / '_qualibrate.html', 'summary', 'ui-disclosure-summary', _DEFAULT_SUMMARY),
         (_TPL / '_param_history.html', 'summary', 'ph-drift-title', _DEFAULT_SUMMARY),
     )
     for i, (path, tag, marker, selector) in enumerate(sources):
@@ -1865,7 +1920,7 @@ def test_migrated_audit_elements_keep_their_existing_kit_parts():
     assert '<summary class="ui-disclosure-summary">AI judge' in autofit
     assert '<summary class="ui-disclosure-summary">Chip profile' in autofit
     generate = _read(_STATIC / 'generate.js')
-    assert 'lab.className = "ui-check gen-arch-radio"' in generate
+    assert 'lab.className = "ui-check ui-check--radio gen-arch-radio"' in generate
     assert 'var r = kitElement("input", "radio");' in generate
     scheduler = _read(_STATIC / 'scheduler.js')
     assert '<button type="button" class="btn-sm sched-env-pick">' in scheduler

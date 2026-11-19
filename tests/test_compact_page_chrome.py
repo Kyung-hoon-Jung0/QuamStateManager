@@ -14,7 +14,7 @@ def source(name):
 
 
 def rule(selector):
-    css = source("static/ui-kit.css").split("/* Kit sweep wave 2: chrome */")[1]
+    css = source("static/ui-kit.css").split("/* Kit sweep wave 2: chrome */")[1].split("/* Kit sweep wave 2:")[0]
     match = re.search(re.escape(selector) + r"\s*\{([^}]+)\}", css)
     assert match, selector
     return match[1]
@@ -97,7 +97,7 @@ def test_folder_browser_rows_and_bands_share_kit_spacing():
 
 
 def test_wizard_tabs_scroll_within_narrow_content():
-    css = source("static/ui-kit.css").split("/* Kit sweep wave 2: chrome */")[1]
+    css = source("static/ui-kit.css").split("/* Kit sweep wave 2: chrome */")[1].split("/* Kit sweep wave 2:")[0]
     narrow = re.search(r"@media \(max-width: 600px\) \{((?:[^{}]*\{[^}]*\})*)\s*\}", css)
     assert narrow and '.ui-chrome-content .gen-steps {' in narrow[1]
     assert '.ui-chrome-content .gen-steps > li {' in narrow[1]
@@ -130,7 +130,7 @@ def test_history_restore_of_search_gets_the_full_page(loaded_client):
 
 
 def test_chrome_additions_are_theme_independent_and_narrow_safe():
-    css = source("static/ui-kit.css").split("/* Kit sweep wave 2: chrome */")[1]
+    css = source("static/ui-kit.css").split("/* Kit sweep wave 2: chrome */")[1].split("/* Kit sweep wave 2:")[0]
     assert not re.search(r'#[0-9a-fA-F]{3,8}\b|rgba?\(|data-theme', css)
     assert 'max-width: 100%' in rule('.ui-pulse-list .pagination')
     assert 'min-width: 0' in rule('.ui-gate-summary')
@@ -144,7 +144,7 @@ def test_settings_target_fields_keep_room_for_labels_and_inputs():
 
 
 def test_chrome_css_only_changes_the_reviewed_scopes():
-    css = source("static/ui-kit.css").split("/* Kit sweep wave 2: chrome */")[1]
+    css = source("static/ui-kit.css").split("/* Kit sweep wave 2: chrome */")[1].split("/* Kit sweep wave 2:")[0]
     selectors = set(re.findall(r"([^{}]+)\{", css))
     assert {s.strip() for s in selectors} == {
         '.ui-chrome-content',

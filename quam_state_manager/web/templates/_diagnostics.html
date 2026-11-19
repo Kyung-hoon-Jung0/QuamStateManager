@@ -12,7 +12,9 @@
   {{ ui_head_fold() }}
 </div>
 
-{% if diag_catalog %}{% include '_diagnostics_checks.html' %}{% endif %}
+{% if diag_catalog %}
+<div class="ui-config-diagnostics">{% include '_diagnostics_checks.html' %}</div>
+{% endif %}
 
 {% if env_card is defined and env_card %}{% include '_diagnostics_env.html' %}{% endif %}
 {% if types_card is defined %}{% include '_diagnostics_types.html' %}{% endif %}

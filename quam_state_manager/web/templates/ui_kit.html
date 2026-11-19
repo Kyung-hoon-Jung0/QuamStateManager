@@ -478,4 +478,28 @@
         <span class="ui-btn-icon ui-btn-icon--warn" role="button" tabindex="0" title="Warning">&#9888;</span>
     </div>
 </section>
+<section class="ui-kit-section"><h2 class="ui-kit-section-title">Configuration tools</h2>
+<label class="ui-check ui-check--radio"><input type="radio" checked name="kit-architecture">Architecture choice</label>
+<div class="ui-config-diagnostics"><div class="diag-checks-dialog">
+<div class="diag-checks-head"><div><strong class="diag-checks-title">Diagnostic checks</strong>
+<p class="diag-checks-sub">The header and body share one surface.</p></div></div>
+<div class="diag-checks-body"><h4 class="diag-checks-group-title">Structure</h4>
+<span class="diag-checks-name">References</span><p class="diag-checks-desc">Checks the loaded state.</p>
+</div></div></div>
+<div class="ui-config-profile"><p class="ui-note">Profile answers travel with the state file.</p>
+<table class="ui-table"><tbody><tr><td class="ui-table-cell">Design fact</td>
+<td class="ui-table-cell"><select class="ui-select" aria-label="Design fact"><option>Unknown</option></select>
+</td></tr></tbody></table></div>
+<details class="ui-disclosure ui-config-location"><summary class="ui-disclosure-summary">Config location</summary>
+<div class="ui-disclosure-body"><input class="ui-input" aria-label="Config location"></div></details>
+<details class="ui-disclosure ui-config-advanced"><summary class="ui-disclosure-summary">Advanced connection</summary>
+<div class="ui-disclosure-body"><p class="ui-note">Optional admin URL</p></div></details>
+<div class="ui-config-environments"><div class="sched-env-row selected">
+<button type="button" class="sched-env-pick btn-sm" aria-label="Select environment"></button>
+<span class="sched-env-name">Python environment</span><span class="sched-env-path">C:\env\python.exe</span>
+<span class="sched-env-status">Ready</span></div></div>
+<div class="ui-config-sources"><select class="ui-select" aria-label="Source"><option>Workspace</option></select>
+<button type="button" class="ui-btn-icon active" aria-label="Reference">&#9733;</button>
+<button type="button" class="ui-btn-icon" aria-label="Remove">&times;</button></div>
+</section>
 {% endblock %}

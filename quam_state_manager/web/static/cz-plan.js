@@ -1602,7 +1602,8 @@
             });
     }
 
-    window.CzPlan = { mount: mount, refresh: refresh, _esc: esc, _deltaRange: deltaRange, _planCounts: planCounts,
+    window.CzPlan = { mount: mount, refresh: refresh,
+                      _esc: esc, _deltaRange: deltaRange, _planCounts: planCounts,
                       drawMap: function (root) { return window.CzMap ? window.CzMap.draw(root) : Promise.resolve(); } };
     document.addEventListener('DOMContentLoaded', mount);
     document.addEventListener('htmx:afterSwap', mount);

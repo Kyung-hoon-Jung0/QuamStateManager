@@ -330,6 +330,9 @@ function tableWidths(el, sw, cw) {
     { const off = [...doc.querySelectorAll('#czg-class-list .ui-option[aria-disabled="true"]')]; ok(off.length > 0 && /SM does not know/.test(off[0].querySelector('.ui-option-desc').textContent) && $('#czg-class').classList.contains('ui-menu-trigger'), 'gate class is a kit menu; an unavailable class is a disabled row with its reason'); }
     ok(count('plan') === 1 && sent[0].body.pairs.join() === 'q1-2', 'the plan is asked on open');
     ok(prim().textContent === 'Check' && !prim().disabled, 'Check before a check');
+    const hintShown = () => !!$('#czg-check-hint') && !$('#czg-check-hint').hidden
+    && (prim().getAttribute('aria-describedby') || '').split(/\s+/).includes('czg-check-hint');
+    ok($('#czg-check-hint') && !hintShown(), 'an enabled Check carries no held-Check hint');
     ok($('#czg-slots .ui-badge') && /default/.test($('#czg-slots').textContent), 'fields marked default');
     ok(!d.querySelector('[style]') && !d.querySelector('[onclick]'), 'no inline style or handler');
 
@@ -355,11 +358,14 @@ function tableWidths(el, sw, cw) {
     prim().click();
     await tick(5);
     ok(prim().disabled && /Checking with the lab's code, about 10 s/.test($('#czg-status').textContent), 'busy: disabled + status text');
+    ok(hintShown() && /valid gate plan and no invalid fields/.test($('#czg-check-hint').textContent),
+       'a held Check says why, and the button is described by that hint');
     prim().click(); prim().click(); window.CzGate._check();
     ok(count('check') === 1, 'clicks while busy are ignored');
     release();
     await settle();
     ok(prim().textContent === 'Create gate' && !prim().disabled, 'after a passing check: Create gate');
+    ok(!hintShown(), 'the held-Check hint never labels Create');
     ok(charts.length === 1 && charts[0].lanes[0].key === 'q1.z', 'the chart gets the server data');
     { const tile = $('#czg-tiles [data-tile="peak"]'); ok(tile && tile.querySelector('.ui-stat-value').firstChild.textContent === '0.1903'
        && /V/.test(tile.querySelector('.ui-stat-unit').textContent) && tile.querySelector('.ui-text-quiet').textContent === 'on q1.z',
@@ -799,6 +805,8 @@ function tableWidths(el, sw, cw) {
     ok(/Fix the marked field, then press Check\./.test($('#czg-status').textContent)
        && !/check again/.test($('#czg-status').textContent),
        'a marked field after a check: the status line under the buttons agrees with the note');
+    ok(!hintShown() && doc.querySelectorAll('#czg-check-hint').length === 1,
+       'a marked field: its own line explains the held Check, the general hint steps aside');
     const lenBadge = fieldOf('flux_pulse_qubit', 'length').closest('.ui-field')
         .querySelector('.ui-field-head .ui-badge');
     ok(!lenBadge || !/default|entered|copied/.test(lenBadge.textContent),
