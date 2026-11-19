@@ -2,8 +2,13 @@
 from __future__ import annotations
 
 import numpy as np
-from scipy.ndimage import gaussian_filter1d, uniform_filter1d, median_filter
-from scipy.signal import savgol_filter
+
+from quam_state_manager.core.scipy_import import import_scipy
+
+gaussian_filter1d = import_scipy("scipy.ndimage").gaussian_filter1d
+uniform_filter1d = import_scipy("scipy.ndimage").uniform_filter1d
+median_filter = import_scipy("scipy.ndimage").median_filter
+savgol_filter = import_scipy("scipy.signal").savgol_filter
 
 
 def window_size(sigma, kernel):

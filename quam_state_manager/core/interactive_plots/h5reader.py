@@ -75,7 +75,8 @@ def _nc_coord_values(var) -> list:
 def _probe_vars_netcdf(path: Path) -> dict | None:
     """probe_vars, NetCDF-classic edition — same payload shape."""
     try:
-        from scipy.io import netcdf_file
+        from quam_state_manager.core.scipy_import import import_scipy
+        netcdf_file = import_scipy("scipy.io").netcdf_file
     except ImportError:
         return None
     out: dict = {"vars": {}, "coords": {}, "qubits": []}
@@ -103,7 +104,8 @@ def _load_dataset_netcdf(path: Path, want, max_elements: int) -> dict | None:
     """load_dataset, NetCDF-classic edition — same payload shape."""
     try:
         import numpy as np
-        from scipy.io import netcdf_file
+        from quam_state_manager.core.scipy_import import import_scipy
+        netcdf_file = import_scipy("scipy.io").netcdf_file
     except ImportError:
         return None
     out_vars: dict = {}

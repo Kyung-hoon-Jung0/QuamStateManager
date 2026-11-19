@@ -105,7 +105,10 @@ from dataclasses import astuple, dataclass, field
 from typing import Any
 
 import numpy as np
-from scipy import signal
+
+from quam_state_manager.core.scipy_import import import_scipy
+
+signal = import_scipy("scipy.signal")
 
 __all__ = [
     "TS_NS", "FS_HZ", "MAX_FIR_TAPS", "MAX_IIR", "FF_TAP_LIMIT",

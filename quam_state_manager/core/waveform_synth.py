@@ -24,11 +24,14 @@ The preview is labeled "synthesized" in the UI; ``machine.generate_config()``
 from __future__ import annotations
 
 import copy
+import logging
 import math
 import threading
 from typing import Any, Callable
 
 import numpy as np
+
+from quam_state_manager.core.scipy_import import import_scipy
 
 
 # scipy is imported where it is used, never at module import: this module is
@@ -37,25 +40,25 @@ import numpy as np
 # after an install -- time `qsm serve` spent before binding its port, so the
 # browser said "connection refused". The functions are the same scipy ones
 # (the bit-exact golden against the lab's quam still holds).
+# Every scipy import goes through ``scipy_import.import_scipy`` (one lock
+# shared with the background preload; a concurrent import from two threads
+# can leave scipy half-imported for the whole process).
 def gaussian_filter1d(*args, **kwargs):
-    from scipy.ndimage import gaussian_filter1d as _f
-    return _f(*args, **kwargs)
+    return import_scipy("scipy.ndimage").gaussian_filter1d(*args, **kwargs)
 
 
 def _blackman_window(*args, **kwargs):
-    from scipy.signal.windows import blackman as _f
-    return _f(*args, **kwargs)
+    return import_scipy("scipy.signal.windows").blackman(*args, **kwargs)
 
 
 def _gaussian_window(*args, **kwargs):
-    from scipy.signal.windows import gaussian as _f
-    return _f(*args, **kwargs)
+    return import_scipy("scipy.signal.windows").gaussian(*args, **kwargs)
 
 
 def _import_scipy() -> None:
     try:
-        import scipy.ndimage  # noqa: F401
-        import scipy.signal.windows  # noqa: F401
+        import_scipy("scipy.ndimage")
+        import_scipy("scipy.signal.windows")
     except ImportError:
         pass
 
@@ -85,8 +88,7 @@ def _scipy_loaded() -> bool:
 
 
 def _import_step(name: str) -> None:
-    import importlib
-    importlib.import_module(name)
+    import_scipy(name)
 
 
 def _preload_steps(max_wait_s: float) -> None:
@@ -98,7 +100,12 @@ def _preload_steps(max_wait_s: float) -> None:
             time.sleep(0.05)
         try:
             _import_step(name)
-        except Exception:  # noqa: BLE001 -- a module this scipy lacks: the next one
+        except ImportError:  # a module this scipy lacks: the next one
+            continue
+        except Exception:  # noqa: BLE001 -- a preload never fails the server
+            # import_scipy already re-bound what the failure orphaned; say so
+            logging.getLogger(__name__).warning(
+                "scipy preload step %s failed", name, exc_info=True)
             continue
     _import_scipy()
 
