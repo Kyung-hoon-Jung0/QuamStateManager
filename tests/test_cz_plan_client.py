@@ -73,7 +73,8 @@ def test_the_page_reads_title_status_figures_card_then_the_collapsed_notes(tmp_p
         assert " open" not in tag, tag
     lede = html[html.index('class="muted czp-lede"'):]
     lede = lede[:lede.index("</details>")]
-    assert '<details class="czp-help">' in lede and "|11&rang;&ndash;|20&rang;" in lede.split("<details", 1)[1]
+    assert '<details class="czp-help ui-disclosure">' in lede
+    assert "|11&rang;&ndash;|20&rang;" in lede.split("<details", 1)[1]
     assert "|11&rang;" not in lede.split("<details", 1)[0], "the physics sits behind the ? only"
     assert lede.index("Where each CZ") < lede.index("Operating values")
     assert '<small class="muted czp-lede-caveat">' in lede

@@ -1462,3 +1462,16 @@ def test_raw_form_control_measure_can_fail(tmp_path):
     assert measure_raw_form_controls([tpl]) == {"_opx_x.html": [
         "fieldset", "legend", "label without a kit class", "input without ui-input",
         "checkbox outside label.ui-check", "textarea without ui-textarea"]}
+
+
+def test_kit_sweep_generate_files_have_no_bare_controls():
+    files = {
+        "templates/_generate.html", "static/generate.js", "static/gen-additions.js",
+        "templates/_diagram_add.html", "static/diagram-add.js", "templates/_cz_plan.html",
+        "static/cz-plan.js", "templates/_map_tools.html", "templates/_chip_name_banner.html",
+        "templates/_zline.html",
+    }
+    for measure in (measure_bare_controls, measure_script_controls, measure_bare_buttons):
+        counts = measure()
+        for path in sorted(files):
+            assert counts.get(path, 0) == 0, (measure.__name__, path, counts.get(path))

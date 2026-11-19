@@ -35,7 +35,7 @@
     flagged | length ~ ' of ' ~ rows | length ~ ' flux line' ~ ('' if rows | length == 1 else 's') ~ (' needs a look.' if flagged | length == 1 else ' need a look.'),
     'The Notes column says why for each one (for example a filter outside the documented range).') }}</div>
 {%- endif %}
-<table id="zline-table" class="data-table zline-table" role="grid">
+<table id="zline-table" class="data-table zline-table ui-table" role="grid">
     <thead>
         <tr>
             <th>Line</th>
@@ -43,7 +43,10 @@
             <th class="ui-table-num" title="exponential_filter entries (A, tau)">Exponentials</th>
             <th class="ui-table-num" title="feedforward_filter taps (0.5 ns each)">FIR taps</th>
             <th class="ui-table-num" title="sum of the FIR taps = the FIR's DC gain">FIR sum</th>
-            <th title="Can the exponential correction be drawn under each QOP model? QOP 3.5+ corrects the sum of all exponentials at once; QOP 3.4 and earlier cascade one correction per exponential, so stability can differ">QOP &ge; 3.5 / &le; 3.4</th>
+            <th title="{{ ('Can the exponential correction be drawn under each QOP model? ' ~
+          'QOP 3.5+ corrects the sum of all exponentials at once; QOP 3.4 ' ~
+          'and earlier cascade one correction per exponential, so stability ' ~
+          'can differ') | safe }}">QOP &ge; 3.5 / &le; 3.4</th>
             <th>Notes</th>
         </tr>
     </thead>
@@ -80,11 +83,14 @@
 <section class="zline-detail" aria-live="polite">
     <div class="zline-controls">
         <h3 id="zline-title" class="zline-title">&nbsp;</h3>
-        <label>Flux pulse
-            <select id="zline-op" aria-label="Flux pulse to draw"></select>
+        <label class="ui-field"><span class="ui-field-label">Flux pulse</span>
+<select id="zline-op" aria-label="Flux pulse to draw" class="ui-select"></select>
         </label>
-        <label title="QOP 3.5+ corrects the sum of all exponentials at once; QOP 3.4 and earlier cascade one correction per exponential">Model
-            <select id="zline-model" aria-label="Filter model (QOP version)">
+                <label
+          title="{{ ('QOP 3.5+ corrects the sum of all exponentials at once; QOP 3.4 ' ~
+          'and earlier cascade one correction per exponential') | safe }}"
+          class="ui-field" ><span class="ui-field-label">Model</span>
+<select id="zline-model" aria-label="Filter model (QOP version)" class="ui-select">
                 <option value="sum">QOP &ge; 3.5 (sum)</option>
                 <option value="cascade">QOP &le; 3.4 (cascade)</option>
             </select>
