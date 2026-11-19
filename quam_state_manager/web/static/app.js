@@ -3079,12 +3079,22 @@ window.SidebarNarrow = (function () {
         setCollapsed(l, narrow ? true : stored());
     }
     function close() { var l = layout(); if (isOpen(l)) setCollapsed(l, true); }
+    // Back/Forward with no cached page swaps in a fresh body: its .app-layout has
+    // neither class, so the narrow rule is applied again to the new element.
+    function reapply() {
+        var l = layout();
+        if (!l || !mq) return;
+        var narrow = !!mq.matches;
+        l.classList.toggle('sidebar-narrow', narrow);
+        setCollapsed(l, narrow ? true : stored());
+    }
     function init() {
         try { mq = window.matchMedia ? window.matchMedia(NARROW) : null; } catch (e) { mq = null; }
         if (!mq) return;
         if (mq.addEventListener) mq.addEventListener('change', sync);
         else if (mq.addListener) mq.addListener(sync);
         sync();
+        document.addEventListener('htmx:historyRestore', reapply);
         document.addEventListener('click', function (ev) {
             if (!isOpen(layout())) return;
             var t = ev.target;
@@ -3101,7 +3111,7 @@ window.SidebarNarrow = (function () {
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
     else init();
-    return { sync: sync, close: close, query: NARROW };
+    return { sync: sync, close: close, reapply: reapply, query: NARROW };
 })();
 
 /* A collapsed sidebar (the narrow-window overlay while closed, or the wide window's own
@@ -3116,13 +3126,21 @@ window.SidebarInert = (function () {
         var closed = l.classList.contains('sidebar-collapsed');
         if (closed) sb.setAttribute('inert', ''); else sb.removeAttribute('inert');
     }
-    function init() {
+    var watched = null, observer = null;
+    function watch() {
         var l = document.querySelector('.app-layout');
         if (!l) return;
         sync();
-        if (window.MutationObserver) {
-            new MutationObserver(sync).observe(l, { attributes: true, attributeFilter: ['class'] });
-        }
+        if (l === watched || !window.MutationObserver) return;
+        // A history restore replaces the layout element: follow the new one.
+        if (observer) observer.disconnect();
+        observer = new MutationObserver(sync);
+        observer.observe(l, { attributes: true, attributeFilter: ['class'] });
+        watched = l;
+    }
+    function init() {
+        watch();
+        document.addEventListener('htmx:historyRestore', watch);
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
     else init();
@@ -30801,6 +30819,8 @@ window.StateVersions = (function () {
                 + (chipKey ? '&chip_key=' + encodeURIComponent(chipKey) : '');
         }
         close();
+        // The comparison replaces the page: the top-bar menu that held the panel closes with it.
+        if (window.TopbarMore && window.TopbarMore.isOpen()) window.TopbarMore.close(false);
         if (window.htmx && window._navigateTablePane) {
             // The app's one main-pane navigation: it pushes an htmx-stamped entry after the swap and re-lights the
             // sidebar, so Back and Forward restore the comparison (a plain {} entry was ignored by htmx on Forward).
