@@ -117,8 +117,25 @@ class TestStandalonePage:  # D-27
 
     def test_sidebar_entry_under_instrument_wiring(self, client):
         html = client.get("/").get_data(as_text=True)
-        i, j = html.find('data-nav-key="instrument"'), html.find('data-nav-key="port_play"')
-        assert 0 < i < j and 'href="/port-play"' in html
+        group = html.split('data-nav-key="instrument"', 1)[1].split('data-nav-key="topology"', 1)[0]
+        assert 'class="nav-sub-row nav-floatable"' in group
+        assert 'href="/instrument"' in group and 'class="nav-float-btn"' in group
+        assert "FloatWiring.toggle()" in group
+        assert "toggleNavSub(this, 'instrument-subnav', 'quam_instrument_nav_collapsed')" in group
+        sub = re.search(r'<ul\b[^>]*id="instrument-subnav"[^>]*>(.*?)</ul>', group, re.S)
+        assert sub and 'nav-subitems-collapsed' in sub[0]
+        assert 'data-nav-key="port_play"' in sub[1] and 'href="/port-play"' in sub[1]
+
+    @pytest.mark.parametrize("page", ["instrument", "port_play"])
+    def test_instrument_group_expands_and_marks_the_current_page(self, client, page):
+        route = "/instrument" if page == "instrument" else "/port-play"
+        html = client.get(route).get_data(as_text=True)
+        group = html.split('data-nav-key="instrument"', 1)[1].split('data-nav-key="topology"', 1)[0]
+        assert 'aria-expanded="true"' in group
+        sub = re.search(r'<ul\b[^>]*id="instrument-subnav"[^>]*>', group, re.S)
+        assert sub and "nav-subitems-collapsed" not in sub[0]
+        link = re.search(r'<a\b[^>]*href="' + route + r'"[^>]*>', group, re.S)
+        assert link and 'class="active"' in link[0]
 
 
 class TestCrossLinks:  # D-28

@@ -1,6 +1,6 @@
 {# The add panel under the chip map (core/diagram_add.py). Staging writes the
    working copy only; the pending tray, Review / Apply and one Ctrl+Z hold it. #}
-{# A port field is a listbox, not a native <select>: hovering or arrowing onto
+{# A port field is a listbox, not a native <select class="ui-select">: hovering or arrowing onto
    an option lights that port on the rack (a native option gives no hover
    events). The value rides a hidden input of the same name. #}
 {% macro port_list(name, cands, role, label, empty) -%}
@@ -23,7 +23,9 @@
 {% macro filters_row(cands) -%}
 {% if cands | selectattr('carries') | list %}
 <tr data-cm-add-filters-row><th class="ui-table-head" scope="row">Previous line's filters</th>
-    <td class="ui-table-cell"><select name="port_filters" aria-label="Filters a reused port still carries" data-cm-add-filters>
+        <td class="ui-table-cell">
+    <select name="port_filters" aria-label="Filters a reused port still carries" data-cm-add-filters class="ui-select"
+      >
       <option value="clear" selected>clear the FIR / IIR filters</option><option value="keep">keep them</option></select></td>
     <td class="ui-table-cell ui-table-muted">only for a picked port that still carries a previous line's FIR / IIR filters (named in its list entry); clearing resets them to a new port's values. A delay is always kept: recalibrate the z-line delay for the new element</td></tr>
 {% endif %}
@@ -42,18 +44,26 @@
     <input type="hidden" name="feedline" value="{{ d.feedline }}">
     <table class="ui-table">
       <tr><th class="ui-table-head" scope="row">Name</th>
-          <td class="ui-table-cell"><input name="name" value="{{ d.name }}" required aria-label="Qubit name"></td>
+                    <td class="ui-table-cell">
+          <input name="name" value="{{ d.name }}" required aria-label="Qubit name" class="ui-input"></td>
           <td class="ui-table-cell ui-table-muted">follows the feedline's naming</td></tr>
       <tr><th class="ui-table-head" scope="row">Feedline</th>
-          <td class="ui-table-cell"><select name="feedline_pick" aria-label="Feedline" data-cm-add-feedline>
+                    <td class="ui-table-cell">
+          <select name="feedline_pick" aria-label="Feedline" data-cm-add-feedline class="ui-select">
             {% for f in d.feedlines %}<option value="{{ f }}"{% if f == d.feedline %} selected{% endif %}>{{ f }}</option>{% endfor %}
           </select></td>
           <td class="ui-table-cell ui-table-muted">or click a qubit on the map to join its feedline</td></tr>
       <tr><th class="ui-table-head" scope="row">Drive frequency (Hz)</th>
-          <td class="ui-table-cell"><input name="drive_rf" inputmode="decimal" value="{{ '%.0f' | format(d.drive_rf) if d.drive_rf is not none else '' }}" aria-label="Drive frequency in Hz" data-cm-add-rf></td>
+                    <td class="ui-table-cell">
+          <input name="drive_rf" inputmode="decimal"
+            value="{{ '%.0f' | format(d.drive_rf) if d.drive_rf is not none else '' }}"
+            aria-label="Drive frequency in Hz" data-cm-add-rf class="ui-input" ></td>
           <td class="ui-table-cell ui-table-muted">starts at {{ d.template }}'s value</td></tr>
       <tr><th class="ui-table-head" scope="row">Readout frequency (Hz)</th>
-          <td class="ui-table-cell"><input name="readout_rf" inputmode="decimal" value="{{ '%.0f' | format(d.readout_rf) if d.readout_rf is not none else '' }}" aria-label="Readout frequency in Hz"></td>
+                    <td class="ui-table-cell">
+          <input name="readout_rf" inputmode="decimal"
+            value="{{ '%.0f' | format(d.readout_rf) if d.readout_rf is not none else '' }}"
+            aria-label="Readout frequency in Hz" class="ui-input" ></td>
           <td class="ui-table-cell ui-table-muted">{% if d.readout_note %}<span class="ui-badge ui-badge--warn">{{ d.readout_note }}</span>{% else %}the next free slot on this feedline, within its LO's IF window{% endif %}</td></tr>
       {{ active_row(d.active, d.template, 'qubit') }}
     </table>

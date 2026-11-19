@@ -42,7 +42,9 @@
      aria-label="Chip name prompt">
   {# one compact row: the why lives in the title, the text truncates before it wraps #}
   <span class="ui-notice-icon" aria-hidden="true">&#8505;</span>
-  <span class="cnb-text ui-notice-text" title="Naming it (stored in extras.chip_name) keeps history, trends and run attribution stable even when state folders move or share a parent directory.">
+  <span class="cnb-text ui-notice-text" title="{{ ('Naming it (stored in extras.chip_name) keeps history, trends and ' ~
+          'run attribution stable even when state folders move or share a ' ~
+          'parent directory.') | safe }}">
     <strong class="ui-notice-key">No chip name.</strong>
     <span class="cnb-note">Set one to keep history and run attribution stable.</span>
   </span>
@@ -50,12 +52,14 @@
         hx-target="#chip-name-banner" hx-swap="outerHTML">
     <input type="text" name="name" value="{{ chip_name_prompt.suggest }}"
            maxlength="64" required aria-label="Chip name"
-           placeholder="chip name">
+           placeholder="chip name" class="ui-input">
     <input type="text" name="data_folder" id="cnb-name-df"
            aria-label="Data folder (optional)"
            placeholder="data folder — e.g. D:/data/myproject"
            list="cnb-df-options"
-           title="Optional: this chip's experiment-data root (an ABSOLUTE path) — stored in extras.data_folder so Datasets auto-pairs with it">
+                      title="{{ ('Optional: this chip\'s experiment-data root (an ABSOLUTE path) ' ~
+          '&#8212; stored in extras.data_folder so Datasets auto-pairs with ' ~
+          'it') | safe }}" class="ui-input">
     <datalist id="cnb-df-options">
       {% for c in data_folder_candidates %}<option value="{{ c.value }}">{{ c.label }}</option>{% endfor %}
     </datalist>
@@ -87,7 +91,7 @@
         hx-target="#chip-name-banner" hx-swap="outerHTML">
     <input type="text" id="cnb-df-input" name="value"
            aria-label="Data folder path" placeholder="e.g. D:/data/myproject"
-           list="cnb-df-options">
+           list="cnb-df-options" class="ui-input">
     <datalist id="cnb-df-options">
       {% for c in data_folder_candidates %}<option value="{{ c.value }}">{{ c.label }}</option>{% endfor %}
     </datalist>
@@ -103,7 +107,7 @@
             hx-confirm="Remove extras.data_folder from the working state?"
             title="Remove the declared data folder">Clear</button>
   </form>
-  <button type="button" class="cnb-x ui-btn-icon" aria-label="Hide for this session"
+  <button type="button" class="cnb-x ui-btn-icon btn-sm" aria-label="Hide for this session"
           title="Hide this notice for this browser session"
           onclick="try{sessionStorage.setItem('quam_banner_hide', this.closest('[data-banner-sig]').getAttribute('data-banner-sig'));}catch(e){}; this.closest('#chip-name-banner').remove();">&times;</button>
 </div>

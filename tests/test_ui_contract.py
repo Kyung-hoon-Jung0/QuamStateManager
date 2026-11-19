@@ -1333,7 +1333,7 @@ def test_a_narrow_pulse_detail_neither_scrolls_nor_squeezes_its_header_tag_or_pi
     assert head.get("white-space") == "normal" and head.get("overflow-wrap") == "anywhere", head
     assert head.get("min-width") == "0", head
     detail = _read(_TPL / "_pulse_detail.html")
-    assert 'class="pulse-overlay-pick"' in detail and 'class="pulse-sec-role"' in detail
+    assert 'class="pulse-overlay-pick ui-select"' in detail and 'class="pulse-sec-role"' in detail
     assert "{% include '_inspector_header.html' %}" in detail
     assert "<strong>{{ inspector_label }}</strong>" in _read(_TPL / "_inspector_header.html")
     # every other inspector keeps its one-line clipped title
@@ -1462,6 +1462,67 @@ def test_raw_form_control_measure_can_fail(tmp_path):
     assert measure_raw_form_controls([tpl]) == {"_opx_x.html": [
         "fieldset", "legend", "label without a kit class", "input without ui-input",
         "checkbox outside label.ui-check", "textarea without ui-textarea"]}
+
+
+def test_kit_sweep_port_files_have_no_bare_controls():
+    files = {
+        "static/port-play.js", "templates/port_play.html", "templates/_port_test.html",
+        "templates/_port_test_targets.html", "templates/base.html",
+        "templates/_opx_monitor_body.html", "templates/ui_kit.html",
+    }
+    for measure in (measure_bare_controls, measure_script_controls, measure_bare_buttons):
+        counts = measure()
+        for file in files:
+            assert counts.get(file, 0) == 0, (measure.__name__, file, counts.get(file))
+
+
+def test_kit_sweep_tools_files_have_no_bare_controls():
+    files = (
+        "templates/_pulse_create.html", "templates/_pulse_copy.html",
+        "templates/_pulse_detail.html", "templates/_pulse_env_strip.html",
+        "static/pulses.js", "templates/_autofit.html", "static/autofit.js",
+        "templates/_scheduler.html", "static/scheduler.js", "static/agent-setup.js",
+        "static/agent.js", "templates/workbench.html",
+    )
+    for measure in (measure_bare_controls, measure_script_controls, measure_bare_buttons):
+        counts = measure()
+        for file in files:
+            assert counts.get(file, 0) == 0, (measure.__name__, file, counts.get(file))
+
+
+def test_kit_sweep_generate_files_have_no_bare_controls():
+    files = {
+        "templates/_generate.html", "static/generate.js", "static/gen-additions.js",
+        "templates/_diagram_add.html", "static/diagram-add.js", "templates/_cz_plan.html",
+        "static/cz-plan.js", "templates/_map_tools.html", "templates/_chip_name_banner.html",
+        "templates/_zline.html",
+    }
+    for measure in (measure_bare_controls, measure_script_controls, measure_bare_buttons):
+        counts = measure()
+        for path in sorted(files):
+            assert counts.get(path, 0) == 0, (measure.__name__, path, counts.get(path))
+
+
+def test_port_play_popup_parts_are_accent_section_cards():
+    # A long dialog reads as separate parts: outputs, run settings, safety each sit in an accent-outlined card.
+    rules = {sel: dict(_decls(body)) for sel, body, _s in _ui_kit_rules()}
+    assert rules[".ui-item--accent.ui-item--accent"].get("border-color") == "var(--ui-accent-border)"
+    assert "var(--ui-accent-border)" in rules[".ui-item--accent > .ui-item-head"].get("border-bottom", "")
+    js = _read(_STATIC / "port-play.js")
+    for title in ("Outputs in this play", "Run settings", "Safety"):
+        m = re.search(r"<section class=\"([^\"]*)\"[^>]*>'? *\+?\s*'?<div class=\"ui-item-head\"><h4 class=\"ui-item-title\">"
+                      + re.escape(title) + "<", js)
+        assert m and "ui-item--accent" in m.group(1).split(), title
+
+
+def test_a_multiple_select_shows_its_rows_instead_of_a_one_line_control():
+    # A kit select has a fixed one-line height; a multiple select keeps its rows through the list modifier.
+    rule = _kit_rule(".ui-select--list.ui-select--list")
+    assert rule.get("height") == "auto" and rule.get("background-image") == "none", rule
+    for tpl in sorted(_TPL.glob("*.html")):
+        for tag in re.findall(r"<select\s[^>]*>", _read(tpl)):
+            if " multiple" in tag and "ui-select" in tag:
+                assert "ui-select--list" in tag, (tpl.name, tag)
 
 
 def test_kit_sweep_pages_files_have_no_bare_controls():

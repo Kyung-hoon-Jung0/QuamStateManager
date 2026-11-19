@@ -364,9 +364,8 @@ window.DiagramAdd = (function () {
     Array.prototype.forEach.call(form.querySelectorAll('input[name="also"]'),
       function (i) { i.remove(); });
     also.forEach(function (a) {
-      var i = document.createElement("input");
-      i.type = "hidden"; i.name = "also"; i.value = a;
-      form.appendChild(i);
+      form.insertAdjacentHTML("beforeend", '<input type="hidden" name="also">');
+      form.lastElementChild.value = a;
     });
     btn.disabled = true;
     if (form.requestSubmit) form.requestSubmit(); else form.submit();

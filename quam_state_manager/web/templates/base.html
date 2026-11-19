@@ -582,7 +582,7 @@
                    not a destination, so it belongs with the other two. Same
                    <details> popover, same /state/archive form — only the place
                    changed. #}
-                <details class="archive-details sidebar-tool-details" id="archive-details">
+                <details class="ui-disclosure archive-details sidebar-tool-details" id="archive-details">
                     <summary class="sidebar-tool archive-btn"
                              title="Bookmark / archive this state (tag + note)"
                              aria-label="Bookmark this state">
@@ -597,7 +597,7 @@
                            differs in content (HTMX re-renders) and re-flashes. #}
                         <form hx-post="/state/archive" hx-target="#archive-status" hx-swap="innerHTML"
                               data-after-request="archiveDone">
-                            <input type="text" name="tag" class="archive-in" maxlength="120"
+                            <input type="text" name="tag" class="ui-input archive-in" maxlength="120"
                                    placeholder="Tag (e.g. before CZ retune)" autocomplete="off">
                             <textarea name="note" class="archive-note" rows="2" maxlength="2000"
                                       placeholder="Note (optional)"></textarea>
@@ -648,7 +648,7 @@
                    answers HX-Redirect, so this target is only ever used on failure. #}
                 <form id="load-form" hx-post="/load" hx-target="#load-failed-slot">
                     <div class="path-input-group">
-                    <input type="text" name="folder" id="load-path-input"
+                    <input class="ui-input" type="text" name="folder" id="load-path-input"
                                placeholder="quam_state folder path..." autocomplete="off">
                         <button type="button" class="outline btn-sm btn-browse"
                                 onclick="openFolderBrowser('load-path-input')" title="Browse folders">&#128193;</button>
@@ -688,13 +688,33 @@
                                    {% if page == 'config_browser' %}class="active"{% endif %}>Config Viewer</a></li>
                         </ul>
                     </li>
-                    <li class="nav-floatable" data-nav-key="instrument"><a href="/instrument" hx-get="/instrument" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           {% if page == 'instrument' %}class="active"{% endif %}>Instrument Wiring</a><button
-                           type="button" class="nav-float-btn" title="Open as a floating panel (stays visible while you work elsewhere)"
-                           aria-label="Open Instrument Wiring as a floating panel"
-                           onclick="event.stopPropagation(); if (window.FloatWiring) FloatWiring.toggle(); return false;">&#10697;</button></li>
-                    <li data-nav-key="port_play"><a href="/port-play" hx-get="/port-play" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           {% if page == 'port_play' %}class="active" {% endif %}title="Play live outputs on one or several ports, or simulate them">Port play</a></li>
+                    <li class="nav-with-sub" data-nav-key="instrument">
+                        <div class="nav-sub-row nav-floatable">
+                            <a href="/instrument" hx-get="/instrument" hx-target="#table-pane"
+                               hx-sync="#table-pane:replace" hx-push-url="true"
+                               {% if page == 'instrument' %}class="active"{% endif %}>Instrument Wiring</a>
+                            <button type="button" class="nav-float-btn"
+                                    title="Open as a floating panel (stays visible while you work elsewhere)"
+                                    aria-label="Open Instrument Wiring as a floating panel"
+                                    onclick="event.stopPropagation();
+                                    if (window.FloatWiring) FloatWiring.toggle(); return false;">&#10697;</button>
+                            <button type="button" class="nav-sub-toggle"
+                                    aria-expanded="{{ 'true' if page in ('instrument', 'port_play') else 'false' }}"
+                                    aria-controls="instrument-subnav" aria-label="Toggle Instrument Wiring"
+                                    onclick="toggleNavSub(this, 'instrument-subnav', 'quam_instrument_nav_collapsed')">
+                                &#9662;</button>
+                        </div>
+                        <ul id="instrument-subnav" data-nav-group="instrument-subnav"
+                            class="nav-subitems{% if page not in ('instrument', 'port_play') %}
+                                   nav-subitems-collapsed{% endif %}">
+                            <li data-nav-key="port_play">
+                                <a href="/port-play" hx-get="/port-play" hx-target="#table-pane"
+                                   hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page == 'port_play' %}class="active" {% endif %}
+                                   title="Play live outputs on one or several ports, or simulate them">Port play</a>
+                            </li>
+                        </ul>
+                    </li>
                     <li class="nav-with-sub" data-nav-key="topology">
                         <div class="nav-sub-row">
                             <a data-nav-parent="true" href="/topology?view=overview" hx-get="/topology?view=overview" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">Chip Status</a>
@@ -868,7 +888,7 @@
                    ↻ refresh moved into the tree toolbar below. #}
                 <form hx-post="/workspace/add" hx-target="#sidebar-tree" class="sidebar-add-form">
                     <div class="path-input-group">
-                        <input type="text" name="folder" id="workspace-path-input"
+                        <input class="ui-input" type="text" name="folder" id="workspace-path-input"
                                placeholder="Add folder path..." size="18" autocomplete="off">
                         <button type="button" class="outline btn-sm btn-browse"
                                 onclick="openFolderBrowser('workspace-path-input', 'dataset')" title="Browse folders">&#128193;</button>
@@ -937,7 +957,7 @@
                         <p class="muted" style="margin:.25rem 0 .5rem">
                             Mix free-text with <code>key:value</code> scopes. Click an example to paste it.
                         </p>
-                        <table class="ds-search-help-grid">
+                        <table class="ui-table ds-search-help-grid">
                             <tbody>
                                 <tr><td><button class="ds-help-example search-help-example" data-search-help-input="sidebar-filter-input" data-example="name:iq_blob">name:iq_blob</button></td>
                                     <td>Name contains <code>iq_blob</code> (<code>exp:</code>, <code>e:</code>)</td></tr>
@@ -1436,18 +1456,18 @@
             <button class="btn-close" onclick="document.getElementById('folder-browser').close()">&times;</button>
         </div>
         <div class="browser-toolbar">
-            <input type="text" id="browser-selected-path" readonly placeholder="Select a folder...">
+            <input class="ui-input" type="text" id="browser-selected-path" readonly placeholder="Select a folder...">
             <button class="btn-sm outline" id="browser-newfolder-btn" type="button"
                     onclick="toggleNewFolder()" title="Create a new folder inside the current one">+ New folder</button>
             <button class="btn-sm" id="browser-select-btn" onclick="selectBrowserFolder()">Select</button>
         </div>
         <div class="browser-newfolder" id="browser-newfolder-row" hidden>
-            <input type="text" id="browser-newfolder-name" placeholder="New folder name"
+            <input class="ui-input" type="text" id="browser-newfolder-name" placeholder="New folder name"
                    onkeydown="if(event.key==='Enter'){event.preventDefault();createBrowserFolder();}else if(event.key==='Escape'){toggleNewFolder();}">
             <button class="btn-sm outline" type="button" onclick="createBrowserFolder()">Create</button>
             <span class="browser-newfolder-err" id="browser-newfolder-err" aria-live="polite"></span>
         </div>
-        <details class="browser-recent" id="browser-recent" open>
+        <details class="ui-disclosure browser-recent" id="browser-recent" open>
             <summary>Recent Folders</summary>
             <div id="browser-recent-list" class="browser-recent-list"></div>
         </details>
@@ -1479,7 +1499,7 @@
     <div id="cmd-palette" class="cmd-palette" hidden role="dialog" aria-modal="true" aria-labelledby="cmd-palette-input">
         <div class="cmd-palette-backdrop" onclick="window.closeCmdPalette()"></div>
         <div class="cmd-palette-box">
-            <input id="cmd-palette-input" class="cmd-palette-input" type="text"
+            <input id="cmd-palette-input" class="ui-input ui-input--block cmd-palette-input" type="text"
                    autocomplete="off" placeholder="Jump to a qubit, pair, page or action..." aria-label="Command palette search">
             <ul id="cmd-palette-results" class="cmd-palette-results" role="listbox"
                 aria-live="polite" aria-label="Search results"></ul>

@@ -167,7 +167,7 @@
         if (e.status === "missing") {
           cell = '<span class="autofit-bad">no matching node file</span>';
         } else if ((e.candidates || []).length > 1) {
-          cell = '<select data-step="' + esc(s.id) + '" class="autofit-filepick">' +
+          cell = '<select data-step="' + esc(s.id) + '" class="ui-select autofit-filepick">' +
             e.candidates.map(function (c) {
               return '<option value="' + esc(c) + '"' +
                 (c === e.path ? " selected" : "") + ">" +
@@ -176,13 +176,14 @@
         } else {
           cell = "<code>" + esc(pathBase(e.path)) + "</code>";
         }
-        return "<tr><td>" + esc(s.label || s.id) + "</td><td>" + cell +
-          '</td><td class="autofit-' + cls + '">' + esc(e.status || "?") +
+        return "<tr><td class=\"ui-table-cell\">" + esc(s.label || s.id) + "</td><td class=\"ui-table-cell\">" + cell +
+          '</td><td class="ui-table-cell autofit-' + cls + '">' + esc(e.status || "?") +
           "</td></tr>";
       }).join("");
       resDiv.hidden = false;
-      resDiv.innerHTML = '<table class="data-table autofit-restable">' +
-        "<thead><tr><th>Step</th><th>Node file</th><th></th></tr></thead>" +
+      resDiv.innerHTML = '<table class="ui-table data-table autofit-restable">' +
+        "<thead><tr><th class=\"ui-table-head\">Step</th><th class=\"ui-table-head\">Node " +
+          "file</th><th class=\"ui-table-head\"></th></tr></thead>" +
         "<tbody>" + rows + "</tbody></table>";
     });
   }
@@ -298,24 +299,24 @@
     var targets = st.targets || [];
     if (!steps.length) return;
     var cur = st.current || {};
-    var head = "<tr><th></th>" + targets.map(function (t) {
+    var head = "<tr><th class=\"ui-table-head\"></th>" + targets.map(function (t) {
       var halted = (st.halted || {})[t];
-      return "<th" + (halted ? ' class="autofit-halted" title="' +
+      return "<th" + (halted ? ' class="ui-table-head autofit-halted" title="' +
         esc(halted) + '"' : "") + ">" + esc(t) + "</th>";
     }).join("") + "</tr>";
     var rows = steps.map(function (s) {
       var cells = targets.map(function (t) {
         var c = ((st.board || {})[s.id] || {})[t];
-        if (!c) return '<td class="autofit-cell-pending">·</td>';
+        if (!c) return '<td class="ui-table-cell autofit-cell-pending">\xb7</td>';
         var cls = "autofit-cell-" + c.state;
         var icon = CELL_ICON[c.state] || c.state;
         var tip = (c.detail || c.state) +
           (c.attempts > 1 ? " (attempt " + c.attempts + ")" : "");
-        return '<td class="' + cls + '" title="' + esc(tip) + '">' + icon +
+        return '<td class="ui-table-cell ' + cls + '" title="' + esc(tip) + '">' + icon +
           (c.attempts > 1 ? '<sub>' + c.attempts + "</sub>" : "") + "</td>";
       }).join("");
       var mark = cur.step_id === s.id ? " ▸" : "";
-      return "<tr><td>" + esc(s.label || s.id) + mark + "</td>" + cells + "</tr>";
+      return "<tr><td class=\"ui-table-cell\">" + esc(s.label || s.id) + mark + "</td>" + cells + "</tr>";
     }).join("");
     var status = st.status +
       (cur.step_id ? " — " + esc(cur.step_id) +
@@ -323,7 +324,7 @@
       (st.llm_calls ? " · LLM calls: " + st.llm_calls : "");
     board.innerHTML = '<p class="autofit-runline autofit-run-' +
       esc(st.status) + '">' + esc(st.autonomy || "") + " · " + status +
-      "</p>" + restoreLine(st) + "<table class='data-table autofit-board-table'>" +
+      "</p>" + restoreLine(st) + "<table class='ui-table data-table autofit-board-table'>" +
       "<thead>" + head + "</thead><tbody>" + rows + "</tbody></table>";
   }
 
@@ -420,10 +421,10 @@
             // docs/76: a calibration ledger without the size of each move is
             // half a ledger — the Δ says whether a node nudged or jumped.
             var d = window.ValueDelta ? window.ValueDelta.chipHtml(p.old, p.new) : "";
-            return "<tr><td>" + esc(e.step || "") + "</td><td><code>" +
-              esc(p.path) + "</code></td><td>" + esc(fmt(p.old)) +
+            return "<tr><td class=\"ui-table-cell\">" + esc(e.step || "") + "</td><td class=\"ui-table-cell\"><code>" +
+              esc(p.path) + "</code></td><td class=\"ui-table-cell\">" + esc(fmt(p.old)) +
               " → <strong>" + esc(fmt(p.new)) + "</strong>" +
-              (d ? " " + d : "") + "</td><td>" +
+              (d ? " " + d : "") + "</td><td class=\"ui-table-cell\">" +
               esc(e.group_id || "") + "</td></tr>";
           }).join("");
         }).join("");
@@ -431,11 +432,12 @@
       div.dataset.rendered = runId;
       div.innerHTML =
         "<h6>Applied (" + writes.length + ")</h6>" +
-        (writes.length ? "<table class='data-table'><thead><tr><th>step</th>" +
-          "<th>path</th><th>old → new</th><th>group</th></tr></thead><tbody>" +
+        (writes.length ? "<table class='ui-table data-table'><thead><tr><th class=\"ui-table-head\">step</th>" +
+          "<th class=\"ui-table-head\">path</th><th class=\"ui-table-head\">old \u2192 new</th><th " +
+            "class=\"ui-table-head\">group</th></tr></thead><tbody>" +
           pathRows(writes) + "</tbody></table>" : '<p class="muted">none</p>') +
         "<h6>Reverted (" + reverts.length + ")</h6>" +
-        (reverts.length ? "<table class='data-table'><tbody>" +
+        (reverts.length ? "<table class='ui-table data-table'><tbody>" +
           pathRows(reverts) + "</tbody></table>" : '<p class="muted">none</p>') +
         "<h6>Loop actions (" + loop.length + ")</h6>" +
         (loop.length ? loop.map(function (line) {

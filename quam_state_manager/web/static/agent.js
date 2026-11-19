@@ -433,7 +433,8 @@ window.AgentPanel = (function () {
   // 700 px, more than twice the 20.5em clamp, with no "show more" at all, while
   // a 3,233-character one beside it is clamped to 308 px. Same box, same rule,
   // both ways now.
-  var MORE_HTML = '<button type="button" class="ag-more" onclick="return AgentPanel.toggleMore(this)">show more</button>';
+  var MORE_HTML = '<button type="button" class="btn-sm ag-more" onclick="return ' +
+    'AgentPanel.toggleMore(this)">show more</button>';
   function addMore(el, md) {
     if (!el.querySelector(".ag-more")) md.insertAdjacentHTML("afterend", MORE_HTML);
   }
@@ -484,7 +485,8 @@ window.AgentPanel = (function () {
       var long = isLong(c);
       html = '<div class="ag-answer"><span class="ag-who">' + esc(c.backend ? "by_" + c.backend : "agent") + (c.readonly ? ' · <span class="muted" title="answered by a read-only call: SM\'s read tools only">read-only</span>' : "") + "</span>" +
         '<div class="ag-md' + (long ? " ag-clamp" : "") + '">' + (c.html || "<p>" + esc(c.text) + "</p>") + "</div>" +
-        (long ? '<button type="button" class="ag-more" onclick="return AgentPanel.toggleMore(this)">show more</button>' : "") + "</div>";
+        (long ? '<button type="button" class="btn-sm ag-more" onclick="return ' +
+          'AgentPanel.toggleMore(this)">show more</button>' : "") + "</div>";
     } else if (c.kind === "tool") {
       var t = String(c.tool || "").replace(/^mcp__sm__/, "sm.");
       var sum = String(c.summary || "").trim();
@@ -532,9 +534,10 @@ window.AgentPanel = (function () {
         var g = groups[key];
         if (!g) {
           g = document.createElement("details");
-          g.className = "ag-card ag-toolgroup";
+          g.className = "ag-card ag-toolgroup ui-disclosure";
           g.setAttribute("data-group", key);
-          g.innerHTML = '<summary onclick="return AgentPanel.toggleGroup(this)"><span class="ag-t"></span><span class="ag-toolgroup-sum"></span></summary>';
+          g.innerHTML = '<summary class=\"ui-disclosure-summary\" onclick="return AgentPanel.toggleGroup(this)">' +
+            '<span class="ag-t"></span><span class="ag-toolgroup-sum"></span></summary>';
           groups[key] = g;
         }
         g.setAttribute("data-ts", run[0].getAttribute("data-ts") || "0");
@@ -667,9 +670,14 @@ window.AgentPanel = (function () {
         (p.ended_by === "SM" && p.note ? ' <span class="muted ag-plan-why">(' + esc(p.note) + ")</span>" : "") + "</div>";   // docs/253: why SM closed it
     }
     var mode = p.mode || (S.now && S.now.mode) || "ask-writes";
+    var modeId = "ag-mode-" + (m.compact ? "compact-" : "home-") + esc(p.id);
     var modeSel = p.status === "draft"
-      ? '<label class="ag-mode">mode <select' + (S.observer ? " disabled" : "") + ' onchange="AgentPanel.setPlanMode(\'' + esc(p.id) + '\', this.value)">' +
-        ["auto", "ask-writes", "ask-all"].map(function (x) { return '<option value="' + x + '"' + (x === mode ? " selected" : "") + ">" + x + "</option>"; }).join("") + "</select></label>"
+      ? '<div class="ui-field ag-mode"><label class="ui-field-label" for="' + modeId + '">mode</label>' +
+        '<select id="' + modeId + '" ' +
+        'aria-label="mode" class=\"ui-select\"' + (S.observer ? " disabled" : "") +
+          ' onchange="AgentPanel.setPlanMode(\'' + esc(p.id) + '\', this.value)">' +
+        ["auto", "ask-writes", "ask-all"].map(function (x) { return '<option value="' + x + '"' +
+          (x === mode ? " selected" : "") + ">" + x + "</option>"; }).join("") + "</select></div>"
       : '<span class="muted ag-mode-ro">mode ' + esc(mode) + "</span>";
     var acts = "";
     var envHtml = "";
@@ -706,7 +714,9 @@ window.AgentPanel = (function () {
         (p.refusal.code === "human_active" && !S.observer ? ' <button type="button" class="btn-sm secondary ag-release" onclick="AgentPanel.releaseHuman()">The OPX is free: let the agent run</button>' : "") + "</p>";
     }
     var html = head + '<div class="ag-steps">' + rows + "</div>" + said +
-      '<details class="ag-may-wrap"' + (p.status === "draft" ? " open" : "") + "><summary>values that may change" + (mayN ? " (" + mayCount + ")" : "") + "</summary>" + mayHtml + "</details>" +
+      '<details class="ui-disclosure ag-may-wrap"' + (p.status === "draft" ? " open" : "") +
+        "><summary class=\"ui-disclosure-summary\">values that may change" + (mayN ? " (" + mayCount + ")" : "") +
+        "</summary>" + mayHtml + "</details>" +
       prog + (envHtml || '<div class="ag-plan-acts">' + modeSel + " " + acts + "</div>");
     setHtml(el, row(p.created, html), force);
   }
@@ -740,7 +750,9 @@ window.AgentPanel = (function () {
       '<p class="ag-env-head"><strong>Approve the envelope</strong> <span class="muted">— mode ' + esc(e.mode || "") +
       ": inside it, writes that pass the gates apply without asking; outside it, a write is held for you and its target stops</span></p>" +
       '<dl class="ag-env-dl">' + lines + "</dl>" + warn +
-      '<details class="ag-env-steps" open><summary>' + (e.steps || []).length + " step(s), exactly as the card shows them</summary><ol>" + steps + "</ol></details>" +
+      '<details class="ui-disclosure ag-env-steps" open><summary ' +
+        'class=\"ui-disclosure-summary\">' + (e.steps || []).length +
+          " step(s), exactly as the card shows them</summary><ol>" + steps + "</ol></details>" +
       '<div class="ag-plan-acts"><button type="button" class="btn-sm ag-start ag-env-ok" onclick="AgentPanel.confirmStart(\'' + esc(p.id) + '\')">Start — approve this envelope</button> ' +
       '<button type="button" class="btn-sm outline ag-env-back" onclick="AgentPanel.closeEnvelope(\'' + esc(p.id) + '\')">Back</button></div></div>';
   }
@@ -778,12 +790,16 @@ window.AgentPanel = (function () {
       (r.driver && r.driver.kind === "terminal" ? ' <span class="muted ag-via" title="' + esc(driverText(r.driver)) + '">via terminal</span>' : "");
     var writes = "";
     if (res.writes && res.writes.length) {
-      writes = '<details class="ag-writes"><summary>' + writesSummary(r, res) + "</summary><div class=\"ag-tbl\"><table>" +
+      writes = '<details class="ui-disclosure ag-writes"><summary class=\"ui-disclosure-summary\">' +
+        writesSummary(r, res) + "</summary><div class=\"ag-tbl\"><table class=\"ui-table\">" +
         res.writes.slice(0, 40).map(function (w) {
           var t = fmtRow([w.old, w.new], w.display);       // docs/272: old and new in one unit, one precision
-          return "<tr><td title=\"" + esc(w.path) + "\">" + esc(w.path) + "</td><td title=\"" + esc("stored: " + rawText(w.old) + " → " + rawText(w.new)) + "\">" + esc(t[0]) + " → " + esc(t[1]) + "</td></tr>";
+          return "<tr><td class=\"ui-table-cell\" title=\"" + esc(w.path) + "\">" + esc(w.path) +
+            "</td><td class=\"ui-table-cell\" title=\"" + esc("stored: " + rawText(w.old) + " \u2192 " +
+            rawText(w.new)) + "\">" + esc(t[0]) + " \u2192 " + esc(t[1]) + "</td></tr>";
         }).join("") +
-        (res.writes.length > 40 ? "<tr><td colspan=2 class=muted>… " + (res.writes.length - 40) + " more</td></tr>" : "") + "</table></div></details>";
+        (res.writes.length > 40 ? "<tr><td class=\"ui-table-cell\" colspan=2 class=muted>\u2026 " +
+          (res.writes.length - 40) + " more</td></tr>" : "") + "</table></div></details>";
     }
     // docs/249: what failed, in plain words, above the run's raw error ("QM host unreachable at 127.0.0.1:1")
     var what = res.failure && res.failure.what ? '<div class="ag-err ag-what"><strong>' + esc(String(res.failure.what).slice(0, 200)) + "</strong></div>" : "";
@@ -791,7 +807,8 @@ window.AgentPanel = (function () {
     // a settled approval is already said by the writes summary; never twice
     var settled = writes && res.approval && /^(approved|rejected|expired)$/.test((r.approval_state || {}).status || "");
     var how = r.how && !settled ? '<div class="muted ag-how">' + esc(r.how) + "</div>" : "";
-    var log = res.log_tail ? '<details class="ag-log"><summary>log tail</summary><pre>' + esc(res.log_tail.slice(-1500)) + "</pre></details>" : "";
+    var log = res.log_tail ? '<details class="ui-disclosure ag-log"><summary class=\"ui-disclosure-summary\">log ' +
+      'tail</summary><pre>' + esc(res.log_tail.slice(-1500)) + "</pre></details>" : "";
     setHtml(el, row(r.since, '<div class="ag-run-line">' + line + "</div>" + what + err + writes + how + log), force);
   }
 
@@ -859,11 +876,15 @@ window.AgentPanel = (function () {
       ", which the node itself marked failed. They are not ticked and are not written unless you tick them.</p>";
   }
   function apNowTd(w, t) {
-    if (w.new_key) return '<td class="muted" title="this key is not in the chip yet; writing creates it">new key</td>';
-    if (w.now_known === undefined) return '<td><span class="ag-ap-nowv">' + esc(t.cell) + "</span></td>";
-    if (!w.now_known) return '<td class="muted">not set</td>';
-    if (JSON.stringify(w.now) === JSON.stringify(w.old)) return '<td><span class="ag-ap-nowv">' + esc(t.cell) + "</span></td>";
-    return '<td class="ag-ap-moved" title="' + esc(movedTitle(t)) + '"><span class="ag-ap-nowv">' +
+    if (w.new_key) return '<td class="ui-table-cell muted" title="this key is not in the chip yet; writing creates ' +
+      'it">new key</td>';
+    if (w.now_known === undefined) return '<td class=\"ui-table-cell\"><span class="ag-ap-nowv">' + esc(t.cell) +
+      "</span></td>";
+    if (!w.now_known) return '<td class="ui-table-cell muted">not set</td>';
+    if (JSON.stringify(w.now) === JSON.stringify(w.old)) {
+      return '<td class=\"ui-table-cell\"><span class="ag-ap-nowv">' + esc(t.cell) + "</span></td>";
+    }
+    return '<td class="ui-table-cell ag-ap-moved" title="' + esc(movedTitle(t)) + '"><span class="ag-ap-nowv">' +
       esc(t.cell) + '</span> <span class="muted">the node saw <span class="ag-ap-oldv">' + esc(t.old) +
       '</span>, now <span data-ap-now>' + esc(t.now) + "</span></span></td>";
   }
@@ -911,11 +932,15 @@ window.AgentPanel = (function () {
       if (cannotStage) writeNote += ' <span class="muted">cannot be staged: ' + esc(cannotStage) + '</span>';
       // a value from a target the node itself marked failed: shown apart, not written unless ticked
       var failed = !!w.failed_target;
-      var tick = S.observer ? "" : '<input type="checkbox" class="ui-agent-tick" data-i="' + i + '"' + (failed ? "" : " checked") +
+      var tick = S.observer ? "" : '<input type="checkbox" class="ui-agent-tick ui-check-box" data-i="'
+        + i + '"' + (failed ? "" : " checked") +
         ' title="ticked values are written" aria-label="' + esc("write " + w.path) + '"> ';
       var failNote = failed ? ' <span class="ui-agent-failed-why">✗ the node marked ' + esc(w.failed_target) + " " + esc(w.failed_outcome || "failed") + ": not written unless ticked</span>" : "";
-      return "<tr" + (failed ? ' class="ui-agent-failed-row"' : "") + "><td title=\"" + esc(w.path) + "\">" + tick + esc(w.path) + failNote + writeNote + "</td>" + nowTd + "<td>" +
-        (S.observer ? esc(t.nw) : '<span class="ag-ap-value">' + esc(t.shown) + '</span><span class="ag-ap-edit"><input class="ag-ap-new" data-i="' + i + '"' +
+      return "<tr" + (failed ? ' class="ui-agent-failed-row"' : "") + "><td class=\"ui-table-cell\" title=\"" +
+        esc(w.path) + "\">" + tick + esc(w.path) + failNote + writeNote + "</td>" + nowTd +
+        "<td class=\"ui-table-cell\">" +
+        (S.observer ? esc(t.nw) : '<span class="ag-ap-value">' + esc(t.shown) +
+          '</span><span class="ag-ap-edit"><input class="ui-input ag-ap-new" data-i="' + i + '"' +
           (w.now_known === true ? ' data-seen-now="' + esc(JSON.stringify(w.now)) + '"' : (w.now_known === false ? ' data-seen-unknown="1"' : '')) +
           ' oninput="AgentPanel.apPreview(this)"' +
           ' title="' + esc("the value written, as stored" + (stored ? " (" + stored + ")" : "") + "; edit to change it") + '" value="' +
@@ -931,15 +956,21 @@ window.AgentPanel = (function () {
          it, optional, typed before the press; a two-step sheet left a card
          pending (and its targets blocked) whenever the second press was missed. */
       var rid = esc(a.id);
-      acts += ' <label class="ui-agent-reject">note for the journal (optional) <input type="text" class="ui-agent-reject-note" value="' + esc(S.rejecting[a.id] || "") +
-        '" oninput="AgentPanel.rejectNote(\'' + rid + '\', this.value)" onkeydown="AgentPanel.rejectKey(event, \'' + rid + '\')"></label>';
+      var noteId = "ag-reject-" + (m.compact ? "compact-" : "home-") + rid;
+      acts += ' <div class="ui-field ui-agent-reject"><label class="ui-field-label" for="' + noteId + '">' +
+        'note for the journal (optional)</label><input id="' + noteId + '" ' +
+        'type="text" class="ui-input ui-agent-reject-note" value="' + esc(S.rejecting[a.id] || "") +
+        '" oninput="AgentPanel.rejectNote(\'' + rid + '\', this.value)" onkeydown="AgentPanel.rejectKey(event, \'' +
+          rid + '\')"></div>';
     }
     var pl = a.plan_id && S.plans[a.plan_id];
     var where = a.plan_id ? ' <span class="muted ag-ap-plan">plan ' + esc(pl ? pl.title : a.plan_id) + (a.step !== undefined && a.step !== null ? " · step " + esc(a.step) : "") + "</span>" : "";
     var html = '<div class="ag-ap-head"><span class="ag-plan-st ag-st-waiting">' + (isRun ? "run request" : "approval") + "</span> <strong><code>" + esc(a.node || "") + "</code></strong> " + esc((a.targets || []).join(" ")) +
       paramsHtml(a.params) + (a.run_id ? " " + runLink(a.run_id) : "") + where + ' <span class="muted">' + esc(a.why_held || "") + " · " + esc(fmtClock(a.created)) + "</span></div>" +
       (isRun ? '<p class="muted ag-ap-note">the agent asks to RUN this node on these targets with these params (mode ask-all); nothing runs before Allow, and Allow covers exactly this run</p>' :
-        failedHead(a) + '<div class="ag-tbl"><table class="ag-ap-rows"><thead><tr>' + '<th>value</th><th>now</th><th>proposed (editable)</th></tr></thead><tbody>' + rows + "</tbody></table></div>") +
+        failedHead(a) + '<div class="ag-tbl"><table class="ui-table ag-ap-rows"><thead><tr>' +
+          '<th class=\"ui-table-head\">value</th><th class=\"ui-table-head\">now</th><th ' +
+          'class=\"ui-table-head\">proposed (editable)</th></tr></thead><tbody>' + rows + "</tbody></table></div>") +
       (a.reason ? '<p class="ag-because">because: ' + esc(a.reason) + "</p>" : "") + '<div class="ag-ap-acts">' + acts + "</div>";
     setHtml(el, row(a.created, html), force);
     markBusy(el, a);
@@ -1050,10 +1081,16 @@ window.AgentPanel = (function () {
       if (sessionOpen()) acts.push('<button type="button" class="btn-sm secondary" onclick="AgentPanel.endSession()">End session</button>');   // docs/247: a Codex conversation between turns too
       if (canClear(m)) acts.push('<button type="button" class="btn-sm secondary ag-clear" onclick="AgentPanel.clearAsk(this)" title="Start a fresh conversation: archive or delete this one, and the agent forgets it">Clear…</button>');   // docs/297
     }
-    acts.push('<label class="ag-observer" title="observer: this window shows but never starts, stops or approves (an accident guard, not a permission)"><input type="checkbox" ' + (S.observer ? "checked" : "") + ' onchange="AgentPanel.setObserver(this.checked)"> view only' + (S.observer ? ' <span class="ag-observing">— this window cannot start, stop or approve</span>' : "") + "</label>");
+    acts.push('<label class="ui-check ag-observer" title="observer: this window shows but never ' +
+      'starts, stops or approves (an accident guard, not a permission)"><input type="checkbox" ' +
+        (S.observer ? "checked" : "") + ' onchange="AgentPanel.setObserver(this.checked)"> view only' +
+        (S.observer ? ' <span class="ag-observing">\u2014 this window cannot start, stop or approve</span>' : "") +
+        "</label>");
     var nArch = (S.conv && S.conv.archives) || 0;
     acts.push('<span class="ag-now-links">' +
-      (nArch ? '<button type="button" class="ag-linkish ag-archived-link" onclick="AgentPanel.archives(this)" title="conversations put away by Clear (read-only)">Archived (' + nArch + ")</button> · " : "") +
+      (nArch ? '<button type="button" class="btn-sm ag-linkish ag-archived-link" ' +
+        'onclick="AgentPanel.archives(this)" title="conversations put away by Clear (read-only)">' +
+        'Archived (' + nArch + ")</button> \xb7 " : "") +
       '<a href="/journal" hx-get="/journal" hx-target="#table-pane" hx-push-url="true">Calibration log →</a>' +
       ' · <a class="ag-summary-link" href="/agent/summary" hx-get="/agent/summary" hx-target="#table-pane" hx-push-url="true" title="the last plan since its Start: applied, held, failed, halted, and why it ended">Night summary →</a>' +
       ' · <a class="ag-setup-link" href="/agent/setup" hx-get="/agent/setup" hx-target="#table-pane" hx-push-url="true" title="connect Claude / Codex to SM, the journal folder, the lab context file">Setup →</a></span>');
@@ -1106,7 +1143,8 @@ window.AgentPanel = (function () {
     w.innerHTML = '<h3>Talk to the agent about this chip</h3>'
       + '<p><b>Ask</b> is read-only: it reads the chip, its history and the runs through SM, and can change nothing. '
       + '<b>Task</b> may propose a plan; it shows up here as a card, and nothing runs until you press <b>Start</b>.</p>'
-      + '<div class="ag-try">' + TRY.map(function (q) { return '<button type="button" class="ag-try-q">' + esc(q) + "</button>"; }).join("") + "</div>"
+      + '<div class="ag-try">' + TRY.map(function (q) { return '<button type="button" class="btn-sm ag-try-q">' +
+        esc(q) + "</button>"; }).join("") + "</div>"
       + '<p class="muted ag-welcome-foot">Writes to the chip always wait for your approval. '
       + '<a href="/agent/setup" hx-get="/agent/setup" hx-target="#table-pane" hx-push-url="true">Agent setup</a> also connects a Claude Code or Codex you run in a terminal.</p>';
     w.addEventListener("click", function (e) {
@@ -1346,8 +1384,11 @@ window.AgentPanel = (function () {
     var body = lines.map(function (r) {
       return '<span class="ag-term-t">' + esc(liveHms(r[0])) + '</span> <span class="ag-term-k ag-term-' + esc(r[1]) + '">' + esc(r[1]) + "</span> " + esc(r[2]);
     }).join("\n");
-    return '<details class="ag-live-term" data-live-term="' + esc(it.id) + '"' + (LIVE.termOpen[it.id] ? " open" : "") + ">"
-      + '<summary title="what the CLI printed, as it happened">Terminal <span class="muted">· ' + (it.n_lines || lines.length) + " lines</span></summary><pre>" + body + "</pre></details>";
+    return '<details class="ui-disclosure ag-live-term" data-live-term="' + esc(it.id) + '"' +
+      (LIVE.termOpen[it.id] ? " open" : "") + ">"
+      + '<summary class=\"ui-disclosure-summary\" title="what the CLI printed, as it happened">' +
+        'Terminal <span class="muted">\xb7 ' + (it.n_lines || lines.length) + " lines</span></summary><pre>" +
+          body + "</pre></details>";
   }
   function liveItemHtml(it) {
     var text = it.phase === "writing" && it.text ? '<div class="ag-live-text">' + esc(it.text.slice(-320)) + "</div>" : "";
@@ -1942,7 +1983,9 @@ window.AgentPanel = (function () {
       } else {
         var list = r.body.archives || [];
         var rows = list.map(function (a) {
-          return '<li data-id="' + esc(a.id) + '"><button type="button" class="ag-linkish ag-arch-open" title="open it read-only">' + esc(a.title || "(no message)") + "</button>" +
+          return '<li data-id="' + esc(a.id) +
+            '"><button type="button" class="btn-sm ag-linkish ag-arch-open" title="open it ' +
+            'read-only">' + esc(a.title || "(no message)") + "</button>" +
             ' <span class="muted ag-arch-meta">' + esc(archRange(a)) + " · " + plural(Number(a.messages) || 0, "message") +
             (a.cleared_by ? " · cleared by " + esc(a.cleared_by) : "") + "</span>" +
             (S.observer ? "" : '<span class="ag-arch-acts"><button type="button" class="btn-sm secondary ag-arch-del">Delete</button></span>') + "</li>";
@@ -2042,6 +2085,7 @@ window.AgentPanel = (function () {
 
   // -------------------------------------------------------------- mount
   function skeleton(compact) {
+    var actorId = "ag-actor-" + (compact ? "compact" : "home");
     // customer feedback 2026-09-08: ONE column -- a muted lead, the status STRIP, the feed
     // (scrolls inside the pane), the COMPOSER pinned at the bottom. Same markup for both
     // mounts; the compact float only changes what the CSS does with it.
@@ -2051,10 +2095,25 @@ window.AgentPanel = (function () {
       '<div class="ag-cards" aria-live="polite"></div>' +
       '<div class="ag-live" hidden></div>' +
       '<form class="ag-form ag-composer" onsubmit="return AgentPanel.submit(event)">' +
-      '<textarea class="ag-input" rows="1" onkeydown="return AgentPanel.key(event)" oninput="AgentPanel.grow(this)" placeholder="Ask, or tell the agent what to do…  (Enter sends · Shift+Enter newline · /run <node> <targets>)"></textarea>' +
-      '<div class="ag-form-row"><select class="ag-intent" title="Ask = a read-only question (SM\'s read tools only, nothing can change). Task = the agent session that may propose plans and, after your Start, run them through SM." onchange="AgentPanel.setIntent(this.value, this)"><option value="ask">Ask (read-only)</option><option value="task">Task</option></select>' +
-      '<select class="ag-backend" title="which CLI drives"></select>' +
-      '<label class="ag-actor-wrap" title="who is at the keyboard IN THIS TAB — the person SM records for Start / Stop / mode / “I ran it”; another tab keeps its own name, a new tab starts from the last one set. English letters only (it travels in a request header); what you SAY to the agent can be any language.">⌨ <input class="ag-actor" list="ag-actor-list" placeholder="your name" autocomplete="off" spellcheck="false" oninput="AgentPanel.setActor(this.value, this)"><datalist id="ag-actor-list"></datalist><small class="ag-actor-record">' + esc(actorLabel()) + '</small></label>' +
+      '<textarea class="ui-textarea ag-input" rows="1" onkeydown="return ' +
+        'AgentPanel.key(event)" oninput="AgentPanel.grow(this)" placeholder="Ask, or tell the ' +
+        'agent what to do\u2026  (Enter sends \xb7 Shift+Enter newline \xb7 /run <node> <targets>' +
+        ')"></textarea>' +
+      '<div class="ag-form-row"><select class="ui-select ag-intent" title="Ask = a read-only ' +
+        'question (SM\'s read tools only, nothing can change). Task = the agent session that may ' +
+        'propose plans and, after your Start, run them through SM." ' +
+        'onchange="AgentPanel.setIntent(this.value, this)"><option value="ask">Ask ' +
+        '(read-only)</option><option value="task">Task</option></select>' +
+      '<select class="ui-select ag-backend" title="which CLI drives"></select>' +
+      '<div class="ui-field ag-actor-wrap" title="who is at the keyboard IN THIS TAB \u2014 ' +
+        'the person SM records for Start / Stop / mode / \u201cI ran it\u201d; another tab keeps ' +
+        'its own name, a new tab starts from the last one set. English letters only (it travels ' +
+        'in a request header); what you SAY to the agent can be any language."><label ' +
+        'class="ui-field-label" for="' + actorId + '">\u2328</label><input id="' + actorId + '" ' +
+        'aria-label="Your name" class="ui-input ' +
+        'ag-actor" list="ag-actor-list" placeholder="your name" autocomplete="off" ' +
+        'spellcheck="false" oninput="AgentPanel.setActor(this.value, this)"><datalist ' +
+        'id="ag-actor-list"></datalist><small class="ag-actor-record">' + esc(actorLabel()) + '</small></div>' +
       '<span class="ag-presets" title="a preset fills a draft; nothing starts before a plan card\'s Start">' +
       '<button type="button" class="btn-sm outline ag-presets-toggle" onclick="AgentPanel.togglePresets(this)" aria-expanded="false">presets ▾</button>' +
       PRESETS.map(function (p, i) { return '<button type="button" class="btn-sm outline ag-preset" onclick="AgentPanel.preset(' + i + ', this.closest(\'.ag-root\'))">' + esc(p[0]) + "</button>"; }).join("") + "</span>" +
@@ -2164,7 +2223,7 @@ window.AgentPanel = (function () {
       var anyFound = names.some(function (n) { return d.backends[n] && d.backends[n].found; });
 
       /* The badge describes the CLI the composer will actually send to — the
-         one in the <select> beside Send — not an OR across every CLI on the
+         one in the <select class=\"ui-select\"> beside Send \u2014 not an OR across every CLI on the
          machine.
          Measured: with codex registered and claude not, the strip read
          "CONNECTED  claude … not registered as an MCP server  Connect →"

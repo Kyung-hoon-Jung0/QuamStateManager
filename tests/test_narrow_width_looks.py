@@ -245,6 +245,34 @@ def test_chart_is_visible_before_its_lane_width_is_measured():
 
 
 def test_unit_fields_keep_a_visible_kit_focus_ring():
-    ring = _rule(".ui-input-unit > .ui-input.ui-input:focus")
-    assert ring["outline"] == "var(--ui-focus-w) solid var(--ui-accent)"
-    assert ring["outline-offset"] == "var(--ui-focus-inset)"
+    """One box: the unit wrapper draws the focus ring; the input inside draws no second ring."""
+    ring = _rule(".ui-input-unit:focus-within")
+    assert ring["border-color"] == "var(--ui-accent)"
+    assert ring["box-shadow"] == "var(--ui-ctl-ring)"
+    inner = _rule(".ui-input-unit > .ui-input.ui-input:focus")
+    assert inner["outline"] == "0" and inner["box-shadow"] == "none"
+
+
+def _rule_with(part):
+    hits = [_decls(b) for sel, b, s in _rules() if part in [p.strip() for p in sel.split(",")]]
+    assert len(hits) == 1, f"one rule lists {part!r}, found {len(hits)}"
+    return hits[0]
+
+
+def test_an_inline_field_control_keeps_its_own_width():
+    """A control in an inline field is as wide as itself (never stretched across the row);
+    --block still fills the column."""
+    for part in (".ui-input-unit", ".ui-input", ".ui-select", ".ui-menu"):
+        assert _rule_with(".ui-field--inline > " + part).get("justify-self") == "start"
+        assert _rule_with(".ui-field--inline > " + part + "--block").get("justify-self") == "stretch"
+
+
+def test_a_field_in_a_table_cell_is_never_squeezed_below_its_control():
+    """In a table cell the control column sizes to its control and a select or number is not
+    compressed, so a band label or a six-decimal value stays whole."""
+    grid = _rule(".ui-table-cell .ui-field.ui-field--inline")
+    assert grid["grid-template-columns"] == "var(--ui-field-label-w) auto"
+    for part in (".ui-table-cell .ui-field--inline > .ui-select", ".ui-table-cell .ui-field--inline > .ui-input",
+                 ".ui-table-cell .ui-field--inline > .ui-input-unit", ".ui-table-cell .ui-input-unit > .ui-input"):
+        decls = _rule_with(part)
+        assert decls.get("max-width") == "none" and decls.get("flex") == "none", part

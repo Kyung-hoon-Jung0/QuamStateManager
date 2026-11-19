@@ -137,7 +137,7 @@ def test_no_coupler_table_identity(tmp_path):
     # 40 ns vs target 32 ns): that one cell is the only difference from the previous pin.
     # Reading order: each row carries data-plan-state; the estimate tier, the validity and a
     # not-playable reason are kit pills (validity shows its short state plus the words).
-    assert hashlib.sha256(table.encode()).hexdigest() == "df1ef0b97abd770afd373785892db28dd210ed276597d1450ed22bda21262bd5"
+    assert hashlib.sha256(table.encode()).hexdigest() == "19d63b950fb522543fd5cfa42a8731888ce2a0ffd8c590dae13887072f7c55ef"
 
 
 def test_empty_ledger_explains_data_folder(tmp_path):

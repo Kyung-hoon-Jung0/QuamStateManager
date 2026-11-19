@@ -10,9 +10,9 @@
       {# Top mirror of the bottom Back/Next + step counter, so the user never has
          to scroll down to navigate (the bottom nav stays too). #}
       <span class="gen-progress" id="gen-progress-top">Step 1 of 8</span>
-      <button type="button" class="btn-sync" id="gen-back-top" disabled>&larr; Back</button>
+      <button type="button" class="btn-sync btn-sm" id="gen-back-top" disabled>&larr; Back</button>
       {#- ui-exception: the same Next as the bottom bar; on a long step the bottom one is below the fold -#}
-      <button type="button" class="btn-sync primary" id="gen-next-top">Next &rarr;</button>
+      <button type="button" class="btn-sync primary btn-sm" id="gen-next-top">Next &rarr;</button>
       <button type="button" class="outline btn-sm" id="gen-reset-step"
               title="Reset only this step; other steps and the environment are kept">Reset step</button>
       <button type="button" class="outline secondary btn-sm" id="gen-reset"
@@ -20,7 +20,6 @@
     </div>
     {{ ui_head_fold() }}
   </div>
-
   <ol class="gen-steps" id="gen-steps">
     <li data-step="1" class="active"><span class="gen-step-num">1</span><span class="gen-step-label">Environment</span></li>
     <li data-step="2"><span class="gen-step-num">2</span><span class="gen-step-label">Network</span></li>
@@ -31,7 +30,6 @@
     <li data-step="7"><span class="gen-step-num">7</span><span class="gen-step-label">Output</span></li>
     <li data-step="8"><span class="gen-step-num">8</span><span class="gen-step-label">Review</span></li>
   </ol>
-
   <div class="gen-panels">
     <section class="gen-panel active" data-step="1">
       <h3>Environment</h3>
@@ -50,54 +48,58 @@
          catches every normal create/remove. This is the way out for the case it
          cannot see (an env registered somewhere the stat does not reach). #}
       <p class="muted gen-env-rescan-row">
-        <button type="button" class="btn-xs outline gen-env-rescan"
+        <button type="button" class="btn-xs outline gen-env-rescan btn-sm"
                 onclick="QuamGen.rescanEnvs(this)"
                 title="Re-run the full conda scan (a few seconds) instead of the cached inventory">
           Rescan environments</button>
       </p>
       <div class="gen-env-custom">
-        <label for="gen-env-custom-path" class="muted gen-env-custom-label">Custom interpreter <b>or venv folder</b> (uv/.venv supported):</label>
+                <label for="gen-env-custom-path" class="muted gen-env-custom-label ui-field-label">Custom interpreter
+        <b>or venv folder</b> (uv/.venv supported):</label>
         <div class="gen-env-custom-row">
           <input type="text" id="gen-env-custom-path" autocomplete="off"
-                 placeholder="C:/my_repo/.venv  ·  /path/to/.venv  ·  …/Scripts/python.exe">
-          <button type="button" class="btn-sync gen-env-custom-use" onclick="QuamGen.useCustomEnv()">Use this</button>
+                 placeholder="C:/my_repo/.venv  &#183;  /path/to/.venv  &#183;  &#8230;/Scripts/python.exe"
+        class="ui-input">
+                    <button type="button" class="btn-sync gen-env-custom-use btn-sm" onclick="QuamGen.useCustomEnv()">
+          Use this</button>
         </div>
         <span id="gen-env-custom-status" class="muted"></span>
       </div>
       {# a lab's own quam_config checkout: stored per environment in SM's settings
          (never in the env), first on PYTHONPATH for the probe and the build #}
       <div class="gen-env-custom">
-        <label for="gen-lab-code-dir" class="muted gen-env-custom-label">Lab code folder for this environment (optional): the folder holding your lab's <code>quam_config</code></label>
+                <label for="gen-lab-code-dir" class="muted gen-env-custom-label ui-field-label">
+        Lab code folder for this environment (optional): the folder holding your lab's <code>quam_config</code>
+        </label>
         <div class="gen-env-custom-row">
           <input type="text" id="gen-lab-code-dir" autocomplete="off"
-                 placeholder="C:/my_lab_checkout  ·  /path/to/checkout">
-          <button type="button" class="btn-sync gen-env-custom-use" onclick="QuamGen.saveLabCodeDir()">Check and save</button>
+                 placeholder="C:/my_lab_checkout  &#183;  /path/to/checkout" class="ui-input">
+                    <button type="button" class="btn-sync gen-env-custom-use btn-sm" onclick="QuamGen.saveLabCodeDir()">
+          Check and save</button>
         </div>
         <span id="gen-lab-code-dir-status" class="muted"></span>
       </div>
     </section>
-
     <section class="gen-panel" data-step="2">
       <h3>Network</h3>
       <p class="muted">How the app reaches the QOP / cluster. These values
         go into <code>wiring.json</code>'s <code>network</code> block.</p>
-      <div class="gen-field">
-        <label for="gen-net-host">Host IP</label>
+      <div class="gen-field ui-field">
+        <label for="gen-net-host" class="ui-field-label">Host IP</label>
         <input type="text" id="gen-net-host" placeholder="e.g. 127.0.0.1"
-               autocomplete="off">
+               autocomplete="off" class="ui-input">
       </div>
-      <div class="gen-field">
-        <label for="gen-net-cluster">Cluster name</label>
+      <div class="gen-field ui-field">
+        <label for="gen-net-cluster" class="ui-field-label">Cluster name</label>
         <input type="text" id="gen-net-cluster" placeholder="e.g. my_cluster"
-               autocomplete="off">
+               autocomplete="off" class="ui-input">
       </div>
-      <div class="gen-field">
-        <label for="gen-net-port">Port <span class="muted">(optional)</span></label>
+      <div class="gen-field ui-field">
+        <label for="gen-net-port" class="ui-field-label">Port <span class="muted">(optional)</span></label>
         <input type="number" id="gen-net-port" min="1" max="65535" step="1"
-               placeholder="leave blank for the default" autocomplete="off">
+               placeholder="leave blank for the default" autocomplete="off" class="ui-input ui-input--num">
       </div>
     </section>
-
     <section class="gen-panel" data-step="3">
       <h3>Chassis &amp; Modules</h3>
       <p class="muted">Set how many OPX1000 chassis your setup has, then click
@@ -108,9 +110,9 @@
         <kbd>M</kbd>&thinsp;/&thinsp;<kbd>L</kbd> set the FEM,
         <kbd>Del</kbd> clears, <kbd>Enter</kbd> opens the menu.</p>
       <div class="gen-chassis-actions">
-        <label class="gen-chassis-count-field">
-          OPX1000 chassis:
-          <input type="number" id="gen-chassis-count" min="0" max="20" value="1">
+        <label class="gen-chassis-count-field ui-field">
+<span class="ui-field-label">OPX1000 chassis:</span>
+<input type="number" id="gen-chassis-count" min="0" max="20" value="1" class="ui-input ui-input--num">
         </label>
         {# OPX+ / Octave are hidden until the generator can actually build them:
            deriveLines hard-pins the readout to kind:"mw_fem", and an OPX+/Octave
@@ -118,8 +120,8 @@
            mixed OPX1000+OPX+, in build_instruments. Until deriveLines emits
            opx/octave channel kinds, the wizard only offers OPX1000 MW/LF —
            the path verified end-to-end. Handlers stay bound for when it lands. #}
-        <button type="button" class="outline" id="gen-add-opxplus" hidden>+ OPX+</button>
-        <button type="button" class="outline" id="gen-add-octave" hidden>+ Octave</button>
+        <button type="button" class="outline btn-sm" id="gen-add-opxplus" hidden>+ OPX+</button>
+        <button type="button" class="outline btn-sm" id="gen-add-octave" hidden>+ Octave</button>
       </div>
       <div id="gen-chassis-list" class="gen-chassis-list"></div>
       <button type="button" class="btn-sm outline" id="gen-port-play-toggle" aria-expanded="false">Port play (scope check)</button>
@@ -132,10 +134,12 @@
           <button type="button" class="btn-sm" data-live-stop>Stop all</button>
         </div>
         <div id="gen-port-play-rack"></div>
-        <table><thead><tr><th>Port</th><th>Mode</th><th>Offset (V)</th><th>Action</th></tr></thead><tbody id="gen-port-offsets"></tbody></table>
+                <table class="ui-table"><thead><tr><th>Port</th><th>Mode</th><th>Offset (V)</th><th>Action</th></tr>
+        </thead><tbody id="gen-port-offsets"></tbody></table>
         <button type="button" class="btn-sm outline" id="gen-port-offsets-copy">Copy as JSON</button>
         <button type="button" class="btn-sm outline" id="gen-port-checks-copy">Copy as CSV</button>
-        <table id="gen-port-checks-table" hidden><thead><tr><th>Port</th><th>Verdict</th><th>Note</th><th>Checked</th></tr></thead><tbody id="gen-port-checks"></tbody></table>
+                <table id="gen-port-checks-table" hidden class="ui-table"><thead><tr><th>Port</th><th>Verdict</th><th>
+        Note</th><th>Checked</th></tr></thead><tbody id="gen-port-checks"></tbody></table>
         <p class="ui-note" id="gen-port-offsets-message" role="status"></p>
       </div>
       <p class="muted gen-hw-soon">This wizard builds OPX1000 setups with
@@ -144,16 +148,14 @@
         No instruments &mdash; set the chassis count above.
       </p>
     </section>
-
     <section class="gen-panel" data-step="4">
       <h3>Qubits, Pairs &amp; TWPAs</h3>
-
       {# ---- DEFINE band: everything that parameterizes the chip, in compact
          rows. No collapsibles — naming is always visible (customer feedback:
          essential controls must never hide behind a closed panel). #}
       <div class="gen-band" id="gen-chip-arch-section">
         <div class="gen-band-head"><span class="gen-band-title">Chip definition</span>
-          <button type="button" class="gen-mini-btn" id="gen-csv-import-btn"
+          <button type="button" class="gen-mini-btn btn-sm" id="gen-csv-import-btn"
                   title="Import a port-label-mapping.csv (the QM fixed-transmon reference flow): qubits, grid, directed pairs, instruments and port pins in one file.">Import port CSV&hellip;</button>
           <input type="file" id="gen-csv-file" accept=".csv,text/csv" hidden>
         </div>
@@ -163,7 +165,7 @@
            value/disabled flags and renderArchRadios mirrors them; the radios
            proxy changes back through it so every existing code path (and
            selfcheck) keeps driving #gen-chip-arch. #}
-        <select id="gen-chip-arch" hidden>
+        <select id="gen-chip-arch" hidden class="ui-select">
           <option value="flux_tunable_coupler">Flux-tunable qubits + tunable coupler &mdash; CZ via coupler</option>
           <option value="flux_tunable_fixed_coupler">Flux-tunable qubits + fixed coupler &mdash; CZ via qubit z</option>
           <option value="fixed_tunable_coupler_lab">Fixed-frequency qubits + tunable coupler &mdash; coupler-only CZ, your lab's gate (cz_coupler_only)</option>
@@ -179,19 +181,18 @@
                Stark-CZ (ZZ drive) toggle. #}
             <div id="gen-cr-options" class="gen-arch-radios" hidden></div>
           </div>
-          <label class="gen-chassis-count-field">
-            Qubits:
-            <input type="number" id="gen-qubit-count" min="0" max="200" value="0">
+          <label class="gen-chassis-count-field ui-field">
+<span class="ui-field-label">Qubits:</span>
+<input type="number" id="gen-qubit-count" min="0" max="200" value="0" class="ui-input ui-input--num">
           </label>
-          <label class="gen-chassis-count-field"
+          <label class="gen-chassis-count-field ui-field"
                  title="Readout is multiplexed — qubits on one feedline share a single RF input + output pair. 6 is typical (one MW-FEM per feedline).">
-            Per feedline:
-            <input type="number" id="gen-mux-size" min="1" max="8" value="6">
+                 <span class="ui-field-label">Per feedline:</span>
+<input type="number" id="gen-mux-size" min="1" max="8" value="6" class="ui-input ui-input--num">
           </label>
         </div>
         <p class="muted gen-oneline" id="gen-chip-arch-note"></p>
         <p class="muted gen-oneline" id="gen-qubit-summary">No qubits &mdash; set the count.</p>
-
         {# Read-only confirmation — control lines are DERIVED from the
            architecture (single source of truth); the controls are disabled on
            purpose and labeled as confirmation so users know why they're shown. #}
@@ -205,7 +206,7 @@
             <span>Readout + XY drive</span>
             <span class="muted gen-line-hw-note" id="gen-line-mw-note">(auto)</span>
           </span>
-          <label class="gen-line-toggle" id="gen-line-qubit-flux"
+          <label class="gen-line-toggle ui-check" id="gen-line-qubit-flux"
                  title="Derived from the architecture — flux-tunable chips get z lines (needs LF-FEM or OPX+)">
             <input type="checkbox" id="gen-chk-qubit-flux" checked disabled>
             <span>Qubit flux (z)</span>
@@ -214,10 +215,10 @@
           {# docs/136 — where the z bias COMES FROM. Orthogonal to whether the
              architecture has a z line at all (the checkbox above), so it is
              its own control and hides entirely on a fixed-frequency chip. #}
-          <label class="gen-line-toggle" id="gen-line-flux-source" hidden
+          <label class="gen-line-toggle ui-field" id="gen-line-flux-source" hidden
                  title="Where each qubit's DC flux bias comes from. LF-FEM is an OPX analog port. QDAC-II is an external DC source armed by an OPX digital trigger — it holds a DC level and cannot play a pulse. Bias tee is both on the same qubit: the QDAC holds the operating point while the LF-FEM plays pulses on top of it.">
-            <span>Flux source</span>
-            <select id="gen-flux-source">
+                 <span class="ui-field-label"><span>Flux source</span></span>
+<select id="gen-flux-source" class="ui-select">
               <option value="opx">LF-FEM (OPX port)</option>
               <option value="qdac">QDAC-II (external DC)</option>
               <option value="tee">Both &mdash; bias tee</option>
@@ -225,10 +226,10 @@
             </select>
             <span class="muted gen-line-hw-note" id="gen-flux-source-note"></span>
           </label>
-          <label class="gen-line-toggle" id="gen-line-pair-gate"
+          <label class="gen-line-toggle ui-field" id="gen-line-pair-gate"
                  title="Derived from the architecture — the 2-qubit gate seeded on every pair">
-            <span>Gate</span>
-            <select id="gen-pair-gate" disabled>
+                 <span class="ui-field-label"><span>Gate</span></span>
+<select id="gen-pair-gate" disabled class="ui-select">
               <option value="cz_coupler">Coupler-only CZ</option>
               <option value="cz_coupler_only">Coupler-only CZ (your lab's gate)</option>
               <option value="cz_tunable">CZ &mdash; tunable coupler</option>
@@ -238,7 +239,6 @@
             <span class="muted gen-line-hw-note" id="gen-pair-gate-note"></span>
           </label>
         </div>
-
         {# Naming scheme: presets (q1…, q0…, board-derived grid letters, custom
            prefix) + per-qubit inline rename — always visible. Renames remap
            populate values, pairs and TWPA lists in one pass (applyQubitIdMap);
@@ -246,18 +246,21 @@
         <div id="gen-naming" class="gen-naming">
           <div class="gen-naming-controls">
             <span class="gen-band-sublabel">Qubit naming</span>
-            <label>Scheme
-              <select id="gen-naming-preset">
+            <label class="ui-field">
+<span class="ui-field-label">Scheme</span>
+<select id="gen-naming-preset" class="ui-select">
                 <option value="one_based">q1, q2, q3, &hellip;</option>
                 <option value="zero_based">q0, q1, q2, &hellip;</option>
                 <option value="grid">Grid letters &mdash; qA1, qA2, qB1, &hellip; (board rows)</option>
                 <option value="custom">Custom prefix + start</option>
               </select>
             </label>
-            <label id="gen-naming-prefix-field" hidden>Prefix
-              <input type="text" id="gen-naming-prefix" value="q" size="5"></label>
-            <label id="gen-naming-start-field" hidden>Start
-              <input type="number" id="gen-naming-start" value="1" min="0" class="gen-topo-dim"></label>
+            <label id="gen-naming-prefix-field" hidden class="ui-field">
+<span class="ui-field-label">Prefix</span>
+<input type="text" id="gen-naming-prefix" value="q" size="5" class="ui-input"></label>
+            <label id="gen-naming-start-field" hidden class="ui-field">
+<span class="ui-field-label">Start</span>
+<input type="number" id="gen-naming-start" value="1" min="0" class="gen-topo-dim ui-input ui-input--num"></label>
             <button type="button" class="outline btn-sm" id="gen-naming-apply"
                     title="Rename every qubit to the scheme (values move with each qubit)">
               Apply names</button>
@@ -267,7 +270,6 @@
           <div id="gen-qubit-name-list" class="gen-qubit-name-list"></div>
         </div>
       </div>
-
       {# ---- LAYOUT band: the interactive chip board (always visible) with the
          pair list as its textual mirror at its side — edit an edge on the
          board, watch the row appear. The list doubles as the keyboard /
@@ -285,8 +287,12 @@
             <button type="button" class="outline btn-sm" data-topo-preset="star" title="Hub q1 connected to every other qubit">Star</button>
             <button type="button" class="outline btn-sm" data-topo-preset="grid" title="2-D grid, nearest-neighbour couplings">Grid (NN)</button>
           </span>
-          <label>Grid <input type="number" id="gen-topo-cols" min="1" max="20" class="gen-topo-dim"> &times;
-            <input type="number" id="gen-topo-rows" min="1" max="20" class="gen-topo-dim"></label>
+          <label class="ui-field">
+<span class="ui-field-label">Grid</span>
+<input type="number" id="gen-topo-cols" min="1" max="20" class="gen-topo-dim ui-input ui-input--num"> &times;
+                        <input type="number" id="gen-topo-rows" min="1" max="20"
+        class="gen-topo-dim ui-input ui-input--num">
+            </label>
         </div>
         <div class="gen-layout-row">
           <div id="gen-topo" class="gen-topo">
@@ -308,7 +314,6 @@
           </div>
         </div>
       </div>
-
       {# ---- TWPA band #}
       <div class="gen-band">
         <div class="gen-band-head"><span class="gen-band-title">TWPAs</span> <span class="muted">&mdash; optional</span></div>
@@ -319,7 +324,6 @@
         <button type="button" class="outline btn-sm" id="gen-add-twpa">
           + Add TWPA</button>
       </div>
-
       {# ---- QDAC-II band (docs/136: a component, not an add-on) #}
       <div class="gen-band" id="gen-qdac-band" hidden>
         <div class="gen-band-head"><span class="gen-band-title">QDAC-II</span> <span class="muted" id="gen-qdac-band-sub">&mdash; DC flux bias</span></div>
@@ -327,20 +331,26 @@
            title="Generated only when the selected env can import the customer's quam_config.qdac_components module (no upstream qualang_tools/quam_builder support exists) — otherwise the build degrades gracefully and says which qubits lost their bias.">
           Per-qubit bias source and QDAC channel. Trigger wiring auto-allocates a digital output; group the cables on step 5.</p>
         <div class="gen-qdac-instrument">
-          <label>Link
-            <select id="gen-qdac-comm">
+          <label class="ui-field">
+<span class="ui-field-label">Link</span>
+<select id="gen-qdac-comm" class="ui-select">
               <option value="Ethernet">Ethernet</option>
               <option value="USB">USB</option>
             </select>
           </label>
-          <label id="gen-qdac-ip-label">IP <input type="text" id="gen-qdac-ip" placeholder="192.168.88.244"></label>
-          <label>Port <input type="number" id="gen-qdac-port" value="5025"></label>
-          <label id="gen-qdac-usb-label" hidden>USB device <input type="number" id="gen-qdac-usb"></label>
+          <label id="gen-qdac-ip-label" class="ui-field">
+<span class="ui-field-label">IP</span>
+<input type="text" id="gen-qdac-ip" placeholder="192.168.88.244" class="ui-input"></label>
+          <label class="ui-field">
+<span class="ui-field-label">Port</span>
+<input type="number" id="gen-qdac-port" value="5025" class="ui-input ui-input--num"></label>
+          <label id="gen-qdac-usb-label" hidden class="ui-field">
+<span class="ui-field-label">USB device</span>
+<input type="number" id="gen-qdac-usb" class="ui-input ui-input--num"></label>
         </div>
         <div id="gen-qdac-list" class="gen-qdac-list"></div>
       </div>
     </section>
-
     <section class="gen-panel" data-step="5">
       <h3>Wiring</h3>
       <p class="muted">Auto-allocate channels for every qubit and coupler
@@ -352,11 +362,11 @@
       {# Back / Next sit on this row (not the global footer) so the keyboard
          flow is Auto-allocate -> Enter -> Tab -> Back -> Tab -> Next. #}
       <div class="gen-allocate-row">
-        <button type="button" class="btn-sync" id="gen-allocate-btn">Auto-allocate</button>
+        <button type="button" class="btn-sync btn-sm" id="gen-allocate-btn">Auto-allocate</button>
         <span id="gen-allocate-status" class="muted"></span>
         <span class="gen-wiring-nav">
-          <button type="button" class="btn-sync" id="gen-wiring-back">&larr; Back</button>
-          <button type="button" class="btn-sync primary" id="gen-wiring-next">Next &rarr;</button>
+          <button type="button" class="btn-sync btn-sm" id="gen-wiring-back">&larr; Back</button>
+          <button type="button" class="btn-sync primary btn-sm" id="gen-wiring-next">Next &rarr;</button>
         </span>
       </div>
       {# uv-2: the monitor follows the rack and docks to the BOTTOM of the
@@ -376,7 +386,6 @@
       <div id="gen-qdac-cabling" class="gen-qdac-cabling" hidden></div>
       <div id="gen-wiring-table" class="gen-wiring-table"></div>
     </section>
-
     <section class="gen-panel" data-step="6">
       <h3>Populate <span class="muted">&mdash; optional physics values</span></h3>
       {# The mode-specific sentence is switched by renderPopulateIntro() on
@@ -391,19 +400,19 @@
           A qubit or pair added in this wizard gets <code>build_quam</code>'s
           defaults.</span>
         Pick how values are entered with the unit selectors below.</p>
-
       {# Default-value presets — named server-side sets of populate defaults
          (instance/gen_presets/); save the current values, re-apply them to a
          new chip. Wired by bindPresetBar()/loadPresetList() in generate.js. #}
       <div id="gen-preset-bar" class="gen-preset-bar">
-        <label>Presets
-          <select id="gen-preset-select">
+        <label class="ui-field">
+<span class="ui-field-label">Presets</span>
+<select id="gen-preset-select" class="ui-select">
             <option value="">(none)</option>
           </select>
         </label>
         <button type="button" class="outline btn-sm" id="gen-preset-apply"
                 title="Fill the tables below from the selected preset">Apply</button>
-        <label class="gen-preset-overwrite">
+        <label class="gen-preset-overwrite ui-check">
           <input type="checkbox" id="gen-preset-overwrite">
           Overwrite existing values</label>
         <button type="button" class="outline btn-sm" id="gen-preset-save"
@@ -413,82 +422,75 @@
       </div>
       <div id="gen-preset-savebox" class="gen-preset-savebox" hidden>
         <input type="text" id="gen-preset-name" placeholder="Preset name (e.g. Lab defaults)"
-               maxlength="120">
+               maxlength="120" class="ui-input">
         <span class="gen-preset-sections">
-          <label><input type="checkbox" id="gen-preset-sec-pulses" checked> Pulses</label>
-          <label><input type="checkbox" id="gen-preset-sec-qubit"> Qubit &amp; XY</label>
-          <label><input type="checkbox" id="gen-preset-sec-resonator"> Resonator</label>
-          <label><input type="checkbox" id="gen-preset-sec-flux"> Flux</label>
-          <label><input type="checkbox" id="gen-preset-sec-pairs"> Pair gates</label>
+          <label class="ui-check"><input type="checkbox" id="gen-preset-sec-pulses" checked> Pulses</label>
+          <label class="ui-check"><input type="checkbox" id="gen-preset-sec-qubit"> Qubit &amp; XY</label>
+          <label class="ui-check"><input type="checkbox" id="gen-preset-sec-resonator"> Resonator</label>
+          <label class="ui-check"><input type="checkbox" id="gen-preset-sec-flux"> Flux</label>
+          <label class="ui-check"><input type="checkbox" id="gen-preset-sec-pairs"> Pair gates</label>
         </span>
         <button type="button" class="btn-sm" id="gen-preset-save-confirm">Save</button>
         <button type="button" class="outline btn-sm" id="gen-preset-save-cancel">Cancel</button>
         <span id="gen-preset-err" class="gen-preset-err" aria-live="polite"></span>
       </div>
       <p id="gen-preset-note" class="muted" hidden></p>
-
       {# Shared OPX cores: written to populate.options.pin_cores on every
          change and on every step-6 entry (syncPinCoresUi in generate.js). #}
       <div id="gen-pin-cores">
-        <label>
+        <label class="ui-check">
           <input type="checkbox" id="gen-pin-cores-chk" checked>
           Share one core per qubit (xy + readout)</label>
         <p class="muted" id="gen-pin-cores-regen" hidden>A Re-generate keeps each element's core from the source chip, so this option applies to a new chip only.</p>
         <p class="muted" id="gen-pin-cores-note">Known risk: on QOP 3.8.1 (another device), with xy and resonator on one core, a resonator update_frequency inside a program made later x180 pulses have no effect; the simulator did not show it; it depended on the program layout. Not tested on QOP 3.7.3; a hardware test is planned.</p>
       </div>
-
       <div id="gen-pop-units" class="gen-pop-units"></div>
       <div id="gen-band-warnings"></div>
       {# Shared-LO map — which qubits sit on each MW-FEM LO. Collapsible so it
          stays compact with many FEMs; populated by renderLoMap() in generate.js. #}
-      <details id="gen-lo-map" class="gen-lo-map" hidden>
-        <summary class="gen-lo-map-summary">LO map</summary>
+      <details id="gen-lo-map" class="gen-lo-map ui-disclosure" hidden>
+        <summary class="gen-lo-map-summary ui-disclosure-summary">LO map</summary>
         <div class="gen-lo-map-body"></div>
       </details>
       {# Read-only mirror of the step-4 chip board — same grid convention + gate
          edge-styling, so you can see the topology while typing values. Toggleable
          (collapsed by default). Rendered by TopoGraph.renderStatic. #}
-      <details id="gen-pop-topo" class="gen-pop-topo" hidden>
-        <summary class="gen-pop-topo-summary">Chip topology <span class="muted" id="gen-pop-topo-caption"></span></summary>
+      <details id="gen-pop-topo" class="gen-pop-topo ui-disclosure" hidden>
+                <summary class="gen-pop-topo-summary ui-disclosure-summary">Chip topology
+        <span class="muted" id="gen-pop-topo-caption"></span></summary>
         <p class="gen-topo-legend" id="gen-pop-topo-legend"></p>
         <div id="gen-pop-topo-board" class="gen-pop-topo-board"></div>
       </details>
       {# Read-only copy of the step-5 wiring diagram — hover a port for that
          qubit's typed values; rows and ports cross-highlight. renderPopWiring(). #}
-      <details id="gen-pop-wiring" class="gen-pop-wiring" hidden>
-        <summary class="gen-pop-wiring-summary">Wiring diagram</summary>
+      <details id="gen-pop-wiring" class="gen-pop-wiring ui-disclosure" hidden>
+        <summary class="gen-pop-wiring-summary ui-disclosure-summary">Wiring diagram</summary>
         <div id="gen-pop-wiring-diagram" class="gen-wiring-diagram"></div>
         <div id="gen-pop-wiring-monitor" class="gen-wiring-monitor" aria-live="polite">
           <span class="gen-monitor-idle">Hover a port or table row to see its values</span>
         </div>
       </details>
-
       <p id="gen-pop-hidden-note" class="muted" hidden></p>
-
       {# Live waveform preview — focus/edit a pulse cell (1Q DRAG, readout, CZ/CR)
          and generate_preview.js POSTs /api/pulse/synth and draws it into
          #gen-pop-preview at the end of this step. The toggle persists an
          on/off preference; the panel × turns it off. #}
-      <label class="gen-preview-toggle" title="Show a live waveform when you edit an amplitude / length cell">
+      <label class="gen-preview-toggle ui-check" title="Show a live waveform when you edit an amplitude / length cell">
         <input type="checkbox" id="gen-preview-toggle" checked>
         <span>Show live waveform preview while editing</span>
       </label>
-
       <div id="gen-pop-sec-qubit">
         <h4>Qubit &amp; XY drive</h4>
         <div id="gen-pop-qubit" class="gen-pop-host"></div>
       </div>
-
       <div id="gen-pop-sec-resonator">
         <h4>Resonator</h4>
         <div id="gen-pop-resonator" class="gen-pop-host"></div>
       </div>
-
       <div id="gen-pop-sec-flux">
         <h4>Flux</h4>
         <div id="gen-pop-flux" class="gen-pop-host"></div>
       </div>
-
       {# docs/136 WS6 — the QDAC bias seeds. Rows are the QDAC-biased qubits
          only; the cells write onto spec.qdac.qubits[qid], the same entry the
          step-4 band edits, so the two views can never disagree. #}
@@ -496,7 +498,6 @@
         <h4>QDAC-II bias <span class="muted">&mdash; the DC operating point and how it steps</span></h4>
         <div id="gen-pop-qdac" class="gen-pop-host"></div>
       </div>
-
       {# TWPA pump tone + calibration seeds. Rows are the step-4 TWPAs; cells
          write spec.populate.twpa[<id>] and run_build._apply_twpa seeds the
          built twpas.<id> entity (hasattr-gated per field). Hidden when the
@@ -505,17 +506,14 @@
         <h4>TWPA <span class="muted">&mdash; pump tone and calibration seeds</span></h4>
         <div id="gen-pop-twpa" class="gen-pop-host"></div>
       </div>
-
       <div id="gen-pop-sec-pulses">
         <h4>Single-qubit gate pulses <span class="muted">&mdash; per qubit, or use Set all to seed</span></h4>
         <div id="gen-pop-pulses" class="gen-pop-host"></div>
       </div>
-
       <div id="gen-pop-sec-additions">
         <header class="ui-head"><h4 class="ui-head-title">Additions</h4><p class="ui-head-gist">Pulses, macros and fields the official build does not write. Each is checked in the environment and refused alone if it fails.</p></header>
         <div id="gen-pop-additions" class="gen-pop-host"></div>
       </div>
-
       <script type="application/json" id="gen-coupler-model-fields">{{ coupler_model_fields | default([]) | tojson }}</script>
       <div id="gen-pop-coupler-models"></div>
       <div id="gen-pop-sec-pairs">
@@ -523,28 +521,26 @@
         <p id="gen-pop-pair-order-note" class="muted" hidden></p>
         <div id="gen-pop-pairs" class="gen-pop-host"></div>
       </div>
-
       {# docs/301 F35: the preview docks at the BOTTOM of the pane (sticky
          bottom, after every table). Sticky at the top it covered the table
          header and the rows above the cell being edited. #}
       <div id="gen-pop-preview" class="gen-pop-preview" hidden>
         <div class="gen-pop-preview-head">
           <div class="gen-pop-preview-title muted"></div>
-          <button type="button" class="gen-pop-preview-close" id="gen-pop-preview-close"
+          <button type="button" class="gen-pop-preview-close btn-sm" id="gen-pop-preview-close"
                   title="Hide the waveform preview (turn it off)" aria-label="Hide preview">&times;</button>
         </div>
         <div id="gen-pop-preview-plot" class="gen-pop-preview-plot"></div>
         <div class="gen-pop-preview-err pulse-synth-err" hidden></div>
       </div>
     </section>
-
     <section class="gen-panel" data-step="7">
       <h3>Output Folder</h3>
       <p class="muted">Where to write <code>state.json</code> +
         <code>wiring.json</code>. Pick an empty folder &mdash; one named
         <code>quam_state</code> is conventional.</p>
       <div class="ui-field">
-        <label for="gen-output-path">Destination folder</label>
+        <label for="gen-output-path" class="ui-field-label">Destination folder</label>
         <div class="path-input-group">
           <input type="text" id="gen-output-path" class="ui-input ui-input--block" placeholder="…/quam_state"
                  autocomplete="off">
@@ -553,18 +549,17 @@
                   title="Browse folders">&#128193;</button>
         </div>
       </div>
-
       {# Editable-scripts export: alongside state/wiring, also write a
          01_make_wiring / 02_build_machine / 03_generate_config + README
          Python bundle (values inlined) into a SEPARATE folder for IDE use. #}
       {# r16 ⓪-4: exports ON by default; the folder auto-follows the state
          folder (<output>\state_gen_scripts) until the user edits the box. #}
-      <label class="gen-scripts-toggle">
+      <label class="gen-scripts-toggle ui-check">
         <input type="checkbox" id="gen-scripts-enable" checked>
         Also export editable Python build scripts
       </label>
       <div class="ui-field" id="gen-scripts-field">
-        <label for="gen-scripts-path">Scripts folder <span class="muted">&mdash;
+        <label for="gen-scripts-path" class="ui-field-label">Scripts folder <span class="muted">&mdash;
           readable Python with this chip's values inlined; edit + re-run in an IDE.
           Follows the state folder (<code>state_gen_scripts</code>) until you change it</span></label>
         <div class="path-input-group">
@@ -577,7 +572,6 @@
         </div>
       </div>
     </section>
-
     <section class="gen-panel" data-step="8">
       <h3>Review &amp; Generate</h3>
       <p class="muted">Review the configuration below, then click
@@ -586,11 +580,8 @@
       <div id="gen-build-result" class="gen-build-result" hidden></div>
     </section>
   </div>
-
   <div id="gen-slot-menu" class="gen-slot-menu" hidden></div>
-
   <div id="gen-message" class="gen-message" hidden></div>
-
   {# JSON drill-down panel — shared markup with the Instrument Wiring page.
      The wizard's wiring diagram uses the docked #gen-wiring-monitor (above)
      for hover info instead of the cursor-following port popup. #}
@@ -598,14 +589,14 @@
     <div class="json-panel-resizer" title="Drag to resize" aria-hidden="true"></div>
     <div class="json-panel-header">
       <span id="json-panel-title">Wiring JSON</span>
-      <button type="button" class="ui-btn-icon" onclick="closeJsonPanel()" aria-label="Close wiring JSON panel">&#10005;</button>
+            <button type="button" class="ui-btn-icon btn-sm" onclick="closeJsonPanel()"
+        aria-label="Close wiring JSON panel" >&#10005;</button>
     </div>
     <div id="json-panel-tree" class="json-tree"></div>
   </div>
-
   <div class="gen-nav">
-    <button type="button" class="btn-sync" id="gen-back" disabled>&larr; Back</button>
+    <button type="button" class="btn-sync btn-sm" id="gen-back" disabled>&larr; Back</button>
     <span class="gen-progress" id="gen-progress">Step 1 of 8</span>
-    <button type="button" class="btn-sync primary" id="gen-next">Next &rarr;</button>
+    <button type="button" class="btn-sync primary btn-sm" id="gen-next">Next &rarr;</button>
   </div>
 </div>

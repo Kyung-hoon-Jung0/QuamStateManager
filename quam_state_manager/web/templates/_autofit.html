@@ -24,35 +24,42 @@
 </div>
 
 {# ---- the AI judge (docs/169): which login answers "is this fit real?" ---- #}
-<details class="autofit-profile autofit-ai" id="autofit-ai" style="margin:0.4rem 0">
-  <summary>AI judge <small class="muted">a second opinion on suspect fits — off, your Claude Code login, an API key, or a local model</small></summary>
+<details class="autofit-profile autofit-ai ui-disclosure" id="autofit-ai">
+  <summary class="ui-disclosure-summary">AI judge <small class="muted">a second opinion on suspect fits &#8212; off,
+    your Claude Code login, an API key, or a local model</small></summary>
   <div class="autofit-ai-body">
-    <label>Provider
-      <select id="ai-provider" onchange="autofitAiProviderChanged()">
+    <div class="ui-field">
+      <div class="ui-field-head"><label class="ui-field-label" for="ai-provider">Provider</label></div>
+      <select class="ui-select" id="ai-provider" onchange="autofitAiProviderChanged()">
         <option value="off">off — deterministic gates only</option>
         <option value="claude_code">Claude Code login (no API key)</option>
         <option value="anthropic">Anthropic API key</option>
         <option value="openai_compat">OpenAI-compatible endpoint (e.g. a local model)</option>
       </select>
-    </label>
-    <label data-ai-for="claude_code anthropic openai_compat">Model
-      <input id="ai-model" type="text" placeholder="blank = the provider's default">
-    </label>
-    <label data-ai-for="anthropic">API key
-      <input id="ai-api-key" type="password" autocomplete="off" placeholder="leave blank to keep the saved one">
-    </label>
-    <label data-ai-for="openai_compat">Base URL
-      <input id="ai-base-url" type="text" placeholder="http://localhost:11434">
-    </label>
-    <label data-ai-for="claude_code">claude executable
-      <input id="ai-claude-bin" type="text" placeholder="blank = claude on PATH">
-    </label>
-    <p class="muted autofit-ai-note" data-ai-for="claude_code">
+    </div>
+    <div class="ui-field" data-ai-for="claude_code anthropic openai_compat">
+      <div class="ui-field-head"><label class="ui-field-label" for="ai-model">Model</label></div>
+      <input class="ui-input" id="ai-model" type="text" placeholder="blank = the provider's default">
+    </div>
+    <div class="ui-field" data-ai-for="anthropic">
+      <div class="ui-field-head"><label class="ui-field-label" for="ai-api-key">API key</label></div>
+      <input class="ui-input" id="ai-api-key" type="password" autocomplete="off"
+             placeholder="leave blank to keep the saved one">
+    </div>
+    <div class="ui-field" data-ai-for="openai_compat">
+      <div class="ui-field-head"><label class="ui-field-label" for="ai-base-url">Base URL</label></div>
+      <input class="ui-input" id="ai-base-url" type="text" placeholder="http://localhost:11434">
+    </div>
+    <div class="ui-field" data-ai-for="claude_code">
+      <div class="ui-field-head"><label class="ui-field-label" for="ai-claude-bin">claude executable</label></div>
+      <input class="ui-input" id="ai-claude-bin" type="text" placeholder="blank = claude on PATH">
+    </div>
+    <p class="muted autofit-ai-note ui-field-hint" data-ai-for="claude_code">
       Uses the Claude Code you are already logged into on this machine — run
       <code>claude</code> once in a terminal and sign in with your plan. Nothing is stored by SM.
       Figures are handed to the model as files it reads itself.
     </p>
-    <div class="autofit-ai-actions">
+    <div class="autofit-ai-actions ui-actions">
       <button type="button" class="btn-sm" onclick="autofitAiSave()">Save</button>
       <button type="button" class="btn-sm outline" onclick="autofitAiProbe()"
               title="One real call through the configured provider">Test</button>
@@ -62,38 +69,43 @@
 </details>
 
 {# ---- plan bar: THE button ---- #}
-<details class="autofit-profile" style="margin:0.4rem 0">
-  <summary>Chip profile <small class="muted">the design facts a human knows before calibrating — rules branch on these; unanswered fields keep asking</small></summary>
+<details class="autofit-profile ui-disclosure">
+  <summary class="ui-disclosure-summary">Chip profile <small class="muted">the design facts a human knows before
+    calibrating &#8212; rules branch on these; unanswered fields keep asking</small></summary>
   <div hx-get="/chip-profile" hx-trigger="intersect once" hx-swap="innerHTML">Loading…</div>
 </details>
 
 <div class="autofit-planbar">
-    <label>Plan
-        <select id="autofit-preset">
+    <div class="ui-field">
+      <div class="ui-field-head"><label class="ui-field-label" for="autofit-preset">Plan</label></div>
+      <select class="ui-select" id="autofit-preset">
             {% for key, name in presets.items() %}
             <option value="{{ key }}">{{ name }}</option>
             {% endfor %}
         </select>
-    </label>
-    <label>Targets
-        <select id="autofit-targets" multiple size="3"
+    </div>
+    <div class="ui-field">
+      <div class="ui-field-head"><label class="ui-field-label" for="autofit-targets">Targets</label></div>
+      <select class="ui-select ui-select--list" id="autofit-targets" multiple size="3"
                 title="empty selection = all active"></select>
-    </label>
-    <label>Autonomy
-        <select id="autofit-autonomy"
+    </div>
+    <div class="ui-field">
+      <div class="ui-field-head"><label class="ui-field-label" for="autofit-autonomy">Autonomy</label></div>
+      <select class="ui-select" id="autofit-autonomy"
                 title="full: gate-checked values land on the chip (rejects auto-reverted, pre-plan snapshot = one-click undo). review: same run, chip restored at the end, values appliable from the report.">
             <option value="full">full — apply (gated + revertible)</option>
             <option value="review">review — restore at end, report only</option>
         </select>
-    </label>
-    <label>Backend
-        <select id="autofit-backend"
+    </div>
+    <div class="ui-field">
+      <div class="ui-field-head"><label class="ui-field-label" for="autofit-backend">Backend</label></div>
+      <select class="ui-select" id="autofit-backend"
                 title="sim: a synthetic demo chip, zero hardware, full write-path parity. real: the loaded chip through the Experiment Runner chassis.">
             <option value="sim">simulation (demo chip)</option>
             <option value="real">real chip (scheduler chassis)</option>
         </select>
-    </label>
-    <button id="autofit-run" class="autofit-run-btn" onclick="autofitRun()">
+    </div>
+    <button id="autofit-run" class="autofit-run-btn btn-sm" onclick="autofitRun()">
         &#9654; Run plan</button>
     <button id="autofit-abort" class="btn-sm outline" onclick="autofitAbort()"
             hidden>Abort</button>
@@ -104,23 +116,23 @@
 <div id="autofit-resolution" hidden></div>
 
 {# ---- live board ---- #}
-<details open class="detail-section">
-    <summary class="section-header">Live board</summary>
+<details open class="detail-section ui-disclosure">
+    <summary class="section-header ui-disclosure-summary">Live board</summary>
     <div id="autofit-board"><p class="muted">No plan run yet — pick a plan and
         press Run. The sim backend demos the whole loop with zero hardware.</p></div>
 </details>
 
 {# ---- review queue ---- #}
-<details open class="detail-section">
-    <summary class="section-header">Review queue
+<details open class="detail-section ui-disclosure">
+    <summary class="section-header ui-disclosure-summary">Review queue
         <small class="muted" id="autofit-review-count"></small></summary>
     <div id="autofit-review"><p class="muted">Deferred / reverted targets land
         here with their verdict chains.</p></div>
 </details>
 
 {# ---- report ---- #}
-<details class="detail-section">
-    <summary class="section-header">Report (ledger)</summary>
+<details class="detail-section ui-disclosure">
+    <summary class="section-header ui-disclosure-summary">Report (ledger)</summary>
     <div id="autofit-report"><p class="muted">Applied values, reverts, LLM
         verdicts and provenance — rendered from the plan run's ledger.</p></div>
 </details>

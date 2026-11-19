@@ -9,6 +9,16 @@
 (function () {
   "use strict";
 
+  function kitElement(tag, type) {
+    var node = document.createElement(tag);
+    if (type) node.type = type;
+    var classes = { input: "ui-input", select: "ui-select", button: "btn-sm",
+      table: "ui-table", details: "ui-disclosure", summary: "ui-disclosure-summary" };
+    node.className = classes[tag] || "";
+    if (type === "checkbox" || type === "radio") node.className = "ui-check-box";
+    return node;
+  }
+
   var STEP_COUNT = 8;
 
   // Use the diff name part for narrow values, with explicit path joints.
@@ -1204,11 +1214,11 @@
     if (fem) options.push({ label: "Empty slot", fem: null });
 
     options.forEach(function (opt) {
-      var b = document.createElement("button");
+      var b = kitElement("button");
       b.type = "button";
       b.setAttribute("role", "menuitem");
       b.textContent = opt.label;
-      if (opt.fem === fem) b.className = "current";
+      if (opt.fem === fem) b.className = "btn-sm current";
       b.addEventListener("click", function () {
         setFem(ctrl, slot, opt.fem);
         activeSlot = { con: ctrl.con, slot: slot };
@@ -1299,9 +1309,9 @@
     title.textContent = label;
     head.appendChild(title);
     if (onRemove) {
-      var del = document.createElement("button");
+      var del = kitElement("button");
       del.type = "button";
-      del.className = "gen-chassis-del";
+      del.className = "btn-sm gen-chassis-del";
       del.textContent = "×";
       del.title = "Remove";
       del.addEventListener("click", onRemove);
@@ -2051,10 +2061,10 @@
     host.innerHTML = "";
     if (!state.spec.qubits.length) return;
     state.spec.qubits.forEach(function (q) {
-      var input = document.createElement("input");
+      var input = kitElement("input");
       input.type = "text";
       input.value = q;
-      input.className = "gen-qubit-name-in";
+      input.className = "ui-input gen-qubit-name-in";
       input.title = "Rename " + q + " — typed values and pairs follow the rename";
       input.addEventListener("change", function () {
         var v = input.value.trim();
@@ -2470,16 +2480,16 @@
       var isReversed = !!(srcOrient && pair[0] === srcOrient.src[1] &&
                           pair[1] === srcOrient.src[0]);
       row.innerHTML =
-        '<select class="gen-pair-c"><option value="">—</option>' +
+        '<select class="gen-pair-c ui-select"><option value="">\u2014</option>' +
         qubitOptions(pair[0]) + "</select>" +
         '<span class="gen-pair-link">' + (cz ? "↔" : "→") + "</span>" +
-        '<select class="gen-pair-t"><option value="">—</option>' +
+        '<select class="gen-pair-t ui-select"><option value="">\u2014</option>' +
         qubitOptions(pair[1]) + "</select>" +
         (isManual
           ? '<span class="gen-pair-manual-chip" title="Orientation pinned by ' +
             'hand — frequency auto-assignment skips this pair">manual</span>'
           : "") +
-        '<button type="button" class="gen-row-del">×</button>';
+        '<button type="button" class="gen-row-del btn-sm">\u00d7</button>';
       // Tint a select whose model value is a phantom (see qubitOptions) so the
       // broken member is findable at a glance among many rows.
       ["gen-pair-c", "gen-pair-t"].forEach(function (cls, side) {
@@ -2636,7 +2646,7 @@
     state.spec.twpas.forEach(function (twpa, idx) {
       var row = document.createElement("div");
       row.className = "gen-twpa-row";
-      var input = document.createElement("input");
+      var input = kitElement("input");
       input.type = "text";
       input.value = twpa.id || "";
       input.placeholder = "twpaA";
@@ -2672,9 +2682,9 @@
         });
         popKey = newId;
       });
-      var del = document.createElement("button");
+      var del = kitElement("button");
       del.type = "button";
-      del.className = "gen-row-del";
+      del.className = "btn-sm gen-row-del";
       del.textContent = "×";
       del.addEventListener("click", function () {
         var pt = (state.spec.populate || {}).twpa;
@@ -2890,8 +2900,12 @@
     function field(label, key, type, extra) {
       var wrap = document.createElement("label");
       var span = document.createElement("span");
-      span.textContent = label;
-      var input = document.createElement(type === "select" ? "select" : "input");
+      var unitMatch = /\((s|V\/s|ns|V)\)$/.exec(label);
+      span.textContent = unitMatch ? label.slice(0, unitMatch.index).trim() : label;
+      wrap.className = "ui-field";
+      span.className = "ui-field-label";
+      var input = kitElement(type === "select" ? "select" : "input");
+      if (type === "number") input.classList.add("ui-input--num");
       if (type === "select") {
         (extra.options || []).forEach(function (opt) {
           var o = document.createElement("option");
@@ -2927,7 +2941,15 @@
       });
       flag();
       wrap.appendChild(span);
-      wrap.appendChild(input);
+      if (unitMatch) {
+        var unit = document.createElement("span");
+        unit.className = "ui-input-unit";
+        unit.appendChild(input);
+        var suffix = document.createElement("span");
+        suffix.className = "ui-input-unit-text";
+        suffix.textContent = unitMatch[1];
+        unit.appendChild(suffix); wrap.appendChild(unit);
+      } else wrap.appendChild(input);
       container.appendChild(wrap);
     }
     field("Channel", "channel", "number", { step: "1",
@@ -2970,8 +2992,8 @@
       head.className = "gen-qdac-rowhead";
       var label = document.createElement("span");
       label.textContent = qid;
-      var pick = document.createElement("select");
-      pick.className = "gen-qdac-source";
+      var pick = kitElement("select");
+      pick.className = "ui-select gen-qdac-source";
       pick.setAttribute("aria-label", qid + " flux source");
       [["opx", "LF-FEM"], ["qdac", "QDAC"], ["tee", "Bias tee"]].forEach(function (o) {
         var opt = document.createElement("option");
@@ -3284,8 +3306,8 @@
     host.innerHTML = "";
     Array.prototype.forEach.call(sel.options, function (opt) {
       var lab = document.createElement("label");
-      lab.className = "gen-arch-radio" + (opt.disabled ? " gen-arch-radio-off" : "");
-      var r = document.createElement("input");
+      lab.className = "ui-check gen-arch-radio" + (opt.disabled ? " gen-arch-radio-off" : "");
+      var r = kitElement("input", "radio");
       r.type = "radio";
       r.name = "gen-chip-arch-radio";
       r.value = opt.value;
@@ -3343,9 +3365,9 @@
       "the QM fixed-transmon reference layout. Uses half the MW ports."]]
       .forEach(function (opt) {
         var lab = document.createElement("label");
-        lab.className = "gen-arch-radio";
+        lab.className = "ui-check gen-arch-radio";
         lab.title = opt[2];
-        var r = document.createElement("input");
+        var r = kitElement("input", "radio");
         r.type = "radio";
         r.name = "gen-cr-portmode-radio";
         r.value = opt[0];
@@ -3364,11 +3386,11 @@
     host.appendChild(modeWrap);
 
     var zzLab = document.createElement("label");
-    zzLab.className = "gen-arch-radio";
+    zzLab.className = "ui-check gen-arch-radio";
     zzLab.title = "Adds a zz_drive wiring line per pair + the StarkInducedCZGate " +
       "seed (the target's detuned-xy tones need a quam-builder with " +
       "FixedFrequencyZZDriveQuam — the env report card will say).";
-    var zz = document.createElement("input");
+    var zz = kitElement("input", "checkbox");
     zz.type = "checkbox";
     zz.checked = !!state.zzEnabled;
     zz.addEventListener("change", function () {
@@ -3750,7 +3772,7 @@
       syncZoneInputs();
       syncTopoControls();      // show/hide the Renumber button as holes appear/clear
     });
-    // The board section is always visible (no <details> gate any more) —
+    // The board section is always visible (no details gate any more) \u2014
     // rendering happens on step entry / renderQubitsStep; only the button
     // bindings live here (once-guarded on the board wrapper).
     var topo = document.getElementById("gen-topo");
@@ -4295,7 +4317,7 @@
         (ln.group ? ' <span class="muted">· ' + ln.group + "</span>" : "") + "</td>" +
         '<td class="gen-wiring-alloc">' + (allocStale ? allocPendingText() : allocText(ln.element, ln.line)) + "</td>" +
         '<td><input type="text" id="' + escapeAttr(pinBoxId(ln)) + '" aria-label="' +
-        escapeAttr(ln.element + " " + ln.line + " pin") + '" class="gen-wiring-pin' +
+        escapeAttr(ln.element + " " + ln.line + " pin") + '" class="ui-input gen-wiring-pin' +
         (why ? ' gen-wiring-pin-invalid" aria-invalid="true" title="' +
         escapeAttr(why) : "") + '" placeholder="' + ph + '" value="' +
         escapeAttr(pin) + '">' +
@@ -4305,7 +4327,7 @@
         "</td></tr>";
     }).join("");
     host.innerHTML =
-      '<table class="gen-wiring" id="gen-wiring-tbl"><thead><tr>' +
+      '<table class="gen-wiring ui-table" id="gen-wiring-tbl"><thead><tr>' +
       "<th>Element</th><th>Line</th><th>Auto-allocated</th>" +
       '<th>Pin <span class="muted">con/slot/port</span></th>' +
       "</tr></thead><tbody>" + body + "</tbody></table>";
@@ -4542,7 +4564,7 @@
               (qd.qubits[qid].trigger_port === e ? " selected" : "") + ">" + e + "</option>";
           })).join("");
         return '<span class="gen-qdac-chip" data-qubit="' + qid + '">' + qid +
-          '<select class="gen-qdac-ext" aria-label="' + qid +
+          '<select class="ui-select gen-qdac-ext" aria-label="' + qid +
           ' trigger input">' + opts + "</select></span>";
       }).join("");
     }
@@ -4570,7 +4592,7 @@
     host.innerHTML =
       '<div class="gen-qdac-cabling-head">' +
         '<span class="gen-band-sublabel">QDAC trigger cabling</span>' +
-        '<label class="gen-qdac-share"><input type="checkbox" id="gen-qdac-share"' +
+        '<label class="gen-qdac-share ui-check"><input type="checkbox" id="gen-qdac-share"' +
           (qdacShareCables() ? " checked" : "") +
           '> Share one cable per ext input</label>' +
         '<button type="button" class="outline btn-sm" id="gen-qdac-rr" ' +
@@ -4593,7 +4615,7 @@
             qids.length + " QDAC qubits were assigned to them round-robin " +
             "(4 shared cables). Change any qubit's input below, or Clear to undo.</strong>"
           : "") + "</p>" +
-      '<table class="gen-qdac-cable-tbl"><thead><tr><th>QDAC input</th>' +
+      '<table class="gen-qdac-cable-tbl ui-table"><thead><tr><th>QDAC input</th>' +
       "<th>OPX digital output</th><th>Qubits armed</th><th></th>" +
       "</tr></thead><tbody>" + rows + "</tbody></table>";
 
@@ -5049,7 +5071,7 @@
     var head = document.createElement("p");
     head.textContent = "Output timing written:";
     wrap.appendChild(head);
-    var table = document.createElement("table");
+    var table = kitElement("table");
     table.className = "ui-table";
     var tr = document.createElement("tr");
     ["Output", "Port", "Delay (ns)"].forEach(function (h) {
@@ -5178,7 +5200,7 @@
       wrap.appendChild(kn);
     }
     t.fems.forEach(function (f) {
-      var table = document.createElement("table");
+      var table = kitElement("table");
       table.className = "ui-table";
       // The source key column shows only when some row of this FEM has one.
       var withSrc = (f.rows || []).some(function (r) { return r && r.source != null && r.source !== ""; });
@@ -5214,9 +5236,9 @@
       tot.appendChild(td);
       table.appendChild(tot);
       if (!f.over && (f.rows || []).length > 8) {
-        var det = document.createElement("details");
+        var det = kitElement("details");
         det.className = "ui-disclosure";
-        var sum = document.createElement("summary");
+        var sum = kitElement("summary");
         sum.className = "ui-disclosure-summary";
         sum.textContent = f.place + ": " + f.total + " (" + f.rows.length + " elements)";
         det.appendChild(sum);
@@ -5573,17 +5595,17 @@
       var g = it.stale;
       if (g) {
         if (g.moveTo != null) {
-          var mv = document.createElement("button");
+          var mv = kitElement("button");
           mv.type = "button";
-          mv.className = "secondary outline gen-wiring-pin-move";
+          mv.className = "btn-sm secondary outline gen-wiring-pin-move";
           mv.textContent = "Move " + (g.idx.length === 1 ? "it" : "them") + " to con" + g.con +
                            " slot " + g.moveTo;
           mv.addEventListener("click", function () { fixStalePins(g, true); });
           row.appendChild(mv);
         }
-        var cl = document.createElement("button");
+        var cl = kitElement("button");
         cl.type = "button";
-        cl.className = "secondary outline gen-wiring-pin-clear";
+        cl.className = "btn-sm secondary outline gen-wiring-pin-clear";
         cl.textContent = "Clear " + (g.idx.length === 1 ? "this pin" : "these " + g.idx.length + " pins");
         cl.title = "Drop the pins so the allocator picks the ports";
         cl.addEventListener("click", function () { fixStalePins(g, false); });
@@ -6184,7 +6206,7 @@
   }
 
   function roChip(q) {
-    return '<button type="button" class="gen-ro-chip' + (_roSel[q] ? " is-sel" : "") +
+    return '<button type="button" class="btn-sm gen-ro-chip' + (_roSel[q] ? " is-sel" : "") +
       '" data-q="' + escapeAttr(q) + '" aria-pressed="' + (_roSel[q] ? "true" : "false") +
       '">' + escapeAttr(q) + "</button>";
   }
@@ -6223,7 +6245,7 @@
     var cards = model.feeds.map(function (f, idx) {
       var ch = f.channel || {};
       var femKey = (ch.con != null && ch.slot != null) ? ch.con + "/" + ch.slot : "";
-      var femSel = '<select class="gen-ro-fem" aria-label="' + escapeAttr(f.name + " FEM") + '">' +
+      var femSel = '<select class="ui-select gen-ro-fem" aria-label="' + escapeAttr(f.name + " FEM") + '">' +
         roOpt("", "auto FEM", !femKey) +
         fems.map(function (m) {
           var k = m.con + "/" + m.slot;
@@ -6233,13 +6255,13 @@
           ? roOpt(femKey, "con" + ch.con + " slot " + ch.slot + " (no MW-FEM)", true) : "") +
         "</select>";
       var out = ch.out_port != null ? ch.out_port : null;
-      var outSel = '<select class="gen-ro-out" aria-label="' + escapeAttr(f.name + " output") + '">' +
+      var outSel = '<select class="ui-select gen-ro-out" aria-label="' + escapeAttr(f.name + " output") + '">' +
         (out == null ? roOpt("", "auto", true) : "") +
         [1, 2, 3, 4, 5, 6, 7, 8].map(function (p) { return roOpt(String(p), "Out " + p, p === out); }).join("") +
         "</select>";
       var inp = ch.in_port != null ? ch.in_port : null;
       var nb = out != null ? loPairedInput(out) : null;
-      var inSel = '<select class="gen-ro-in" aria-label="' + escapeAttr(f.name + " input") + '"' +
+      var inSel = '<select class="ui-select gen-ro-in" aria-label="' + escapeAttr(f.name + " input") + '"' +
         (out != null && nb == null ? ' title="' + escapeAttr(NOTE_23) + '"' : "") + ">" +
         (inp == null ? roOpt("", "auto", true) : "") +
         [1, 2].map(function (p) {
@@ -6256,7 +6278,7 @@
         (idx < 9 ? idx + 1 : "") + "</span>" +
         '<span class="gen-ro-name">' + escapeAttr(f.name) + "</span>" +
         '<span class="gen-ro-count muted">' + f.members.length + "/" + MUX_MAX + "</span>" +
-        '<button type="button" class="btn-xs outline gen-ro-here"' + (nSel ? "" : " disabled") +
+        '<button type="button" class="btn-xs outline gen-ro-here btn-sm"' + (nSel ? "" : " disabled") +
         ' title="Move the selected qubits here">Move here</button></div>' +
         '<div class="gen-ro-ports">' + femSel + outSel + '<span class="gen-ro-arrow">→</span>' + inSel + "</div>" +
         '<div class="gen-ro-chips">' + f.members.map(roChip).join("") + "</div>" +
@@ -6272,17 +6294,17 @@
       "feedline, press its number, or drag. 0 = unassign.</span>" +
       '<span class="gen-ro-tools"><span class="muted">Inputs</span>' +
       '<span class="gen-ro-seg" aria-label="Readout inputs for Out 1 / Out 8">' +
-      '<button type="button" class="btn-xs gen-ro-mode' + (mode === "neighbor" ? " is-on" : "") +
+      '<button type="button" class="btn-sm btn-xs gen-ro-mode' + (mode === "neighbor" ? " is-on" : "") +
       '" data-mode="neighbor" aria-pressed="' + (mode === "neighbor") +
       '" title="Out 1 → In 1, Out 8 → In 2 (the coupled pairs)">Neighbor</button>' +
-      '<button type="button" class="btn-xs gen-ro-mode' + (mode === "crossing" ? " is-on" : "") +
+      '<button type="button" class="btn-sm btn-xs gen-ro-mode' + (mode === "crossing" ? " is-on" : "") +
       '" data-mode="crossing" aria-pressed="' + (mode === "crossing") +
       '" title="Out 1 → In 2, Out 8 → In 1 (QM: optimized readout)">Crossing</button></span>' +
       (mode === "mixed" ? '<span class="muted" data-gen-ro-mixed title="The feedlines use different inputs; ' +
         'pressing an option sets every feedline on Out 1 / Out 8">mixed</span>' : "") +
-      '<button type="button" class="btn-xs outline gen-ro-fill"' + (model.pool.length ? "" : " disabled") +
+      '<button type="button" class="btn-xs outline gen-ro-fill btn-sm"' + (model.pool.length ? "" : " disabled") +
       ' title="Fill feedlines up to the step-4 size, in qubit order">Fill from pool</button>' +
-      '<button type="button" class="btn-xs outline gen-ro-clear"' + (model.feeds.length ? "" : " disabled") +
+      '<button type="button" class="btn-xs outline gen-ro-clear btn-sm"' + (model.feeds.length ? "" : " disabled") +
       ">Unassign all</button></span></div>" +
       '<div class="gen-ro-pool" data-ro-target="' + RO_POOL + '">' +
       '<span class="gen-ro-pool-label">Unassigned <b>' + model.pool.length + "</b></span>" +
@@ -6291,7 +6313,7 @@
       "</div>" +
       '<div class="gen-ro-feeds">' + cards +
       '<div class="gen-ro-card gen-ro-new" data-ro-target="' + RO_NEW + '">' +
-      '<button type="button" class="btn-xs outline gen-ro-newbtn"' + (nSel ? "" : " disabled") +
+      '<button type="button" class="btn-xs outline gen-ro-newbtn btn-sm"' + (nSel ? "" : " disabled") +
       ">+ New feedline</button>" +
       '<span class="muted">from the selection</span></div></div>' +
       '<div class="gen-ro-note muted" aria-live="polite">' +
@@ -7453,7 +7475,7 @@
     var current = popBucketRead(group, rid)[col.field];
     var input;
     if (col.kind === "select") {
-      input = document.createElement("select");
+      input = kitElement("select");
       col.options.forEach(function (opt) {
         var o = document.createElement("option");
         o.value = opt;
@@ -7462,8 +7484,9 @@
       });
       input.value = current == null ? (col.shownDefault || "") : String(current);
     } else {
-      input = document.createElement("input");
+      input = kitElement("input");
       input.type = col.kind === "text" ? "text" : "number";
+      if (input.type === "number") input.classList.add("ui-input--num");
       if (current != null) {
         if (col.dim === "amp") {
           input.value = ampToDisplay(current, ampMode(),
@@ -7491,7 +7514,7 @@
           ? " and rewrites the whole readout bank (shared FSP, equal per-tone "
             + "amplitudes)" : "");
     }
-    input.className = "gen-pop-in";
+    input.classList.add("gen-pop-in");
     // a blank cell takes a default the build applies: say it as a hint, never a value
     if (col.placeholder) input.placeholder = col.placeholder;
     // data-* identity so applyLoAssignments() can find the LO cells.
@@ -7696,7 +7719,7 @@
     }
     var input;
     if (col.kind === "select") {
-      input = document.createElement("select");
+      input = kitElement("select");
       col.options.forEach(function (opt) {
         var o = document.createElement("option");
         o.value = opt;
@@ -7704,11 +7727,12 @@
         input.appendChild(o);
       });
     } else {
-      input = document.createElement("input");
+      input = kitElement("input");
       input.type = col.kind === "text" ? "text" : "number";
+      if (input.type === "number") input.classList.add("ui-input--num");
       input.placeholder = "set all…";
     }
-    input.className = "gen-pop-in";
+    input.classList.add("gen-pop-in");
     // Names the column in the Ctrl+Z toast (QA r2-23).
     input.setAttribute("aria-label", "Set all " + (col.label || col.field));
     if (col.kind === "text") {
@@ -7871,8 +7895,8 @@
   }
 
   function buildPopTable(group, rowIds, columns, rowLabel) {
-    var table = document.createElement("table");
-    table.className = "gen-pop-table";
+    var table = kitElement("table");
+    table.className = "ui-table gen-pop-table";
     table.id = "gen-pop-tbl-" + group;       // stable id for armPlainResize
     table.addEventListener("keydown", popGridKeydown);
     var thead = document.createElement("thead");
@@ -7970,10 +7994,11 @@
     host.appendChild(lead);
     Object.keys(POP_UNITS).forEach(function (dim) {
       var wrap = document.createElement("label");
-      wrap.className = "gen-pop-unit";
+      wrap.className = "ui-field gen-pop-unit";
       var span = document.createElement("span");
+      span.className = "ui-field-label";
       span.textContent = POP_UNIT_LABEL[dim];
-      var sel = document.createElement("select");
+      var sel = kitElement("select");
       Object.keys(POP_UNITS[dim]).forEach(function (u) {
         var o = document.createElement("option");
         o.value = u;
@@ -8010,10 +8035,11 @@
     // Stored representation is IDENTICAL in both modes (fsp + amplitudes) —
     // the toggle only changes entry semantics, so specs/drafts stay portable.
     var pWrap = document.createElement("label");
-    pWrap.className = "gen-pop-unit gen-pop-powermode";
+    pWrap.className = "ui-field gen-pop-unit gen-pop-powermode";
     var pSpan = document.createElement("span");
+    pSpan.className = "ui-field-label";
     pSpan.textContent = "Power input";
-    var pSel = document.createElement("select");
+    var pSel = kitElement("select");
     [["manual", "FSP + amplitude"], ["absolute", "absolute dBm (auto FSP)"]]
       .forEach(function (opt) {
         var o = document.createElement("option");
@@ -9272,7 +9298,7 @@
     // explicit re-solve is the user's opt-in to the solver's picks, and it
     // marks the changed cells touched so populate-protect carries them.
     if (state.mode === "regenerate") {
-      var rs = document.createElement("button");
+      var rs = kitElement("button");
       rs.type = "button";
       rs.className = "btn-sm outline gen-lo-resolve";
       rs.textContent = "Re-solve LOs";
@@ -9480,7 +9506,7 @@
     refreshFSPCells();
   }
 
-  // Refresh all FSP <input>s of one populate group ("resonator" default) in
+  // Refresh all FSP inputs of one populate group ("resonator" default) in
   // place from the current spec.
   function refreshFSPCells(group) {
     group = group || "resonator";
@@ -10104,16 +10130,33 @@
       section.appendChild(output);
       fields.concat([{key: "source", label: "Source", help: "Where these model parameters came from."}]).forEach(function (f) {
         var label = document.createElement("label");
-        label.textContent = f.label + (f.unit ? " (" + f.unit + ")" : "");
-        var input = document.createElement("input");
-        input.type = "text"; if (f.scale) input.inputMode = "decimal";
+        label.className = "ui-field";
+        var caption = document.createElement("span");
+        caption.className = "ui-field-label";
+        caption.textContent = f.label;
+        label.appendChild(caption);
+        var input = kitElement("input");
+        input.type = "text";
+        if (f.scale) {
+          input.inputMode = "decimal";
+          input.classList.add("ui-input--num");
+        }
         input.dataset.field = f.key;
         input.setAttribute("aria-describedby", output.id);
         var v = bucket[f.key];
         input.value = v == null ? (f.key === "source" ? "entered in the wizard" : "") :
           (f.scale && typeof v === "number" ? window.CouplerUnits.toDisplay(v, f.scale) : v);
-        var help = document.createElement("small"); help.className = "muted"; help.textContent = f.help;
-        label.appendChild(input); label.appendChild(help); grid.appendChild(label);
+        var help = document.createElement("small"); help.className = "ui-field-hint"; help.textContent = f.help;
+        if (f.unit) {
+          var unit = document.createElement("span");
+          unit.className = "ui-input-unit";
+          unit.appendChild(input);
+          var suffix = document.createElement("span");
+          suffix.className = "ui-input-unit-text";
+          suffix.textContent = f.unit;
+          unit.appendChild(suffix); label.appendChild(unit);
+        } else label.appendChild(input);
+        label.appendChild(help); grid.appendChild(label);
         input.addEventListener("input", function () {
           var pop = state.spec.populate || (state.spec.populate = {});
           var models = pop.coupler_models || (pop.coupler_models = {});
@@ -11140,7 +11183,7 @@
         cellErrs[0].label + ": " + cellErrs[0].message +
         (cellErrs.length > 1 ? " …" : "")]);
     }
-    el.innerHTML = '<table class="gen-review-table"><tbody>' +
+    el.innerHTML = '<table class="ui-table gen-review-table"><tbody>' +
       rows.map(function (r) {
         return "<tr><th>" + r[0] + "</th><td></td></tr>";
       }).join("") + "</tbody></table>" +
@@ -11219,7 +11262,7 @@
       return [x, "QOP " + x]; }));
     if (v && QOP_VERSIONS.indexOf(String(v)) < 0) opts.push([String(v), "QOP " + v + " (from the chip)"]);
     cell.textContent = "";
-    var sel = document.createElement("select");
+    var sel = kitElement("select");
     sel.id = "gen-qop-version";
     sel.setAttribute("aria-label", "QOP version");
     opts.forEach(function (o) {
@@ -11397,11 +11440,15 @@
     var wrap = document.createElement("p");
     wrap.className = "gen-cap-root";
     var lab = document.createElement("label");
-    lab.textContent = "Chip root class ";
+    lab.className = "ui-field";
+    var caption = document.createElement("span");
+    caption.className = "ui-field-label";
+    caption.textContent = "Chip root class ";
+    lab.appendChild(caption);
     lab.title = "The class the generated state.json declares as its __class__."
       + " Your own subclass carries the fields and overrides your nodes rely on;"
       + " the stock class carries only what quam-builder declares.";
-    var sel = document.createElement("select");
+    var sel = kitElement("select");
     sel.id = "gen-quam-class";
     sel.className = "ui-select ui-root-select";
     var auto = document.createElement("option");
@@ -11473,9 +11520,9 @@
 
   function _capInventory(box, inventory) {
     if (!inventory || !inventory.length) return;
-    var det = document.createElement("details");
-    det.className = "gen-cap-inventory";
-    var sm = document.createElement("summary");
+    var det = kitElement("details");
+    det.className = "ui-disclosure gen-cap-inventory";
+    var sm = kitElement("summary");
     var nAvail = inventory.filter(function (r) { return r.available; }).length;
     sm.textContent = "Full environment inventory (" + nAvail + "/" +
       inventory.length + " capabilities available)";
@@ -11491,9 +11538,9 @@
   }
 
   function _capRecheckButton(box) {
-    var btn = document.createElement("button");
+    var btn = kitElement("button");
     btn.type = "button";
-    btn.className = "outline gen-cap-recheck";
+    btn.className = "btn-sm outline gen-cap-recheck";
     btn.textContent = "Re-check environment";
     btn.title = "Re-probe the env (use after pip-installing into it)";
     btn.addEventListener("click", function () {
@@ -11545,8 +11592,8 @@
     head.textContent = "✗ Preview failed: " + (res.error || "previewer reported an error");
     out.appendChild(head);
     if (res.traceback) {
-      var det = document.createElement("details");
-      var sum = document.createElement("summary");
+      var det = kitElement("details");
+      var sum = kitElement("summary");
       sum.textContent = "Traceback";
       det.appendChild(sum);
       var pre = document.createElement("pre");
@@ -11617,9 +11664,9 @@
         // fixed over the lower ~55% of the viewport, and opening it by itself
         // covered this very result — the downloads, the pulse gallery and the
         // Generate button — until its × was found.
-        var jsonBtn = document.createElement("button");
+        var jsonBtn = kitElement("button");
         jsonBtn.type = "button";
-        jsonBtn.className = "outline gen-config-export-btn gen-config-json-btn";
+        jsonBtn.className = "btn-sm outline gen-config-export-btn gen-config-json-btn";
         jsonBtn.textContent = "{ } View config JSON";
         jsonBtn.addEventListener("click", function () {
           // Reuse the shared slide-up JSON panel (read-only copy mode — the
@@ -11671,9 +11718,9 @@
         var plot = document.createElement("div");
         plot.className = "gen-preview-pulses-plot";
         res.ops.forEach(function (o) {
-          var b = document.createElement("button");
+          var b = kitElement("button");
           b.type = "button";
-          b.className = "outline btn-sm gen-preview-pulse-btn";
+          b.className = "btn-sm outline gen-preview-pulse-btn";
           b.textContent = o.element + " · " + o.op_name;
           b.addEventListener("click", function () {
             list.querySelectorAll(".gen-preview-pulse-btn.active").forEach(function (x) {
@@ -12063,10 +12110,10 @@
             (calChN === 1 ? "" : "s") + " read differently from the source chip " +
             "(listed below)";
           msg.className = "gen-build-warn-line";
-          var cw = document.createElement("details");
-          cw.className = "gen-build-warn-line gen-merge-cal-changed";
+          var cw = kitElement("details");
+          cw.className = "ui-disclosure gen-build-warn-line gen-merge-cal-changed";
           cw.open = true;
-          var cs = document.createElement("summary");
+          var cs = kitElement("summary");
           cs.textContent = "⚠ " + calChN + " value" + (calChN === 1 ? "" : "s") +
             " the rebuild does not reproduce (you did not change " +
             (calChN === 1 ? "it" : "them") + "): check before using this chip";
@@ -12361,9 +12408,9 @@
           el.appendChild(ccap);
         }
         if (lostN || dangN || schemaDropN) {
-          var det = document.createElement("details");
-          det.className = "gen-merge-detail";
-          var sm = document.createElement("summary");
+          var det = kitElement("details");
+          det.className = "ui-disclosure gen-merge-detail";
+          var sm = kitElement("summary");
           sm.textContent = "Not carried / dropped / broken (" +
             (lostN + dangN + schemaDropN) + ") — expand";
           det.appendChild(sm);
@@ -12382,9 +12429,9 @@
             parent.appendChild(cl);
           };
           (lostGroups || []).forEach(function (g) {
-            var gd = document.createElement("details");
-            gd.className = "gen-merge-lost-group";
-            var gs = document.createElement("summary");
+            var gd = kitElement("details");
+            gd.className = "ui-disclosure gen-merge-lost-group";
+            var gs = kitElement("summary");
             var who = g.kind === "other" ? g.owner : g.kind + " " + g.owner;
             var gone = g.reversed_as ? " — rebuilt reversed as " + g.reversed_as
               : g.present === false ? (g.kind === "port"
@@ -12448,16 +12495,16 @@
         el.appendChild(se);
       }
 
-      var loadBtn = document.createElement("button");
+      var loadBtn = kitElement("button");
       loadBtn.type = "button";
-      loadBtn.className = "btn-sync primary";
+      loadBtn.className = "btn-sm btn-sync primary";
       loadBtn.textContent = "Load into app";
       loadBtn.addEventListener("click", function () { runLoad(outPath); });
       el.appendChild(loadBtn);
 
-      var previewBtn = document.createElement("button");
+      var previewBtn = kitElement("button");
       previewBtn.type = "button";
-      previewBtn.className = "btn-sync outline";
+      previewBtn.className = "btn-sm btn-sync outline";
       previewBtn.textContent = "Preview config";
       el.appendChild(previewBtn);
 
@@ -12542,7 +12589,7 @@
       chint.className = "muted";
       chint.textContent = "Fix the environment for these, or build without them.";
       el.appendChild(chint);
-      var cgo = document.createElement("button");
+      var cgo = kitElement("button");
       cgo.type = "button";
       cgo.textContent = "Build without these features";
       cgo.addEventListener("click", function () { runBuild(false, true); });
@@ -12565,9 +12612,9 @@
       };
       var answerButtons = function (choices, set, parent) {
         choices.forEach(function (b) {
-          var btn = document.createElement("button");
+          var btn = kitElement("button");
           btn.type = "button";
-          btn.className = b[2] + " " + b[3] + " " + b[4];
+          btn.className = "btn-sm " + b[2] + " " + b[3] + " " + b[4];
           btn.textContent = b[1];
           btn.addEventListener("click", function () {
             set(b[0]);
@@ -12687,7 +12734,7 @@
         "(this re-reads the chip and drops the edits made here), or generate " +
         "as listed.";
       el.appendChild(shint);
-      var rl = document.createElement("button");
+      var rl = kitElement("button");
       rl.type = "button";
       rl.textContent = "Reload the wizard from the chip";
       rl.addEventListener("click", function () {
@@ -12699,7 +12746,7 @@
           { bubbles: true, detail: { step: state.step } }));
       });
       el.appendChild(rl);
-      var sgo = document.createElement("button");
+      var sgo = kitElement("button");
       sgo.type = "button";
       sgo.textContent = "Generate anyway";
       sgo.addEventListener("click", function () { runBuild(false, false, true); });
@@ -12722,7 +12769,7 @@
       hh.className = "muted";
       hh.textContent = "Next to this chip it goes to " + here + ".";
       el.appendChild(hh);
-      var nb = document.createElement("button");
+      var nb = kitElement("button");
       nb.type = "button";
       nb.textContent = "Write it next to this chip";
       nb.addEventListener("click", function () {
@@ -12741,9 +12788,9 @@
         runBuild(false);
       });
       el.appendChild(nb);
-      var ow = document.createElement("button");
+      var ow = kitElement("button");
       ow.type = "button";
-      ow.className = "outline";
+      ow.className = "btn-sm outline";
       ow.textContent = "Overwrite that recipe";
       ow.addEventListener("click", function () { runBuild(false, false, false, true); });
       el.appendChild(ow);
@@ -12767,7 +12814,7 @@
     el.appendChild(hint);
 
     if (own && own.report) {
-      var ob = document.createElement("button");
+      var ob = kitElement("button");
       ob.type = "button";
       ob.textContent = "Show that build's report";
       ob.addEventListener("click", function () {
@@ -12787,7 +12834,7 @@
       el.appendChild(ob);
     }
 
-    var go = document.createElement("button");
+    var go = kitElement("button");
     go.type = "button";
     go.textContent = "Generate anyway";
     go.addEventListener("click", function () { runBuild(true); });

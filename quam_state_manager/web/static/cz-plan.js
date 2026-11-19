@@ -126,13 +126,21 @@
         };
         var multi = row.kind === 'two-flux' || row.kind === 'both movers';
         var movers = row.lines.filter(function (ln) { return ln.moves && (multi || ln.pulse_field === 'flux_pulse_qubit'); });
-        el.innerHTML = '<div class="czp-controls"><strong>Solve amplitude</strong> <label>Tier <select class="czp-solve-tier">' +
+        el.innerHTML = '<div class="czp-controls"><strong>Solve amplitude</strong> <' +
+            'label class="ui-field"><span class="ui-field-label">Tier</span>' +
+            '<select class="czp-solve-tier ui-select">' +
             ['auto', 'quad', 'model', 'direct'].map(function (t) { return '<option>' + t + '</option>'; }).join('') +
-            '</select></label><label' + (!multi ? ' hidden' : '') + '>Line <select class="czp-solve-line">' +
+            '</select></label><label' + (!multi ? ' hidden' : '') +
+                ' class="ui-field"><span class="ui-field-label">Line</span>' +
+            '<select class="czp-solve-line ui-select">' +
             movers.map(function (ln) { return '<option value="' + esc(ln.role) + '">' + esc(ln.role) + '</option>'; }).join('') +
-            '</select></label><label>Direct amplitude (V) <input class="czp-solve-amp" type="number" step="any" disabled></label></div>' +
+            '</select></label><label class="ui-field"><span class="ui-field-label">Direct amplitude</span>' +
+            '<span class="ui-input-unit">' +
+            '<input class="czp-solve-amp ui-input ui-input--num" type="number" step="any" disabled>' +
+            '<span class="ui-input-unit-text">V</span></span></label></div>' +
             '<output class="czp-solve-target"></output><div class="czp-solve-result" role="status"></div>' +
-            '<p class="czp-solve-notes"></p><button type="button" class="czp-solve-stage" disabled>Stage</button>';
+            '<p class="czp-solve-notes"></p><button type="button" class="' +
+                'czp-solve-stage btn-sm" disabled>Stage</button>';
         var generation = 0, result, button = el.querySelector('button');
         // [derived], checks S2-ROUTE/S2-EXPOSE: discard late operation answers.
         function preview() {
@@ -157,7 +165,13 @@
                 if (point) { point.solve = d; savePoints(root); }
                 if (d.ok && d.operating_point) {
                     var p = d.operating_point;
-                    el.querySelector('.czp-solve-result').insertAdjacentHTML('beforeend', '<table><tr><th>Preview amplitude (V)</th><th>Preview frequency (GHz)</th></tr><tr><td>' + esc(p.amplitude_v) + '</td><td data-preview="1" data-pair="' + esc(p.pair) + '" data-op="' + esc(p.op) + '" data-line="' + esc(p.line) + '" data-freq-hz="' + esc(p.frequency_hz) + '" data-method="' + esc(p.method) + '" data-path="' + esc(p.path) + '">' + esc(p.y) + '</td></tr></table>');
+                    el.querySelector('.czp-solve-result').insertAdjacentHTML('beforeend',
+                        '<table class="ui-table"><tr><th>Preview amplitude (V)</th><t' +
+                        'h>Preview frequency (GHz)</th></tr><tr><td>' + esc(p.amplitude_v) +
+                         '</td><td data-preview="1" data-pair="' + esc(p.pair) + '" data-op="' +
+                         esc(p.op) + '" data-line="' + esc(p.line) + '" data-freq-hz="' + esc(p.frequency_hz) +
+                         '" data-method="' + esc(p.method) + '" data-path="' + esc(p.path) +
+                         '">' + esc(p.y) + '</td></tr></table>');
                     root._czSolvePreview = el.closest('details') && el.closest('details').open ? p : null;
                 }
                 redrawFlux(root);
@@ -415,7 +429,9 @@
             // one line, the sentences folded: several per-qubit paragraphs pushed the
             // figure below the fold at 1366 px (CZ8). The text stays in the DOM.
             var uniq = Array.from(new Set(cave[f]));
-            p.innerHTML = uniq.length === 1 ? esc(uniq[0]) : uniq.length ? '<details class="czp-caveat-box"><summary>' +
+            p.innerHTML = uniq.length === 1 ? esc(uniq[0]) : uniq.length ?
+                '<details class="czp-caveat-box ui-disclosure"><summary class' +
+                 '="ui-disclosure-summary">' +
                 esc(plural(uniq.length, 'note', 'notes')) + ' on this figure</summary>' +
                 uniq.map(esc).join('<br>') + '</details>' : '';
             p.hidden = !uniq.length;
