@@ -6088,11 +6088,20 @@ window.revertSessionConfirm = function (btn) {
             if (d.push_armed) {
                 lines.push("", "Auto-Sync (push) is ARMED, so this is written to the live chip immediately.");
             }
-            if (!window.confirm(lines.join("\n"))) {
-                if (window.showToast) window.showToast("Cancelled — nothing was changed.", "info");
-                return;
-            }
-            if (window.htmx) window.htmx.trigger(btn, "revertconfirmed");
+            // In-page kit confirm: nothing is sent on Cancel, Escape or a backdrop click.
+            var ask = window.smConfirm ? window.smConfirm(lines.join("\n")) : Promise.resolve(false);
+            return ask.then(function (yes) {
+                if (!yes) {
+                    if (window.showToast) window.showToast("Cancelled \u2014 nothing was changed.", "info");
+                    return;
+                }
+                if (!btn.isConnected) {
+                    // The tray re-rendered while the question was open; its old button no longer posts.
+                    if (window.showToast) window.showToast("The tray changed meanwhile; nothing was sent.", "info");
+                    return;
+                }
+                if (window.htmx) window.htmx.trigger(btn, "revertconfirmed");
+            });
         })
         .catch(function () {
             window.showToast("Could not check what the revert changes (network error).", "error");
