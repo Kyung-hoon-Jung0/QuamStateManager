@@ -23,5 +23,4 @@ set(200, 300); w.dsHeadFit();
 assert.ok(!head.classList.contains('ui-ds-head-wrap'), 'meta that fits stays on line 1');
 const kit = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', 'ui-kit.css'), 'utf8');
 assert.match(kit, /\.ui-ds-head-wrap > \.ui-ds-meta \{[^}]*order: 3;[^}]*overflow: visible/, 'line 2 shows every control');
-assert.match(kit, /\.ui-pane-sliver \* \{ visibility: hidden; \}/, 'the sliver hides whole controls, borders included');
 console.log('ds_head_fit_selfcheck ok');

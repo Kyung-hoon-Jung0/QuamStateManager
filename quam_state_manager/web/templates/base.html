@@ -1735,6 +1735,8 @@
             return null;
         }
         function saveUserChoice(choice) {
+            // An arrow replaces a drag stored before DRAG_KEY existed: the circle keeps it.
+            if (!validSizes(choice)) { var dragged = dragSizes(); if (dragged) saveDragSizes(dragged); }
             try { localStorage.setItem(USER_KEY, JSON.stringify(choice)); } catch (e) {}
         }
         // The circle between the arrows returns to the last DRAGGED height, which
@@ -1757,7 +1759,7 @@
         }
         // The up arrow: the panel takes the whole height (base markTop -> .ui-split-top).
         function fullSizes() { return [0, 100]; }
-        // The default opening position and the down arrow's (UI_CONFIG.split).
+        // The Datasets page's opening position and the down arrow's (UI_CONFIG.split).
         function expandedSizes() {
             // v1.3.0: a dataset run keeps more of the run list in view
             return document.querySelector('#inspector-pane #ds-detail-root')
@@ -1777,52 +1779,24 @@
             var sizes = userSizes();
             return sizes && Number(sizes[1]) < Number(collapsedSizes()[1]) ? sizes : collapsedSizes();
         }
-        // After leaving a page, the next run opens at least as tall as its
-        // up arrow. Later run switches use the plain remembered choice again.
-        // R4-TP-1: with no remembered choice, an inspector on a page whose
-        // table IS the page (Pulses) keeps that table readable: 15% left
-        // 0 rows at 1366x768. A remembered choice always wins.
+        // Where a panel opens with no remembered choice: the full height, with no
+        // strip of the page left above it. The two pages whose table IS the page
+        // keep it readable: Pulses (R4-TP-1) and the Datasets run list (j/k between
+        // runs). A remembered choice always wins. After leaving a page, the next
+        // run opens at least this tall; later switches use the plain choice again.
         function firstOpenSizes() {
             var S = UI_CONFIG.split;
             if (S.tableFirstSizes && document.querySelector('#table-pane #pulses-total')) return S.tableFirstSizes;
-            // The Datasets run list keeps its rows (j/k between runs).
             if (document.querySelector('#table-pane #dataset-search')) return expandedSizes();
-            return headingSizes() || expandedSizes();
+            return fullSizes();
         }
-        // D-2 (compact): with no remembered choice, an inspector opens so the
-        // page above keeps only the top half of its title line -- a px target
-        // from the page's own first heading, so it holds at any window size.
-        function headingSizes() {
-            var pane = document.getElementById("table-pane");
-            var host = pane && pane.parentElement;
-            // F1: the page's own title (h1), not a breadcrumb or a hidden h2
-            var h = pane && (pane.querySelector("h1") || pane.querySelector("h2"));
-            if (!h || !host) return null;
-            var pr = pane.getBoundingClientRect(), hr = h.getBoundingClientRect();
-            if (!(hr.height > 0)) return null;
-            // Split.js sizes a pane as p% of the parent minus half the gutter
-            var total = host.clientHeight;
-            var px = hr.top - pr.top + pane.scrollTop + hr.height / 2 + (UI_CONFIG.split.gutterSize || 0) / 2;
-            if (!(total > 0) || !(px > 0)) return null;
-            var top = Math.max(2, Math.min(Number(UI_CONFIG.split.expandedSizes[0]), px / total * 100));
-            top = Math.round(top * 100) / 100;
-            lastHeading = [top, Math.round((100 - top) * 100) / 100];
-            return lastHeading;
-        }
-        // F1: while the page is only a title sliver its own horizontal
-        // scrollbar is hidden, so the half title reads cleanly.
-        var lastHeading = null;
-        function markSliver(sizes) {
-            var tp = document.getElementById("table-pane");
-            if (tp) tp.classList.toggle("ui-pane-sliver", !!(sizes && sameSizes(sizes, lastHeading)));
-        }
-        window.__smHeadingSizes = headingSizes;      // (selfcheck)
         window.__smFirstOpenSizes = firstOpenSizes;      // (selfcheck)
         function openSizes() {
             var sizes = userSizes() || firstOpenSizes();
             if (navigation.collapsed && datasetInspector()) {
                 navigation.collapsed = false;
-                if (Number(sizes[1]) < Number(expandedSizes()[1])) sizes = expandedSizes();
+                var tall = firstOpenSizes();
+                if (Number(sizes[1]) < Number(tall[1])) sizes = tall;
             }
             return sizes;
         }
@@ -1896,7 +1870,6 @@
         // table-pane initSplit() re-applies quam_split_sizes).
         function applySizes(sizes) {
             sizes = sizes.slice();
-            markSliver(sizes);
             inspectorExpanded = sizes[1] > 30;
             saveSizes(sizes);
             initSplit(sizes);
@@ -1930,7 +1903,6 @@
         window.__smDockInspector = dockInspector;        // (selfcheck)
         window.__smUndockInspector = undockInspector;    // (selfcheck)
         function renderDock(tablePane, inspectorPane) {
-            tablePane.classList.remove("ui-pane-sliver");
             tablePane.style.height = "";
             inspectorPane.style.height = "";
             inspectorPane.classList.add("ui-inspector-docked");
@@ -1957,7 +1929,11 @@
                 x.textContent = "\u00D7";
                 x.title = "Close the panel";
                 x.setAttribute("aria-label", "Close the panel");
-                bar.appendChild(title); bar.appendChild(up); bar.appendChild(back); bar.appendChild(x);
+                // The buttons sit at the bar's centre, under the split bar's own.
+                var actions = document.createElement("span");
+                actions.className = "ui-dock-actions";
+                actions.appendChild(up); actions.appendChild(back); actions.appendChild(x);
+                bar.appendChild(title); bar.appendChild(actions);
                 inspectorPane.insertBefore(bar, inspectorPane.firstChild);
             }
             var backBtn = bar.querySelector(".ui-dock-back");
@@ -1997,7 +1973,11 @@
             var d = dragSizes();
             if (d) saveUserChoice(d);
             else { try { localStorage.removeItem(USER_KEY); } catch (e) {} }
-            return d || firstOpenSizes();
+            if (d) return d;
+            // No drag yet: the opening height, or the default split where a panel
+            // opens at the full height (the circle would otherwise do nothing there).
+            var open = firstOpenSizes();
+            return Number(open[0]) > 0 ? open : UI_CONFIG.split.defaultSizes;
         }
         function backTitle() {
             return dragSizes() ? "Back to the height you dragged it to"
@@ -2069,7 +2049,6 @@
                 removeDockBar();
                 tablePane.style.height = "";
                 inspectorPane.style.height = "";
-                tablePane.classList.remove("ui-pane-sliver");
                 inspectorPane.classList.add("split-hidden");
                 return;
             }
@@ -2102,7 +2081,6 @@
                     markDragging(false);
                     if (!scope.alive) return;
                     saveSizes(s); inspectorExpanded = s[1] > 30;
-                    markSliver(null);
                     markTop(s);
                     // v1.3.0 (customer): a drag is the user's last choice; the
                     // next inspector opens at this height. A press on the bar
@@ -2418,9 +2396,9 @@
             var user = userSizes();
             if (user) saveSizes(user);
             // v1.5.5: no choice yet -- a panel open at page load (a restored
-            // run) opens at the up arrow's default height, never at whatever
-            // SM's own last move left in the current split.
-            else if (inspectorHasContent()) saveSizes(expandedSizes());
+            // run) opens where any first panel opens, never at whatever SM's
+            // own last move left in the current split.
+            else if (inspectorHasContent()) saveSizes(firstOpenSizes());
             initSplit();
         }
 

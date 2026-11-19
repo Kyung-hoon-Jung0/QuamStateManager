@@ -67,7 +67,7 @@ async function boot(storage, preload) {
 
 (async function () {
     ok(!!registry && !!split, 'the real page carries the split script and its registry');
-    const EXP = SPLIT.datasetExpandedSizes;
+    const EXP = [0, 100];  // with no choice a panel opens at the full height
     // 1. a collapsed old split is not taken as the user's choice
     for (const old of [[100, 0], [96.5, 3.5], SPLIT.collapsedSizes.map((x, i) => i ? x - 2 : x + 2)]) {
         const a = await boot({ quam_split_sizes: JSON.stringify(old) });

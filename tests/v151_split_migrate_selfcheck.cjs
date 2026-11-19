@@ -88,7 +88,7 @@ async function boot(storage) {
     // 2. SM's own fixed position is not a choice
     const b = await boot({ quam_split_sizes: JSON.stringify(SPLIT.collapsedSizes) });
     const bOpen = b.open();
-    ok(b.user() === null && same(bOpen, SPLIT.datasetExpandedSizes),
+    ok(b.user() === null && same(bOpen, [0, 100]),
        "SM's own collapsed position is not taken as a choice: " + JSON.stringify(bOpen));
     // 3. a recorded choice wins over the old key
     const c = await boot({ quam_split_sizes: JSON.stringify(OLD), quam_split_user: JSON.stringify([40, 60]) });
