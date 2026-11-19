@@ -251,9 +251,20 @@ function partial(ts, extra) {
        '2 ticks still open the docs/84 workbench: ' + seen[0]);
 
     // ---- 9. Compare lights the sidebar's Compare item (docs/132) -------
-    // compare() pushState's manually, so no htmx history event fires — it
-    // must call syncSidebarNavActive itself, and the matcher must map the
-    // /diff/* entry routes onto the /diff link.
+    // compare() goes through the app's one main-pane navigation, which pushes
+    // an htmx-stamped entry after the table-pane swap and re-lights the
+    // sidebar; the matcher maps the /diff/* entry routes onto the /diff link.
+    // The mock swaps like htmx does: it fires htmx:afterSwap on #table-pane.
+    if (!document.getElementById('table-pane')) {
+        document.body.insertAdjacentHTML('beforeend', '<div id="table-pane"></div>');
+    }
+    window.htmx.ajax = function (m, url) {
+        seen.push(url);
+        const pane = document.getElementById('table-pane');
+        pane.dispatchEvent(new window.CustomEvent('htmx:afterSwap', {
+            bubbles: true, detail: { pathInfo: { requestPath: url } } }));
+        return Promise.resolve();
+    };
     document.body.insertAdjacentHTML('beforeend',
         '<nav class="sidebar-nav"><a href="/qubits">Qubits</a>' +
         '<a href="/diff">Compare</a></nav>');
@@ -273,6 +284,12 @@ function partial(ts, extra) {
     ok(!document.querySelector('.sidebar-nav a[href="/qubits"]')
         .classList.contains('active'),
        'and the previous page item is cleared');
+    // Forward restores the comparison only from an entry htmx owns: a bare {}
+    // entry is skipped by htmx on popstate and the old table stays on screen.
+    ok(window.history.state && window.history.state.htmx === true,
+       'the Compare entry in history is htmx-stamped, so Forward brings it back');
+    ok(window.location.pathname === '/diff/versions',
+       'and the address is the comparison: ' + window.location.pathname);
 
     // ---- 10. paging asks for the page alone ------------------------------
     // S10 C6: changes-only filter mode on every refetch -> no filter at all,

@@ -30801,13 +30801,10 @@ window.StateVersions = (function () {
                 + (chipKey ? '&chip_key=' + encodeURIComponent(chipKey) : '');
         }
         close();
-        if (window.htmx) {
-            htmx.ajax('GET', url, { target: '#table-pane', swap: 'innerHTML' });
-            try { history.pushState({}, '', url); } catch (e) {}
-            // Manual pushState fires no htmx history event, so nothing else
-            // re-derives the sidebar's active item — call the canonical
-            // setter ourselves (customer, 2026-08-22: Compare didn't light).
-            if (window.syncSidebarNavActive) window.syncSidebarNavActive();
+        if (window.htmx && window._navigateTablePane) {
+            // The app's one main-pane navigation: it pushes an htmx-stamped entry after the swap and re-lights the
+            // sidebar, so Back and Forward restore the comparison (a plain {} entry was ignored by htmx on Forward).
+            window._navigateTablePane(url);
         } else {
             window.location.href = url;
         }
