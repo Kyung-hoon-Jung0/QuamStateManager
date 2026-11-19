@@ -28,7 +28,7 @@ const pin = (v,m) => {if (!v) throw new Error(m);};
  await new Promise(r=>setTimeout(r,40));
  pin(!/Updated 2 s ago/.test(w.document.querySelector('.ui-opxmon-sentence').textContent) && /No fresh answer/.test(w.document.querySelector('.ui-opxmon-sentence').textContent),'D4 status and verdict expire together');
  pin([...w.document.querySelectorAll('button')].every(b=>b.disabled),'D2 stale data disables every close control');
- pin(/freshness expired/.test(w.document.querySelector('.ui-opxmon-health').textContent),'D4 verdict expired');
+ pin(/freshness expired/.test(w.document.querySelector('.ui-opxmon-health').title),'D4 verdict expired');
  w.close();
  console.log('D2 count, re-render, stale controls; D4 common freshness: 5 pins passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});
