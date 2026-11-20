@@ -37,7 +37,7 @@ const TRAY = '<div id="pending-tray" class="pending-tray" data-change-count="0">
   + '<span class="state-status-dot">&#9679;</span>Synced</button></div>';
 // The poller's arming gate is `#new-run-popup`; the element stays, because the
 // card is still what the chip OPENS.
-const HTML = TRAY
+const HTML = '<small data-last-run hidden></small>' + TRAY
   + '<div id="new-run-popup" class="new-run-popup" style="display:none">'
   + '<div class="new-run-popup-card"><div id="new-run-popup-id"></div>'
   + '<div id="new-run-popup-exp"></div><div id="new-run-popup-qubits"></div>'
@@ -119,6 +119,8 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
     win.answer = { uid: 'f:10', run_id: 10, date: '2026-01-01', time: '10:00:00' };
     win.__newRunPoll.poll(); await settle(); await settle();
 
+    ok(win.document.querySelector('[data-last-run]').textContent === 'last: #10 10:00',
+       'baseline poll names the last landed run');
     ok(chip(win) === null, 'the first poll announces nothing');
     ok(!cardShown(win), 'and pops no card');
     const st = win.__newRunPoll.stamps();

@@ -13,7 +13,7 @@ async function mount() {
     const page = await browser.newPage();
     await page.setViewport({ width: 1366, height: 768 });
     const rows = Array.from({ length: 320 }, (_, i) => row(320 - i));
-    await page.setContent(`<div id="sidebar-tree"><details open><summary>day</summary><ul>
+    await page.setContent(`<div id="sidebar-tree" hidden><details open><summary>day</summary><ul>
         <li><span class="tree-entry-click" data-uid="folder:320">320</span></li></ul></details></div>
         <div id="inspector-pane"><div id="ds-detail-root" data-uid="folder:240"></div></div>
         <div id="table-pane"><div class="datasets-page"><div class="ds-digest-band"><span>2026-11-20</span>
@@ -58,6 +58,42 @@ async function run() {
         args: ['--no-first-run', '--no-default-browser-check'] });
     console.log('owned browser PID ' + browser.process().pid);
     const pin = process.env.ARRIVAL_PIN || 'all';
+    if (pin === 'all' || pin === 'seen') {
+        const page = await mount();
+        await page.evaluate(() => {
+            const tray = document.createElement('div');
+            tray.id = 'pending-tray';
+            tray.innerHTML = '<button class="state-status-badge">Synced</button>';
+            document.body.prepend(tray);
+        });
+        await deliver(page, []);
+        await scrolled(page);
+        for (const [i, action] of ['escape', 'elsewhere', 'close'].entries()) {
+            const id = 321 + i;
+            await deliver(page, [row(id)]);
+            await page.evaluate(id => window.SyncBadge.note('new', { count: 1, uids: ['folder:' + id] }), id);
+            assert.equal(await page.$eval('#ds-new-pill', el => el.hidden), false, 'arrival has a table bar');
+            assert.equal(await page.$eval('.state-status-notice', el => el.textContent), '1 new');
+            if (action === 'escape') await page.keyboard.press('Escape');
+            else if (action === 'elsewhere') await page.click('#pending-tray');
+            else await page.click('#ds-arrivals-close');
+            assert.equal(await page.$eval('#ds-new-pill', el => el.hidden), true, action + ' dismisses table bar');
+            assert.equal(await page.$('.state-status-notice'), null, action + ' acknowledges chip');
+            await deliver(page, [row(id)]);
+            await page.evaluate(id => window.SyncBadge.note('new', { count: 1, uids: ['folder:' + id] }), id);
+            assert.equal(await page.$('.state-status-notice'), null, 'next poll stays acknowledged');
+            assert.equal(await page.$eval('#ds-new-pill', el => el.hidden), true, 'next poll stays dismissed');
+        }
+        await page.evaluate(() => {
+            const pane = document.getElementById('table-pane');
+            pane.innerHTML = '<p>Other page</p>';
+            pane.dispatchEvent(new CustomEvent('htmx:afterSwap', { bubbles: true, detail: { target: pane } }));
+            window.SyncBadge.note('new', { count: 1, uids: ['folder:400'] });
+        });
+        assert.equal(await page.$('#ds-arrivals'), null, 'news on another page cannot remount the table bar');
+        await page.close();
+        console.log('seen pin passed');
+    }
     if (pin === 'all' || pin === 'scroll') {
         const page = await mount();
         await deliver(page, []); // initial catch-up is complete
@@ -100,7 +136,7 @@ async function run() {
         assert.ok(samples.every(s => s.count >= 1), 'bar stays through sidebar swap and duplicate delivery');
         assert.equal(samples.at(-1).count, 2, 'both unseen runs counted');
         const paneY = await page.$eval('#table-pane', el => el.getBoundingClientRect().top);
-        assert.ok(paneY - probe.paneY >= 26, 'fixture: the external bar moves the scroller origin');
+        assert.ok(Math.abs(paneY - probe.paneY) <= 1, 'reserved bar space keeps the scroller origin');
         await page.click('#ds-new-pill');
         await sleep(100);
         assert.ok(await page.$eval('#ds-new-pill', el => el.hidden), 'bar click clears it');

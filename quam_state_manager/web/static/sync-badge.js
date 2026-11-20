@@ -50,7 +50,7 @@
             // docs/170: the click REFRESHES the run lists (the sidebar's ↻ and,
             // on the Datasets page, its Rescan) -- what the user does by hand
             // to see them. No card: after the refresh the runs are simply there.
-            title: 'New experiment runs have landed — click to refresh the run lists'
+            title: 'Runs landed since you last looked; click to refresh the run lists'
         }
     };
     var ORDER = ['rundone', 'new'];
@@ -66,7 +66,7 @@
 
     // One rule for "the page already shows this run", used by this chip and by
     // the Datasets "new runs" bar: its row is on screen in the Datasets table,
-    // or the sidebar tree lists it with every group around it open.
+    // or its sidebar row intersects the viewport with every ancestor group open.
     function listedInTree(uid) {
         var tree = document.getElementById('sidebar-tree');
         if (!tree || uid == null) return false;
@@ -78,7 +78,18 @@
             if (!d.open) return false;
             d = d.parentElement ? d.parentElement.closest('details') : null;
         }
-        return true;
+        var r = e.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) return false;
+        var top = 0, bottom = window.innerHeight, left = 0, right = window.innerWidth;
+        for (var p = e.parentElement; p; p = p.parentElement) {
+            var css = window.getComputedStyle(p);
+            if (/(auto|scroll|hidden|clip)/.test(css.overflow + css.overflowY + css.overflowX)) {
+                var box = p.getBoundingClientRect();
+                top = Math.max(top, box.top); bottom = Math.min(bottom, box.bottom);
+                left = Math.max(left, box.left); right = Math.min(right, box.right);
+            }
+        }
+        return r.bottom > top && r.top < bottom && r.right > left && r.left < right;
     }
     function runShown(uid) {
         var dv = window.DatasetVirtual;
@@ -114,6 +125,7 @@
         }
         if (!kind || !host || !anchor) {
             if (el && el.parentNode) el.parentNode.removeChild(el);
+            document.dispatchEvent(new CustomEvent('sm:runs-seen'));
             return;
         }
         if (!el) {
@@ -141,7 +153,9 @@
         el.className = 'state-status-notice ' + spec.cls;
         var txt = spec.text(shownPayload);
         if (el.textContent !== txt) el.textContent = txt;
-        el.title = spec.title;
+        document.dispatchEvent(new CustomEvent('sm:runs-seen'));
+        el.title = kind === 'new' && typeof shownPayload.count === 'number'
+            ? shownPayload.count + ' runs landed since you last looked' : spec.title;
     }
 
     function note(kind, payload) {
@@ -150,9 +164,26 @@
         render();
     }
     function clear(kind) {
+        if ((!kind || kind === 'new') && pending['new']) {
+            (pending['new'].uids || []).forEach(function (uid) { shownNew[uid] = true; });
+        }
         if (kind) delete pending[kind]; else pending = {};
-        if (!kind || kind === 'new') shownNew = {};
+        // Seen identities survive a refresh and a later poll of the same runs.
         render();
+    }
+    function acknowledge(uids) {
+        (uids || []).forEach(function (uid) { shownNew[uid] = true; });
+        render();
+    }
+    var latestRun = null;
+    function lastRun(data) {
+        if (data) latestRun = data.uid ? data : null;
+        var r = latestRun;
+        var text = r ? ['last:', '#' + r.run_id, r.experiment_name,
+            (r.qubits || []).join(','), (r.time || '').slice(0, 5)].filter(Boolean).join(' ') : '';
+        document.querySelectorAll('[data-last-run]').forEach(function (el) {
+            el.textContent = text.trim(); el.title = text.trim(); el.hidden = !r;
+        });
     }
     function ackHandler(kind, fn) { onAck[kind] = fn; }
 
@@ -165,6 +196,9 @@
         if (t && (t.id === 'pending-tray' || (t.querySelector && t.querySelector('#pending-tray')))) render();
     });
     document.addEventListener('sm:tray-swapped', render);
+    window.addEventListener('resize', render);
+    document.addEventListener('htmx:afterSwap', function () { lastRun(); });
+    document.addEventListener('scroll', function () { if (pending['new']) render(); }, true);
     // The sidebar listing a counted run, or opening the group that holds it,
     // shows it: count again.
     document.addEventListener('htmx:afterSwap', function (ev) {
@@ -178,6 +212,8 @@
 
     window.SyncBadge = {
         note: note, clear: clear, onAck: ackHandler, render: render, runShown: runShown,
+        lastRun: lastRun, acknowledge: acknowledge,
+        isSeen: function (uid) { return !!shownNew[uid]; },
         _pending: function () { return pending; }
     };
 })();

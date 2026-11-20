@@ -329,6 +329,7 @@
                           hx-trigger="load, stateRestored from:body, liveDriftChanged from:body"
                           hx-swap="innerHTML"></span></li>
             </ul>
+            <small class="ui-note ui-menu-value" data-last-run hidden></small>
             <ul class="topbar-right">
                 <li class="ui-opxmon-alarm-slot" id="ui-opxmon-alarm-slot" hx-get="/opx-monitor/alarm-badge"
                     hx-trigger="load, every 10s" hx-request='{"timeout":5000}' hx-swap="innerHTML">

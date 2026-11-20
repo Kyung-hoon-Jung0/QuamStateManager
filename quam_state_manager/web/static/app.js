@@ -183,12 +183,7 @@ var UI_CONFIG = {
     roleColors: {
         xy:        '#9b59b6',   /* XY drive port       — purple   */
         rr:        '#e3781a',   /* Readout resonator   — orange (D-107: 3.01:1 with the white label) */
-        rr_in:     '#c026d3',   /* Readout input       - fuchsia: the kit's line-2 colour (the
-                                   light theme's --plot-colorway-4), the same in both themes.
-                                   Gold, then a burnt orange, were both orange-family twins of
-                                   rr that users could not tell apart on the rack; fuchsia is
-                                   a different hue (CIE76 distance 126 from rr), stands out on
-                                   both theme backgrounds and carries the white label at 4.7:1 */
+        rr_in:     'var(--ui-role-rr-in)',
         z:         '#2471a3',   /* Flux / Z line       — blue     */
         coupler:   '#1abc9c',   /* Coupler             — teal     */
         cr:        '#27ae60',   /* Cross-resonance drive — green  */
@@ -24557,6 +24552,10 @@ function _reapplyShownTreeHighlight(scopeEl) {
 document.addEventListener('htmx:afterSwap', function (evt) {
     var t = evt.detail && evt.detail.target;
     if (t && t.closest && t.closest('#sidebar-tree')) _reapplyShownTreeHighlight(t);
+    var count = t && t.querySelector && t.querySelector('[data-tree-group-count]');
+    var group = count && count.closest('details');
+    var label = group && group.querySelector('summary small');
+    if (label) label.textContent = '(' + count.getAttribute('data-tree-group-count') + ')';
 });
 
 function syncSidebarTreeHighlight(uid, date) {
@@ -25042,6 +25041,7 @@ document.addEventListener('htmx:afterSwap', function(evt) {
                     _failures = 0;
                     _clearPollFailureBanner();
                 }
+                if (window.SyncBadge) window.SyncBadge.lastRun(data);
                 if (!data.uid) {
                     _schedule(POLL_SECS * 1000);
                     return;
