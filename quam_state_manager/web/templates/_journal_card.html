@@ -8,7 +8,9 @@
 {% macro card_body(c, day) %}
     {% if c.kind == 'run' %}
         <div class="jr-body">
-            {% if c.gate and c.gate.reason %}<p class="jr-gate-reason muted">gate: {{ c.gate.reason }}</p>{% endif %}
+{% if c.gate and c.gate.reason %}
+            <p class="jr-gate-reason muted">{{ 'gate not checked' if c.gate.verdict == 'unknown' else 'gate' }}:{#
+                #} {{ c.gate.reason }}</p>{% endif %}
             {% for f in c.flags or [] %}<p class="jr-flag-note jr-flag-{{ f.key }} muted"{% if f.title %} title="{{ f.title }}"{% endif %}>{{ f.note }}</p>{% endfor %}
             {%- if c.renamed_here %}<p class="jr-note jr-renamed-here" title="{{ c.renamed_here }}">A Modify config rename came into force in this run's saved state ({{ c.renamed_here_short or c.renamed_here }}). Its changes compare each qubit with itself under its old name.</p>{% endif %}
             {%- if c.targets_as_recorded %}<p class="jr-note muted jr-recorded-targets">Saved under the qubit names from before a Modify config rename: recorded as {{ c.targets_as_recorded|join(' ') }}; shown in today's names.</p>{% endif %}
@@ -81,13 +83,22 @@
                 <span class="jr-badge jr-out-{{ c.outcome or 'none' }}" title="the node's own outcome">{% if c.outcome
                   == 'ok' %}✓ ok{% elif c.outcome == 'failed' %}✗ failed{% elif c.outcome == 'mixed' %}mixed{% elif
                   c.outcome == 'neutral' %}no verdict{% else %}no outcome{% endif %}</span>
-                {% if c.gate %}<span class="jr-badge jr-gate-{{ c.gate.verdict }}" title="{% if c.gate.verdict == 'pending' %}the gate is being checked; the page refreshes when it is done{% else %}deterministic gate, anchored on the run's own saved state{% if c.gate.reason %} — {{ c.gate.reason }}{% endif %}{% endif %}">{{ 'checking gate' if c.gate.verdict == 'pending' else 'gate ' ~ c.gate.verdict }}</span>{% endif %}
+                {% if c.gate %}<span class="jr-badge jr-gate-{{ c.gate.verdict }}"
+                    title="{% if c.gate.verdict == 'unknown' %}gate not checked: {{ c.gate.reason }}{%
+                    elif c.gate.verdict == 'pending' %}the gate is being checked;{#
+                    #} the page refreshes when it is done{% else %}deterministic gate,{#
+                    #} anchored on the run's own saved state{% if c.gate.reason %} {{ '\u2014' }} {{ c.gate.reason }}{%
+                    endif %}{% endif %}">{{ 'checking gate' if c.gate.verdict == 'pending' else
+                    ('gate not checked' if c.gate.verdict == 'unknown' else 'gate ' ~ c.gate.verdict) }}</span>
+{% endif %}
                 {% for f in c.flags or [] %}<span class="jr-badge jr-flag jr-flag-{{ f.key }}" title="{{ f.note }}">{{ f.label }}</span>{% endfor %}
             </span>
             {% set run_url = '/dataset/' ~ c.uid if c.eid and c.uid else '/dataset/by-run/' ~ c.run_id %}
             <a class="jr-run-link" href="{{ run_url }}" hx-get="{{ run_url }}" hx-target="#table-pane" hx-push-url="true" onclick="event.stopPropagation()">#{{ c.run_id }}</a>
             <span class="jr-who-cell">
-                <span class="jr-author jr-author-{{ (c.author or 'unknown').split(':')[0] }}" title="{{ c.certainty }}">{{ c.author }}</span>
+{% if c.author and c.author != 'unknown' %}
+                <span class="jr-author jr-author-{{ c.author.split(':')[0] }}" title="{{ c.certainty }}">{#
+                    #}{{ c.author }}</span>{% endif %}
                 {% if c.plan_id %}<span class="jr-plan muted" title="plan">plan {{ c.plan_id }}</span>{% endif %}
             </span>
         </summary>
@@ -105,7 +116,8 @@
             <span class="jr-pills"><span class="jr-badge jr-out-{{ c.outcome|replace(' ', '-') if c.outcome else 'none' }}" title="{{ c.sentence }}">{% if c.outcome == 'failed' %}&#10007; {% endif %}{{ c.short or c.classification }}</span></span>
             <span class="jr-run-link muted" title="{{ folder_text }}">&ndash;</span>
             <span class="jr-who-cell">
-                <span class="jr-author jr-author-{{ (c.author or 'unknown').split(':')[0] }}">{{ c.author }}</span>
+{% if c.author and c.author != 'unknown' %}
+                <span class="jr-author jr-author-{{ c.author.split(':')[0] }}">{{ c.author }}</span>{% endif %}
                 {% if c.plan_id %}<span class="jr-plan muted" title="plan">plan {{ c.plan_id }}</span>{% endif %}
             </span>
         </summary>
@@ -121,7 +133,8 @@
             <span class="jr-pills">{% if c.undone %}<span class="jr-badge jr-undone">undone</span>{% elif c.partly_undone %}<span class="jr-badge jr-undone">partly undone</span>{% endif %}{% if c.src == 'auto' %}<span class="jr-badge" title="an armed auto session">auto</span>{% endif %}</span>
             <span class="jr-run-link muted"></span>
             <span class="jr-who-cell">
-                <span class="jr-author jr-author-{{ (c.author or 'unknown').split(':')[0] }}">{{ c.author }}</span>
+{% if c.author and c.author != 'unknown' %}
+                <span class="jr-author jr-author-{{ c.author.split(':')[0] }}">{{ c.author }}</span>{% endif %}
                 {% if c.plan_id %}<span class="jr-plan muted">plan {{ c.plan_id }}</span>{% endif %}
             </span>
         </summary>

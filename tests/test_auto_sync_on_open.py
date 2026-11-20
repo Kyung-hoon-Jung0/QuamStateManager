@@ -287,3 +287,30 @@ class TestReopenHint:
     def test_no_hint_when_the_setting_is_off(self, world):
         world["client"].post("/settings/auto-sync-on-open", json={"enabled": False})
         assert self._HINT not in self._restart_offering(world)
+
+
+@pytest.mark.parametrize("hx", [False, True])
+def test_reopen_without_auto_sync_opens_without_a_live_write(world, hx):
+    hint = TestReopenHint()
+    html = hint._restart_offering(world)
+    assert 'name="auto_sync" value="0"' in html and "Re-open without Auto-Sync" in html
+    before = {p.name: p.read_bytes() for p in world["live"].iterdir() if p.is_file()}
+    r = world["client"].post("/load", data={"folder": str(world["live"]), "auto_sync": "0",
+                                            "next": "/datasets"},
+                             headers={"HX-Request": "true"} if hx else {})
+    assert r.status_code in (200, 302)
+    assert (r.headers.get("HX-Redirect") or r.headers.get("Location")).endswith("/datasets")
+    with world["app"].app_context():
+        assert routes_mod._active_ctx()["store"] is not None
+    assert not _sess(world) and 'data-auto-apply="1"' not in _tray(world)
+    assert before == {p.name: p.read_bytes() for p in world["live"].iterdir() if p.is_file()}
+    # The one-press choice does not change the machine setting or future default opens.
+    _open(world)
+    assert _sess(world)
+
+
+@pytest.mark.parametrize("allowed", [True, False])
+def test_quiet_reopen_is_offered_only_when_default_would_arm(world, allowed):
+    world["client"].post("/settings/auto-sync-on-open", json={"enabled": allowed})
+    html = TestReopenHint()._restart_offering(world)
+    assert ("Re-open without Auto-Sync" in html) == allowed

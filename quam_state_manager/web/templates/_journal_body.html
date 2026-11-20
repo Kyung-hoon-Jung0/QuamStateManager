@@ -65,15 +65,7 @@
 
 {% endif %}
 
-{% if s.unassigned %}
-<div class="jr-unassigned jr-line-group">
-    <b class="jr-line-count" data-suffix="from a session that named no chip.">{{ '{:,}'.format(s.unassigned|length) }} journal line{{ 's' if s.unassigned|length != 1 }} from a session that named no chip.</b>
-    <span class="muted">SM never guesses which chip they belong to.</span>
-    <button type="button" class="btn-sm outline" onclick="JournalPage.adopt('{{ s.day }}')">Move them under {{ s.chip }}</button>
-    <ul class="jr-unassigned-list">{% for e in s.unassigned %}<li class="muted" data-jr-search="{{ e.search_hay }}" data-jr-author="{{ e.kind }}">{{ e.time }} · {{ e.text }}</li>{% endfor %}
-    </ul>
-</div>
-{% endif %}
+
 
 {% if history.state not in ('building', 'unavailable') %}
 {% if s.timeline %}
@@ -96,6 +88,25 @@
 {% endif %}<div class="jr-cards"{% if s.paged %} data-jr-paged="1" data-jr-q="{{ s.filters.q }}" data-jr-who="{{ s.filters.author }}"{% endif %}>{% if s.window and s.window.earlier %}{{ more_row(s, 'earlier') }}{% endif %}{% for c in s.cards_shown %}{{ card(c, s.day, s.lazy, s.paged)|jr_squeeze(s.paged) }}{% endfor %}{% if s.window and s.window.later %}{{ more_row(s, 'later') }}{% endif %}</div>
 {% if not s.paged %}{% set cached_html %}{% for c in s.cards_cached %}{{ card(c, s.day, s.lazy) }}{% endfor %}{% endset %}
 <script type="application/json" class="jr-search-cache">{{ cached_html|string|tojson }}</script>{% endif %}
+{% endif %}
+
+{% if s.unassigned %}
+<details class="ui-disclosure jr-unassigned jr-line-group">
+    <summary class="ui-disclosure-summary">
+        <b class="jr-line-count" data-suffix="from a session that named no chip.">{{
+            '{:,}'.format(s.unassigned|length) }} journal line{{ 's' if s.unassigned|length != 1 }}{#
+            #} from a session that named no chip.</b>
+        <button type="button" class="btn-sm outline" onclick="JournalPage.adopt('{{ s.day }}')">{#
+            #}Move them under {{ s.chip }}</button>
+    </summary>
+    <div class="ui-disclosure-body">
+        <p class="muted">SM never guesses which chip they belong to.</p>
+        <ul class="jr-unassigned-list">{% for e in s.unassigned %}
+            <li class="muted" data-jr-search="{{ e.search_hay }}" data-jr-author="{{ e.kind }}">{#
+                #}{{ e.time }} &middot; {{ e.text }}</li>{% endfor %}
+        </ul>
+    </div>
+</details>
 {% endif %}
 
 {% if s.loose %}
