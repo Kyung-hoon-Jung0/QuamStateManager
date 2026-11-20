@@ -344,6 +344,34 @@ class TestLazySidebarGroups:
         assert "tree-lazy-hint" not in zone
         assert zone.count("tree-entry-click") == 3
 
+    def test_refresh_keeps_a_show_all_group_complete(self, tmp_path, monkeypatch):
+        from quam_state_manager.web.app import create_app
+        from quam_state_manager.web import routes as routes_mod
+        monkeypatch.setenv("SM_DISABLE_ENV_WARMUP", "1")
+        monkeypatch.setattr(routes_mod, "_LAZY_GROUP_MIN_ENTRIES", 0)
+        root = tmp_path / "big"
+        qs = _mk_run(root, "2026-03-01", 1)
+        for rid in range(2, 55):
+            _mk_run(root, "2026-03-02", rid)
+        app = create_app()
+        app.config["TESTING"] = True
+        c = app.test_client()
+        c.post("/load", data={"folder": str(qs)}, headers={"Origin": "http://localhost"})
+        ws = app.config["workspace"]
+        deadline = time.time() + 30
+        while ws.hydrating_roots():
+            assert time.time() < deadline
+            time.sleep(0.02)
+
+        def zone(**extra):
+            html = c.get("/workspace/tree", query_string={
+                "open_groups": json.dumps(["2026-03-02"]), **extra}).get_data(as_text=True)
+            return html.split('data-tpath="2026-03-02"')[1].split("</details>")[0]
+        capped = zone()
+        assert capped.count("tree-entry-click") == 50 and "tree-show-more-btn" in capped
+        full = zone(full_groups=json.dumps(["2026-03-02"]))
+        assert full.count("tree-entry-click") == 53 and "tree-show-more-btn" not in full
+
     def test_group_fetch_returns_capped_rows(self, client):
         r = client.get("/workspace/tree/group", query_string={
             "capped": "1", "root": str(self.root.resolve()),

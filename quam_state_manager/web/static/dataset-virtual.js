@@ -139,6 +139,7 @@
         // "N new runs ↑" pill's count — and uids whose row should flash
         // briefly (uid → expiry ms) when the virtual scroller renders it.
         arrivalUids: new Set(),
+        dismissedUids: new Set(),
         flashUids: new Map(),
         // The initial catch-up, including runs landing while the page loads,
         // completes the baseline quietly through its final partial response.
@@ -2239,7 +2240,7 @@
         for (var i = 0; i < updated.length; i++) {
             var uid = (updated[i].f || '') + ':' + updated[i].id;
             if ((!state.rowsById || !state.rowsById.has(uid)) &&
-                _stampOf(updated[i]) > newest && !state.baselineUids.has(uid) &&
+                _stampOf(updated[i]) > newest && !state.baselineUids.has(uid) && !state.dismissedUids.has(uid) &&
                 !(state.collections && !(updated[i].tags && updated[i].tags.length)))   // QA datasets-r2-14
                 state.arrivalUids.add(uid);   // docs/170
         }
@@ -2432,7 +2433,11 @@
     function _dismissNewPill() {
         var el = document.getElementById('ds-new-pill');
         if (!el || el.hidden) return false;
-        if (state.arrivalUids) state.arrivalUids.clear();
+        if (state.arrivalUids) {
+            // A later poll still carries the held runs: dismissed stays dismissed.
+            state.arrivalUids.forEach(function (uid) { state.dismissedUids.add(uid); });
+            state.arrivalUids.clear();
+        }
         _updateNewPill();
         return true;
     }
@@ -3180,6 +3185,7 @@
         // Fresh full payload — new runs are simply IN it, so arrival
         // bookkeeping resets (the old pill node died with the swapped pane).
         state.arrivalUids = new Set();
+        state.dismissedUids = new Set();
         state.flashUids = new Map();
         state.catchUp = true;
         state.baselineUids = new Set();

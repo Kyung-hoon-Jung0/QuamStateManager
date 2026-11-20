@@ -56,7 +56,7 @@
 {% endmacro %}
 
 {% macro dir_node(root_path, node, name_filter) %}
-{% set _cap = 50 %}
+{% set _cap = node.entries | length if node.tpath in (full_tpaths | default(())) else 50 %}
 {# docs/142 B4: a closed date group ships an EMPTY list and fetches its rows
    on first open (native <details> fires `toggle` on any open change,
    programmatic restores included, so app.js's open-state restore triggers

@@ -40031,6 +40031,12 @@ def workspace_tree():
     if isinstance(open_groups, list) and open_groups:
         ctx = _tree_render_ctx(ws.tree if ws else {}, ws=ws)
         ctx["eager_tpaths"].update(p for p in open_groups if isinstance(p, str))
+        try:
+            full_groups = json.loads(request.args.get("full_groups", "[]"))
+        except (ValueError, TypeError):
+            full_groups = []
+        # A group the user expanded with "Show all" keeps every entry across the refresh.
+        ctx["full_tpaths"] = {p for p in full_groups if isinstance(p, str)} if isinstance(full_groups, list) else set()
         return render_template("_sidebar_tree.html", **ctx, tree_ws_version=ws.version if ws else None)
     return _unfiltered_tree_html(ws)
 

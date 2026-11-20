@@ -132,7 +132,7 @@ function ids(w) {
   // build catching up, listed silently.
   // The user is scrolling, so the delta is held and the run is not on screen
   // (an arrival applied onto the visible rows is not news, docs/104 #3).
-  async function arrive(held, landed) {
+  async function arrive(held, landed, repeat) {
     const delta = { now: 2000, vanished: [], updated: [landed] };
     let served = 0, baseline = true;
     const w = bootDatasets([held]);
@@ -141,7 +141,7 @@ function ids(w) {
         baseline = false;
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ now: 1001, updated: [] }) });
       }
-      if (String(url).indexOf('/datasets/changes-since') >= 0 && !served++)
+      if (String(url).indexOf('/datasets/changes-since') >= 0 && (!served++ || repeat))
         return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(delta) });
       return new Promise(() => {});
     };
@@ -152,7 +152,7 @@ function ids(w) {
     w.document.dispatchEvent(new w.Event('visibilitychange'));
     await tick(120);
     const pill = w.document.getElementById('ds-new-pill');
-    return { served: served, shown: !!(pill && !pill.hidden), text: pill ? pill.textContent : '', w: w };
+    return { get served() { return served; }, shown: !!(pill && !pill.hidden), text: pill ? pill.textContent : '', w: w };
   }
   {
     const a = await arrive(row(5, '2026-04-03', '10:00:00', T_B, 'fk'), row(1182, '2026-04-03', '00:07:48', T_A, 'fa'));
@@ -168,13 +168,23 @@ function ids(w) {
   // ---------------- A3c. the customer can dismiss the bar ----------------
   // Esc, or a click anywhere else, dismisses the new-runs bar (customer request).
   for (const how of ['Escape', 'click']) {
-    const a = await arrive(row(5, '2026-04-03', '10:00:00', T_B, 'fk'), row(1182, '2026-04-03', '00:07:48', T_A, 'fa'));
+    const a = await arrive(row(5, '2026-04-03', '10:00:00', T_B, 'fk'), row(1182, '2026-04-03', '00:07:48', T_A, 'fa'),
+                           true);
     ok(a.shown, 'fixture: the bar is shown before the ' + how + ' (' + a.text + ')');
     if (how === 'Escape') a.w.document.dispatchEvent(new a.w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     else a.w.document.body.dispatchEvent(new a.w.MouseEvent('click', { bubbles: true, cancelable: true }));
     await tick(30);
     const pill = a.w.document.getElementById('ds-new-pill');
     ok(pill && pill.hidden, 'A3c: ' + how + ' dismisses the new-runs bar');
+    // The user keeps scrolling; the next poll still carries the held run.
+    const before = a.served;
+    for (let k = 0; k < 20 && a.served === before; k++) { a.w.DatasetVirtual.pollNow(); await tick(100); }
+    ok(a.served > before, 'fixture: a second poll was served after the ' + how + ' (' + a.served + ')');
+    a.w.document.getElementById('datasets-scroll').dispatchEvent(new a.w.Event('scroll'));
+    await tick(120);
+    const p2 = a.w.document.getElementById('ds-new-pill');
+    ok(p2 && p2.hidden, 'A3c: after ' + how + ' the next poll does not bring the bar back ("' + (p2 && p2.textContent)
+       + '", polls ' + before + ' -> ' + a.served + ')');
   }
 
   // ---------------- B. the Trends axis ----------------

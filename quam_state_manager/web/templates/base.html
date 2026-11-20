@@ -1093,7 +1093,14 @@
                                 open_groups: JSON.stringify(Array.from(el.querySelectorAll(
                                     'details.tree-dir[open][data-tpath]')).map(function (g) {
                                     return g.getAttribute('data-tpath');
-                                })) }
+                                })),
+                                // Groups the user expanded with "Show all" stay complete.
+                                full_groups: JSON.stringify(Array.from(el.querySelectorAll(
+                                    'details.tree-dir[open][data-tpath]')).filter(function (g) {
+                                    var ul = g.querySelector(':scope > ul.tree-entries');
+                                    return ul && !ul.querySelector('.tree-show-more')
+                                        && ul.querySelectorAll(':scope > li.tree-entry').length > 50;
+                                }).map(function (g) { return g.getAttribute('data-tpath'); })) }
                         };
                         if (f) opts.source = f;
                         // Customer: a new run must not throw away where the
