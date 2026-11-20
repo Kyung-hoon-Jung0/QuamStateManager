@@ -338,8 +338,8 @@ STATUS_RETRY_S = 0.05
 
 
 def _status_bytes(path: Path) -> bytes:
-    """One share-delete read: a plain open here makes the child's ``os.replace`` of the file fail on Windows
-    (the end-to-end test met exactly that: the child died with a PermissionError mid-run)."""
+    """One share-delete read of the status file. On Windows the child's replace of the file can still fail
+    while any reader holds it open (share-delete or not, measured), so the child retries its replace."""
     from quam_state_manager.core import safe_io
     with safe_io.open_shared(path) as f:
         return f.read()
@@ -461,9 +461,9 @@ class ClickRuns(ptr.Runs):
         return bool(cur and cur["proc"].poll() is None)
 
     def status(self, rid: Optional[str] = None) -> dict:
-        """The heartbeat touch and the run clock only. The port test's status opens ``_status.json`` with a
-        plain read, which makes the child's ``os.replace`` of that file fail on Windows (the child then dies
-        mid-run); the click reads the file itself, share-delete (``_read_status``)."""
+        """The heartbeat touch and the run clock only. The port test's status also opens ``_status.json``;
+        every open of it can make the child's replace of that file fail on Windows, so the click reads it
+        once per poll, itself (``_read_status``)."""
         run = self.current
         if not run or (rid and run["id"] != rid):
             return {"state": "none"}
