@@ -12,7 +12,7 @@ import traceback
 
 # A script must work with PYTHONPATH pinned exclusively to the lab library.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from nodesim_guard import Guard, inside  # noqa: E402
+from nodesim_guard import Guard, inside, library_fingerprint  # noqa: E402
 
 
 def sanitize(value, prefix=""):
@@ -208,10 +208,9 @@ def build_one(job, guard, result, holder):
         guard.install_classes()
         holder["classes_installed"] = True
     source_stats = {}
-    for folder in ("calibration_utils", "quam_config"):
-        for path in (Path(job["library_root"]) / folder).rglob("*.py"):
-            stat = path.stat()
-            source_stats[str(path.resolve())] = [stat.st_mtime_ns, stat.st_size]
+    for relpath, mtime_ns, size in library_fingerprint(job["library_root"]):
+        path = Path(job["library_root"]) / relpath
+        source_stats[str(path.resolve())] = [mtime_ns, size]
     replaced = result["replaced_hosts"]
     for filename in ("state.json", "wiring.json"):
         path = Path(job["chip_copy"]) / filename
