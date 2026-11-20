@@ -1144,6 +1144,15 @@ def _spine_of(root: Path, entries: list[ExperimentEntry]) -> list[str]:
                     # via the D-B stamp.
                     if child not in run_folders:
                         spine.add(child)
+                        # A run folder that is not listed YET: its quam_state
+                        # may exist with state.json or wiring.json still to
+                        # come. Those writes move only the quam_state dir, never
+                        # the run folder, so without this the run stayed out
+                        # of the sidebar until some other run landed.
+                        if _FOLDER_RE.match(de.name):
+                            qs = os.path.join(child, "quam_state")
+                            if os.path.isdir(qs):
+                                spine.add(qs)
         except OSError:
             continue
     dirs = list(spine)

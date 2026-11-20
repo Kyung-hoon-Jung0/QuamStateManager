@@ -1114,6 +1114,7 @@
                         if (_fi && document.activeElement === _fi
                                 && (Date.now() - (window.__sbFilterKeyAt || 0)) < 5000) return;
                         _treePolling = true;
+                        _wakeAgain = false;
                         _pollN++;
                         // 10 s abort (r13 audit D5): a hung socket used to pin
                         // _treePolling=true and silently kill every later tick.
@@ -1157,8 +1158,25 @@
                         }).catch(function(){}).then(function(){
                             if (tm) scope.clearTimeout(tm);
                             _treePolling = false;
+                            // A wake that came while this tick was in flight
+                            // may name a run this tick did not see yet.
+                            if (_wakeAgain) wakePoll();
                         });
                     }
+                    // A run landing wakes the tree at once (the same signal the
+                    // Datasets table polls on). Before this the tree waited for
+                    // its own interval, so the table and the "new runs" bar ran
+                    // up to a full interval ahead of the sidebar.
+                    var _wakeAgain = false, _wakeTm = null;
+                    function wakePoll() {
+                        if (_wakeTm) scope.clearTimeout(_wakeTm);
+                        _wakeTm = scope.timeout(function () {
+                            _wakeTm = null;
+                            if (_treePolling) { _wakeAgain = true; return; }
+                            poll();
+                        }, 400);
+                    }
+                    scope.listen(document, 'sm:runs-changed', wakePoll);
                     poll();                       // establish baseline after the load render
                     scope.interval(poll, secs * 1000);
                     // r13 audit D5: catch-up poll when the window becomes visible
