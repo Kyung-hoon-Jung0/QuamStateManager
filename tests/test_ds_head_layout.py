@@ -62,7 +62,7 @@ def test_the_title_wraps_between_its_segments_not_inside_them():
     # (`.table-header-row h2 > small`, /^\([\d,]+ runs/) is kept
     # S10 walk: "({{ total }} runs" -> "({{ '{:,}'.format(total or 0) }} runs" -- the count is grouped
     assert re.search(r'<h2 class="ds-head-title ui-head-title">\{\{ page_title \}\} '
-                     r"<small class=\"muted ui-count\">\(\{\{ '\{:,\}'\.format\(total or 0\) \}\} runs", row)
+                     r"<small class=\"muted ui-count\">\(\{\{ '\{:,\}'\.format\(total or 0\)\s+\}\} runs", row)
 
 
 def test_the_column_menu_opens_leftward_inside_the_pane():

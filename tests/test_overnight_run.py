@@ -210,6 +210,16 @@ class TestWhatAGateFailIs:
         g = agent_overnight.gate_verdicts(res, ["qA1", "qA2"])
         assert g["qA1"] == {"v": "pass"} and g["qA2"]["v"] == "fail" and g["qA2"]["why"].startswith("fit:")
 
+    def test_an_aborted_or_error_target_holds_its_write_like_a_failed_one(self):
+        # the Calibration log's failure rule (core.dataset.marks_failure), not the word "fail" alone
+        w = [{"path": "qubits.qA1.f_01"}]
+        for word in ("aborted", "error", "Crashed"):
+            assert agent_overnight.fit_hold({"outcomes": {"qA1": word}}, w), word
+        assert agent_overnight.fit_hold({"outcomes": {"qA1": "skipped"}}, w) is None
+        g = agent_overnight.gate_verdicts({"status": "done", "classification": "ok", "mode": "auto",
+                                           "run": {"outcomes": {"qA1": "aborted"}}}, ["qA1"])
+        assert g["qA1"]["v"] == "fail"
+
     def test_a_write_the_envelope_held_is_a_gate_fail_but_the_modes_own_hold_is_not(self):
         held = {"status": "done", "classification": "ok", "approval": {"id": "ap-1"}}
         g = agent_overnight.gate_verdicts(dict(held, mode="auto", why_held="max_delta for power_rabi: ..."), ["qA1"])

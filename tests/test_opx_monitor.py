@@ -925,7 +925,7 @@ def test_d21_transport_failure_labels_retained_sections(env):
     assert m.section_times == previous
     assert set(m.section_errors) == {'controllers', 'open_qms', 'jobs'}
     html = page(app, 'live')
-    assert 'Temperatures unavailable (last good read at' in html
+    assert 'Temperatures unavailable; last good read at' in html
     assert 'Open QMs unavailable; last good read at' in html
     assert m.status()['state'] == 'stale' and not m.capabilities()['close']
 
@@ -1124,7 +1124,7 @@ def test_round4_alarm_and_failed_calls(env):
     m.poll_once()
     html = page(app, 'live')
     assert '<strong class="ui-verdict-key">PROBLEM</strong>' in html
-    assert 'Temperatures unavailable (last good read at' in html
+    assert 'Temperatures unavailable; last good read at' in html
     assert 'No temperature readings.' not in html
     assert 'SSH tunnel' not in html
     assert 'SSH tunnel' not in om.connection_hint('localhost')
@@ -1144,7 +1144,7 @@ def test_round4_partial_failure_and_admin_failure(env, monkeypatch):
     m.poll_once()
     html = page(app, 'live')
     assert '<strong class="ui-verdict-key">PROBLEM</strong>' in html
-    assert 'Temperatures unavailable (last good read at' in html
+    assert 'Temperatures unavailable; last good read at' in html
     assert 'No temperature readings.' not in html
     def unavailable(*args):
         raise OSError('unreachable')
@@ -1572,7 +1572,7 @@ def test_tiles_kept_after_a_failed_read_are_marked_stale(env):
     w.script[:] = [om.WorkerError('No answer within 30 s while reading; the worker was stopped.')]
     m.poll_once()
     html = page(app, 'live')
-    assert 'Temperatures unavailable (last good read at' in html
+    assert 'Temperatures unavailable; last good read at' in html
     assert 'the values below are stale' in html
     assert 'ui-opxmon-tile--stale' in html and '>last good read at ' in html
     assert 'permission' not in html

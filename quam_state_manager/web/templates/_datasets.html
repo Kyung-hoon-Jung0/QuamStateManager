@@ -57,13 +57,15 @@
     {% set _dscope = ('date:' ~ digest.date ~ ' ') if digest.date else '' %}
     {% if digest.failed %}
     <button class="ds-help-example ds-digest-bad" data-example="{{ _dscope }}is:failed"
-            title="Show this day's failed runs">{{ digest.failed }} failed</button>
+            title="Show this day's runs whose run status names an error">
+        {{- digest.failed }} run error{{ 's' if digest.failed != 1 }}</button>
     {% elif not digest.qubit_fail %}
     <span class="ds-digest-ok">all OK</span>
     {% else %}
     <span class="ds-digest-item">no run errors</span>
     {% endif %}
-    {% if digest.qubit_fail %}<span class="ds-digest-oclabel ui-text-quiet">fit not accepted:</span>{% endif %}
+    {% if digest.qubit_fail -%}
+    <span class="ds-digest-oclabel ui-text-quiet">fit not accepted, runs per target:</span>{% endif %}
     {% for q, n in digest.qubit_fail %}
     <button class="ds-help-example ds-digest-qchip" data-example="{{ _dscope }}outcome:{{ q }}=fail"
             title="Show the {{ n }} run{{ 's' if n != 1 }} where {{ q }}'s outcome failed">{{ q }}&nbsp;×{{ n }}</button>
@@ -72,7 +74,12 @@
 {% endif %}
 {% include '_project_state_notice.html' %}
 <div class="table-header-row ui-head ui-head--data">
-    <h2 class="ds-head-title ui-head-title">{{ page_title }} <small class="muted ui-count">({{ '{:,}'.format(total or 0) }} runs{% if stats %}, {{ '{:,}'.format(stats.experiment_types or 0) }} types, {{ '{:,}'.format(stats.unique_qubits | length) }} qubits{% endif %})</small>
+    <h2 class="ds-head-title ui-head-title">{{ page_title }} <small class="muted ui-count">({{ '{:,}'.format(total or 0)
+        }} runs{% if stats %}, {{ '{:,}'.format(stats.experiment_types or 0) }} types, {{
+        '{:,}'.format(stats.unique_qubits | length) }} qubits{% endif %})</small>
+        {%- if folders and folders | length > 1 %}
+        {# recheck 3: the count spans every loaded folder; the summary and the table follow the folder chips #}
+        <small class="muted ui-count">in all {{ folders | length }} folders</small>{% endif %}
         {# docs/126 ⑥ — the times' basis, stated where they are read: SM shows
            the run folders' own timestamps verbatim (the acquisition PC's
            local clock) and never converts them. #}

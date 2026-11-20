@@ -12115,7 +12115,6 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .jr-pill small { opacity: .7; }
 .jr-out-ok { border-color: var(--color-success-border, #2e7d32); }
 .jr-out-failed { border-color: var(--cell-bad-color, #d62728); color: var(--cell-bad-color, #d62728); }
-.jr-out-mixed { border-color: var(--color-warn-border, #e6a700); }
 .jr-arrow { opacity: .5; }
 .jr-copy { position: absolute; right: .5rem; top: .4rem; }
 .jr-digest-folded { max-height: 11.5rem; overflow: hidden; }
@@ -12197,8 +12196,7 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .jr-seg .jr-pill:hover { outline: 1px solid var(--pico-primary); }
 .jr-seg .jr-pill.jr-out-ok { color: #2e9e5b; background: rgba(46,158,91,.16); }
 .jr-seg .jr-pill.jr-out-failed { color: #e5484d; background: rgba(229,72,77,.18); }
-.jr-seg .jr-pill.jr-out-mixed { color: #d99a00; background: rgba(230,167,0,.16); }
-.jr-seg .jr-pill.jr-out-none { opacity: .7; }
+.jr-seg .jr-pill.jr-out-none, .jr-seg .jr-pill.jr-out-neutral { opacity: .7; }
 .jr-cards { gap: 0; border: 1px solid var(--pico-muted-border-color); border-radius: .4rem; overflow: hidden; }
 .jr-card { border: 0; border-left: 3px solid var(--pico-muted-border-color); border-radius: 0; background: transparent; padding: 0 .55rem;
     border-bottom: 1px solid color-mix(in srgb, var(--pico-muted-border-color) 55%, transparent); }
@@ -12224,8 +12222,7 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .jr-who-cell { display: flex; gap: .3rem; align-items: center; white-space: nowrap; }
 .jr-badge.jr-out-ok { color: #2e9e5b; border-color: rgba(46,158,91,.5); background: rgba(46,158,91,.1); }
 .jr-badge.jr-out-failed { color: #e5484d; border-color: rgba(229,72,77,.5); background: rgba(229,72,77,.1); }
-.jr-badge.jr-out-mixed { color: #d99a00; border-color: rgba(230,167,0,.5); }
-.jr-badge.jr-out-none { opacity: .65; }
+.jr-badge.jr-out-none, .jr-badge.jr-out-neutral { opacity: .65; }
 /* docs/281: an agent run with no run folder sits on the run grid; its failure
    class can be long, so it never widens the pills column of its row. */
 .jr-agent-run .jr-pills .jr-badge { display: inline-block; max-width: 9.3rem; overflow: hidden;

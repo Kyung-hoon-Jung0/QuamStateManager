@@ -813,6 +813,9 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # highlighted while both values were NaN.
     from quam_state_manager.core.differ import compare_equal as _cmp_equal
     app.jinja_env.globals["cmp_equal"] = _cmp_equal
+    # One ok / fail / neutral rule for a per-target outcome (row badge, run detail, Calibration log).
+    from quam_state_manager.core.dataset import outcome_class as _outcome_class
+    app.jinja_env.globals["outcome_class"] = _outcome_class
     # docs/308 4b: kit field ids (unique per process) and the menu id guard
     import itertools as _itertools
     import json as _json

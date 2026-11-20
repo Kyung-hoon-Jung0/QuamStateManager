@@ -53,9 +53,14 @@ function mkStorage() {
 
 function world(opts) {
   const reverse = !!(opts && opts.reverse);   // docs/170: app.js BEFORE the badge
-  const dom = new JSDOM('<!DOCTYPE html><html><body>' + HTML + '</body></html>',
+  // opts.head: app.js runs from <head>, before the body (and its popup) is parsed
+  const body = (opts && opts.head) ? '' : HTML;
+  const dom = new JSDOM('<!DOCTYPE html><html><body>' + body + '</body></html>',
     { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/' });
   const win = dom.window;
+  if (opts && opts.head) {
+    Object.defineProperty(win.document, 'readyState', { value: 'loading', configurable: true });
+  }
   global.window = win; global.document = win.document;
   global.CSS = win.CSS;                       // docs/125 standing rule
   // Node 24 makes `globalThis.navigator` a getter-only accessor, so it is
@@ -338,6 +343,24 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
        + (chip(win) && chip(win).textContent) + '")');
     const st = win.__newRunPoll.stamps();
     ok(st.ack === T && st.seen === T + 800, 'ack stays at the render, detection follows (' + JSON.stringify(st) + ')');
+  }
+
+  // -------------------------------------------------------------------------
+  // 8. base.html loads app.js in <head>: the first poll still goes out once the
+  //    document is parsed, so the top bar's "last:" line is not blank for ~3 s
+  // -------------------------------------------------------------------------
+  {
+    const T = 1700000000000;
+    const win = world({ renderT: T, head: true });
+    ok(win.urls.length === 0, 'nothing is asked before the body exists');
+    win.document.body.innerHTML = HTML;
+    Object.defineProperty(win.document, 'readyState', { value: 'interactive', configurable: true });
+    win.document.dispatchEvent(new win.Event('DOMContentLoaded'));
+    for (let i = 0; i < 40 && !win.urls.some((u) => /\/datasets\/poll/.test(u)); i++) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    ok(win.urls.some((u) => /\/datasets\/poll/.test(u)),
+       'the first poll goes out right after the document is parsed (urls ' + JSON.stringify(win.urls) + ')');
   }
 
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }

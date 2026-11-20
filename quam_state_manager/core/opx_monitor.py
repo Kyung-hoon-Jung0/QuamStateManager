@@ -1063,6 +1063,30 @@ def local_time(value):
     return local.strftime('%Y-%m-%d %H:%M:%S') + f' ({zone_text(local)})'
 
 
+def read_time(value) -> str:
+    """A last-good-read time for a sentence, or '' when no time is on record. A caller
+    that gets '' says the sentence without a time; 'not reported' never fills a time slot."""
+    return local_time(value) if timestamp(value) is not None else ''
+
+
+def unconfigured_sentence(follows_chip: bool, chip_default, chip_unreadable: bool = False) -> str:
+    """Why no OPX is watched, naming every remedy that applies. A monitor that follows the
+    open chip can be fixed by opening a chip whose wiring names an OPX host (when no chip
+    is open) or only by a saved connection (when a chip is open: its wiring names no OPX
+    host, or ``chip_unreadable``, the open chip could not be read). "No chip open" is the
+    chip source answering None, never an unreadable chip."""
+    if not follows_chip:
+        return "No OPX connection is set up. Choose one under Monitor settings."
+    if chip_unreadable:
+        return ("No OPX connection is set up: the open chip's wiring could not be read. "
+                "Choose a connection under Monitor settings.")
+    if chip_default is None:
+        return ("No OPX connection is set up. Open a chip whose wiring names an OPX host, "
+                "or choose a connection under Monitor settings.")
+    return ("No OPX connection is set up: the open chip's wiring names no OPX host. "
+            "Choose a connection under Monitor settings.")
+
+
 def zone_text(local=None):
     """The PC zone label every monitor time uses, e.g. 'UTC+9'."""
     local = local if local is not None else datetime.now().astimezone()
@@ -1316,26 +1340,32 @@ def qm_state(q, idle_value):
 
 def live_tiles(answer, idle_states, hottest, limit, state, failures):
     """The four Live tiles. A tile carries a state tone only from a known abnormal value;
-    an unknown value is quiet (grey). ``failures`` = number of calls refused or unanswered."""
+    an unknown value is quiet (grey). ``failures`` = number of calls refused or unanswered.
+
+    One word per state, the same as the zones: no answer and no failed try says "not read yet"; no answer
+    after a failed try ('error', or 'stale' with no answer) says "unavailable"; a section an answer lacks
+    stays "unknown"."""
     ans = answer or {}
     fresh = state == 'ok'
+    never_read = answer is None and state not in ('error', 'stale')
+    missing = 'not read yet' if never_read else ('unavailable' if answer is None else 'unknown')
     qms = ans.get('open_qms')
     tiles = []
     if qms is None:
-        tiles.append({'label': 'Open QMs', 'value': 'unknown', 'note': 'QM list not read', 'tone': 'quiet'})
+        tiles.append({'label': 'Open QMs', 'value': missing, 'note': 'QM list not read', 'tone': 'quiet'})
     else:
         idle = sum(bool((idle_states.get(q['id']) or {}).get('idle')) for q in qms)
         tiles.append({'label': 'Open QMs', 'value': str(len(qms)),
                       'note': (f'{idle} idle' if idle else ('none idle' if qms else 'no QM open')),
                       'tone': 'warn' if idle and fresh else None})
     if qms is None or any(q.get('jobs') is None for q in qms):
-        tiles.append({'label': 'Jobs', 'value': 'unknown', 'note': 'job list not read', 'tone': 'quiet'})
+        tiles.append({'label': 'Jobs', 'value': missing, 'note': 'job list not read', 'tone': 'quiet'})
     else:
         n = sum(job_activity(j.get('status')) == 'active' for q in qms for j in q.get('jobs') or [])
         tiles.append({'label': 'Jobs', 'value': str(n) + ' running, queued or processing',
                       'note': ''})
     if hottest is None:
-        tiles.append({'label': 'Hottest sensor', 'value': 'unknown', 'note': 'no temperature reading', 'tone': 'quiet'})
+        tiles.append({'label': 'Hottest sensor', 'value': missing, 'note': 'no temperature reading', 'tone': 'quiet'})
     else:
         over = limit is not None and hottest['value'] > limit
         tiles.append({'label': 'Hottest sensor', 'value': '%.1f' % hottest['value'], 'unit': '°C',
@@ -1351,7 +1381,9 @@ def live_tiles(answer, idle_states, hottest, limit, state, failures):
         note, tone = 'no fresh answer', 'quiet'
     else:
         note, tone = 'all calls answered', None
-    tiles.append({'label': 'Server', 'value': ('QOP ' + str(qop)) if qop else 'QOP not reported', 'note': note,
+    # Before any read there is no version to report: the same words as the zones ("not read yet").
+    value = ('QOP ' + str(qop)) if qop else ('QOP not reported' if answer is not None else missing)
+    tiles.append({'label': 'Server', 'value': value, 'note': note,
                   'tone': tone if (qop or tone in ('danger', 'warn')) else 'quiet'})
     if not fresh:
         for t in tiles:
@@ -1374,6 +1406,7 @@ class Monitor:
         # the open chip's target and env (``{"target", "python", "python_source"}``, or
         # None when no chip is open); a saved settings target overrides it
         self.default_source = default_source
+        self.chip_unreadable = False   # set by chip_default when the open chip raised
         self._target_sig = None
         # an injected wall clock (tests) also drives the monotonic one
         self.mono = mono or (time.monotonic if clock is time.time else clock)
@@ -1424,10 +1457,12 @@ class Monitor:
     def chip_default(self) -> Optional[dict]:
         if self.default_source is None:
             return None
+        self.chip_unreadable = False
         try:
             d = self.default_source()
         except Exception:  # noqa: BLE001; an unreadable chip is "no default", never a guess
             logger.exception("opx monitor: the open chip's target could not be read")
+            self.chip_unreadable = True   # a chip IS open: the unconfigured line must not say "open one"
             return None
         return d if isinstance(d, dict) else None
 
@@ -1438,6 +1473,7 @@ class Monitor:
         s = load_settings(self.instance)
         d = self.chip_default()
         s["chip_default"] = d
+        s["chip_unreadable"] = self.chip_unreadable
         s["target_source"] = "settings" if s.get("target") else None
         s["python_source"] = "settings" if s.get("python") else None
         if not s.get("target") and d and d.get("target"):
@@ -1850,7 +1886,8 @@ class Monitor:
             state, sentence = 'error', s['settings_error']
         elif not s.get("target"):
             state = "unconfigured"
-            sentence = "No OPX connection is set up. Choose one under Monitor settings."
+            sentence = unconfigured_sentence(self.default_source is not None, s.get("chip_default"),
+                                             s.get("chip_unreadable", False))
         elif not s.get("python"):
             state = "unconfigured"
             sentence = "No Python environment with the QM SDK is chosen. Choose one under Monitor settings."

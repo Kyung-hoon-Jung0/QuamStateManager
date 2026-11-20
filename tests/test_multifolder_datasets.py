@@ -85,6 +85,21 @@ class TestUid:
 # --------------------------------------------------------------------------
 
 class TestMultiFolderAggregation:
+    def test_title_count_names_its_scope(self, tmp_path):
+        """recheck 3: the title counts every loaded folder; it says so beside a folder-scoped summary."""
+        fa = tmp_path / "chipA"
+        fb = tmp_path / "chipB"
+        _seed_run(fa, 250)
+        _seed_run(fb, 251)
+        _app, c = _app_with_folders(tmp_path, [fa, fb])
+        body = c.get("/datasets", headers={"HX-Request": "true"}).get_data(as_text=True)
+        head = body[body.index('ds-head-title'):]
+        head = head[:head.index('</h2>')]
+        assert "(2 runs" in head and "in all 2 folders" in head
+        _app1, c1 = _app_with_folders(tmp_path / "one", [fa])
+        body1 = c1.get("/datasets", headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert "folders</small>" not in body1   # one folder: nothing to scope
+
     def test_table_merges_folders_and_colliding_ids_resolve(self, tmp_path):
         fa = tmp_path / "chipA"
         fb = tmp_path / "chipB"
@@ -512,5 +527,21 @@ def test_latest_run_poll_reports_incomplete_index(tmp_path, monkeypatch):
     store._last_scan_truncated = True
     data = client.get("/datasets/poll").get_json()
     assert data["run_id"] == 163 and data["indexing"] is True
+    store._last_scan_truncated = False
+    assert client.get("/datasets/poll").get_json()["indexing"] is False
+
+def test_latest_run_poll_says_indexing_before_the_first_run_is_read(tmp_path, monkeypatch):
+    # Recheck 3: a cold index holds no run yet; the "last:" line must read "(indexing)".
+    folder = tmp_path / "runs"
+    _seed_run(folder, 163)
+    app, client = _app_with_folders(tmp_path, [folder])
+    with app.test_request_context():
+        active = routes._active_dataset_stores()
+    monkeypatch.setattr(routes, "_active_dataset_stores", lambda **kw: active)
+    store = active[0]["store"]
+    monkeypatch.setattr(store, "runs_snapshot", lambda: [])
+    store._last_scan_truncated = True
+    data = client.get("/datasets/poll").get_json()
+    assert data["uid"] is None and data["indexing"] is True
     store._last_scan_truncated = False
     assert client.get("/datasets/poll").get_json()["indexing"] is False

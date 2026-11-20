@@ -2,12 +2,13 @@
 {%- from "_opx_owner.html" import owner_cell, owner_head, owner_text, same_tag_hint -%}
 {%- from "_opx_qm_table.html" import qm_table with context -%}
 {%- from "_opx_qm_ports.html" import ports_link -%}
-{%- set ans = st.answer or {} -%}
+{#- never read: every section is None, so no surface counts or dates a read that did not happen -#}
+{%- set ans = st.answer or {'controllers': none, 'open_qms': none, 'jobs': none} -%}
 {%- set cap = st.capabilities -%}
 {%- set owners_stale = st.state != 'ok' -%}
 {%- macro read_age(section) -%}
 {%- if st.age_s is not none %}{{ '%.0f'|format(st.age_s) }} s ago
-{%- else %}at {{ local_time(st.section_times.get(section)) }}{% endif -%}
+{%- elif read_time(st.section_times.get(section)) %}at {{ read_time(st.section_times.get(section)) }}{% endif -%}
 {%- endmacro -%}
 {%- set owners_age = read_age('open_qms') -%}
 {%- set polls = tab in ('live', 'jobs', 'history', 'cleanup') and st.state != 'unconfigured' -%}
@@ -15,7 +16,12 @@
 {%- set poll_s = 1 if st.settling else st.interval_s|int -%}
 {%- set ps = posted if posted_form == 'settings' else none -%}{%- set pn = posted if posted_form == 'names' else none -%}
 {%- macro flash_line() -%}<p class="ui-state {{ 'ui-state--error' if flash_error else 'ui-opxmon-flash' }}" role="status">{{ flash }}</p>{%- endmacro -%}
-{%- set unavailable_key = 'Not available for this target.' if settings.target and settings.target.get('kind', 'qmm') != 'qmm' else ('Server unreachable.' if st.state == 'error' else 'Not available yet.') -%}
+{#- never read: no answer and no failed try ('error' / 'stale' with no answer is a read that was tried and failed);
+    every zone and tile then says "not read yet", and "unavailable" is kept for a failed read -#}
+{%- set never_read = st.answer is none and st.state not in ('error', 'stale') -%}
+{%- set unavailable_key = 'Not available for this target.' if settings.target and settings.target.get('kind', 'qmm')
+    != 'qmm' else ('Server unreachable.' if st.state == 'error' else ('Not read yet.' if never_read
+    else 'Not available yet.')) -%}
 <div id="ui-opxmon-body" class="ui-opxmon-body" data-tab="{{ tab }}" data-state="{{ st.state }}"
      data-snapshot="{{ st.snapshot_id }}"
      {% if st.age_s is not none %}data-age="{{ '%.1f'|format(st.age_s) }}"{% endif %}
@@ -40,7 +46,11 @@
   <span class="ui-notice-text">{% for a in st.alarms %}{{ a.controller }} {{ a.label }} = {{ '%.1f'|format(a.value) if a.unit == '°C' else ('%.1f'|format(a.value)).removesuffix('.0') }} {{ a.unit }} ({{ a.direction }} the limit {{ '%g'|format(a.limit) }} {{ a.unit }}){% if not loop.last %}; {% endif %}{% endfor %}</span></div>
 {%- endif %}
 {%- set age_rows = st.section_errors.items()|rejectattr('0', 'equalto', 'controllers' if tab == 'live' else '')|list %}
-{%- if age_rows %}<p class="ui-text-quiet ui-opxmon-section-age">{% for section, error in age_rows %}<span title="{{ error }}">{{ 'Open QMs' if section == 'open_qms' else section|replace('_', ' ')|capitalize }} unavailable; {{ 'last good read at ' ~ local_time(st.section_times.get(section)) if st.section_times.get(section) else 'no successful read yet' }}</span>{% if not loop.last %}. {% endif %}{% endfor %}</p>{% endif %}
+{%- if age_rows %}<p class="ui-text-quiet ui-opxmon-section-age">{% for section, error in
+  age_rows %}<span title="{{ error }}">{{ 'Open QMs' if section == 'open_qms' else section|replace('_',
+  ' ')|capitalize }} unavailable; {% set read_at = read_time(st.section_times.get(section)) %}
+  {{- 'last good read at ' ~ read_at if read_at else 'no successful read yet' }}</span>{% if not
+  loop.last %}. {% endif %}{% endfor %}</p>{% endif %}
 {%- if tab == 'live' %}
   {%- if st.target_source %}
   <p class="ui-note" data-opxmon-source="{{ st.target_source }}">Watching {{ st.target_label }} {{ "from the open chip's wiring" if st.target_source == 'chip' else 'from Monitor settings' }}. <a href="/opx-monitor/settings" hx-get="/opx-monitor/settings" hx-target="#table-pane" hx-push-url="true">Change</a></p>
@@ -48,24 +58,49 @@
   {{ ui.ui_stats(tiles, 'Key numbers') }}
   {#- Zone: Open QMs -#}
   {%- set qms = ans.open_qms %}
-  <section class="ui-zone" aria-label="Open QMs"><div class="ui-zone-head"><h3 class="ui-zone-title">Open QMs</h3><span class="ui-zone-sum">{% if not cap.live %}not available{% elif qms is none %}unknown{% else %}{{ qms|length }} open{% set idle_n = idle_states.values()|selectattr('idle')|list|length %}{% if idle_n %} &middot; {{ idle_n }} idle{% endif %}{% if owners_stale %} &middot; last good read {{ owners_age }}{% endif %}{% endif %}</span></div>
+  <section class="ui-zone" aria-label="Open QMs"><div class="ui-zone-head"><h3 class="ui-zone-title">Open QMs</h3>{#
+    #}<span class="ui-zone-sum">{% if not cap.live %}{{ 'not read yet' if never_read else 'not available' }}{%
+    elif qms is none %}
+    {{- 'not read yet' if never_read else ('unknown' if st.answer else 'unavailable') }}{% else %}
+    {{- qms|length }} open{% set idle_n = idle_states.values()|selectattr('idle')|list|length %}
+    {%- if idle_n %} &middot; {{ idle_n }} idle{% endif %}{% if owners_stale and
+    owners_age %} &middot; last good read {{ owners_age }}{% endif %}{% endif %}</span></div>
   <div class="ui-zone-body">
   {%- if not cap.live %}
     <p class="ui-state ui-state--empty"><span class="ui-state-key">{{ unavailable_key }}</span> {{ plain_error(cap.live_reason) }}</p>
   {%- elif qms is none %}
-    <p class="ui-zone-empty">{% if st.section_times.get('open_qms') %}Open QM list unavailable; last good read at
-    {{ local_time(st.section_times.get('open_qms')) }}.{% else %}Open QM list: no successful read yet.{% endif %}</p>
+    <p class="ui-zone-empty">{% if read_time(st.section_times.get('open_qms')) %}Open QM list unavailable;
+    last good read at {{ read_time(st.section_times.get('open_qms')) }}.{% elif never_read %}
+    Open QM list not read yet.{% else %}
+    Open QM list: no successful read yet.{% endif %}</p>
   {%- elif not qms %}
-    <p class="ui-zone-empty">{% if owners_stale %}No QM was open at the last good read ({{ owners_age }}); whether one is open now is unknown.{% else %}No QM is open: the hardware is free.{% endif %}</p>
+    <p class="ui-zone-empty">{% if owners_stale %}No QM was open at the last good read{% if
+      owners_age %} ({{ owners_age }}){% endif %}; whether one is open now is unknown.{% else %}No QM is open: the{#
+      #} hardware is free.{% endif %}</p>
   {%- else %}
-    {%- if owners_stale %}<div class="ui-notice ui-notice--warn ui-opxmon-qm-stale" role="status"><span class="ui-notice-icon" aria-hidden="true">⚠</span><strong class="ui-notice-key">Not current.</strong><span class="ui-notice-text">Owners below are from the last good read, {{ owners_age }}; QMs may have opened or closed since. SM's watch is interrupted, so no QM counts as idle.</span></div>{% endif %}
+    {%- if owners_stale %}<div class="ui-notice ui-notice--warn ui-opxmon-qm-stale" role="status"><span{#
+      #} class="ui-notice-icon" aria-hidden="true">⚠</span><strong class="ui-notice-key">Not current.</strong><span{#
+      #} class="ui-notice-text">Owners below are from the last good read{% if owners_age %}, {{ owners_age }}
+      {%- endif %}; QMs may have opened or closed since. SM's watch is interrupted, so no QM counts as idle.</span>{#
+      #}</div>{% endif %}
     {{ qm_table(qms, 'Who holds each open QM', owners_stale, owners_age, ports=True) }}
   {%- endif %}
   </div></section>
   {#- Zone: Temperatures -#}
-  <section class="ui-zone" aria-label="Temperatures"><div class="ui-zone-head"><h3 class="ui-zone-title">Temperatures</h3><span class="ui-zone-sum">{% if hottest and not temperature_failed %}{% if hottest_limit is not none and hottest.value > hottest_limit %}<span class="ui-text-danger">Above limit: {{ hottest.label }} {{ '%.1f'|format(hottest.value) }} °C</span>{% else %}Hottest: {{ hottest.label }} {{ '%.1f'|format(hottest.value) }} °C{% endif %}{% elif temperature_failed or ans.controllers is none %}unavailable{% else %}no readings{% endif %}</span></div>
+  <section class="ui-zone" aria-label="Temperatures"><div class="ui-zone-head"><h3 class="ui-zone-title">{#
+    #}Temperatures</h3><span class="ui-zone-sum">{% if hottest and not temperature_failed %}
+    {%- if hottest_limit is not none and hottest.value > hottest_limit %}<span class="ui-text-danger">Above limit:{#
+    #} {{ hottest.label }} {{ '%.1f'|format(hottest.value) }} °C</span>{% else %}Hottest: {{ hottest.label }}{#
+    #} {{ '%.1f'|format(hottest.value) }} °C{% endif %}{% elif never_read %}not read yet
+    {%- elif temperature_failed or ans.controllers is none %}unavailable{% else %}no readings{% endif %}</span></div>
   <div class="ui-zone-body">
-  {% if temperature_failed or ans.controllers is none %}<p class="ui-note">Temperatures unavailable ({{ 'last good read at ' ~ local_time(st.section_times.get('controllers')) if st.section_times.get('controllers') else 'no successful read yet' }}){% if ans.controllers %}; the values below are stale{% endif %}</p>{% elif not (ans.controllers or [])|selectattr('temperatures')|list and not unreadable_temps %}<p class="ui-zone-empty">No temperature readings.</p>{% endif %}
+  {#- one bracket level: read_time already carries "(UTC+9)", so the read time is set off by semicolons -#}
+  {% if never_read %}<p class="ui-note">Temperatures not read yet.</p>
+  {%- elif temperature_failed or ans.controllers is none %}<p class="ui-note">Temperatures unavailable; {% set read_at =
+    read_time(st.section_times.get('controllers')) %}{{ 'last good read at ' ~ read_at if read_at else
+    'no successful read yet' }}{% if ans.controllers %}; the values below are stale{% endif %}.</p>{% elif not
+    (ans.controllers or [])|selectattr('temperatures')|list and not unreadable_temps %}<p class="ui-zone-empty">No{#
+    #} temperature readings.</p>{% endif %}
   {% set temps_stale = (temperature_failed or st.state != 'ok') and ans.controllers %}{% set stale_at = stale_time(st.section_times.get('controllers')) if st.section_times.get('controllers') else '' %}
   {% for group in ['fem', 'other'] if ans.controllers %}
   {% if group == 'other' %}<details class="ui-disclosure ui-opxmon-other-temperatures" data-fold="other-temperatures"><summary class="ui-disclosure-summary">Other temperatures</summary><div class="ui-disclosure-body">{% endif %}
@@ -124,7 +159,7 @@
   {% if fem_stale and occupancy.known %}<div class="ui-notice ui-notice--warn ui-opxmon-fem-stale" role="status">
   <span class="ui-notice-icon" aria-hidden="true">⚠</span>
   <strong class="ui-notice-key">Not current.</strong>
-  <span class="ui-notice-text">FEM slot occupancy at the last good read ({{ fem_age }});
+  <span class="ui-notice-text">FEM slot occupancy at the last good read{% if fem_age %} ({{ fem_age }}){% endif %};
   QMs may have opened or closed since.</span></div>{% endif %}
   <table class="ui-table ui-opxmon-table{% if fem_stale %} ui-opxmon-table--stale{% endif %}" aria-label="Controllers and FEM slots">
     <thead><tr><th class="ui-table-head">Controller</th><th class="ui-table-head">Type</th><th class="ui-table-head">FEM slots</th></tr></thead>
@@ -133,7 +168,13 @@
       <tr><td data-label="Controller" class="ui-table-cell">{{ c.name }}</td><td data-label="Type" class="ui-table-cell">{{ c.type or '' }}</td>
         <td data-label="FEM slots" class="ui-table-cell">{% set st_t = slot_temperatures(c) %}{% if c.fems %}{% for slot, kind in c.fems.items() %}{% set k = c.name ~ '/' ~ slot %}{% set tr = st_t.get(slot|string) %}
           <span class="ui-opxmon-fem{% if fem_stale %} ui-opxmon-fem--stale{% elif k in busy %} ui-opxmon-fem--busy{% elif k in held %} ui-opxmon-fem--held{% endif %}"
-                title="{% if k in busy %}A QM with an active job ({{ busy[k] }}: running, queued or processing) claims this FEM{% elif k in held %}An open QM ({{ held[k] }}) claims this FEM; no active job reported{% elif not occupancy.known %}Occupancy unknown{% else %}{{ 'No open QM claimed this FEM at the last good read (' ~ fem_age ~ ')' if fem_stale else 'No open QM claims this FEM' }}{% endif %}{% if fem_stale and (k in busy or k in held) %} (at the last good read, {{ fem_age }}){% endif %}">
+                title="{% if k in busy %}A QM with an active job ({{ busy[k] }}: running, queued or processing){#
+                  #} claims this FEM{% elif k in held %}An open QM ({{ held[k] }}) claims this FEM; no active job{#
+                  #} reported{% elif not occupancy.known %}Occupancy unknown{% else %}
+                  {{- 'No open QM claimed this FEM at the last good read' ~ (' (' ~ fem_age ~ ')' if fem_age else '')
+                  if fem_stale else 'No open QM claims this FEM' }}{% endif %}
+                  {%- if fem_stale and (k in busy or k in held) %} (at the last good read{% if
+                  fem_age %}, {{ fem_age }}{% endif %}){% endif %}">
             <span class="ui-opxmon-light" aria-hidden="true"></span>{{ slot }} {{ kind }}{% if k in busy %} &middot; active job{% elif k in held %} &middot; claimed by an open QM{% elif fem_stale and occupancy.known %} &middot; none at the last good read{% endif %}{% if tr %} <span class="ui-opxmon-fem-temp" title="sensor '{{ tr.key }}'">{% if tr.value is none %}no sensor{% else %}{{ '%.1f'|format(tr.value) }} °C{% endif %}</span>{% endif %}</span>{% endfor %}{% else %}<span class="ui-note">the server reported no FEMs</span>{% endif %}</td></tr>
     {%- endfor %}
     </tbody>
@@ -156,12 +197,22 @@
   {%- elif ans.open_qms is none %}
   <p class="ui-state ui-state--empty"><span class="ui-state-key">No QM list.</span> {% if ans.refused and ans.refused.list_open_qms %}{{ call_failure('list_open_qms', ans.refused.list_open_qms) }}{% else %}Nothing has been read yet.{% endif %}</p>
   {%- else %}{% set qm_stale = st.state != 'ok' %}{% set qm_age = read_age('open_qms') %}
-  <section class="ui-zone" aria-label="Open quantum machines"><div class="ui-zone-head"><h3 class="ui-zone-title">Open quantum machines{% if qm_stale %} at the last good read ({{ qm_age }}){% endif %}</h3><span class="ui-zone-sum"><span class="ui-count">{{ ans.open_qms|length }}</span></span></div>
+  <section class="ui-zone" aria-label="Open quantum machines"><div class="ui-zone-head"><h3 class="ui-zone-title">{#
+    #}Open quantum machines{% if qm_stale %} at the last good read{% if qm_age %} ({{ qm_age }}){% endif %}
+    {%- endif %}</h3><span class="ui-zone-sum"><span class="ui-count">{{ ans.open_qms|length }}</span></span></div>
   <div class="ui-zone-body">
-  {%- if qm_stale %}<div class="ui-notice ui-notice--warn ui-opxmon-qm-stale" role="status"><span class="ui-notice-icon" aria-hidden="true">⚠</span><strong class="ui-notice-key">Not current.</strong><span class="ui-notice-text">This list is from the last good read, {{ qm_age }}; QMs may have opened or closed since. SM's watch is interrupted, so no QM counts as idle.</span></div>{% endif %}
+  {%- if qm_stale %}<div class="ui-notice ui-notice--warn ui-opxmon-qm-stale" role="status"><span{#
+    #} class="ui-notice-icon" aria-hidden="true">⚠</span><strong class="ui-notice-key">Not current.</strong><span{#
+    #} class="ui-notice-text">This list is from the last good read{% if qm_age %}, {{ qm_age }}
+    {%- endif %}; QMs may have opened or closed since. SM's watch is interrupted, so no QM counts as idle.</span>{#
+    #}</div>{% endif %}
   {%- if ans.open_qms|length > 1 %}<div class="ui-notice ui-notice--warn ui-opxmon-multi" role="status"><span class="ui-notice-icon" aria-hidden="true">⚠</span><strong class="ui-notice-key">More than one QM is open.</strong><span class="ui-notice-text">Several programs or people may hold the hardware.</span></div>{% endif %}
-  {%- if not ans.open_qms %}<p class="ui-zone-empty">{% if qm_stale %}<span class="ui-state-key">No QM was open at the last good read ({{ qm_age }}).</span> Whether one is open now is unknown.{% else %}<span class="ui-state-key">No QM is open.</span>{% endif %}</p>{% else %}
-  <table class="ui-table ui-opxmon-table{% if qm_stale %} ui-opxmon-table--stale{% endif %}" aria-label="Open quantum machines{% if qm_stale %} (last good read, {{ qm_age }}){% endif %}"{% if qm_stale %} data-stale="1"{% endif %}>
+  {%- if not ans.open_qms %}<p class="ui-zone-empty">{% if qm_stale %}<span class="ui-state-key">No QM was open at{#
+    #} the last good read{% if qm_age %} ({{ qm_age }}){% endif %}.</span> Whether one is open now is{#
+    #} unknown.{% else %}<span class="ui-state-key">No QM is open.</span>{% endif %}</p>{% else %}
+  <table class="ui-table ui-opxmon-table{% if qm_stale %} ui-opxmon-table--stale{% endif %}" aria-label="Open{#
+    #} quantum machines{% if qm_stale %} (last good read{% if qm_age %}, {{ qm_age }}
+    {%- endif %}){% endif %}"{% if qm_stale %} data-stale="1"{% endif %}>
     <thead><tr><th class="ui-table-head" scope="col">QM</th><th class="ui-table-head" scope="col">State</th>{{ owner_head(any_marker) }}<th class="ui-table-head" scope="col">FEMs</th><th class="ui-table-head" scope="col">Jobs</th></tr></thead>
     <tbody>{% for q in ans.open_qms %}{% set qs = qm_states[q.id] %}<tr class="ui-opxmon-qm-row" data-qm-id="{{ q.id }}"><td data-label="QM" class="ui-table-cell"><code class="ui-chip">{{ q.id }}</code></td>
       <td data-label="State" class="ui-table-cell ui-opxmon-qm-state"><span class="ui-text-strong">{{ qs.fact }}</span><div class="ui-text-quiet">{{ qs.basis }}{% if idle_states[q.id].idle and qs.fact != 'idle' %} &middot; idle{% endif %}</div></td>
@@ -206,7 +257,8 @@
   <p class="ui-state ui-state--empty ui-opxmon-close-off"><span class="ui-state-key">Closing is not available.</span> {{ plain_error(cap.close_reason) }}</p>
   {%- else %}
   <section class="ui-zone" aria-label="Open QMs"><div class="ui-zone-head">
-<h3 class="ui-zone-title">Open QMs</h3><span class="ui-zone-sum">{% if ans.open_qms is none %}unknown{% else -%}
+<h3 class="ui-zone-title">Open QMs</h3><span class="ui-zone-sum">{% if ans.open_qms is none %}
+  {{- 'unknown' if st.answer else 'not read yet' }}{% else -%}
 {{ ans.open_qms|length }} open{% if idle_ids %} &middot; {{ idle_ids|length }} idle{% endif %}{% endif %}</span></div>
   <div class="ui-zone-body">
   {%- if ans.open_qms is none %}<p class="ui-zone-empty">Open QM list: no successful read yet.</p>

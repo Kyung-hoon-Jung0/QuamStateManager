@@ -40,6 +40,14 @@ if (pin === 'all' || pin === 'indexing') {
     w.SyncBadge.lastRun({ ...run, run_id: 280, indexing: false });
     assert.match(d.querySelector('[data-last-run]').textContent, /#280/);
     assert.doesNotMatch(d.querySelector('[data-last-run]').textContent, /indexing/);
+    // Recheck 3: a cold index with no run read yet says "(indexing)", never a blank line
+    w.SyncBadge.lastRun({ uid: null, run_id: null, indexing: true });
+    for (const e of d.querySelectorAll('[data-last-run]')) {
+        assert.equal(e.textContent, 'last: (indexing)');
+        assert.equal(e.hidden, false, 'the cold-index line is shown');
+    }
+    w.SyncBadge.lastRun({ uid: null, run_id: null, indexing: false });
+    assert.equal(d.querySelector('[data-last-run]').hidden, true, 'no run and no index work: nothing to say');
 }
 if (pin === 'all' || pin === 'seen') {
     const row = d.querySelector('[data-uid]'), tree = d.getElementById('sidebar-tree');

@@ -45,6 +45,45 @@ const tick = (ms) => new Promise((r) => setTimeout(r, ms || 30));
     ok(inPorts.length >= 2 && labels.length === inPorts.length, 'every physical input carries a label (' + labels + ')');
     const in2 = inPorts.find((g) => g.getAttribute('data-port') === '2');
     ok(!!in2 && labels.indexOf('in 2') >= 0, 'the readout input says "in 2", not the row it sits on');
+    // recheck 3: each input's caption sits below the cell's real bottom; a 2-row
+    // readout cluster reaches past the nominal radius and covered "in 2"
+    function captionsClear(host, tag) {
+        const ports = Array.from(d.querySelectorAll('#' + host + ' .iw-port[data-io="input"]'));
+        const lbls = Array.from(d.querySelectorAll('#' + host + ' .iw-in-port-label'));
+        ports.forEach((g, i) => {
+            // a dot's outer edge: its radius plus half its outline
+            const low = Math.max(...Array.from(g.querySelectorAll('circle')).map((c) =>
+                Number(c.getAttribute('cy')) + Number(c.getAttribute('r')) +
+                (Number(c.getAttribute('stroke-width')) || 0) / 2));
+            const y = lbls[i] ? Number(lbls[i].getAttribute('y')) : NaN;
+            const fs = lbls[i] ? Number(lbls[i].getAttribute('font-size')) : NaN;
+            // the caption's whole em box (baseline minus font size) stays below the dots
+            ok(y - fs > low, tag + ': in ' + g.getAttribute('data-port')
+                + ' caption clears its dots (' + y + ' vs ' + low + ')');
+        });
+        return ports.reduce((m, g) => Math.max(m, g.querySelectorAll('circle').length), 0);
+    }
+    captionsClear('instrument-diagram', 'page');
+    // the same rack with five readout lines on one input: the cluster takes two rows
+    const grab = (name) => {
+        const m = FX.page.match(new RegExp('var ' + name + ' = (\{.*\});'));
+        return m ? JSON.parse(m[1]) : {};
+    };
+    const five = grab('instrumentData');
+    let padded = false;
+    Object.values(five.controllers || {}).forEach((c) => Object.values(c.fems || {}).forEach((f) => {
+        const ins = (f.input_ports || {})['2'];
+        if (padded || !ins || !ins.length) return;
+        while (ins.length < 5) {
+            ins.push(Object.assign({}, ins[0], { element: 'r' + ins.length, label: 'r' + ins.length + '.rr_in' }));
+        }
+        padded = true;
+    }));
+    ok(padded, 'the fixture has a readout input to load with five lines');
+    const fiveHost = d.createElement('div'); fiveHost.id = 'iw-five'; d.body.appendChild(fiveHost);
+    w.renderInstrumentWiring('iw-five', five, grab('rawWiring'), {});
+    await tick();
+    ok(captionsClear('iw-five', 'five lines') >= 5, 'the five-line input draws five dots');
     const legend = d.querySelector('#instrument-diagram .iw-legend');
     const items = legend ? Array.from(legend.querySelectorAll('.iw-legend-item')).map((i) => i.textContent) : [];
     ok(items.indexOf('XY drive') >= 0 && items.indexOf('Readout out') >= 0 && items.indexOf('Readout in') >= 0,

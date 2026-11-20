@@ -53,7 +53,7 @@ const { JSDOM } = require("jsdom");
     const ok = w.document.querySelector('.sched-item[data-id="b"]');
     assert(row && ok, "both items render"); checks++;
     assert.strictEqual(row.querySelector(".sched-item-status").textContent,
-      "done — 1 of 2 targets failed"); checks++;
+      "done — 1 of 2 targets not successful"); checks++;
     const warn = row.querySelector('[data-failed-targets="1"]');
     assert(warn && warn.getAttribute("role") === "status" && warn.textContent === note,
       "the failure and its written path are announced"); checks++;

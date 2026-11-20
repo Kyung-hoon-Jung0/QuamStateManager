@@ -100,7 +100,7 @@ class TestDigestBandSaysWhatItCounted:
         ])
         assert "all OK" not in band
         assert "no run errors" in band
-        assert '<span class="ds-digest-oclabel ui-text-quiet">fit not accepted:</span>' in band
+        assert '<span class="ds-digest-oclabel ui-text-quiet">fit not accepted, runs per target:</span>' in band
         assert "failed outcomes:" not in band
         assert 'data-example="date:2026-09-24 outcome:q3=fail"' in band
         assert "q3&nbsp;×2" in band
@@ -113,7 +113,9 @@ class TestDigestBandSaysWhatItCounted:
             (1, "2026-09-23", ["q1"], {"q1": "successful"}, "error"),
         ])
         assert 'data-example="date:2026-09-24 is:failed"' in band
-        assert "1 failed" in band
+        # what the button counts is named: runs whose STATUS names an error
+        assert "1 run error</button>" in band
+        assert "1 failed" not in band
 
     def test_an_aborted_or_error_outcome_is_a_failure(self, tmp_path):
         """Review: the count had been narrowed to the substring 'fail', so an

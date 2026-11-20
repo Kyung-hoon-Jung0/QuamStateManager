@@ -269,7 +269,10 @@ class TestWiring:
         # docs/141 4ac: gated on the popup existing. Unconditional, it put a
         # background request into every jsdom harness that evaluates app.js,
         # which is what made version_diff_selfcheck.cjs flake ~50% of runs.
-        assert "if (document.getElementById('new-run-popup')) _schedule(1500);" in tail[:1600]
+        # recheck 3: armed once the document is parsed (app.js loads in <head>), at once
+        first = "function _firstPoll() { if (document.getElementById('new-run-popup')) _schedule(0); }"
+        assert first in tail[:2400]
+        assert "document.addEventListener('DOMContentLoaded', _firstPoll);" in tail[:2400]
         ds = (ROOT / "quam_state_manager/web/static/dataset-virtual.js").read_text(encoding="utf-8")
         assert "pollNow: function () {" in ds and "state.pollWakeAgain" in ds
         lw = (ROOT / "quam_state_manager/web/static/live-wake.js").read_text(encoding="utf-8")

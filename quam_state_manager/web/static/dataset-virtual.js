@@ -377,9 +377,9 @@
                         if (String(ok2).toLowerCase() === otgt) {
                             var ocv = String(row.oc[ok2]).toLowerCase();
                             // `=fail` is the digest's failure CLASS -- the same
-                            // /error|fail|abort|crash/ its chip counts with
+                            // marksFailure rule its chip counts with
                             // (routes._datasets_view is the server twin).
-                            return ov === 'fail' ? /error|fail|abort|crash/.test(ocv)
+                            return ov === 'fail' ? marksFailure(ocv)
                                                  : ocv.indexOf(ov) !== -1;
                         }
                     }
@@ -455,7 +455,7 @@
                 if (value === 'bookmarked' || value === 'starred') return !!row.bm;
                 if (value === 'wrote' || value === 'writes') return !!row.ws;
                 if (value === 'failed' || value === 'error')
-                    return /(error|fail|abort|crash)/.test(String(row.status || '').toLowerCase());
+                    return marksFailure(row.status);
                 return false;
         }
         return false;
@@ -596,24 +596,51 @@
         if (/(finish|done|complet)/.test(s)) cls = 'ds-status-done';
         else if (/(success|pass)/.test(s)) cls = 'ds-status-ok';
         else if (/(run|progress|pending|queue)/.test(s)) cls = 'ds-status-run';
-        else if (/(error|fail|abort|crash)/.test(s)) cls = 'ds-status-err';
+        else if (marksFailure(s)) cls = 'ds-status-err';
         return '<span class="ds-status ' + cls + '" title="' + escapeHtml(status) + '">' + escapeHtml(status) + '</span>';
     }
     // F9: a run whose node marked EVERY target failed still reports status
     // "finished" (the process ended normally). Say the fits failed beside it,
     // and mark the key metric as coming from a failed fit.
+    // One failure rule for a run status and a target outcome: the server's
+    // core/dataset.py marks_failure (FAILURE_WORDS) is the twin, so a row, the
+    // digest and the Calibration log never count one run differently.
+    var FAILURE_RE = /error|fail|abort|crash|unsuccess/;
+    function marksFailure(v) {
+        return v != null && FAILURE_RE.test(String(v).toLowerCase());
+    }
+    // core/dataset.py marks_success / outcome_class are the twins: one
+    // ok / fail / neutral rule for a target outcome (row badge, run detail).
+    var SUCCESS_RE = /^(success|successful|succeeded|ok)$/;
+    function outcomeClass(v) {
+        if (marksFailure(v)) return 'fail';
+        return v != null && SUCCESS_RE.test(String(v).trim().toLowerCase()) ? 'ok' : 'neutral';
+    }
     function allTargetsFailed(row) {
         var oc = row && row.oc, n = 0;
         if (!oc) return false;
-        for (var q in oc) { n++; if (oc[q] === 'successful') return false; }
+        for (var q in oc) { n++; if (!marksFailure(oc[q])) return false; }
         return n > 0;
+    }
+    // The run status that leads a target count in the Status cell ("error, "), or '' when the run
+    // status is not a failure (a successful run's cell reads "2 of 5 failed" alone).
+    function failedRunLead(row) {
+        var s = row && row.status;
+        return marksFailure(s) ? String(s).trim().toLowerCase() + ', ' : '';
+    }
+    // The text the Status cell shows for a run (the same words its render writes).
+    function statusCellText(row) {
+        var lead = failedRunLead(row), f = failedTargets(row);
+        if (allTargetsFailed(row)) return lead + 'all failed';
+        if (f) return lead + f.k + ' of ' + f.n + ' failed';
+        return String((row && row.status) || '');
     }
     // A run whose node marked SOME targets failed: {k, n}, or null when none
     // failed or no outcomes were recorded.
     function failedTargets(row) {
         var oc = row && row.oc, n = 0, k = 0;
         if (!oc) return null;
-        for (var q in oc) { n++; if (oc[q] !== 'successful') k++; }
+        for (var q in oc) { n++; if (marksFailure(oc[q])) k++; }
         return k ? {k: k, n: n} : null;
     }
     // The key metric was read off the fit of a target the node marked failed
@@ -621,7 +648,7 @@
     function metricFromFailedTarget(row) {
         if (allTargetsFailed(row)) return true;
         var oc = row && row.oc;
-        return !!(oc && row.mq != null && (row.mq in oc) && oc[row.mq] !== 'successful');
+        return !!(oc && row.mq != null && (row.mq in oc) && marksFailure(oc[row.mq]));
     }
     function tagsCell(row) {
         var h = '';
@@ -638,9 +665,12 @@
         if (!row.oc || Object.keys(row.oc).length === 0) return '-';
         var h = '';
         for (var q in row.oc) {
-            var ok = row.oc[q] === 'successful';
-            h += '<span class="outcome-badge ' + (ok ? 'outcome-ok' : 'outcome-fail') +
-                 '" title="' + escapeHtml(q) + ': ' + escapeHtml(row.oc[q]) + '">' + (ok ? '✓' : '✗') + '</span>';
+            // outcomeClass, the rule every count and the run detail use; an
+            // outcome that is neither a success nor a failure gets a "?".
+            var cls = outcomeClass(row.oc[q]), ok = cls === 'ok', bad = cls === 'fail';
+            h += '<span class="outcome-badge' + (ok ? ' outcome-ok' : (bad ? ' outcome-fail' : '')) +
+                 '" title="' + escapeHtml(q) + ': ' + escapeHtml(row.oc[q]) + '">'
+                 + (ok ? '✓' : (bad ? '✗' : '?')) + '</span>';
         }
         return h;
     }
@@ -684,15 +714,17 @@
          }},
         {key: 'status', label: 'Status', on: true, w: 124, sortKey: 'status', type: 'str',   // L9: 96 clipped "finished"; W2-11: 104 fit "all failed" by 2 px at the default size and clipped it at a larger one
          render: function (r) {
+             // a failed run status (error, aborted) stays on the cell beside the target count
+             var lead = failedRunLead(r);
              return allTargetsFailed(r)
                  ? '<span class="ds-status ds-status-err ds-all-failed" title="' + escapeHtml(r.status || 'no status')
-                   + '; the node marked every target of this run as failed">all failed</span>'
+                   + '; the node marked every target of this run as failed">' + escapeHtml(lead) + 'all failed</span>'
                  : (failedTargets(r)
                      ? (function (f) {
                          return '<span class="ds-status ds-status-err" data-failed="' + f.k + '/' + f.n
                            + '" title="' + escapeHtml(r.status || 'no status') + '; the node marked '
                            + f.k + ' of ' + f.n + ' targets of this run as failed">'
-                           + f.k + ' of ' + f.n + ' failed</span>';
+                           + escapeHtml(lead) + f.k + ' of ' + f.n + ' failed</span>';
                        })(failedTargets(r))
                      : statusChip(r.status));
          }},
@@ -749,7 +781,32 @@
     }
     function colWidth(c) {
         if (colState.widths[c.key] != null) return colState.widths[c.key];
+        if (c.key === 'status') return Math.max(c.w, statusColNeed());
         return c.key === 'id' ? Math.max(c.w, idColNeed()) : c.w;
+    }
+    /* The Status column fits its longest label ("error, 2 of 5 failed"), so the chip never ends in an
+       ellipsis: the chip's .72rem bold characters (about 0.62 em each), its .35rem side padding and
+       1 px border, and the cell's .4rem side padding. A width the user dragged still wins. */
+    var _statusCharsAt = -1;
+    function statusColChars() {
+        var most = 0, rows = state.rows || [];
+        for (var i = 0; i < rows.length; i++) {
+            if (!rows[i]) continue;
+            var n = statusCellText(rows[i]).length;
+            if (n > most) most = n;
+        }
+        return most;
+    }
+    function statusColNeed() {
+        var chars = statusColChars(), root = 16;
+        _statusCharsAt = chars;
+        try { root = parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16; }
+        catch (e) { /* the estimate below still holds */ }
+        return Math.ceil(root * 0.72 * 0.62 * chars + root * 0.7 + 2 + root * 0.8 + 8);
+    }
+    function refitStatusCol() {
+        if (colState.widths.status != null) return;
+        if (statusColChars() !== _statusCharsAt) buildColgroup();
     }
     /* v1.5.1 (r6 P2-2): the ID column fits its content. A fixed 58 px clipped
        every 4-digit id to "#175..." at 1280 and hid the wrote-state mark
@@ -1200,7 +1257,6 @@
             }
             return;
         }
-        var bad = /error|fail|abort|crash/;
         var latest = '';
         for (var i = 0; i < state.visible.length; i++) {
             var d = state.rows[state.visible[i]].date || '';
@@ -1211,12 +1267,12 @@
             var row = state.rows[state.visible[j]];
             if ((row.date || '') !== latest) continue;
             total++;
-            if (bad.test(String(row.status || '').toLowerCase())) failed++;
+            if (marksFailure(row.status)) failed++;
             if (row.oc) {
                 for (var q in row.oc) {
                     // QA datasets-r2-18: the chip filters `outcome:<q>=fail`,
                     // which matchScope reads as this same failure class.
-                    if (bad.test(String(row.oc[q]).toLowerCase())) {
+                    if (marksFailure(row.oc[q])) {
                         qfail[q] = (qfail[q] || 0) + 1;
                     }
                 }
@@ -1248,14 +1304,16 @@
             var fb = document.createElement('button');
             fb.className = 'ds-help-example ds-digest-bad';
             fb.setAttribute('data-example', dscope + 'is:failed');
-            fb.textContent = failed + ' failed';
+            fb.setAttribute('title', "Show this day's runs whose run status names an error");
+            fb.textContent = failed + ' run error' + (failed === 1 ? '' : 's');
             band.appendChild(fb);
         } else if (!qs.length) {
             band.appendChild(span('ds-digest-ok', 'all OK'));
         } else {
             band.appendChild(span('ds-digest-item', 'no run errors'));
         }
-        if (qs.length) band.appendChild(span('ds-digest-oclabel ui-text-quiet', 'fit not accepted:'));
+        if (qs.length) band.appendChild(span('ds-digest-oclabel ui-text-quiet',
+            'fit not accepted, runs per target:'));
         qs.forEach(function (q) {
             var b = document.createElement('button');
             b.className = 'ds-help-example ds-digest-qchip';
@@ -1475,6 +1533,7 @@
         var cmpHint = _paramCompareHint();     // QA F15
         if (cmpHint) msg += (msg ? ' · ' : '') + cmpHint;
         countEl.textContent = msg;
+        countEl.title = msg;   // the strip is one line; a clipped hint reads in full on hover
         if (state.emptyEl) {
             state.emptyEl.style.display = state.visible.length === 0 ? '' : 'none';
         }
@@ -1898,8 +1957,8 @@
         if (state.pollSkipUntil && Date.now() < state.pollSkipUntil) return;
         // Table swapped away (navigated to another menu) → stop polling so we
         // don't fetch + server-rescan forever against a detached DOM.
-        if (!state.scrollEl || !document.body.contains(state.scrollEl)) {
-            stopPolling();
+        if (!_mounted()) {
+            _teardown();
             return;
         }
         var dateInp = document.getElementById('ds-active-date');
@@ -1926,6 +1985,8 @@
             })
             .then(function(data) {
                 if (!data || typeof data.now !== 'number') throw new Error('bad payload');
+                // an answer that was in flight when the table left the page acts on nothing
+                if (!_mounted()) return;
                 pollSucceeded();
                 refreshOpenDetail(data);
                 // docs/170: the render's "still indexing" note goes away on
@@ -2186,6 +2247,7 @@
             _rebuildFitKeys();     // a delta may introduce a brand-new fit key / qubit
             _rebuildParamFacets(); // …or a brand-new param key/value facet
             refitIdCol();          // v1.5.1 (r6 P2-2): ...or a longer id / a first wrote mark
+            refitStatusCol();      // ...or a longer Status label ("aborted, 3 of 12 failed")
             applyFilters();        // re-sorts (sm is on the merged rows → in-slot placement)
             _buildSortBanner();    // surface any new fit-metric / param badge
             _buildQubitPicker();   // surface any new qubit
@@ -2407,7 +2469,7 @@
     // The uids whose rows are inside the scroller's viewport now.
     function _onScreenUids() {
         var out = new Set();
-        if (!state.scrollEl || !state.visible) return out;
+        if (!state.scrollEl || !state.tbody || !state.visible) return out;
         var m = listMetrics();
         if (state.scrollEl.clientHeight > 0 && m.viewport <= 0) return out;   // list below the fold
         var from = Math.floor(m.top / ROW_HEIGHT);
@@ -2431,26 +2493,77 @@
     // wrong while the list starts below the fold of the one-scroller pane).
     // A row already on screen from the very top keeps the old scroll-to-top,
     // so a single-folder page lands exactly where it always did.
+    // A target inside the Sort / date-tab bar would leave that bar cut in half
+    // at the pane's top edge: it moves to the bar's top when the row still fits
+    // below it, else past the bar's bottom, so the bar is whole or gone.
     function _scrollToListPos(pos) {
         var el = state.scrollEl, tb = state.tbody;
         if (!el || !tb) return;
-        var listOff = el.scrollTop + (tb.getBoundingClientRect().top - el.getBoundingClientRect().top);
+        var paneTop = el.getBoundingClientRect().top;
+        var listOff = el.scrollTop + (tb.getBoundingClientRect().top - paneTop);
         if (listOff + (pos + 1) * ROW_HEIGHT <= el.clientHeight) { el.scrollTop = 0; return; }
         var thead = tb.parentNode && tb.parentNode.querySelector ? tb.parentNode.querySelector('thead') : null;
         var headH = thead ? thead.getBoundingClientRect().height : 0;
-        el.scrollTop = Math.max(0, Math.round(listOff + pos * ROW_HEIGHT - headH - ROW_HEIGHT));
+        var target = Math.max(0, Math.round(listOff + pos * ROW_HEIGHT - headH - ROW_HEIGHT));
+        var bar = document.getElementById('sort-filter-grid');
+        var r = bar && el.contains(bar) ? bar.getBoundingClientRect() : null;
+        if (r && r.height > 0) {
+            var cs = window.getComputedStyle ? window.getComputedStyle(el) : null;
+            var inset = (el.clientTop || 0) + (cs ? parseFloat(cs.paddingTop) || 0 : 0);
+            // barTop lands the bar a padding below the edge (whole); barBottom is in
+            // border coordinates, so scrolling to it puts the bar's bottom at the
+            // border itself and no strip is left in the padding (gone).
+            var barTop = el.scrollTop + (r.top - paneTop) - inset;
+            var barBottom = el.scrollTop + (r.bottom - paneTop) - (el.clientTop || 0);
+            if (target > barTop && target < barBottom) {
+                var shown = Math.max(0, Math.floor(barTop));
+                target = (listOff + (pos + 1) * ROW_HEIGHT - shown <= el.clientHeight) ? shown : Math.ceil(barBottom);
+            }
+        }
+        el.scrollTop = target;
         scheduleRender();
     }
 
     function _onNewPillClick() {
+        var pill = document.getElementById('ds-new-pill');
+        var hadFocus = !!(pill && document.activeElement === pill);   // the pill hides: its focus must go on
+        var held = new Set(state.arrivalUids || []);   // a flush acknowledges arrivals already on screen
         flushPendingNow();                 // held runs land NOW (explicit request)
         var pos = _firstArrivalPos();      // read BEFORE the count clears (QA F2)
+        var first = pos >= 0 ? state.rows[state.visible[pos]] : null;
+        for (var k = 0; !first && k < state.visible.length; k++) {   // focus only: the scroll keeps pos
+            var cand = state.rows[state.visible[k]];
+            if (cand && held.has(cand.uid)) first = cand;
+        }
         if (window.SyncBadge) window.SyncBadge.acknowledge(Array.from(state.arrivalUids));
         if (state.arrivalUids) state.arrivalUids.clear();
         _updateNewPill();
-        if (!state.scrollEl) return;
-        if (pos < 0) { state.scrollEl.scrollTop = 0; return; }   // filtered out: the old top
-        _scrollToListPos(pos);             // where the new runs ACTUALLY sort
+        if (state.scrollEl) {
+            if (pos < 0) state.scrollEl.scrollTop = 0;   // filtered out: the old top
+            else _scrollToListPos(pos);    // where the new runs ACTUALLY sort
+        }
+        if (hadFocus) _focusAfterPill(first ? first.uid : null);
+    }
+    // Keyboard focus after the pill hides: the first new row's select box once the scroll has
+    // rendered it, else the Sort bar's toggle; never BODY. preventScroll keeps the position the
+    // pill just scrolled to (a mouse click lands exactly where it did before).
+    function _focusAfterPill(uid) {
+        var go = function () {
+            var target = null, tb = state.tbody;
+            if (uid != null && tb && tb.rows) {
+                for (var i = 0; i < tb.rows.length && !target; i++) {
+                    if (tb.rows[i].getAttribute('data-id') === String(uid)) {
+                        target = tb.rows[i].querySelector('input.ds-check');
+                    }
+                }
+            }
+            if (!target) target = document.getElementById('sort-banner-toggle');
+            if (!target || !target.focus) return;
+            try { target.focus({preventScroll: true}); } catch (e) { target.focus(); }
+        };
+        // after scheduleRender's frame drew the rows (rAF is called on window: unbound it throws)
+        if (window.requestAnimationFrame) window.requestAnimationFrame(function () { setTimeout(go, 0); });
+        else setTimeout(go, 16);
     }
 
     // docs/126 item 6.5: Esc or a click anywhere else DISMISSES the announcement
@@ -2488,7 +2601,31 @@
             var host = document.getElementById('ds-arrivals');
             if (host) host.remove();
         }
+        if (state.tbody && !_mounted()) _teardown();
     });
+
+    /* Recheck 3: the one rule for "the Datasets page is gone": its tbody left the
+       document. #table-pane is the one scroller and it SURVIVES a menu swap, so the
+       old scroller check kept this module alive on the next page: its poll went on,
+       the held delta landed there, the anchor keep scrolled that page 32 px per run
+       (measured from a detached tbody) and arrivals "on screen" in the detached list
+       were acknowledged in the shared seen set, so the top-bar chip lost them. Once
+       the table is gone nothing of this module acts until init() mounts one again. */
+    function _mounted() {
+        // contains() on THIS document, not isConnected: a node still attached to some
+        // other document (an old window, a detached fragment's owner) is not this page
+        return !!(state.tbody && state.scrollEl && document.body
+            && document.body.contains(state.tbody) && document.body.contains(state.scrollEl));
+    }
+    function _teardown() {
+        stopPolling();
+        state.pendingDelta = null;
+        if (state.scrollEl) state.scrollEl.removeEventListener('scroll', onScroll);
+        state.scrollEl = null;
+        state.listEl = null;
+        state.tbody = null;
+        state.selfScrollTop = null;
+    }
 
     function startPolling() {
         if (state.pollTimer) clearInterval(state.pollTimer);

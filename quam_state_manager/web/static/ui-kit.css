@@ -2141,6 +2141,10 @@ summary:where(:not([class]), .muted, .section-header, .ph-drift-title):not(:wher
 .ui-head .ds-head-controls { flex-wrap: wrap; max-width: 100%; }
 .ui-dataset-search { flex: 1 1 16rem; min-width: min(100%, 16rem); max-width: 100%; position: relative; }
 .ui-dataset-search > input.ui-search { width: 100%; min-width: 0; }
+/* "Showing N of M" stays one line beside the box; a long hint ends in an ellipsis, full text on hover */
+.ui-dataset-search > #dataset-filter-count {
+    flex: 0 0 auto; max-width: 60%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .ui-dataset-search > #dataset-search {
     border-color: var(--ui-border-strong); background: var(--ui-surface-0); color: var(--ui-text);
 }

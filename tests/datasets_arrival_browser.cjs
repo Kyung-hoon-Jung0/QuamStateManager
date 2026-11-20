@@ -249,6 +249,61 @@ async function run() {
         await page.close();
         console.log('highlight pin passed');
     }
+    if (pin === 'all' || pin === 'leave') {
+        // Recheck 3: Datasets -> another page by an htmx swap of #table-pane (the one scroller,
+        // which survives the swap). Runs landing there must neither scroll that page nor be
+        // acknowledged by the Datasets table that is gone; coming back, the table works again.
+        const page = await mount();
+        await page.evaluate(() => {
+            const tray = document.createElement('div');
+            tray.id = 'pending-tray';
+            tray.innerHTML = '<button class="state-status-badge">Synced</button>';
+            document.body.prepend(tray);
+            window.dsMarkup = document.getElementById('table-pane').innerHTML;
+        });
+        await deliver(page, []);
+        await scrolled(page);
+        await page.evaluate(() => {
+            const pane = document.getElementById('table-pane');
+            pane.innerHTML = '<div id="overview" style="height:3000px">Overview</div>';
+            pane.dispatchEvent(new CustomEvent('htmx:afterSwap', { bubbles: true, detail: { target: pane } }));
+            pane.scrollTop = 139;
+        });
+        await sleep(5200); // the overview scroll is past the interaction gate
+        const uids = [];
+        for (const id of [321, 322, 323]) {
+            uids.push('folder:' + id);
+            await page.evaluate(r => {
+                window.answers.push({ now: Date.now() / 1000, updated: [r], vanished: [] });
+                window.DatasetVirtual.pollNow();
+            }, row(id));
+            await sleep(120);
+            await page.evaluate(u => window.SyncBadge.note('new', { count: u.length, uids: u }), uids);
+            assert.equal(await page.$eval('#table-pane', el => el.scrollTop), 139,
+                'a run landing on another page does not scroll it (run ' + id + ')');
+            assert.equal(await page.$eval('.state-status-notice', el => el.textContent), uids.length + ' new',
+                'a run landing on another page stays counted (run ' + id + ')');
+        }
+        assert.equal(await page.$('#ds-arrivals'), null, 'no table bar on another page');
+        // Back to Datasets: the table anchors and announces again.
+        await page.evaluate(() => {
+            const pane = document.getElementById('table-pane');
+            pane.innerHTML = window.dsMarkup;
+            pane.scrollTop = 0;
+            pane.dispatchEvent(new CustomEvent('htmx:afterSwap', { bubbles: true, detail: { target: pane } }));
+            window.DatasetVirtual.init();
+        });
+        await deliver(page, []);
+        await scrolled(page);
+        const rowY = () => document.querySelector('tr[data-id="folder:240"]').getBoundingClientRect().top;
+        const y = await page.evaluate(rowY);
+        await deliver(page, [row(330)]);
+        assert.ok(Math.abs(await page.evaluate(rowY) - y) <= 1, 'back on Datasets the rows do not move');
+        assert.equal(await page.$eval('#ds-new-pill', el => !el.hidden && parseInt(el.textContent, 10)), 1,
+            'back on Datasets a landed run is announced');
+        await page.close();
+        console.log('leave pin passed');
+    }
     if (pin === 'all' || pin === 'load') {
         const page = await mount();
         await scrolled(page);
