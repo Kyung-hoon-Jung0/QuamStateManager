@@ -514,3 +514,19 @@ def test_latest_run_poll_reports_incomplete_index(tmp_path, monkeypatch):
     assert data["run_id"] == 163 and data["indexing"] is True
     store._last_scan_truncated = False
     assert client.get("/datasets/poll").get_json()["indexing"] is False
+
+def test_latest_run_poll_says_indexing_before_the_first_run_is_read(tmp_path, monkeypatch):
+    # Recheck 3: a cold index holds no run yet; the "last:" line must read "(indexing)".
+    folder = tmp_path / "runs"
+    _seed_run(folder, 163)
+    app, client = _app_with_folders(tmp_path, [folder])
+    with app.test_request_context():
+        active = routes._active_dataset_stores()
+    monkeypatch.setattr(routes, "_active_dataset_stores", lambda **kw: active)
+    store = active[0]["store"]
+    monkeypatch.setattr(store, "runs_snapshot", lambda: [])
+    store._last_scan_truncated = True
+    data = client.get("/datasets/poll").get_json()
+    assert data["uid"] is None and data["indexing"] is True
+    store._last_scan_truncated = False
+    assert client.get("/datasets/poll").get_json()["indexing"] is False

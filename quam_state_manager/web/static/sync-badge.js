@@ -181,11 +181,12 @@
     }
     var latestRun = null;
     function lastRun(data) {
-        if (data) latestRun = data.uid ? data : null;
+        // A cold index that holds no run yet still says what it is doing.
+        if (data) latestRun = data.uid ? data : (data.indexing ? { indexing: true } : null);
         var r = latestRun;
-        var text = r ? ['last:', '#' + r.run_id, r.experiment_name,
+        var text = !r ? '' : !r.uid ? 'last: (indexing)' : ['last:', '#' + r.run_id, r.experiment_name,
             (r.qubits || []).join(','), (r.time || '').slice(0, 5),
-            r.indexing ? '(indexing)' : ''].filter(Boolean).join(' ') : '';
+            r.indexing ? '(indexing)' : ''].filter(Boolean).join(' ');
         document.querySelectorAll('[data-last-run]').forEach(function (el) {
             el.textContent = text.trim(); el.title = text.trim(); el.hidden = !r;
         });

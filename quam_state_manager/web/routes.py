@@ -47740,11 +47740,14 @@ def datasets_poll():
                 latest_key = key
                 latest_uid = _dataset_uid(fol["key"], run.run_id)
                 latest_run = run
+    indexing = any(getattr(f["store"], "scan_truncated", False) for f in active)
     if latest_run is None:
-        return jsonify({"uid": None, "run_id": None})
+        # Recheck 3: a cold index holds no run yet; say so, so the "last:" line
+        # reads "(indexing)" instead of staying blank until the first run is read.
+        return jsonify({"uid": None, "run_id": None, "indexing": indexing})
     payload = {
         "uid": latest_uid,
-        "indexing": any(getattr(f["store"], "scan_truncated", False) for f in active),
+        "indexing": indexing,
         "run_id": latest_run.run_id,
         "experiment_name": latest_run.experiment_name,
         "qubits": latest_run.qubits or [],
