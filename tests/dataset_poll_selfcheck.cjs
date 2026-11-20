@@ -159,6 +159,17 @@ function jsonResponse(body, status) {
     });
 }
 
+async function bootLive(fetchImpl, uiConfig, page) {
+    let baseline = true;
+    const out = boot((...args) => {
+        if (baseline) { baseline = false; return jsonResponse({ now: 1001, updated: [], vanished: [] }); }
+        return fetchImpl(...args);
+    }, uiConfig, page);
+    pump(out.w);
+    await wait(40);
+    return out;
+}
+
 (async function main() {
     {
         const row = Object.assign({}, ROWS[0], {cap: '111', hs: true});
@@ -420,7 +431,7 @@ function jsonResponse(body, status) {
                           q: ['q3'], p: [], oc: {}, metric: '', bm: false, tags: [],
                           status: 'successful', dur: 1, note: '', parent: null,
                           hs: false, sm: {}, pm: {}, f: 'fold1' };
-        const { w } = boot(() => jsonResponse({ updated: [NEW_ROW], vanished: [], now: 8000 }));
+        const { w } = await bootLive(() => jsonResponse({ updated: [NEW_ROW], vanished: [], now: 8000 }));
         // Make the user "active" the way the app does: a scroll on the list.
         w.document.getElementById('datasets-scroll').dispatchEvent(new w.Event('scroll'));
         pump(w);
@@ -457,7 +468,7 @@ function jsonResponse(body, status) {
                           q: ['q1'], p: [], oc: {}, metric: '', bm: false, tags: [],
                           status: 'successful', dur: 1, note: '', parent: null,
                           hs: false, sm: {}, pm: {}, f: 'fold1' };
-        const { w } = boot(() => jsonResponse({ updated: [NEW_ROW], vanished: [], now: 9000 }));
+        const { w } = await bootLive(() => jsonResponse({ updated: [NEW_ROW], vanished: [], now: 9000 }));
         pump(w);
         await wait(40);
         ok(w.DatasetVirtual.getRow('fold1:9') != null, 'idle poll applies directly');
@@ -485,7 +496,7 @@ function jsonResponse(body, status) {
                         q: ['q1'], p: [], oc: {}, metric: '', bm: false, tags: [],
                         status: 'successful', dur: 1, note: '', parent: null,
                         hs: false, sm: {}, pm: {}, f: 'fold1' };
-        const { w } = boot(() => jsonResponse({ updated: [BACKFILL, FRESH], vanished: [],
+        const { w } = await bootLive(() => jsonResponse({ updated: [BACKFILL, FRESH], vanished: [],
                                                 now: 9500, partial: false }));
         const note = w.document.createElement('small');
         note.id = 'ds-scan-note';
@@ -539,7 +550,7 @@ function jsonResponse(body, status) {
 
         // (a) a HELD arrival: the pill click scrolls to it, and it renders
         {
-            const { w } = boot(() => jsonResponse({ updated: [NEW_ROW], vanished: [], now: 8000 }),
+            const { w } = await bootLive(() => jsonResponse({ updated: [NEW_ROW], vanished: [], now: 8000 }),
                                undefined, { rows, band: BAND });
             const g = geometry(w);
             g.pane.dispatchEvent(new w.Event('scroll'));   // the user is active -> the delta is held
@@ -560,7 +571,7 @@ function jsonResponse(body, status) {
 
         // (b) an IDLE-applied arrival: the top of the list is not where it is
         {
-            const { w } = boot(() => jsonResponse({ updated: [NEW_ROW], vanished: [], now: 8000 }),
+            const { w } = await bootLive(() => jsonResponse({ updated: [NEW_ROW], vanished: [], now: 8000 }),
                                undefined, { rows, band: BAND });
             const g = geometry(w);
             pump(w);
@@ -587,7 +598,7 @@ function jsonResponse(body, status) {
         //     scroll-to-top (the header, digest and filters stay in view)
         {
             const TOP_ROW = mk('kr', 40, '2026-08-20', '08:00:00');   // id 40 > every lab-I id -> pos 0
-            const { w } = boot(() => jsonResponse({ updated: [TOP_ROW], vanished: [], now: 8000 }),
+            const { w } = await bootLive(() => jsonResponse({ updated: [TOP_ROW], vanished: [], now: 8000 }),
                                undefined, { rows, band: BAND });
             const g = geometry(w);
             g.S = 500;                                     // the user is down the page
@@ -601,7 +612,7 @@ function jsonResponse(body, status) {
 
         // (c) a filter still gets the FILTERED band (and its suffix)
         {
-            const { w } = boot(() => jsonResponse({ updated: [NEW_ROW], vanished: [], now: 8000 }),
+            const { w } = await bootLive(() => jsonResponse({ updated: [NEW_ROW], vanished: [], now: 8000 }),
                                undefined, { rows, band: BAND });
             geometry(w);
             w.DatasetVirtual.toggleFolder('lab-I');
@@ -619,11 +630,8 @@ function jsonResponse(body, status) {
 
     // ------------------------------------------------------------------
     // 15. The pill counts only runs the user cannot see listed yet.
-    //     (a) a held arrival the sidebar tree already lists (open group) is
-    //         not counted; one it does not list yet is, until the tree swap
-    //         that lists it; one in a CLOSED group stays counted.
-    //     (b) a fresh page: the first delta's run taken before the page was
-    //         drawn is listed quietly; one taken after it is announced.
+    //     (a) Sidebar listings do not acknowledge arrivals held by the table.
+    //     (b) The initial catch-up is quiet, including landings during load.
     // ------------------------------------------------------------------
     {
         const mk = (id, t) => ({ id, exp: 'rabi', date: '2026-08-20', time: '07:00:00', t, q: ['q1'],
@@ -651,22 +659,32 @@ function jsonResponse(body, status) {
             const ev = new w.CustomEvent('htmx:afterSwap', { bubbles: true, detail: { target: t } });
             t.dispatchEvent(ev);
         }
-        // (a) held: listed in the tree -> not counted
+        async function liveBoot(delta) {
+            let baseline = true;
+            const out = boot(() => {
+                if (baseline) { baseline = false; return jsonResponse({ updated: [], vanished: [], now: 1001 }); }
+                return jsonResponse(delta);
+            }, undefined, PAGE);
+            pump(out.w);
+            await wait(40);
+            return out;
+        }
+        // A sidebar listing does not acknowledge a held table arrival.
         {
             const delta = { updated: [mk(20, LATE)], vanished: [], now: 9000 };
-            const { w } = boot(() => jsonResponse(delta), undefined, PAGE);
+            const { w } = await liveBoot(delta);
             tree(w, ['fold1:20'], true);
             busy(w);   // the user is active: the delta is held
             pump(w);
             await wait(40);
             const pill = w.document.getElementById('ds-new-pill');
-            ok(w.DatasetVirtual.getRow('fold1:20') == null && pill && pill.hidden === true,
-               'a held run the sidebar already lists is not counted as new');
+            ok(w.DatasetVirtual.getRow('fold1:20') == null && pill && pill.hidden === false,
+               'a held run stays counted even when the sidebar lists it');
         }
         // (a) held, not listed yet -> counted, cleared by the tree swap that lists it
         {
             const delta = { updated: [mk(21, LATE)], vanished: [], now: 9000 };
-            const { w } = boot(() => jsonResponse(delta), undefined, PAGE);
+            const { w } = await liveBoot(delta);
             const t = tree(w, [], true);
             busy(w);
             pump(w);
@@ -679,7 +697,7 @@ function jsonResponse(body, status) {
             ok(pill.hidden === false, 'listed only inside a closed group: still counted');
             tree(w, ['fold1:21'], true);
             swapped(w, t);
-            ok(pill.hidden === true, 'the sidebar swap that lists it clears the count');
+            ok(pill.hidden === false, 'the sidebar swap leaves the table count alone');
         }
         // (b) fresh page: a run taken before the render is not news
         {
@@ -698,7 +716,7 @@ function jsonResponse(body, status) {
             pump(w);
             await wait(40);
             const pill = w.document.getElementById('ds-new-pill');
-            ok(pill && pill.hidden === false, 'a run taken after the render is still announced on the first poll');
+            ok(pill && pill.hidden === true, 'a run landing while the initial load catches up is baseline');
         }
     }
 
@@ -745,7 +763,7 @@ function jsonResponse(body, status) {
         {
             let polls = 0;
             const NEXT_ROW = Object.assign(mk(62), { date: '2026-08-20', time: '08:00:00' });
-            const { w } = boot(() => jsonResponse({ updated: [++polls === 1 ? NEW_ROW : NEXT_ROW],
+            const { w } = await bootLive(() => jsonResponse({ updated: [++polls === 1 ? NEW_ROW : NEXT_ROW],
                                                     vanished: [], now: 8000 + polls }),
                                undefined, { rows, band: '' });
             const g = geometry(w);
@@ -777,7 +795,7 @@ function jsonResponse(body, status) {
         }
         // (b) at the top: no compensation, the run shows at the top, no bar
         {
-            const { w } = boot(() => jsonResponse({ updated: [NEW_ROW], vanished: [], now: 8000 }),
+            const { w } = await bootLive(() => jsonResponse({ updated: [NEW_ROW], vanished: [], now: 8000 }),
                                undefined, { rows, band: '' });
             const g = geometry(w);
             pump(w);
@@ -789,7 +807,7 @@ function jsonResponse(body, status) {
         }
         // (c) a HELD run while scrolled down: only the bar appears, and it is compensated
         {
-            const { w } = boot(() => jsonResponse({ updated: [NEW_ROW], vanished: [], now: 8000 }),
+            const { w } = await bootLive(() => jsonResponse({ updated: [NEW_ROW], vanished: [], now: 8000 }),
                                undefined, { rows, band: '' });
             const g = geometry(w);
             g.S = 600;

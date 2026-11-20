@@ -89,3 +89,13 @@ def test_sidebar_wakes_on_a_landed_run_and_keeps_the_shown_marker():
                        capture_output=True, text=True, encoding="utf-8", cwd=str(ROOT), timeout=300)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "sidebar_live_run_selfcheck ok" in r.stdout
+
+
+def test_virtualized_arrivals_in_browser():
+    node = shutil.which("node")
+    chrome = Path("C:/Program Files/Google/Chrome/Application/chrome.exe")
+    if not node or not chrome.is_file():
+        pytest.skip("Chrome and node required for layout pin")
+    r = subprocess.run([node, str(ROOT / "tests" / "datasets_arrival_browser.cjs")],
+                       capture_output=True, text=True, encoding="utf-8", cwd=ROOT, timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr

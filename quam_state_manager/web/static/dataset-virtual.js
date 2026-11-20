@@ -140,12 +140,9 @@
         // briefly (uid → expiry ms) when the virtual scroller renders it.
         arrivalUids: new Set(),
         flashUids: new Map(),
-        // A fresh page's first delta (and any partial ones while the server's
-        // index was still filling) completes what the page should have shown
-        // at load: a run in it that was taken before the page was drawn is
-        // listed quietly, never announced as an arrival.
+        // The initial catch-up, including runs landing while the page loads,
+        // completes the baseline quietly through its final partial response.
         catchUp: true,
-        renderTs: 0,
         baselineUids: new Set(),
         // Liveness bookkeeping for the poll (docs/80): when the current request
         // started (watchdog), how many consecutive failures (backoff), until
@@ -795,10 +792,13 @@
         // Just-arrived rows flash (docs/104 #3) — the class re-applies on any
         // rebuild inside the flash window (innerHTML makes a fresh <tr>, so
         // the CSS animation restarts); _flashActive expires it after that.
+        var shown = document.querySelector('#inspector-pane #ds-detail-root');
         var cls = 'clickable-row' + (_flashActive(row.uid) ? ' ds-row-new' : '');
         // datasets-r2-24: the j/k cursor survives every virtual re-render
         // (a scroll, the Split relayout on close) -- innerHTML used to wipe it.
-        if (_kbIdx >= 0 && String(row.uid != null ? row.uid : row.id) === _kbUid()) cls += ' ds-row-active';
+        if (shown ? shown.dataset.uid === String(row.uid != null ? row.uid : row.id)
+            : (_kbIdx >= 0 && String(row.uid != null ? row.uid : row.id) === _kbUid()))
+            cls += ' ds-row-active';
         var html = '<tr class="' + cls + '" data-id="' + row.uid + '" data-folder-key="' + (row.f || '') + '" data-exp="' + escapeHtml(row.exp || '') + '">';
         for (var i = 0; i < cols.length; i++) {
             var c = cols[i];
@@ -1221,7 +1221,10 @@
                 }
             }
         }
-        while (band.firstChild) band.removeChild(band.firstChild);
+        var pill = band.querySelector('#ds-new-pill');
+        Array.from(band.childNodes).forEach(function (child) {
+            if (child !== pill) band.removeChild(child);
+        });
         if (filtered) band.setAttribute('data-filtered', '1');
         else band.removeAttribute('data-filtered');
         function span(cls, text) {
@@ -1266,6 +1269,7 @@
             state.visible.length > total
                 ? '(latest day of ' + state.visible.length + ' filtered runs)'
                 : '(filtered set)'));
+        if (pill) band.appendChild(pill);
     }
 
     function applyFilters() {
@@ -1545,16 +1549,18 @@
         // (pointerdown, no click) keeps pressActive=true and freezes the virtual window
         // until the 1500ms safety timeout, so the user scrolls into blank spacer rows.
         clearPress();
+        // Returning to the top explicitly reveals held rows, just like the bar click.
+        if (!own && state.pendingDelta && state.scrollEl && state.scrollEl.clientHeight > 0
+            && listMetrics().top === 0) flushPendingNow();
         // Reaching an arrival's ROW acknowledges APPLIED arrivals — the
         // pill's own click performs exactly this scroll, so a user who gets
         // there themselves has seen the same thing (docs/104 #3). Held runs
         // are NOT acknowledged: they are not in the table yet. (QA F2: was
         // "reaching the top of the list", which is not where new runs sort
         // once run ids from several folders are mixed.)
-        if (state.arrivalUids && state.arrivalUids.size && !state.pendingDelta &&
+        if (!own && state.arrivalUids && state.arrivalUids.size && !state.pendingDelta &&
             state.scrollEl && _arrivalOnScreen()) {
-            state.arrivalUids.clear();
-            _updateNewPill();
+            _ackShownArrivals();
         }
         scheduleRender(false);   // window-dedup: skip the rebuild if first/last unchanged
         _recountBadge();         // a counted run scrolled into view is shown
@@ -1976,7 +1982,12 @@
                 var quiet = state.catchUp;
                 if (!data.partial || state.pollCatchUps >= POLL_MAX_CATCHUPS) state.catchUp = false;
                 if (quiet) _noteBaseline(data);
-                if (activeRecently()) {
+                var firstRow = state.rows[state.visible[0]];
+                var atTop = state.scrollEl && state.scrollEl.clientHeight > 0 && listMetrics().top === 0
+                    && state.sortKey === 'id' && state.sortDesc && (data.updated || []).every(function (r) {
+                        return !firstRow || natCmp(r.id, firstRow.id) > 0;
+                    });
+                if (activeRecently() && (!atTop || state.pressActive)) {
                     // Hold the delta until the user is idle to avoid jumping
                     // their search/scroll out from under them — but SAY SO
                     // (docs/104 #3): count the genuinely-new runs in the held
@@ -2235,33 +2246,21 @@
         _ackShownArrivals();
     }
 
-    // The rows of a catch-up delta whose run time is before the page was
-    // drawn belong to the page as loaded (see catchUp). A row with no run
-    // time, or one taken after the render, is still announced.
+    // The first completed catch-up is the baseline, independent of acquisition clock or metadata.
     function _noteBaseline(data) {
         var updated = (data && data.updated) || [];
-        var drawnMs = (state.renderTs || 0) * 1000;
         for (var i = 0; i < updated.length; i++) {
-            var t = updated[i].t;
-            if (typeof t === 'number' && drawnMs > 0 && t < drawnMs)
-                state.baselineUids.add((updated[i].f || '') + ':' + updated[i].id);
+            state.baselineUids.add((updated[i].f || '') + ':' + updated[i].id);
         }
     }
 
-    // The pill counts only runs the user cannot see listed yet. A run counts
-    // as shown once its table row is inside the viewport, or once the sidebar
-    // tree lists it in an open group (the tree refreshes on the same run-landed
-    // signal this table polls on). Each is acknowledged by itself: a run that
-    // landed while the user is scrolled down stays counted, nothing scrolls.
-    // The rule itself lives in sync-badge.js (SyncBadge.runShown), shared with
-    // the top-bar chip, which counts the same runs.
+    // The table acknowledges its own viewport; the sidebar only clears the top-bar chip.
     function _ackShownArrivals() {
         if (state.arrivalUids && state.arrivalUids.size) {
-            var badge = window.SyncBadge;
             var onScreen = _onScreenUids();
             var done = [];
             state.arrivalUids.forEach(function (uid) {
-                if (badge && badge.runShown ? badge.runShown(uid) : onScreen.has(uid)) done.push(uid);
+                if (onScreen.has(uid)) done.push(uid);
             });
             for (var i = 0; i < done.length; i++) state.arrivalUids.delete(done[i]);
         }
@@ -2343,8 +2342,8 @@
         return r ? { uid: r.uid, y: _listRowY(pos) } : null;
     }
     function _listRowY(pos) {
-        return state.tbody.getBoundingClientRect().top - state.scrollEl.getBoundingClientRect().top
-            + pos * ROW_HEIGHT;
+        // The bar can move the scroller itself. Keep screen y, not pane-relative y.
+        return state.tbody.getBoundingClientRect().top + pos * ROW_HEIGHT;
     }
     function _keepAnchor(a) {
         if (!a || !state.scrollEl || !state.tbody) return;
@@ -2426,9 +2425,10 @@
         _scrollToListPos(pos);             // where the new runs ACTUALLY sort
     }
 
-    // docs/126 ⑥: Esc or a click anywhere else DISMISSES the announcement
-    // (customer request). Dismissal only acknowledges — the held rows still
-    // land on the next idle flush; nothing is lost, just no longer announced.
+    // docs/126 item 6.5: Esc or a click anywhere else DISMISSES the announcement
+    // (customer request). Dismissal only acknowledges; the held rows still
+    // land on the next idle flush. A sidebar refresh does not dismiss it: the
+    // table bar counts what the TABLE has not shown.
     function _dismissNewPill() {
         var el = document.getElementById('ds-new-pill');
         if (!el || el.hidden) return false;
@@ -2438,12 +2438,6 @@
     }
     if (!window._dsPillDismissBound) {
         window._dsPillDismissBound = true;
-        // The sidebar tree just listed new runs: those are no longer news.
-        document.addEventListener('htmx:afterSwap', function (e) {
-            var t = e.detail && e.detail.target;
-            if (t && t.closest && t.closest('#sidebar-tree') && state.tbody && state.tbody.isConnected)
-                _ackShownArrivals();
-        });
         document.addEventListener('keydown', function (e) {
             if (e.key === 'Escape') _dismissNewPill();
         });
@@ -3188,7 +3182,6 @@
         state.arrivalUids = new Set();
         state.flashUids = new Map();
         state.catchUp = true;
-        state.renderTs = initialTs || 0;
         state.baselineUids = new Set();
         state.digestLive = false;   // QA F2: a fresh render's band is current
         // Poll interval (docs/104 #3, tightened by docs/132): a run that

@@ -1089,7 +1089,11 @@
                         // a live run bumps the version on most polls).
                         var opts = {
                             target: '#sidebar-tree', swap: 'innerHTML',
-                            values: { name: (f && f.value) || '' }
+                            values: { name: (f && f.value) || '',
+                                open_groups: JSON.stringify(Array.from(el.querySelectorAll(
+                                    'details.tree-dir[open][data-tpath]')).map(function (g) {
+                                    return g.getAttribute('data-tpath');
+                                })) }
                         };
                         if (f) opts.source = f;
                         // Customer: a new run must not throw away where the
