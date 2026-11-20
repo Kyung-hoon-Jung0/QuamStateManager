@@ -1,16 +1,19 @@
 /* v1.5.1 (r6 P2-16): Instrument Wiring's "Readout out" and "Readout in" are
  * told apart at a glance, in both themes.
  *
- * They were two near-identical oranges (#e67e22 and #f0a030: a luminance
- * contrast of 1.33 between them). Readout in keeps the orange family but is
- * a dark burnt orange now, so the pair differs in lightness -- which also
- * survives colour-vision deficiencies -- and the white port label reads on it.
+ * They were two near-identical oranges (#e67e22 and #f0a030), then orange
+ * and a dark burnt orange (#9e4f00) that users still could not tell apart on
+ * the rack. Readout in is a different hue now (the kit's line-2 fuchsia), far
+ * from Readout out and from every other port role in CIE76 distance, and the
+ * white port label still reads on it.
  * The driver (tests/test_v151_r6_wiring_readout_colours.py) renders the REAL
  * /instrument fragment; the SHIPPED app.js draws the rack and its legend here,
  * and the SHIPPED stylesheets give the Wiring table's role badges.
  *
  * Contrast is the WCAG 2.x relative-luminance ratio (sRGB linearisation,
  * 0.2126 R + 0.7152 G + 0.0722 B, (L1 + 0.05) / (L2 + 0.05)).
+ * Colour distance is CIE76: the Euclidean distance of the CIELAB values (D65
+ * white, sRGB linearisation as above).
  *
  * Run: node tests/v151_r6_wiring_readout_colours_selfcheck.cjs <fixture.json>
  */
@@ -49,6 +52,15 @@ function contrast(a, b) {
     return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
 }
 const r2 = (x) => Math.round(x * 100) / 100;
+function lab(c) {
+    const lin = c.map((v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+    const x = (0.4124 * lin[0] + 0.3576 * lin[1] + 0.1805 * lin[2]) / 0.95047;
+    const y = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
+    const z = (0.0193 * lin[0] + 0.1192 * lin[1] + 0.9505 * lin[2]) / 1.08883;
+    const f = (t) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+    return [116 * f(y) - 16, 500 * (f(x) - f(y)), 200 * (f(y) - f(z))];
+}
+function dE(a, b) { const p = lab(a), q = lab(b); return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]); }
 
 (async function () {
     const scripts = [...FX.page.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)]
@@ -72,8 +84,12 @@ const r2 = (x) => Math.round(x * 100) / 100;
     const out = sw('Readout out'), inn = sw('Readout in');
     ok(!!out && !!inn, 'the legend shows both readout colours: ' + JSON.stringify([out, inn]));
     if (out && inn) {
-        const c = contrast(out, inn);
-        ok(c >= 1.8, 'Readout in and Readout out differ in lightness (contrast ' + r2(c) + ' >= 1.8)');
+        const e = dE(out, inn);
+        ok(e >= 60, 'Readout in and Readout out are different hues (CIE76 ' + r2(e) + ' >= 60)');
+        const near = Object.keys(w.UI_CONFIG.roleColors).filter((r) => r !== 'rr_in' && r !== 'fallback')
+            .map((r) => [r, dE(inn, rgb(w.UI_CONFIG.roleColors[r]))]).sort((a, b) => a[1] - b[1])[0];
+        ok(near[1] >= 30, 'Readout in is apart from every other port role (nearest ' + near[0]
+            + ', CIE76 ' + r2(near[1]) + ' >= 30)');
         ['light', 'dark'].forEach((t) => {
             const cb = contrast(inn, BG[t]);
             ok(cb >= 2.5, 'Readout in stands out on the ' + t + ' page (contrast ' + r2(cb) + ' >= 2.5)');

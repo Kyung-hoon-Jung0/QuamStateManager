@@ -49,6 +49,22 @@ class TestFloatWiring:
         assert "stateRestored" in js.split("window.FloatWiring = ")[1]
 
 
+    def test_float_icon_reads_on_the_selected_row(self):
+        """The float icon on a selected Instrument Wiring row wears the kit's
+        on-accent colour. The rule used to name an `li.nav-floatable` that
+        the button is not in (it sits in a `div.nav-sub-row`), so it never
+        matched and the icon stayed muted on the accent fill."""
+        import re
+        base = _read("quam_state_manager/web/templates/base.html")
+        m = re.search(r'<div class="([^"]*)">\s*<a href="/instrument"[^>]*>[^<]*'
+                      r'Instrument Wiring</a>\s*<button type="button" class="nav-float-btn"', base)
+        assert m and "nav-sub-row" in m.group(1).split(), "the float button's row changed"
+        css = _read("quam_state_manager/web/static/style.css")
+        hits = [body for sel, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css)
+                if ".sidebar-nav .nav-sub-row:has(> a.active) .nav-float-btn"
+                in [x.strip() for x in sel.split(",")]]
+        assert hits and any(re.search(r"(^|;)\s*color:\s*var\(--ui-on-accent\)", b) for b in hits), hits
+
 class TestCalcPinRemoved:
     def test_no_pin_button_or_handler(self):
         assert "calc-pin" not in _read("quam_state_manager/web/templates/base.html")

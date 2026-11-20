@@ -768,6 +768,26 @@ function world(topo, opts) {
     ok(reads - before <= cv, 'D2 ...with ONE height read per panel, in one pass (' + (reads - before) + ' reads, ' + cv + ' panels)');
   }
 
+  {
+    // a ?view= deep link opened in a background tab or a hidden window: the
+    // page gets no animation frames until it is shown, so a landing queued on
+    // one left the page on Overview. A hidden page lands at once.
+    for (const v of ['readout', 'coherence', 'calibration']) {
+      let rafs = 0;
+      const T = world(CHAIN, { url: '/topology?view=' + v, chipView: v,
+                               beforeMount: function (T0) {
+                                 Object.defineProperty(T0.doc, 'hidden', { configurable: true, get: () => true });
+                                 T0.win.requestAnimationFrame = function () { rafs++; return 0; };
+                               } });
+      await sleep(60);
+      const want = T.doc.querySelector(SEL[v]);
+      const wid = want && (want.id || want.getAttribute('data-topo-section') || want.getAttribute('data-group'));
+      ok(T.scrolled.some((s) => s.id === wid),
+         'hidden page: /topology?view=' + v + ' lands on its section with no animation frame ('
+         + JSON.stringify(T.scrolled) + ', ' + rafs + ' frames asked)');
+      ok(T.lit().split('/')[0] === v, 'hidden page: ...and lights ' + v + ' (' + T.lit() + ')');
+    }
+  }
   console.log(fails ? ('FAILED ' + fails) : 'chip_jump_selfcheck: all ok');
   process.exit(fails ? 1 : 0);
 })().catch(function (e) { console.error('FAIL: threw ' + (e && e.stack || e)); process.exit(1); });
