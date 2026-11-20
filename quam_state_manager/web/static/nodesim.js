@@ -30,7 +30,8 @@
     var WINDOWS_US = [10, 20, 50, 100];
     var DEFAULT_US = 20;
     var PHASES = ["copy", "build", "login", "spawn", "connect", "submit", "wait", "report", "close"];
-    var LIVE = { starting: 1, running: 1 };
+    var WARM_PHASES = ["copy", "lock", "build", "lease", "connect", "submit", "wait", "report"];
+    var LIVE = { starting: 1, running: 1, warming: 1, renewing: 1, expired_retry: 1 };
     var NOT_IN_LIBRARY = "The node asked for is not in the calibration library of this chip.";
     var STALE = "chip changed since - re-simulate";
     var NO_ANSWER = "No answer from SM; the run stops if this page stops asking.";
@@ -189,6 +190,7 @@
     }
 
     /* ---- one answer -> its DOM ------------------------------------------ */
+    /* D-19, P2 spec 1: keep cold and warm phase orders distinct. */
     function phaseList(j) {
         var ol = el("ol", "ui-steps");
         ol.setAttribute("data-nodesim-phases", "");
@@ -196,7 +198,7 @@
         (Array.isArray(j.phases) ? j.phases : []).forEach(function (p) { if (p && p.name) done[p.name] = p.s; });
         // a live run lists every phase still to come; a finished one only the phases that ran (a cache hit
         // ran copy and cache, nothing else)
-        var names = LIVE[str(j.state)] ? PHASES.slice() : [];
+        var names = LIVE[str(j.state)] ? (j.warm ? WARM_PHASES : PHASES).slice() : [];
         Object.keys(done).forEach(function (n) { if (names.indexOf(n) < 0) names.push(n); });
         names.forEach(function (n) {
             var cur = j.phase === n;
@@ -244,6 +246,7 @@
     function nodeItems(n) {   // nodes only (a graph is not simulated here)
         return ((n && n.items) || []).filter(function (x) { return x && x.file && (!x.kind || x.kind === "node"); });
     }
+    /* P2 spec 5: page controls use the UI kit and server verdict lines. */
     function mount(root) {
         if (!root || root.__nodesim) return root && root.__nodesim;
         var UI = window.UI;
@@ -270,6 +273,18 @@
         var acts = UI.actions([], "Simulation");
         acts.appendChild(stopBtn);
         acts.appendChild(simBtn);
+        var instanceHost = el("div");
+        instanceHost.setAttribute("data-nodesim-instances", "");
+        var renewBtn = UI.button({ label: "Renew simulator (about 62 s)", cls: "btn-sm secondary" });
+        renewBtn.setAttribute("data-nodesim-renew", "");
+        var newBtn = UI.button({ label: "Start new instance", cls: "btn-sm secondary" });
+        newBtn.setAttribute("data-nodesim-new-instance", "");
+        renewBtn.hidden = true;
+        newBtn.hidden = true;
+        acts.appendChild(renewBtn);
+        acts.appendChild(newBtn);
+        var settingHost = el("div");
+        settingHost.setAttribute("data-nodesim-setting", "");
         var lost = el("div");
         lost.setAttribute("data-nodesim-lost", "");
         var status = el("div");
@@ -281,7 +296,8 @@
         chartHost.setAttribute("data-nodesim-chart", "");
         var scriptHost = el("div");
         scriptHost.setAttribute("data-nodesim-script", "");
-        [ctxRow, nodeHost, pickNote, targetHost, winHost, estimate, acts, lost, status, strip, chartHost, scriptHost]
+        [ctxRow, nodeHost, pickNote, targetHost, winHost, estimate, settingHost, acts, instanceHost,
+         lost, status, strip, chartHost, scriptHost]
             .forEach(function (n) { root.appendChild(n); });
 
         function item() {
@@ -292,14 +308,21 @@
             var it = item();
             return !!(it && !it.refused && S.targets.length && !(S.answer && LIVE[S.answer.state]));
         }
+        /* P2 spec 1: replacement actions appear only with their offer. */
         function buttons() {
             var live = !!(S.answer && LIVE[S.answer.state]);
             stopBtn.hidden = !live;
             simBtn.disabled = !canStart();
+            renewBtn.hidden = !(S.answer && S.answer.state === "renew_offer");
+            newBtn.hidden = !(S.answer && S.answer.state === "needs_instance");
         }
+        /* D-31, P2 spec 1: the server labels the warm estimate. */
         function showEstimate() {
             var it = item();
             var lines = (it && it.estimate_lines) || {};
+            if (root.getAttribute("data-warm-pool") === "true" && it && it.warm_estimate_lines) {
+                lines = it.warm_estimate_lines;
+            }
             var t = lines[String(S.windowUs)];
             estimate.textContent = typeof t === "string" ? t : "";
             estimate.hidden = !estimate.textContent;
@@ -352,6 +375,7 @@
             showEstimate();
             buttons();
         }
+        /* D-12, P2 spec 2.6: only a deliberate picker change expresses intent. */
         function drawPickers() {
             clear(nodeHost);
             var items = nodeItems(S.nodes);
@@ -360,7 +384,7 @@
                                       return { value: x.file, label: x.name || x.file, disabled: !!x.refused };
                                   }) });
             sel.setAttribute("data-nodesim-node", "");
-            sel.addEventListener("change", function () { pickNode(sel.value); });
+            sel.addEventListener("change", function () { pickNode(sel.value); intent(true); });
             nodeHost.appendChild(sel);
             clear(winHost);
             var seg = UI.segmented(WINDOWS_US.map(function (w) {
@@ -496,21 +520,26 @@
             else if (!LIVE[j.state] && j.state !== "busy") clearResult();
             buttons();
         }
+        /* D-17, P2 spec 3.4: keep observing instance notices between clicks. */
         function schedule(gen) {
             if (S.timer) clearTimeout(S.timer);
             S.timer = null;
             if (gen !== S.gen || !root.isConnected) return;
             var live = (S.answer && LIVE[S.answer.state]) || (S.misses > 0 && S.run);
             var idle = S.answer && S.answer.state === "done" && S.run;
+            idle = idle || (root.getAttribute("data-warm-pool") === "true" && S.answer
+                && ["ready", "renew_offer", "needs_instance", "idle_closed"].indexOf(S.answer.state) >= 0);
             if (!live && !idle) return;
             S.timer = setTimeout(function () { poll(gen); }, live ? POLL_MS : IDLE_POLL_MS);
         }
+        /* D-19, P2 spec 1: display the server's progress and instance rows. */
         function poll(gen) {
             if (gen !== S.gen || !root.isConnected) return Promise.resolve();
             var q = "?window=" + encodeURIComponent(windowId()) + (S.run ? "&id=" + encodeURIComponent(S.run) : "");
             return call("/api/nodesim/status" + q).then(function (j) {
                 if (gen !== S.gen) return;
                 apply(j);
+                if (root.getAttribute("data-warm-pool") === "true") instances();
                 schedule(gen);
             });
         }
@@ -542,6 +571,53 @@
         simBtn.addEventListener("click", start);
         stopBtn.addEventListener("click", stop);
 
+        /* D-12, P2 spec 2.6: panel opening and a node pick are separate inputs. */
+        function intent(explicit) {
+            if (root.getAttribute("data-warm-pool") !== "true") return Promise.resolve();
+            return call("/api/nodesim/intent", { explicit: explicit, window: windowId() }).then(function (j) {
+                if (j && !S.run) { apply(j); schedule(S.gen); }
+            });
+        }
+        /* D-11, P2 spec 3.5: only token-free server lines reach the strip. */
+        function instances() {
+            return call("/api/nodesim/instances").then(function (j) {
+                if (!j || !Array.isArray(j.rows)) return;
+                clear(instanceHost);
+                j.rows.forEach(function (r) {
+                    if (typeof r.line === "string") instanceHost.appendChild(UI.badge(r.line, "neutral"));
+                });
+                (j.notices || []).forEach(function (n) {
+                    if (typeof n.line === "string") instanceHost.appendChild(UI.badge(n.line, "neutral"));
+                    if (n.state === "renew_offer") renewBtn.hidden = false;
+                });
+            });
+        }
+        /* D-13, D-17, P2 spec 3.4: replacement requires an explicit action. */
+        function replaceInstance(route) {
+            return call(route, { window: windowId() }).then(function (j) { apply(j); schedule(S.gen); });
+        }
+        renewBtn.addEventListener("click", function () { replaceInstance("/api/nodesim/renew"); });
+        newBtn.addEventListener("click", function () { replaceInstance("/api/nodesim/new-instance"); });
+        /* D-12, P2 spec 1: persist only the keep-warm choice. */
+        function settings() {
+            if (root.getAttribute("data-warm-pool") !== "true") return Promise.resolve();
+            return call("/api/nodesim/settings").then(function (j) {
+                if (!j || typeof j.label !== "string") return;
+                clear(settingHost);
+                var check = UI.check(j.label, !!j.keep_warm, false);
+                var input = check.querySelector("input");
+                input.setAttribute("data-nodesim-keep-warm", "");
+                input.addEventListener("change", function () {
+                    call("/api/nodesim/settings", { keep_warm: input.checked }).then(function () {
+                        if (input.checked) intent(false);
+                    });
+                });
+                settingHost.appendChild(check);
+                settingHost.appendChild(el("p", "ui-note", j.note));
+            });
+        }
+
+        /* D-12, P2 spec 2.1: prepare imports when this panel opens. */
         function load() {
             var want = root.getAttribute("data-node");
             if (!want) {
@@ -562,7 +638,9 @@
                 pickNode(S.node);
                 if (want && !found) { pickNote.textContent = NOT_IN_LIBRARY; pickNote.hidden = false; }
                 // a run of this window that is still going (a reload, a page switch) is shown again
-                return poll(S.gen).then(function () { schedule(S.gen); });
+                return settings().then(function () { return intent(false); }).then(function () {
+                    return poll(S.gen).then(function () { schedule(S.gen); });
+                });
             });
         }
         S.ready = load();

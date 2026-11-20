@@ -185,3 +185,77 @@ def test_no_agent_door():
     text = (Path(__file__).resolve().parents[1] / "quam_state_manager" / "web" / "nodesim_routes.py"
             ).read_text(encoding="utf-8")
     assert "/api/agent" not in text
+
+
+@pytest.fixture
+def warm_app(app):
+    """Drive real HTTP routes with the subprocess fake worker (P2 spec 5, Piece S)."""
+    from quam_state_manager.core import nodesim_pool
+    from tests.test_nodesim_warm import Rig
+    rig = Rig(app.tmp / "warm", nodesim_pool)
+    app.m.pool = rig.p
+    try:
+        yield app, rig
+    finally:
+        for job in app.m.warm_jobs.values():
+            job["stop"].set()
+            job["thread"].join(timeout=5)
+        rig.close()
+
+
+def test_p2_settings_and_instances_are_secret_free(warm_app):
+    """The settings file and HTTP response carry no credentials (D-11, P2 spec 1)."""
+    app, rig = warm_app
+    r = app.c.get("/api/nodesim/settings").get_json()
+    assert r["keep_warm"] is False and r["label"] == "Keep the cloud simulator warm"
+    r = app.c.post("/api/nodesim/settings", json={"keep_warm": True, "password": PW}).get_json()
+    assert r["keep_warm"] is True
+    assert PW not in rig.p.settings.read_text()
+    assert app.c.post("/api/nodesim/settings", json={"keep_warm": "yes"}).status_code == 400
+    r = app.c.get("/api/nodesim/instances").get_json()
+    assert r["limit"] == 3 and "simulation-auth" not in json.dumps(r)
+
+
+def test_p2_panel_intent_warms_without_acquire(warm_app):
+    """Panel-open intent prepares the worker but does not acquire (D-12, S-8)."""
+    app, rig = warm_app
+    ans = app.c.post("/api/nodesim/intent", json={}, headers=H).get_json()
+    assert ans["state"] in ("warming", "ready")
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        ans = app.c.get(STATUS, headers=H).get_json()
+        if ans["state"] == "ready":
+            break
+        time.sleep(.01)
+    assert ans["line"] == "Node simulator ready."
+    assert not [c for c in rig.broker.calls if c["op"] == "acquire"]
+
+
+def test_p2_warm_click_cache_and_secret_sweep(warm_app):
+    """Warm HTTP answers, run folders and cache are scrubbed (D-11, D-22, S-11)."""
+    app, rig = warm_app
+    rig.plan["error"] = PW + " token-sentinel-93"
+    request = {"node": "11_rabi_demo.py", "targets": ["q1"], "window_us": 20}
+    first = app.c.post(START, json=request, headers=H).get_json()
+    assert first["id"]
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        ans = app.c.get(STATUS + "?id=" + first["id"], headers=H).get_json()
+        if app.m.warm_jobs[first["id"]]["done"]:
+            break
+        time.sleep(.01)
+    assert ans["state"] == "done", ans
+    assert PW not in json.dumps(ans) and "token-sentinel-93" not in json.dumps(ans)
+    cached = app.c.post(START, json=request, headers=H).get_json()
+    assert cached["cached"] and [p["name"] for p in cached["phases"]] == ["copy", "cache"]
+    for path in Path(app.m.instance, "nodesim").rglob("*"):
+        if path.is_file():
+            content = path.read_text(encoding="utf-8")
+            assert PW not in content and "token-sentinel-93" not in content
+
+
+@pytest.mark.parametrize("route", ["intent", "renew", "new-instance", "settings"])
+def test_p2_bad_json_is_rejected(warm_app, route):
+    """Each new POST route checks its body before side effects (P2 spec 5)."""
+    app, rig = warm_app
+    assert app.c.post("/api/nodesim/" + route, data="[]", content_type="application/json").status_code == 400

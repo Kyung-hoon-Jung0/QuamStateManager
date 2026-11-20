@@ -80,6 +80,9 @@ AMP_UNVERIFIED = "amplitude scale not verified for this QOP"
 STATES = ("none", "blocked", "no_env", "no_library", "not_configured", "needs_targets", "refused",
           "busy", "starting", "running", "done", "node_error", "serializer", "guard",
           "chip_changed", "too_long", "timeout", "stopped", "failed")
+STATES += tuple("warming ready instance no_slot spawn_failed needs_instance renew_offer renewing expired_retry "
+                "lab_busy build_watchdog worker_crashed worker_restart busy_chip stopped_spawning stopped_kept "
+                "idle_closed broker_failed cold_fallback lease_failed".split())
 
 #: the child's result kinds (child protocol, spec section 4)
 KINDS = ("ok", "node_error", "serializer", "guard", "refused", "too_long", "timeout", "failed")
@@ -95,6 +98,19 @@ LINES = {
     "busy": "A simulation is already running in this window.",
     "chip_changed": "The live chip files changed while the node was built; the result was dropped.",
     "stopped": "Stopped. The cloud instance was closed.",
+    "ready": "Node simulator ready.",
+    "needs_instance": ("This chip's FEM layout differs from the open instance; it needs a new instance "
+                       "(about 62 s)."),
+    "renewing": "Starting a replacement cloud instance; clicks keep using the current one until it is ready.",
+    "expired_retry": ("The cloud instance expired during this click; simulating again on a fresh instance "
+                      "(about 62 s)."),
+    "lab_busy": "The lab environment is busy with another check; try again.",
+    "build_watchdog": ("The node's build took over 30 s; the simulator process was stopped and the lab lock "
+                       "released."),
+    "stopped_spawning": "Stopped. The cloud instance is still starting and is closed as soon as it is up.",
+    "stopped_kept": "Stopped. The cloud instance stays open for the next click.",
+    "idle_closed": "The cloud instance was closed after 10 min without a click.",
+    "cold_fallback": "Using a one-off simulator process this time.",
 }
 EMPTY_TARGETS_LINE = "This usually means no qubit or pair was selected; pick targets and simulate again."
 TOO_LONG_LINE = "The cloud simulator refused a window this long."
@@ -118,7 +134,7 @@ PHASE_LABELS = {
 }
 
 DEFAULTS = {"id": None, "elapsed_s": None, "limit_s": None, "phase": None, "phases": [],
-            "estimate_s": None, "banners": [], "result": None, "cached": False}
+            "estimate_s": None, "banners": [], "result": None, "cached": False, "warm": False}
 
 
 def _g(x: Any) -> str:
@@ -136,7 +152,34 @@ def first_line(text: Any) -> str:
 
 
 def line(state: str, **kw) -> str:
-    """The one user-facing text of a state (spec section 1.2)."""
+    """The one user-facing text of a state (P1 spec 1.2, P2 spec 1)."""
+    if state == "warming":
+        return f"Preparing the node simulator in env {kw.get('env') or '?'} (about 5 s)."
+    if state == "starting" and "in_use_here" in kw:
+        return ("Starting a cloud simulator instance (about 62 s); "
+                f"{kw['in_use_here']} of 3 instances of this account in use on this PC.")
+    if state == "instance":
+        return (f"Cloud instance open until {_hhmm(kw.get('expires_at'))}; it closes after 10 min without "
+                f"a click. {kw.get('in_use_here', 0)} of 3 in use on this PC.")
+    if state == "no_slot":
+        return (f"All 3 cloud simulator instances of this account are in use ({kw.get('in_use_here', 3)} "
+                f"by this PC). The earliest one here closes at {_hhmm(kw.get('earliest_close'))}.")
+    if state == "spawn_failed":
+        return "The cloud simulator instance could not start: " + first_line(kw.get("message"))
+    if state == "broker_failed":
+        return "The cloud instance manager could not start: " + first_line(kw.get("message"))
+    if state == "lease_failed":
+        return first_line(kw.get("message"))
+    if state == "renew_offer":
+        return f"The cloud instance closes at {_hhmm(kw.get('expires_at'))}."
+    if state == "worker_crashed":
+        return (f"The simulator process stopped unexpectedly (exit code {kw.get('code')}); "
+                "the next click starts a fresh one.")
+    if state == "worker_restart":
+        return (f"A lab file changed ({kw.get('file')}); the simulator process restarts (about 5 s). "
+                "The cloud instance is kept.")
+    if state == "busy_chip":
+        return f"The simulator is busy with chip {kw.get('name')}; this click waits."
     if state == "blocked":
         env, python, found = kw.get("env") or "?", kw.get("python") or "python", kw.get("found")
         head = (f"The simulator library in env {env} is qm-saas {found}" if found
@@ -168,6 +211,15 @@ def line(state: str, **kw) -> str:
     if state == "failed":
         return first_line(kw.get("message"))
     return LINES.get(state, LINES["none"])
+
+
+def _hhmm(value):
+    """Format the server's expiry in local time (D-17, P2 spec 1)."""
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone().strftime("%H:%M")
+    except ValueError:
+        return "?"
 
 
 def answer(state: str, **kw) -> dict:
@@ -240,6 +292,16 @@ def estimate(node_file: Any, window_us: float) -> dict:
     return {"estimate_s": round(total, 1), "family": name,
             "line": (f"About {total:.0f} s with a fresh cloud instance, the sum of measured parts "
                      "(not measured end to end).")}
+
+
+def warm_estimate(node_file, window_us):
+    """Use the upper build range and P0b fit, labelled as an estimate (D-31, P2 spec 1)."""
+    fit = family(node_file)
+    if fit is None:
+        return dict(estimate_s=None, line="No measured time for this kind of node yet.")
+    total = .041 + .24 + fit[1] + fit[2] * float(window_us)
+    return dict(estimate_s=round(total, 1),
+                line=f"About {total:.1f} s with an open cloud instance (estimate).")
 
 
 def library_root(calibrations_folder: Any) -> Optional[Path]:
@@ -533,7 +595,8 @@ class Manager:
     def __init__(self, instance, *, popen: Optional[Callable] = None,
                  probe: Callable = probe_qm_saas, make_copy: Optional[Callable] = None,
                  remove_copy: Optional[Callable] = None, digest: Callable = nodesim_spawn.live_digest,
-                 limit_s: float = LIMIT_S):
+                 limit_s: float = LIMIT_S, pool=None):
+        """Use the warm pool by default; an injected cold transport retains P1 tests (P2 spec 2.7)."""
         from quam_state_manager.core import chip_copy
         self.instance = Path(instance)
         self.popen = popen or _owned_popen
@@ -548,6 +611,12 @@ class Manager:
         self.jobs: dict = {}
         self.final: dict = {}
         self.latest: dict = {}
+        if pool is None and popen is None:
+            from quam_state_manager.core.nodesim_pool import WarmPool
+            pool = WarmPool(instance, probe=probe)
+        self.pool = pool
+        self.warm_jobs: dict = {}
+        self.intent_answers: dict = {}
 
     def runs(self, window: Any) -> ClickRuns:
         key = window_key(window)
@@ -634,6 +703,9 @@ class Manager:
                     self.latest[runs.window] = rid
                 return copy.deepcopy(final)
             before = self.digest(live_folder) if live_folder else None
+            if self.pool is not None:
+                return self._warm_start(window, python, library, live_folder, saas, copies, meta,
+                                        ikey, before, mw, copy_phase, est, node_file)
             request = {"scratch": str(scratch), "chip_copy": str(chip), "library": str(library),
                        "node": str(node_file), "targets": list(targets), "window_ns": window_ns,
                        "overrides": overrides, "saas_host": saas.get("host") or ""}
@@ -658,6 +730,147 @@ class Manager:
         finally:
             if not keep:
                 self.remove_copy(copies)
+
+    def _warm_start(self, window, python, library, live, saas, copies, meta, ikey, before, mw,
+                    copy_phase, est, node_file):
+        """Start an asynchronous warm click; share P1 cache and result rendering (D-22, P2 spec 2)."""
+        from quam_state_manager.core.nodesim_pool import PoolError, clean
+        rid = uuid.uuid4().hex
+        job = dict(stop=threading.Event(), answer=answer("running", id=rid, phase="copy"),
+                   window=window_key(window), started=time.monotonic(), seen=time.monotonic())
+        with self._lock:
+            if any(j["window"] == job["window"] and not j["done"] for j in self.warm_jobs.values()):
+                return answer("busy")
+            job["done"] = False
+            self.warm_jobs[rid] = job
+            self.latest[job["window"]] = rid
+        # The start caller removes its transient copies in finally; the worker receives immutable bytes here.
+        from types import SimpleNamespace
+        detached = self.instance / "nodesim" / job["window"] / rid / "copy"
+        detached.mkdir(parents=True)
+        for name in ("state.json", "wiring.json"):
+            (detached / name).write_bytes((Path(copies.after) / name).read_bytes())
+        fixed = SimpleNamespace(after=detached, seq=copies.seq, store_id=copies.store_id)
+
+        def notify(state, **fields):
+            """Only scrubbed server lines cross the HTTP boundary (D-11, D-19)."""
+            phases = [copy_phase] + fields.pop("phases", [])
+            job["answer"] = clean(answer(state, id=rid, phases=phases, warm=True,
+                                         elapsed_s=round(time.monotonic() - job["started"], 1), **fields),
+                                  self.pool.secrets)
+
+        def run():
+            """Complete and record the verdict off the request thread (D-9, D-22)."""
+            import shutil
+            try:
+                request = dict(click_id=rid, node=str(node_file), targets=meta["targets"],
+                               overrides=meta["overrides"], window_ns=meta["window_ns"], wait_cap_s=self.limit_s)
+                result = self.pool.run(python=python, library=library, live=live, credentials=saas,
+                                       copies=fixed, request=request, stop=job["stop"], notify=notify)
+                if before is not None and self.digest(live) != before:
+                    final = answer("chip_changed", id=rid)
+                elif result["kind"] == "ok":
+                    final = self._done(result, meta, job["answer"].get("phases", []), mw, cached=False)
+                    self.cache.put(ikey, cache_key(result["script"], meta["window_ns"], meta["qop"]),
+                                   {"result": result})
+                else:
+                    state = result["kind"] if result["kind"] in STATES else "failed"
+                    final = answer(state, message=result.get("message"), targets_empty=not meta["targets"])
+                result = clean(result, self.pool.secrets)
+                work = detached.parent
+                _write_json(work / "_run.json", {"id": rid, "meta": meta, "SIMULATED": True})
+                _write_json(work / "_result.json", result)
+            except PoolError as exc:
+                from quam_state_manager.core.nodesim_pool import worker_key
+                key = worker_key(python, library, live)
+                if self.pool.allow_cold(exc.state, key):
+                    notify("cold_fallback")
+                    from types import SimpleNamespace
+                    fixed.root = detached.parent
+                    cold = Manager(self.instance, popen=self.popen, probe=self.probe,
+                                   make_copy=lambda store: fixed, remove_copy=lambda copies: None,
+                                   digest=self.digest, limit_s=self.limit_s)
+                    cold.cache = self.cache
+                    current = cold.start(window, python=python, env_name=meta["env"], library=library,
+                                         info=SimpleNamespace(file=str(node_file), kind="node",
+                                                              targets_name=next(iter(meta["overrides"]))),
+                                         targets=meta["targets"], choices=meta["targets"], window_us=meta["window_us"],
+                                         saas=saas, store=None, live_folder=live)
+                    deadline = time.monotonic() + self.limit_s + 10
+                    while current["state"] in ("running", "starting") and time.monotonic() < deadline:
+                        if job["stop"].wait(.05):
+                            cold.stop(window, current["id"])
+                        current = cold.status(window, current["id"])
+                        job["answer"] = current
+                    final = current
+                    final.setdefault("banners", []).append(LINES["cold_fallback"])
+                    cold_work = cold.run_folder(current.get("id"))
+                    if cold_work:
+                        _write_json(detached.parent / "_run.json", {"id": rid, "meta": meta, "SIMULATED": True})
+                        result = _read_json(cold_work / "_result.json")
+                        if result:
+                            _write_json(detached.parent / "_result.json", result)
+                else:
+                    final = answer(exc.state if exc.state in STATES else "broker_failed", **exc.fields)
+            except Exception as exc:  # transport errors are scrubbed, never logged
+                final = answer("failed", message=str(exc))
+            finally:
+                shutil.rmtree(detached, ignore_errors=True)
+            final = clean({**final, "id": rid}, self.pool.secrets + [saas.get("password")])
+            _write_json(detached.parent / "_answer.json", final)
+            self.runs(window)._prune()
+            job["answer"], job["done"] = final, True
+        thread = threading.Thread(target=run, daemon=True)
+        job["thread"] = thread
+        thread.start()
+
+        def watch():
+            """Carry the page heartbeat and total deadline over to warm jobs (P2 spec 2.5, D-18)."""
+            deadline = time.monotonic() + self.limit_s
+            while not job["done"] and time.monotonic() < deadline:
+                if time.monotonic() - job["seen"] > 12 or job["stop"].wait(.2):
+                    break
+            if not job["done"]:
+                job["stop"].set()
+        threading.Thread(target=watch, daemon=True).start()
+        return dict(job["answer"])
+
+    def intent(self, window, *, python, env_name, library, store, live_folder, saas, explicit=False, renew=False):
+        """Panel opening prepares imports; only explicit intent acquires with setting off (D-12)."""
+        from quam_state_manager.core.nodesim_pool import PoolError, clean
+        if not self.pool:
+            return answer("none")
+        if not python:
+            return answer("no_env")
+        if not library:
+            return answer("no_library")
+        if not saas:
+            return answer("not_configured")
+        key = window_key(window)
+        self.intent_answers[key] = answer("warming", env=env_name)
+
+        def run():
+            """Keep the page responsive while imports or an intent spawn runs (D-19)."""
+            copies = None
+            try:
+                copies = self.make_copy(store)
+                operation = self.pool.renew if renew else self.pool.intent
+                fields = {} if renew else dict(explicit=explicit)
+                operation(python=python, library=library, live=live_folder, credentials=saas,
+                          copies=copies, **fields,
+                          notify=lambda state, **kw: self.intent_answers.update(
+                              {key: clean(answer(state, **kw), self.pool.secrets)}))
+                self.intent_answers[key] = answer("ready")
+            except PoolError as exc:
+                state = exc.state if exc.state in STATES else "broker_failed"
+                self.intent_answers[key] = answer(state, **exc.fields)
+            except Exception as exc:
+                self.intent_answers[key] = answer("failed", message=str(exc), secret=saas.get("password"))
+            finally:
+                if copies:
+                    self.remove_copy(copies)
+        threading.Thread(target=run, daemon=True).start()
+        return self.intent_answers[key]
 
     # -- end -----------------------------------------------------------------
 
@@ -806,6 +1019,20 @@ class Manager:
 
     def status(self, window: Any, rid: Optional[str] = None, *, seq: Any = None,
                store_id: Any = None) -> dict:
+        """Return warm or cold progress and mark stale snapshots (D-14, D-26)."""
+        key = window_key(window)
+        warm = self.warm_jobs.get(rid or self.latest.get(key))
+        if warm:
+            warm["seen"] = time.monotonic()
+            out = copy.deepcopy(warm["answer"])
+            prov = ((out.get("result") or {}).get("provenance") or {})
+            if prov and seq is not None and (prov.get("seq") != seq or
+                                             (store_id is not None and prov.get("store_id") != store_id)):
+                prov.update(stale=True, stale_line=STALE_LINE)
+                out["banners"].append(STALE_LINE)
+            return out
+        if not rid and key not in self.latest and key in self.intent_answers:
+            return copy.deepcopy(self.intent_answers[key])
         runs = self.runs(window)
         rid = rid or self.latest.get(runs.window)
         if not rid:
@@ -839,6 +1066,11 @@ class Manager:
         return out
 
     def stop(self, window: Any, rid: Optional[str] = None) -> dict:
+        """Signal the active transport without moving lock ownership (D-18)."""
+        warm = self.warm_jobs.get(rid or self.latest.get(window_key(window)))
+        if warm:
+            warm["stop"].set()
+            return copy.deepcopy(warm["answer"])
         runs = self.runs(window)
         rid = rid or self.latest.get(runs.window)
         if rid and runs.stop(rid, "Stop pressed"):

@@ -491,6 +491,50 @@ function renderMode(file) {
        === 'The node asked for is not in the calibration library of this chip.'
        && !$('[data-nodesim-pick-note]', away).hidden, 'a node not in the library says so, not a silent swap');
 
+    /* ---- P2: explicit intent, keep-warm, renewal, instance strip --------------- */
+    const warmPage = doc.createElement('div');
+    warmPage.setAttribute('data-nodesim', '');
+    warmPage.setAttribute('data-warm-pool', 'true');
+    doc.body.appendChild(warmPage);
+    M.queue['/api/nodesim/nodes'] = [NODES];
+    M.queue['/api/nodesim/settings'] = [{ keep_warm: false, label: 'Keep the cloud simulator warm',
+        note: 'Starts a cloud instance when this panel opens; it uses one of the account\'s 3 instances '
+            + 'until 10 min pass without a click. Off by default.' }];
+    M.queue['/api/nodesim/intent'] = [{ state: 'ready', line: 'Node simulator ready.' }];
+    M.queue['/api/nodesim/status'] = [{ state: 'ready', line: 'Node simulator ready.' }];
+    M.queue['/api/nodesim/instances'] = [{ rows: [{ line: 'Cloud instance open until 12:34.' }] }];
+    const warm = window.NodeSim.mount(warmPage);
+    await warm.ready;
+    await tick();
+    ok(callsTo('/api/nodesim/intent').pop().body.explicit === false, 'P2: panel open has no explicit intent');
+    const keep = $('[data-nodesim-keep-warm]', warmPage);
+    ok(keep && !keep.checked, 'P2: keep-warm is off by default');
+    ok(txt('[data-nodesim-instances]') !== null, 'P2: instance strip exists');
+    const wpick = $('[data-nodesim-node]', warmPage);
+    wpick.value = '11_rabi.py'; change(wpick);
+    await tick();
+    ok(callsTo('/api/nodesim/intent').pop().body.explicit === true, 'P2: a deliberate node pick sends intent');
+    warm.apply({ state: 'needs_instance', line: 'The server needs a new instance.' });
+    ok(!$('[data-nodesim-new-instance]', warmPage).hidden, 'P2: hash change shows Start new instance');
+    M.queue['/api/nodesim/new-instance'] = [{ state: 'ready', line: 'Node simulator ready.' }];
+    $('[data-nodesim-new-instance]', warmPage).click();
+    await tick();
+    ok(callsTo('/api/nodesim/new-instance').length === 1, 'P2: Start new instance sends its POST');
+    warm.apply({ state: 'renew_offer', line: 'The cloud instance closes at 12:34.' });
+    ok(!$('[data-nodesim-renew]', warmPage).hidden, 'P2: renewal offer shows its action');
+    M.queue['/api/nodesim/renew'] = [{ state: 'ready', line: 'Node simulator ready.' }];
+    $('[data-nodesim-renew]', warmPage).click();
+    await tick();
+    ok(callsTo('/api/nodesim/renew').length === 1, 'P2: renewal sends its POST');
+    const warmBox = window.NodeSim.renderAnswer({ state: 'running', line: 'Building.', warm: true, phases: [] });
+    ok($$('[data-phase]', warmBox).map((x) => x.getAttribute('data-phase')).join(',')
+       === 'copy,lock,build,lease,connect,submit,wait,report', 'P2: warm phases follow the IPC contract');
+    ['warming', 'no_slot', 'spawn_failed', 'stopped_spawning', 'stopped_kept', 'idle_closed', 'broker_failed']
+        .forEach((state) => {
+            const b = window.NodeSim.renderAnswer({ state: state, line: 'Server verdict for ' + state });
+            ok(b.textContent.indexOf('Server verdict for ' + state) >= 0, 'P2: verbatim ' + state);
+        });
+
     /* ---- static rules on the source ------------------------------------------ */
     const src = NODESIM_SRC;
     const lines = Object.values(SPEC_LINES).concat([window.NodeSim.NO_ANSWER]);
