@@ -77,6 +77,7 @@ function world(opts) {
   win.htmx = { ajax() { return Promise.resolve(); }, trigger() {}, process() {},
                on() {}, off() {}, config: {} };
 
+  if (opts && typeof opts.renderT === 'number') win.__pageRenderT = opts.renderT;   // base.html
   win.urls = [];
   win.answer = { uid: null };
   // Installed INSIDE the realm: a Node-realm `window.fetch =` never reaches the
@@ -272,6 +273,71 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
     win.__newRunPoll.poll(); await settle(); await settle();
     ok(chip(win) && chip(win).textContent === 'new runs',
        'the chip says "new runs" (got "' + (chip(win) && chip(win).textContent) + '")');
+  }
+
+  // -------------------------------------------------------------------------
+  // 6. The baseline is the render time, not the first poll's latest run: a
+  //    store still building its index answers with the newest run indexed SO
+  //    FAR, and every older run it indexes later was counted as new.
+  //    The fake server counts like routes.datasets_poll: indexed runs whose
+  //    instant is after the since_t the client sent.
+  // -------------------------------------------------------------------------
+  function fakeServer(win, runs) {
+    win.indexed = [];
+    win.__nextAnswer = function () {
+      const polls = win.urls.filter(function (x) { return x.indexOf('/datasets/poll') === 0; });
+      const u = polls[polls.length - 1] || '';
+      const m = /since_t=(\d+)/.exec(u);
+      const since = m ? Number(m[1]) : null;
+      let latest = null;
+      win.indexed.forEach(function (r) { if (!latest || r.t > latest.t) latest = r; });
+      if (!latest) return { uid: null };
+      const a = { uid: latest.uid, run_id: latest.id, date: '2026-01-01', time: '10:00:00',
+                  t: latest.t, indexing: win.indexed.length < runs.length };
+      if (since !== null) {
+        const nu = win.indexed.filter(function (r) { return r.t > since; });
+        a.new_count = nu.length; a.new_uids = nu.map(function (r) { return r.uid; });
+      }
+      return a;
+    };
+  }
+  {
+    const T = 1700000000000;
+    const win = world({ renderT: T });
+    const runs = [];
+    for (let i = 1; i <= 50; i++) runs.push({ uid: 'f:' + i, id: i, t: T - 100000 + i * 1000 });
+    fakeServer(win, runs);
+    win.indexed = runs.slice(0, 5);                 // the build has reached the oldest five
+    win.__newRunPoll.poll(); await settle(); await settle();
+    const firstPoll = win.urls.filter(function (x) { return x.indexOf('/datasets/poll') === 0; })[0];
+    ok(firstPoll === '/datasets/poll?since_t=' + T,
+       'the first poll already asks "since the render" (' + firstPoll + ')');
+    ok(chip(win) === null, 'during indexing nothing is announced');
+    win.indexed = runs.slice();                     // the build finishes: 45 more runs, all older than the page
+    win.__newRunPoll.poll(); await settle(); await settle();
+    ok(chip(win) === null, 'runs the index reached late are not new (got "'
+       + (chip(win) && chip(win).textContent) + '")');
+    win.indexed.push({ uid: 'f:51', id: 51, t: T + 60000 });   // one run lands
+    win.__newRunPoll.poll(); await settle(); await settle();
+    ok(chip(win) && /^1 new/.test(chip(win).textContent),
+       'one run landing after the render is "1 new" (got "' + (chip(win) && chip(win).textContent) + '")');
+  }
+
+  // -------------------------------------------------------------------------
+  // 7. A run landing between the render and the first poll is announced
+  // -------------------------------------------------------------------------
+  {
+    const T = 1700000000000;
+    const win = world({ renderT: T });
+    const runs = [{ uid: 'f:1', id: 1, t: T - 5000 }, { uid: 'f:2', id: 2, t: T + 800 }];
+    fakeServer(win, runs);
+    win.indexed = runs.slice();
+    win.__newRunPoll.poll(); await settle(); await settle();
+    ok(chip(win) && /^1 new/.test(chip(win).textContent),
+       'the first poll announces a run that landed after the render (got "'
+       + (chip(win) && chip(win).textContent) + '")');
+    const st = win.__newRunPoll.stamps();
+    ok(st.ack === T && st.seen === T + 800, 'ack stays at the render, detection follows (' + JSON.stringify(st) + ')');
   }
 
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }

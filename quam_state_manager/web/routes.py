@@ -14894,10 +14894,13 @@ def _run_recency(run: Any) -> tuple:
     different zones order by when each run really happened, which their
     folder names' wall clocks cannot say. A run nothing dates (no instant)
     sorts before every dated one, then by its folder clock, as an empty
-    date string did."""
+    date string did. Two runs recorded in the same instant (same second) order
+    by run id, so the higher id is the newer one."""
     utc_us = getattr(run, "instant_us", None)
+    run_id = getattr(run, "run_id", None)
     return (utc_us is not None, utc_us or 0,
-            getattr(run, "date", "") or "", getattr(run, "time", "") or "")
+            getattr(run, "date", "") or "", getattr(run, "time", "") or "",
+            run_id if isinstance(run_id, int) else -1)
 
 
 CH_MAX_CHIPS = 6       # per-row change-point chips shown in the Changes tab

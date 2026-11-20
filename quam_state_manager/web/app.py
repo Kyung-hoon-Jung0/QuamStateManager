@@ -315,6 +315,21 @@ _CSP_WORKBENCH = _CSP.replace(
     "connect-src 'self' http://127.0.0.1:* http://localhost:*; ")
 assert _CSP_WORKBENCH != _CSP, "the connect-src directive moved; the workbench relaxation no longer applies"
 
+# The page's send time travels in a response header, never in the body: a
+# page served from a RAM cache (the live-edit splice, the hub answer cache,
+# a pre-compressed gzip body) stays byte-identical to a fresh render, and the
+# baseline is still the moment THIS response left. base.html reads it from
+# the navigation entry's serverTiming.
+PAGE_SENT_TIMING = "sm-sent"
+
+
+def _stamp_page_render_t(resp):
+    """Add ``Server-Timing: sm-sent;desc="<UTC epoch ms>"`` to every HTML response."""
+    if resp.mimetype == "text/html":
+        resp.headers.add("Server-Timing",
+                         '%s;desc="%d"' % (PAGE_SENT_TIMING, int(time.time() * 1000)))
+    return resp
+
 
 def _add_security_headers(resp):
     """Defense-in-depth response headers (Phase 4 §3, extended in Phase 5 §3.1).
@@ -1122,6 +1137,10 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
         from quam_state_manager import __version__ as _v
         return {"sm_version": _v}
 
+    # The new-run poll's baseline: a run counts as new when its own instant is
+    # after the moment the page was sent (base.html window.__pageRenderT, read
+    # from the Server-Timing header _stamp_page_render_t adds), never because
+    # the Datasets index reached it late.
     # docs/178 — the one sentence every "stage only / live is untouched"
     # surface owes the user while Auto-Sync push is armed. A Jinja global so a
     # label and the route's own result message cannot drift apart.
@@ -1146,6 +1165,7 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     app.before_request(_record_own_port)
     app.after_request(_add_security_headers)
     app.after_request(_finite_trigger_headers)
+    app.after_request(_stamp_page_render_t)
 
     # docs/155 F3' — one directory listing per request, shared by the two
     # staleness walkers that were sweeping the same date directories twice
