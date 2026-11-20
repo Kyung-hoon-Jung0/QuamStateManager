@@ -2500,7 +2500,10 @@
        were acknowledged in the shared seen set, so the top-bar chip lost them. Once
        the table is gone nothing of this module acts until init() mounts one again. */
     function _mounted() {
-        return !!(state.tbody && state.tbody.isConnected && state.scrollEl && state.scrollEl.isConnected);
+        // contains() on THIS document, not isConnected: a node still attached to some
+        // other document (an old window, a detached fragment's owner) is not this page
+        return !!(state.tbody && state.scrollEl && document.body
+            && document.body.contains(state.tbody) && document.body.contains(state.scrollEl));
     }
     function _teardown() {
         stopPolling();
