@@ -371,6 +371,11 @@ class TestLazySidebarGroups:
         assert capped.count("tree-entry-click") == 50 and "tree-show-more-btn" in capped
         full = zone(full_groups=json.dumps(["2026-03-02"]))
         assert full.count("tree-entry-click") == 53 and "tree-show-more-btn" not in full
+        refreshed = c.post("/workspace/refresh", data={
+            "open_groups": json.dumps(["2026-03-02"]),
+            "full_groups": json.dumps(["2026-03-02"])}).get_data(as_text=True)
+        group = refreshed.split('data-tpath="2026-03-02"')[1].split("</details>")[0]
+        assert group.count("tree-entry-click") == 53 and "tree-show-more-btn" not in group
 
     def test_group_fetch_returns_capped_rows(self, client):
         r = client.get("/workspace/tree/group", query_string={

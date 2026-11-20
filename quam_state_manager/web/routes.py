@@ -40024,15 +40024,20 @@ def workspace_tree():
     # background, so this is normally a memo hit -- see _unfiltered_tree_html.
     # A refresh renders already-open groups with their entries in the same response.
     # Otherwise the swap paints empty placeholders until a second request fills them.
+    return _tree_with_open_groups(ws)
+
+
+def _tree_with_open_groups(ws):
+    """Keep expanded run groups in both automatic and explicit refreshes."""
     try:
-        open_groups = json.loads(request.args.get("open_groups", "[]"))
+        open_groups = json.loads(request.values.get("open_groups", "[]"))
     except (ValueError, TypeError):
         open_groups = []
     if isinstance(open_groups, list) and open_groups:
         ctx = _tree_render_ctx(ws.tree if ws else {}, ws=ws)
         ctx["eager_tpaths"].update(p for p in open_groups if isinstance(p, str))
         try:
-            full_groups = json.loads(request.args.get("full_groups", "[]"))
+            full_groups = json.loads(request.values.get("full_groups", "[]"))
         except (ValueError, TypeError):
             full_groups = []
         # A group the user expanded with "Show all" keeps every entry across the refresh.
@@ -40306,7 +40311,7 @@ def workspace_refresh():
     # docs/126 r3: a no-change rescan keeps the version, so the memoized
     # unfiltered HTML is still valid — the Refresh round-trip pays only the
     # scan itself, not a 450 KB re-render of an identical tree.
-    return _unfiltered_tree_html(ws)
+    return _tree_with_open_groups(ws)
 
 
 @bp.route("/app/reload", methods=["POST"])
@@ -47736,6 +47741,7 @@ def datasets_poll():
         return jsonify({"uid": None, "run_id": None})
     payload = {
         "uid": latest_uid,
+        "indexing": any(getattr(f["store"], "scan_truncated", False) for f in active),
         "run_id": latest_run.run_id,
         "experiment_name": latest_run.experiment_name,
         "qubits": latest_run.qubits or [],

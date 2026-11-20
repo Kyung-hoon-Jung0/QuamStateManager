@@ -25232,6 +25232,19 @@ document.addEventListener('htmx:afterSwap', function(evt) {
                  _state: function () { return { armed: _armed, anchor: _anchor }; } };
     })();
 
+    // Capture before the refresh replaces full groups with lazy placeholders.
+    // The chip presses this same button; polling already sends these values.
+    document.addEventListener('htmx:configRequest', function (ev) {
+        var detail = ev.detail;
+        if (!detail || !/^\/workspace\/(refresh|tree)(?:\?|$)/.test(detail.path || '')) return;
+        var groups = Array.from(document.querySelectorAll('#sidebar-tree details.tree-dir[open][data-tpath]'));
+        detail.parameters.open_groups = JSON.stringify(groups.map(function (g) { return g.dataset.tpath; }));
+        detail.parameters.full_groups = JSON.stringify(groups.filter(function (g) {
+            var ul = g.querySelector(':scope > ul.tree-entries');
+            return ul && !ul.querySelector('.tree-show-more')
+                && ul.querySelectorAll(':scope > li.tree-entry').length > 50;
+        }).map(function (g) { return g.dataset.tpath; }));
+    });
     window.refreshRunLists = function () {
         var did = { sidebar: false, datasets: false };
         var ws = document.querySelector('.btn-workspace-refresh');

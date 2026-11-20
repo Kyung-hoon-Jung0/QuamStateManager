@@ -1386,6 +1386,7 @@ class Monitor:
         self._worker_sig = None
         self.section_times = {}
         self.section_errors = {}
+        self.deferred_errors = {}
         self.last_answer: Optional[dict] = None
         self.last_ok_at: Optional[float] = None
         self.last_error: Optional[str] = None
@@ -1482,6 +1483,7 @@ class Monitor:
             self.last_answer = None
             self.section_times.clear()
             self.section_errors.clear()
+            self.deferred_errors.clear()
             self.admin = {'known': False, 'reason': 'Admin input unknown; no fresh admin poll.'}
             self.clock_measure = None
             self._watch = {}
@@ -1571,9 +1573,11 @@ class Monitor:
                 return
             ans = r.get("result") or {}
             errors = ans.get('refused') or {}
+            self.deferred_errors = {}
             if self._defer_read(errors):
+                self.deferred_errors = dict(errors)
                 self.last_error = failure_summary(errors)
-                self.section_errors = dict(errors)
+                # Deferred reads keep the last successful sections and their ages.
                 return
             if not errors:
                 self._misses = 0
@@ -1897,6 +1901,7 @@ class Monitor:
                                          if v['continuous'] and v['sig']
                                          and any(job_activity(s) == 'active' for _, s in v['sig'])), default=None),
                 "section_times": self.section_times, "section_errors": self.section_errors, "state": state,
+                "deferred_errors": self.deferred_errors,
                 "sentence": sentence, "sentence_shown": sentence_shown or sentence, "age_s": age,
                 'health': health_state, 'admin': self.admin,
                 'badge_label': (badge_label(answer, health(answer, self.admin, s['thresholds'], 'ok'), 'ok')

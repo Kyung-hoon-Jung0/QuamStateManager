@@ -31,6 +31,16 @@ if (pin === 'all' || pin === 'context') {
     assert.ok(read('templates/base.html').includes('data-last-run'), 'top bar ships its context host');
     assert.ok(read('templates/_wiring.html').includes('data-last-run'), 'overview ships its context host');
 }
+if (pin === 'all' || pin === 'indexing') {
+    const run = { uid: 'f:163', run_id: 163, experiment_name: 'ramsey', indexing: true };
+    w.SyncBadge.lastRun(run);
+    assert.match(d.querySelector('[data-last-run]').textContent, /#163 ramsey .*indexing/);
+    d.dispatchEvent(new w.CustomEvent('htmx:afterSwap'));
+    assert.match(d.querySelector('p').textContent, /indexing/);
+    w.SyncBadge.lastRun({ ...run, run_id: 280, indexing: false });
+    assert.match(d.querySelector('[data-last-run]').textContent, /#280/);
+    assert.doesNotMatch(d.querySelector('[data-last-run]').textContent, /indexing/);
+}
 if (pin === 'all' || pin === 'seen') {
     const row = d.querySelector('[data-uid]'), tree = d.getElementById('sidebar-tree');
     const box = (top, bottom) => ({ top, bottom, left: 0, right: 150, width: 150, height: bottom - top });
@@ -41,6 +51,7 @@ if (pin === 'all' || pin === 'seen') {
     assert.equal(chip().title, '2 runs landed since you last looked');
     row.getBoundingClientRect = () => box(30, 50);
     tree.dispatchEvent(new w.Event('scroll'));
+    assert.equal(chip().title, '1 run landed since you last looked');
     assert.equal(chip().textContent, '1 new', 'scrolling the row into view acknowledges it');
     w.SyncBadge.acknowledge(['f:3']);
     assert.equal(chip(), null, 'a table dismissal acknowledges its exact identities');

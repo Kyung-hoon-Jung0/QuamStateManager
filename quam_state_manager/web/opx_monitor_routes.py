@@ -239,7 +239,8 @@ def _view(tab: str, st=None) -> dict:
     temperature_failed = 'controllers' in st['section_errors'] or any(k.endswith('.temperatures') for k in (st.get('answer') or {}).get('refused', {}))
     verdict = om.verdict(st.get('answer'), st['health'], idle_states, st['state'], st['age_s'])
     hottest_limit = om.temperature_limit(hottest['key'], s['thresholds']) if hottest else None
-    failures = len(set((st.get('answer') or {}).get('refused') or {}) | set(st['section_errors']))
+    failures = len(st.get('deferred_errors') or
+                   (set((st.get('answer') or {}).get('refused') or {}) | set(st['section_errors'])))
     details = st['health'].get('details')
     owner_ctx.update({
         'band': om.band_view(verdict, st['state'], st['health'], plain_error(details) if details else None),

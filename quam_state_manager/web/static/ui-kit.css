@@ -2410,3 +2410,9 @@ details.ui-menu.topo-report-export { margin: 0; }
 /* The one rule that owns the sidebar filter box's right padding: room for the ? (1.5rem) and the box's own
    scrollbar once a long query wraps. It outranks .ui-textarea in specificity and comes last in source order. */
 .sidebar-filter #sidebar-filter-input.ui-textarea--grow { padding-right: 2.7rem; }
+
+/* Reserve the full control height even when the inspector narrows the run list. */
+#ds-arrivals {
+    min-height: calc(var(--ui-ctl-h) + var(--ui-gap-1) * 2 + var(--ui-bw));
+    flex-shrink: 0;
+}

@@ -499,3 +499,18 @@ class TestDatasetByPath:
         app, c = _app_with_folders(tmp_path, [])
         assert c.get("/dataset/by-path", query_string={"path": str(tmp_path)}).status_code == 400
         assert c.get("/dataset/by-path").status_code == 400
+
+
+def test_latest_run_poll_reports_incomplete_index(tmp_path, monkeypatch):
+    folder = tmp_path / "runs"
+    _seed_run(folder, 163)
+    app, client = _app_with_folders(tmp_path, [folder])
+    with app.test_request_context():
+        active = routes._active_dataset_stores()
+    monkeypatch.setattr(routes, "_active_dataset_stores", lambda **kw: active)
+    store = active[0]["store"]
+    store._last_scan_truncated = True
+    data = client.get("/datasets/poll").get_json()
+    assert data["run_id"] == 163 and data["indexing"] is True
+    store._last_scan_truncated = False
+    assert client.get("/datasets/poll").get_json()["indexing"] is False
