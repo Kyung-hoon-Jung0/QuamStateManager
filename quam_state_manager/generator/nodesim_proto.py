@@ -221,7 +221,7 @@ def is_allowed_saas_host(host, port, resolver=None):
                                                    ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24"))
             if address.is_loopback or address.is_link_local or address.is_unspecified or address.is_multicast:
                 return False
-            if address.is_private and not test_net:
+            if not address.is_global and not test_net:
                 return False
         return True
     except (OSError, ValueError, TypeError, IndexError):
