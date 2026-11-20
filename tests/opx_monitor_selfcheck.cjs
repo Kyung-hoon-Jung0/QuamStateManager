@@ -106,12 +106,48 @@ const tick = () => new Promise(r => setTimeout(r, 20));
   healthWorld.setTimeout = (fn, ms) => { timers.push([fn, ms]); };
   healthWorld.eval(fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', 'opx-health.js'), 'utf8'));
   healthWorld.document.dispatchEvent(new healthWorld.CustomEvent('htmx:afterSwap'));
+  const monitorBody = healthWorld.document.createElement('div'); monitorBody.id = 'ui-opxmon-body';
+  healthWorld.document.body.append(monitorBody);
+  const badgeRequest = new healthWorld.CustomEvent('htmx:beforeRequest', {cancelable: true,
+    detail: {elt: healthWorld.document.getElementById('ui-opxmon-alarm-slot')}});
+  healthWorld.document.dispatchEvent(badgeRequest);
+  ok(badgeRequest.defaultPrevented, 'a monitor snapshot owns the badge, suppressing its independent poll');
+  const lateBadge = new healthWorld.CustomEvent('htmx:beforeOnLoad', {cancelable: true,
+    detail: {elt: healthWorld.document.getElementById('ui-opxmon-alarm-slot'), xhr: {responseText: 'OPX free'}}});
+  healthWorld.document.dispatchEvent(lateBadge);
+  ok(lateBadge.defaultPrevented, 'an older badge request already in flight cannot overwrite the monitor snapshot');
+  monitorBody.remove();
   ok(timers.length === 1 && timers[0][1] === 6000, 'health expiry is tied to the snapshot and cannot be extended by another swap');
   timers[0][0]();
   const expired = healthWorld.document.querySelector('.ui-opxmon-health');
   ok(healthWorld.document.querySelector('[data-health="grey"]') && /freshness expired/.test(expired.title)
      && / OPX unknown$/.test(expired.textContent),
      'D-14 health expires to grey without a server response; the badge stays short, the reason is its tooltip');
+  const shared = new JSDOM('<div id="ui-opxmon-alarm-slot">old badge</div>' +
+    '<div id="ui-opxmon-body" data-tab="settings"><div id="ui-opxmon-band" ' +
+    'hx-get="/opx-monitor/body?tab=settings" hx-select="#ui-opxmon-band">FREE</div>' +
+    '<input id="draft" value="unsaved"></div>', {runScripts: 'outside-only'}).window;
+  shared.htmx = {process() {}};
+  shared.eval(fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager/web/static/opx-health.js'), 'utf8'));
+  shared.OpxHealth.receive({id: '2', live: '<div id="ui-opxmon-body" data-tab="live">' +
+    '<div id="ui-opxmon-band">BUSY</div><div class="cards">1 QM</div></div>', badge: 'OPX busy'});
+  ok(shared.document.querySelector('#ui-opxmon-band').textContent === 'BUSY' &&
+    shared.document.querySelector('#ui-opxmon-alarm-slot').textContent === 'OPX busy' &&
+    shared.document.querySelector('#draft').value === 'unsaved',
+    'a shared snapshot updates Settings and its badge without replacing the form');
+  ok(shared.document.querySelector('#ui-opxmon-band').getAttribute('hx-select') === '#ui-opxmon-band',
+    'shared Settings band keeps its poll selection');
+  shared.OpxHealth.receive({id: '1', live: '<div id="ui-opxmon-body">FREE</div>', badge: 'OPX free'});
+  ok(shared.document.querySelector('#ui-opxmon-band').textContent === 'BUSY',
+    'a delayed snapshot cannot roll the page back');
+  shared.document.querySelector('#ui-opxmon-body').dataset.tab = 'live';
+  shared.OpxHealth.receive({id: '3', live: '<div id="ui-opxmon-body" data-tab="live">' +
+    '<div id="ui-opxmon-band">FREE</div><div class="cards">0 QM</div></div>', badge: 'OPX free'});
+  ok(shared.document.querySelector('.cards').textContent === '0 QM' &&
+    shared.document.querySelector('#ui-opxmon-band').textContent === 'FREE' &&
+    shared.document.querySelector('#ui-opxmon-alarm-slot').textContent === 'OPX free',
+    'a shared snapshot updates Live cards, band and badge together');
+  shared.close();
   const dot = healthWorld.document.querySelector('.ui-opxmon-health');
   dot.classList.add('ui-opxmon-verdict--red');
   dot.setAttribute('data-health', 'green');

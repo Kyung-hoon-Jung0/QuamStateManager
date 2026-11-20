@@ -41,6 +41,10 @@
     }
     var WATCHED = ".ui-opxmon-health[data-valid-ms], .ui-opxmon-verdict[data-valid-ms]";
     function watch() {
+        var body = document.getElementById('ui-opxmon-body');
+        if (body && body.dataset.snapshot && BigInt(body.dataset.snapshot) > latest) {
+            latest = BigInt(body.dataset.snapshot);
+        }
         document.querySelectorAll(WATCHED).forEach(function (node) {
             if (node.__opxWatching) return;
             node.__opxWatching = true;
@@ -58,9 +62,65 @@
         if (!elt || ["ui-opxmon-body", "ui-opxmon-band", "ui-opxmon-alarm-slot"].indexOf(elt.id) < 0) return;
         document.querySelectorAll(".ui-opxmon-health, .ui-opxmon-verdict[data-valid-ms]").forEach(function (node) { unknown(node, "SM did not answer the refresh"); });
     }
+    // Share a complete read across Live and Settings tabs. Never roll a page back for a late response.
+    var channel = window.BroadcastChannel ? new window.BroadcastChannel('sm-opx-monitor') : null;
+    var latest = 0n;
+    function snapshot(html) {
+        var doc = new window.DOMParser().parseFromString(html, 'text/html');
+        var source = doc.querySelector('template[data-opxmon-live]');
+        var live = source ? source.content.querySelector('#ui-opxmon-body') : doc.querySelector('#ui-opxmon-body');
+        var badge = doc.querySelector('#ui-opxmon-alarm-slot');
+        if (!live || !badge || !live.dataset.snapshot) return null;
+        return {id: live.dataset.snapshot, live: live.outerHTML, badge: badge.innerHTML};
+    }
+    function receive(data) {
+        var body = document.getElementById('ui-opxmon-body');
+        if (!body || !data || BigInt(data.id) <= latest || !window.htmx) return;
+        latest = BigInt(data.id);
+        var doc = new window.DOMParser().parseFromString(data.live, 'text/html');
+        var live = doc.querySelector('#ui-opxmon-body');
+        var settings = body.dataset.tab === 'settings';
+        if (!settings && body.dataset.tab !== 'live') return;
+        var target = settings ? document.getElementById('ui-opxmon-band') : body;
+        var replacement = settings ? live.querySelector('#ui-opxmon-band') : live;
+        // Keep the Settings band's polling attributes and the user's form.
+        if (settings) Array.from(target.attributes).forEach(function (a) {
+            if (a.name.indexOf('hx-') === 0) replacement.setAttribute(a.name, a.value);
+        });
+        document.dispatchEvent(new CustomEvent('htmx:beforeSwap', {detail: {target: target}}));
+        target.replaceWith(replacement);
+        document.getElementById('ui-opxmon-alarm-slot').innerHTML = data.badge;
+        window.htmx.process(replacement);
+        document.dispatchEvent(new CustomEvent('htmx:afterSwap', {detail: {target: replacement}}));
+    }
+    if (channel) channel.onmessage = function (event) { receive(event.data); };
+    document.addEventListener('htmx:beforeOnLoad', function (event) {
+        var elt = event.detail && event.detail.elt;
+        if (elt && elt.id === 'ui-opxmon-alarm-slot' && document.getElementById('ui-opxmon-body')) {
+            event.preventDefault();
+            return;
+        }
+        var xhr = event.detail && event.detail.xhr;
+        var data = xhr && snapshot(xhr.responseText || '');
+        if (data && BigInt(data.id) < latest) event.preventDefault();
+    });
+    document.addEventListener('htmx:afterRequest', function (event) {
+        var xhr = event.detail && event.detail.xhr;
+        var data = xhr && snapshot(xhr.responseText || '');
+        if (!data || BigInt(data.id) < latest) return;
+        latest = BigInt(data.id);
+        if (channel) channel.postMessage(data);
+    });
+    // While a monitor is visible its response owns every surface, including the badge.
+    document.addEventListener("htmx:beforeRequest", function (event) {
+        var elt = event.detail && event.detail.elt;
+        if (elt && elt.id === 'ui-opxmon-alarm-slot' && document.getElementById('ui-opxmon-body')) {
+            event.preventDefault();
+        }
+    });
     document.addEventListener("DOMContentLoaded", watch);
     document.addEventListener("htmx:afterSwap", watch);
     ["htmx:sendError", "htmx:responseError", "htmx:timeout"].forEach(function (event) { document.addEventListener(event, failed); });
-    window.OpxHealth = {watch: watch, failed: failed, setStatus: setStatus};
+    window.OpxHealth = {watch: watch, failed: failed, setStatus: setStatus, receive: receive};
     watch();
 })();

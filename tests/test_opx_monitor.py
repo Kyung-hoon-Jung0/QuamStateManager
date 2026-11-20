@@ -305,7 +305,8 @@ def test_refused_list_open_qms_says_so_and_disables_close(env):
     a["open_qms"] = None
     w.script[:] = [a]
     m.poll_once()
-    assert "The OPX server did not answer the request for the list of open quantum machines: PermissionError: not allowed" in page(app, "jobs")
+    assert ("The server denied permission to read the list of open quantum machines: "
+            "PermissionError: not allowed") in page(app, "jobs")
     html = page(app, "cleanup")
     assert "Closing is not available." in html and "ui-opxmon-close\"" not in html
     r = app.test_client().post("/opx-monitor/close", data={"all": "1", "qm_ids": "QM-a", "confirm_count": "1"}, headers=ORIGIN)
@@ -1286,7 +1287,7 @@ def test_stress_d5_error_cause(env):
     assert 'connection' not in m.status()['health']['details']
     a = answer(refused={'get_devices': 'PermissionError: not permitted'})
     w.script[:] = [a]; m.poll_once()
-    assert m.status()['health']['reason'].startswith('The OPX server did not answer')
+    assert m.status()['health']['reason'].startswith('The server denied permission')
     assert 'permissions' in m.status()['health']['details']
 
 
@@ -2375,7 +2376,7 @@ def test_problem_screen_names_no_sdk_call_and_says_the_cause_once(env):
     html = page(app, 'live')
     text = _re.sub(r'<[^>]+>', ' ', html)
     cause = m.status()['health']['reason']
-    assert cause.startswith('The OPX server did not answer the request for ')
+    assert cause.startswith('The server denied permission to read ')
     assert text.count(cause) == 1, text.count(cause)
     assert 'Last reply 0 s ago; some data unavailable.' in text
     with app.test_request_context('/'):
@@ -2880,3 +2881,153 @@ def test_busy_with_a_known_offset_shows_this_pc_clock(env):
     html = page(app, 'live')
     assert f" since {_clock_text(clock.t - 30)} (this PC&#39;s clock;" in html
     assert _clock_text(clock.t + 30) not in html
+
+
+@pytest.mark.parametrize('error', ['TimeoutError: timed out', 'RuntimeError: held by another client'])
+def test_busy_transient_read_keeps_last_good_occupancy_with_age(env, error):
+    app, m, w, clock, _ = env
+    m.poll_once()
+    before = m.last_answer
+    delay = 30 if 'Timeout' in error else 5
+    clock.t += delay
+    w.script[:] = [om.WorkerError(error)]
+    m.poll_once()
+    st = m.status()
+    assert st['state'] == 'stale' and not st['health'].get('problem')
+    assert m.last_answer == before and st['age_s'] == delay
+    html = page(app, 'live')
+    assert 'BUSY' in html and 'PROBLEM' not in html
+    assert 'Not read this time' in html and f'last good read was {delay} s ago' in html
+    assert st['badge_label'] == 'busy (last read)'
+
+
+def test_partial_busy_refusal_keeps_last_good_then_recovers(env):
+    app, m, w, clock, _ = env
+    m.poll_once()
+    partial = answer(qms=(('QM-a', [], ['con1/1']),), refused={
+        'qm.get_jobs(QM-a)': 'TimeoutError: timed out'})
+    partial['open_qms'][0]['jobs'] = None
+    w.script[:] = [partial]
+    clock.t += 5
+    m.poll_once()
+    assert 'BUSY' in page(app, 'live') and m.last_ok_at == clock.t - 5
+    w.script[:] = [answer(qms=())]
+    clock.t += 5
+    m.poll_once()
+    assert m.status()['state'] == 'ok' and m.status()['badge_label'] == 'free'
+    assert 'No QM is open: the hardware is free.' in page(app, 'live')
+
+
+@pytest.mark.parametrize('error', ['TimeoutError: timed out', 'PermissionError: access denied',
+                                  'RuntimeError: failed request'])
+def test_real_read_failure_has_one_evidenced_cause(env, error):
+    app, m, w, clock, _ = env
+    m.poll_once()
+    w.script[:] = [om.WorkerError(error)]
+    for _ in range(3):
+        clock.t = max(clock.t + 10, m._retry_at + 1)
+        m.poll_once()
+    st = m.status()
+    assert st['health']['problem'] and st['badge_label'] == 'problem'
+    html = page(app, 'live')
+    assert 'PROBLEM' in html
+    assert not ('did not answer' in html and 'answered but declined' in html)
+    assert ('account permissions' in html) == ('PermissionError' in error)
+    assert 'QOP version' not in st['health']['details']
+
+
+@pytest.mark.parametrize('tab', ['live', 'settings'])
+def test_monitor_response_uses_one_status_for_body_and_badge(env, monkeypatch, tab):
+    app, m, w, clock, _ = env
+    m.poll_once()
+    original = m.status
+    reads = []
+    def changing_status():
+        st = original()
+        reads.append(st)
+        if len(reads) > 1:
+            st['badge_label'] = 'free'
+        return st
+    monkeypatch.setattr(m, 'status', changing_status)
+    html = app.test_client().get('/opx-monitor/body?tab=' + tab,
+                                 headers={'HX-Request': 'true'}).get_data(as_text=True)
+    assert len(reads) == 1
+    assert '> OPX busy</a>' in html and '>BUSY</strong>' in html
+
+
+@pytest.mark.parametrize('age', [0, 8])
+def test_first_full_monitor_paint_includes_its_snapshot_badge(env, age):
+    app, m, w, clock, _ = env
+    m.poll_once()
+    clock.t += age
+    html = app.test_client().get('/opx-monitor/live').get_data(as_text=True)
+    slot = re.search(r'id="ui-opxmon-alarm-slot".*?</li>', html, re.S).group()
+    label = 'busy (last read)' if age else 'busy'
+    assert '> OPX ' + label + '</a>' in slot
+    assert re.search(r'<strong class="ui-verdict-key">BUSY', html)
+
+
+def test_busy_without_server_progress_has_sm_observed_lower_bound(env):
+    app, m, w, clock, _ = env
+    a = answer()
+    for j in a['open_qms'][0]['jobs']:
+        j.pop('created_at', None)
+        j.pop('updated_at', None)
+    w.script[:] = [a]
+    _watch(m, clock, 305)
+    html = page(app, 'live')
+    assert 'for at least 5 min (observed by SM)' in html
+    assert 'busy time unknown' not in html
+    w.script[:] = [answer(qms=())]
+    clock.t += 5
+    m.poll_once()
+    assert 'observed by SM' not in page(app, 'live')
+
+
+@pytest.mark.parametrize('first_read', [True, False])
+def test_explicit_contention_stays_deferred_without_inventing_occupancy(env, first_read):
+    app, m, w, clock, _ = env
+    if not first_read:
+        m.poll_once()
+    w.script[:] = [om.WorkerError('RuntimeError: held by another client')]
+    for _ in range(4):
+        clock.t += 60
+        m.poll_once()
+    st = m.status()
+    assert st['state'] == 'stale' and not st['health'].get('problem')
+    html = page(app, 'live')
+    assert 'PROBLEM' not in html
+    if first_read:
+        assert '>UNKNOWN</strong>' in html and 'No successful read yet.' in html
+        assert 'No QM is open: the hardware is free.' not in html
+    else:
+        assert 'BUSY' in html and 'last good read was 240 s ago' in html
+
+
+def test_status_does_not_wait_for_a_poll_in_its_request(env):
+    """A slow server request holds the poll lock; the badge and page still read the monitor at once."""
+    import threading
+    import time as _time
+    app, m, worker, clock, _ = env
+    m.poll_once()
+    entered, release = threading.Event(), threading.Event()
+    real = worker.request
+
+    def slow(op, timeout=None, **kw):
+        if op == 'poll':
+            entered.set()
+            release.wait(10)
+        return real(op, timeout=timeout, **kw)
+
+    worker.request = slow
+    t = threading.Thread(target=m.poll_once, daemon=True)
+    t.start()
+    try:
+        assert entered.wait(5)
+        t0 = _time.monotonic()
+        st = m.status()
+        assert _time.monotonic() - t0 < 2
+        assert st['state'] in ('ok', 'stale')
+    finally:
+        release.set()
+        t.join(10)
