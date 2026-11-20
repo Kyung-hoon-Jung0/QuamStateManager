@@ -184,6 +184,27 @@ class Guard:
             self.fail(channel, detail)
         return refused
 
+    # R3-1: every name the sim step constructs, captured before any library or node code runs.
+    SIM_NAMES = (("qm", "QuantumMachinesManager"), ("qm", "SimulationConfig"))
+    # Cold sim step only; captured when the child imported qm_saas before the audit hook.
+    SAAS_NAMES = (("qm_saas", "QmSaas"), ("qm_saas", "QOPVersion"), ("qm_saas", "ClusterConfig"))
+
+    def capture_sim_classes(self):
+        """Capture every sim-step class into ONE dict, keyed "<module>.<name>" (FI4-1, R3-1).
+
+        The sim step constructs only these objects; ``check_sim_bindings`` pins each module binding.
+        qm_saas is never imported here: its names join only when the module is already loaded.
+        """
+        import importlib
+        self.sim_classes, self.sim_owners = {}, {}
+        for module_name, attribute in self.SIM_NAMES + self.SAAS_NAMES:
+            if (module_name, attribute) in self.SAAS_NAMES and module_name not in sys.modules:
+                continue
+            module = importlib.import_module(module_name)
+            key = module_name + "." + attribute
+            self.sim_owners[key] = (module, attribute)
+            self.sim_classes[key] = vars(module)[attribute]
+
     def install_classes(self, lease=None):
         """Patch real classes, including aliases imported before this call.
 
@@ -191,9 +212,8 @@ class Guard:
         the guard's own late lease (``set_lease``), which stays unset in a plain
         build, so every QMM construction is refused there.
         """
-        from qm import QuantumMachinesManager
-        # FI4-1: the sim step constructs exactly this object, never a fresh name lookup.
-        self.qmm_class = QuantumMachinesManager
+        self.capture_sim_classes()
+        QuantumMachinesManager = self.sim_classes["qm.QuantumMachinesManager"]
         original = QuantumMachinesManager.__init__
         source = self.lease if lease is None else lease
 
@@ -224,12 +244,12 @@ class Guard:
         from qualibrate.core.storage.local_storage_manager import LocalStorageManager
         LocalStorageManager.save = self.block("storage.save", "refused")
 
-    def check_qmm_binding(self):
-        """Refuse a node that rebound ``qm.QuantumMachinesManager`` (FI4-1); return the captured class."""
-        import qm
-        if vars(qm).get("QuantumMachinesManager") is not self.qmm_class:
-            self.fail("barrier", "qm.QuantumMachinesManager replaced")
-        return self.qmm_class
+    def check_sim_bindings(self):
+        """Refuse a node that rebound any captured sim-step name (FI4-1, R3-1); return the captured dict."""
+        for key, (module, attribute) in self.sim_owners.items():
+            if vars(module).get(attribute) is not self.sim_classes[key]:
+                self.fail("barrier", key + " replaced")
+        return dict(self.sim_classes)
 
     def install_library(self, library_root):
         import quam_config

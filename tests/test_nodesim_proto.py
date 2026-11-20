@@ -242,6 +242,6 @@ def test_cluster_config_matches_p1_child(monkeypatch):
     for config in ({"controllers": {"c1": {"fems": {"1": {"type": "MW"}, "3": {"type": "LF"}}},
                                     "c2": {"fems": {"2": {"type": "MW"}, "1": {"type": "LF"}}}}},
                    {"controllers": {"c1": {"fems": {"4": {"type": "LF"}}}}}):
-        old = nodesim_click.cluster_of(config).calls
+        old = nodesim_click.cluster_of(config, _FakeCluster).calls
         new = p.cluster_config(p.cluster_spec(config), fake).calls
         assert new == old

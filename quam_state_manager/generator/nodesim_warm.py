@@ -179,7 +179,6 @@ class Worker:
             node = notes["stub"].instances[0]
             built = cold.post_build(out, notes)
             config, script = built["config"], built["script"]
-            from qm import SimulationConfig
             spec = proto.cluster_spec(config)
             hash_value = proto.cluster_hash(spec)
             result.update(script=script, script_ok=built["script_ok"],
@@ -224,12 +223,13 @@ class Worker:
             self.guard.enter_sim()
             if self.qmm is None:
                 self.phase("connect")
-                qmm_class = self.guard.qmm_class  # FI4-1: the patched class, never a fresh lookup
+                qmm_class = self.guard.sim_classes["qm.QuantumMachinesManager"]  # FI4-1: never a fresh lookup
                 self.qmm = self.bounded(lambda: qmm_class(**self.guard.lease_params),
                                         30, self.pump, "connect")
             if self.pump():
                 raise cold.Stopped()
             self.phase("submit")
+            SimulationConfig = self.guard.sim_classes["qm.SimulationConfig"]  # R3-1: never a fresh lookup
             job = self.bounded(lambda: self.qmm.simulate(config, node.namespace["qua_program"],
                                                        SimulationConfig(duration=request["window_ns"] // 4)),
                                request["wait_cap_s"], self.pump, "submit")

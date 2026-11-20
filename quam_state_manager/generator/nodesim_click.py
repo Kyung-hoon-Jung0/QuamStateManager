@@ -34,6 +34,7 @@ import traceback
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import nodesim_build as nb  # noqa: E402
+from nodesim_proto import is_allowed_saas_host  # noqa: E402
 
 KINDS = ("ok", "node_error", "serializer", "guard", "refused", "too_long", "timeout", "failed")
 #: the child's phases in order; SM's own ``copy`` comes before them
@@ -52,6 +53,8 @@ SERIALIZATION = "QUA serialization validation failed: "
 #: tries of one ``_status.json`` replace, and the pause between them (a reader holds the file for milliseconds)
 STATUS_REPLACE_TRIES = 20
 STATUS_REPLACE_WAIT_S = 0.01
+# Every class the cold sim step constructs (R3-1): the Guard's one list, never a second copy here.
+COLD_SIM_NAMES = tuple(f"{m}.{n}" for m, n in nb.Guard.SIM_NAMES + nb.Guard.SAAS_NAMES)
 #: qm's answer when the cloud simulator refuses a window (P0b item 4, D-41, Q-4)
 TOO_LONG_MARKS = ("Internal Server Error", "StatusCode.UNKNOWN")
 
@@ -179,11 +182,14 @@ def resolve(host, port):
     return sorted(pairs)
 
 
-def cluster_of(config):
-    """The cloud instance's cluster: the config's FEM slots by type (as P0b and the gate sim)."""
-    import qm_saas
+def cluster_of(config, cluster_class):
+    """The cloud instance's cluster: the config's FEM slots by type (as P0b and the gate sim).
+
+    *cluster_class* is the captured ``qm_saas.ClusterConfig`` (R3-1), never a fresh lookup.
+    """
+    from types import SimpleNamespace
     from nodesim_proto import cluster_config, cluster_spec
-    return cluster_config(cluster_spec(config), qm_saas)
+    return cluster_config(cluster_spec(config), SimpleNamespace(ClusterConfig=cluster_class))
 
 
 def target_key(fields, targets):
@@ -310,10 +316,14 @@ def close_instance(inst, counters):
 
 def simulate(saas, built, req, guard, status, stopping, counters, box):
     """One cloud instance: login, spawn, connect, submit, wait (capped), report, close."""
-    from qm import SimulationConfig
-    from qm_saas import QmSaas, QOPVersion
-    # FI4-1: refuse a rebound module name; construct only the class whose __init__ the guard patched.
-    QuantumMachinesManager = guard.check_qmm_binding()
+    # FI4-1, R3-1: refuse any rebound sim-step name; construct only the objects captured before node code.
+    classes = guard.check_sim_bindings()
+    missing = [name for name in COLD_SIM_NAMES if name not in classes]
+    if missing:
+        raise ImportError("not captured before the build: " + ", ".join(missing))
+    QuantumMachinesManager, SimulationConfig = classes["qm.QuantumMachinesManager"], classes["qm.SimulationConfig"]
+    QmSaas, QOPVersion = classes["qm_saas.QmSaas"], classes["qm_saas.QOPVersion"]
+    ClusterConfig = classes["qm_saas.ClusterConfig"]
     window_ns = int(req["window_ns"])
     wait_cap = float(req.get("wait_cap_s") or WAIT_CAP_S)
     status.begin("login")
@@ -323,7 +333,7 @@ def simulate(saas, built, req, guard, status, stopping, counters, box):
     if stopping():
         raise Stopped()
     status.begin("spawn")
-    inst = client.simulator(version, cluster_of(built["config"]))
+    inst = client.simulator(version, cluster_of(built["config"], ClusterConfig))
     box["inst"] = inst
     counters["opened"] = counters.get("opened", 0) + 1
     try:
@@ -332,6 +342,8 @@ def simulate(saas, built, req, guard, status, stopping, counters, box):
             raise Stopped()
         status.begin("connect")
         params = inst.qmm_connection_params
+        if not is_allowed_saas_host(params["host"], params["port"]):
+            guard.fail("lease", ONLY_SAAS)
         guard.set_lease(params, resolve(params["host"], params["port"]))
         qmm = QuantumMachinesManager(**params)
         status.begin("submit")
@@ -444,6 +456,12 @@ def main():
         nb.verify_env(job, guard)
         nb.verify_config_raw(guard)
         nb.preimport_trusted()  # D-33 / D-39: the one shared pre-import list
+        try:
+            # R3-1: loaded before node code so install_classes captures its classes. Cold only, outside the
+            # D-33 shared list on purpose: the warm worker never imports qm_saas (module level opens no socket).
+            import qm_saas  # noqa: F401
+        except ImportError:
+            pass  # the sim step then refuses with "not captured", before any login
         guard.install_audit()
         import qm  # noqa: F401
         import qualibrate  # noqa: F401

@@ -411,6 +411,197 @@ def test_fi1c_substitute_warm(session):
     assert session.log().count("simulate") == 1  # only the clean first click simulated
 
 
+# ---------------------------------------------------------------- INT3 (R3-1): every captured sim-step name
+def substitute(module, name):
+    """A node that rebinds <module>.<name> to a subclass whose __init__ writes a marker file."""
+    return f"""
+import os, {module}
+from pathlib import Path
+Base = {module}.{name}
+class Sub(Base):
+    def __init__(self, *args, **kwargs):
+        Path(os.environ["QUAM_STATE_PATH"], "int3_sub_ran").write_text("yes")
+{module}.{name} = Sub
+"""
+
+
+# qm.QuantumMachinesManager keeps its FI4-1 rows above; these are the other captured names.
+INT3_COLD = ("qm.SimulationConfig", "qm_saas.QmSaas", "qm_saas.QOPVersion", "qm_saas.ClusterConfig")
+INT3_WARM = ("qm.SimulationConfig",)
+
+
+@pytest.mark.parametrize("key", INT3_COLD)
+def test_int3_substitute_cold(key, tmp_path, generator_dir):
+    """R3-1: a rebound sim-step name is refused by name before login (no credentials passed); Sub never runs."""
+    click = Click(tmp_path / "cold", generator_dir)
+    with listener() as (login_port, login), listener() as (inst_port, inst):
+        node = write_node(click.library, "11_fake_rabi.py", substitute(*key.split(".")))
+        result = click.start(node, login_port, inst_port).finish()
+    click.connections = {"login": login["connections"], "instance": inst["connections"]}
+    assert not (click.chip / "int3_sub_ran").exists(), "node code ran in the sim step"
+    assert_guard(click, result, f"GUARD FAIL barrier {key} replaced")
+
+
+@pytest.mark.parametrize("key", INT3_WARM)
+def test_int3_substitute_warm(key, session):
+    """R3-1: rebinding on warm click 2 with no lease renewal is refused by name; Sub never runs."""
+    ready(session)
+    ok_click(session)
+    session.node(substitute(*key.split(".")))
+    session.click()
+    event = session.events.get(timeout=20)
+    while event["ev"] not in ("guard", "result", "bye", "eof"):
+        event = session.events.get(timeout=20)
+    assert event["ev"] == "guard", event
+    assert event["line"] == f"GUARD FAIL barrier {key} replaced", event
+    assert session.event("bye")["why"] == "guard"
+    session.proc.wait(timeout=10)
+    assert not (session.chip / "int3_sub_ran").exists(), "node code ran in the sim phase"
+    assert session.log().count("simulate") == 1  # only the clean first click simulated
+
+
+def test_int3_cold_sim_step_constructs_only_captured(monkeypatch):
+    """R3-1 depth: with every binding check passed, simulate() still builds only the captured objects.
+
+    The qm / qm_saas modules here carry rogue classes, as if a rebinding happened after the check;
+    a fresh name lookup in the sim step would construct one and fail this pin.
+    """
+    import types
+    from quam_state_manager.generator import nodesim_click as nc
+    made = []
+
+    def rogue(name):
+        def init(self, *args, **kwargs):
+            raise AssertionError("fresh lookup constructed " + name)
+        return type("Rogue", (), {"__init__": init})
+
+    for module_name, names in (("qm", ("QuantumMachinesManager", "SimulationConfig")),
+                               ("qm_saas", ("QmSaas", "QOPVersion", "ClusterConfig"))):
+        module = types.ModuleType(module_name)
+        for name in names:
+            setattr(module, name, rogue(module_name + "." + name))
+        monkeypatch.setitem(sys.modules, module_name, module)
+
+    class Report:
+        def to_dict(self):
+            return {"adc_acquisitions": [{"end_time": 40}]}
+
+    class Job:
+        def wait_until(self, state, timeout=None):
+            return True
+
+        def get_simulated_waveform_report(self):
+            return Report()
+
+    class Inst:
+        qmm_connection_params = {"host": "192.0.2.10", "port": 1}
+
+        def spawn(self):
+            made.append("spawn")
+
+        def close(self):
+            made.append("close")
+
+    class Captured:
+        """Base of the captured fakes: records its construction."""
+        def __init__(self, *args, **kwargs):
+            made.append(type(self).__name__)
+            self.kwargs = kwargs
+
+    class QuantumMachinesManager(Captured):
+        def simulate(self, config, program, simulation_config):
+            return Job()
+
+    class SimulationConfig(Captured):
+        pass
+
+    class QmSaas(Captured):
+        def simulator(self, version, cluster):
+            return Inst()
+
+    class QOPVersion(Captured):
+        pass
+
+    class Controller:
+        def mw_fems(self, *slots):
+            pass
+
+        def lf_fems(self, *slots):
+            pass
+
+    class ClusterConfig(Captured):
+        def controller(self):
+            return Controller()
+
+    captured = {"qm.QuantumMachinesManager": QuantumMachinesManager, "qm.SimulationConfig": SimulationConfig,
+                "qm_saas.QmSaas": QmSaas, "qm_saas.QOPVersion": QOPVersion, "qm_saas.ClusterConfig": ClusterConfig}
+
+    class StubGuard:
+        def check_sim_bindings(self):
+            return dict(captured)
+
+        def set_lease(self, params, endpoints):
+            pass
+
+    class Status:
+        def begin(self, phase):
+            pass
+
+        def end(self):
+            pass
+
+    built = {"config": {"controllers": {"c1": {"fems": {"1": {"type": "MW"}}}}}, "program": object()}
+    saas = {"email": "e", "password": "p", "host": "127.0.0.1", "port": 1, "version": "v_fake"}
+    out = nc.simulate(saas, built, {"window_ns": 400, "wait_cap_s": 5}, StubGuard(), Status(),
+                      lambda: False, {}, {})
+    assert out["last_adc_end_ns"] == 40
+    assert made == ["QmSaas", "QOPVersion", "ClusterConfig", "spawn", "QuantumMachinesManager",
+                    "SimulationConfig", "close"]
+
+
+@pytest.mark.parametrize("host", ["10.0.0.1", "127.0.0.1"])
+def test_int3p3_cold_private_lease_host(host, tmp_path, generator_dir):
+    """INT3P3: refuse a private instance host before set_lease or QMM construction."""
+    click = Click(tmp_path / "cold", generator_dir)
+    node = click.node('''
+        from nodesim_guard import Guard
+        def unexpected_lease(*args, **kwargs):
+            raise AssertionError("set_lease reached for a refused host")
+        Guard.set_lease = unexpected_lease
+    ''')
+    with listener() as (login_port, login), listener() as (inst_port, inst):
+        result = click.start(node, login_port, inst_port, control={"instance_host": host}).finish()
+    line = "GUARD FAIL lease Only the cloud simulator is allowed."
+    assert result["kind"] == "guard" and result["ok"] is False, result
+    assert result["message"] == line and result["guard_lines"] == [line], result
+    assert result["instances_opened"] == result["instances_closed"] == 1
+    assert click.saas_log() == ["spawn", "close"]
+    assert login["connections"] == 1 and inst["connections"] == 0
+    assert "set_lease reached" not in click.stderr
+
+
+def test_int3_sim_phase_has_no_fresh_qm_import():
+    """R3-1 source pin: the cold sim step and the warm worker never import a qm / qm_saas name at sim time."""
+    import ast
+    generator = cold_h.GENERATOR
+
+    def imports(node):
+        found = []
+        for item in ast.walk(node):
+            if isinstance(item, ast.ImportFrom) and (item.module or "").split(".")[0] in ("qm", "qm_saas"):
+                found.append(f"from {item.module} import ...")
+            elif isinstance(item, ast.Import):
+                found += [a.name for a in item.names if a.name.split(".")[0] == "qm_saas"]
+        return found
+
+    cold_tree = ast.parse((generator / "nodesim_click.py").read_text(encoding="utf-8"))
+    cold = {n.name: n for n in ast.walk(cold_tree) if isinstance(n, ast.FunctionDef)}
+    for name in ("simulate", "cluster_of"):
+        assert imports(cold[name]) == [], name
+    warm_tree = ast.parse((generator / "nodesim_warm.py").read_text(encoding="utf-8"))
+    assert imports(warm_tree) == []
+
+
 # ---------------------------------------------------------------- env rows (FI-2, 4, 5, 10, 13, 14)
 ENV_ROWS = {
     "FI-2-env": ("QUAM_STATE_PATH", "live"),
