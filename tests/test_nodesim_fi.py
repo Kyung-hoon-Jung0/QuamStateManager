@@ -15,7 +15,7 @@ import threading
 import pytest
 
 from quam_state_manager.core.nodesim_spawn import (
-    build_node, live_digest, parse_output, pinned_env, prepare_scratch,
+    build_node, check_library, live_digest, parse_output, pinned_env, prepare_scratch,
 )
 
 
@@ -71,6 +71,14 @@ def test_verdict_parser():
                    json.dumps(answer()) + "\n" + json.dumps(answer())):
         with pytest.raises(ValueError):
             parse_output(output)
+
+
+def test_library_root_check(tmp_path):
+    root = tmp_path / "library"
+    check_library({"library_file": str(root / "quam_config" / "__init__.py")}, root)
+    for reported in (str(tmp_path / "other" / "quam_config" / "__init__.py"), None):
+        with pytest.raises(RuntimeError, match="library outside the chosen root"):
+            check_library({"library_file": reported}, root)
 
 
 def test_stub_writers_raise():

@@ -62,6 +62,14 @@ def parse_output(stdout):
     return result
 
 
+def check_library(result, library_root):
+    """D-15 on the SM side: the reported quam_config must live under the chosen root."""
+    reported = result.get("library_file")
+    root = Path(library_root).resolve()
+    if not reported or not Path(reported).resolve().is_relative_to(root):
+        raise RuntimeError("library outside the chosen root: " + str(reported))
+
+
 def live_digest(folder):
     _, _, state, wiring = safe_io.read_state_wiring_raw(folder)
     return {"state.json": hashlib.sha256(state).hexdigest(),
@@ -91,6 +99,8 @@ def build_node(interpreter, node_file, library_root, chip_copy, scratch,
         result = parse_output(stdout)
         if process.returncode and result["ok"]:
             raise RuntimeError("child exited unsuccessfully after a success result")
+        if result["ok"]:
+            check_library(result, library_root)
         result["stderr"] = stderr
         return result
     finally:
