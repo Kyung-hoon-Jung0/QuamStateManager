@@ -9127,35 +9127,65 @@ def _running_config_mismatches() -> list[dict]:
 
 
 def _project_state_mismatch() -> dict | None:
-    """The open chip's project keeps its quam state in another folder.
+    """The runs shown beside the open chip were made from another state.
 
-    Runs a QUAlibrate project saves are made from the project's configured
-    ``[quam] state_path``. When that folder is not the chip open in SM, the
-    runs shown beside the chip were made from another state, so pages say so
-    once. The folder rule is the one source: run contents are never compared
-    (cost), and a run folder records no source state path to prefer. Returns
-    ``{"project", "project_state", "chip_folder"}`` or None (no chip, an
-    archive view, no project scope, a project with no state path, or the
-    same folder). READ-ONLY: the project config is read through the
-    stat-cached reverse index; never raises."""
-    from quam_state_manager.core import qualibrate_config
+    Two rules, one notice. FOLDER rule (``kind`` "folder"): runs a QUAlibrate
+    project saves are made from the project's configured ``[quam] state_path``;
+    when that folder is not the chip open in SM, returns ``{"kind", "project",
+    "project_state", "chip_folder"}``. CONTENT rule (``kind`` "content"), asked
+    only when the folder rule is quiet: a node can run from an in-memory state
+    that evolves run to run while the chip file stays put, so the NEWEST run in
+    this chip's own run storage (the project's data folder, ``_scope_storage_path``;
+    none -> nothing to say) has its saved ``quam_state`` compared with the open chip's working copy
+    (``core/run_state_origin``; the run's own recorded writes ignored); returns
+    ``{"kind", "run_id", "count", "examples"}`` when they differ. None for no
+    chip, an archive view, no runs, a run without a saved state, or no
+    difference. READ-ONLY; the newest run is picked from the scoped store as
+    indexed (no rescan, one run folder read, cached); never raises."""
+    from quam_state_manager.core import qualibrate_config, run_state_origin, store_revs
 
     ctx = _active_ctx()
     if not ctx or ctx.get("type") != "quam" or (ctx.get("origin") or "live") != "live":
         return None
     project = ctx.get("qualibrate_project")
     chip = ctx.get("live_path") or ctx.get("path")
-    if not project or not chip:
+    if project and chip:
+        try:
+            index = qualibrate_config.project_state_paths()
+            state = dict(index.get("projects") or []).get(project)
+            if state and not path_match.same_folder(chip, state):
+                return {"kind": "folder", "project": project, "project_state": str(state),
+                        "chip_folder": str(chip)}
+        except Exception:  # noqa: BLE001 -- a notice must never break a render
+            logger.debug("project state compare failed", exc_info=True)
+    store = ctx.get("store")
+    if store is None or not isinstance(getattr(store, "state", None), dict):
         return None
     try:
-        index = qualibrate_config.project_state_paths()
-        state = dict(index.get("projects") or []).get(project)
-        if not state or path_match.same_folder(chip, state):
+        storage = _scope_storage_path(ctx)     # this chip's own run storage, never the workspace
+        ds = (_get_or_create_store(Path(storage), rescan=False, hold_filling=True)
+              if storage and Path(storage).is_dir() else None)
+        if ds is None:
             return None
+        newest, newest_key = None, None
+        with ds._scan_lock:
+            runs = list(ds.runs.values())
+        for run in runs:
+            key = _run_recency(run)
+            if newest_key is None or key > newest_key:
+                newest, newest_key = run, key
+        if newest is None:
+            return None
+        rev = (store_revs.store_serial(store), getattr(store, "mutation_seq", 0), id(store.state))
+        found = run_state_origin.newest_run_origin(newest.folder_path, newest.run_id,
+                                                   store.state, rev)
     except Exception:  # noqa: BLE001 -- a notice must never break a render
-        logger.debug("project state compare failed", exc_info=True)
+        logger.debug("run state origin compare failed", exc_info=True)
         return None
-    return {"project": project, "project_state": str(state), "chip_folder": str(chip)}
+    if not found or not found.get("differs"):
+        return None
+    return {"kind": "content", "run_id": found["run_id"], "count": found["count"],
+            "examples": found["examples"]}
 
 
 def _chip_is_open() -> bool:
