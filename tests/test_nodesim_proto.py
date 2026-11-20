@@ -54,6 +54,28 @@ def test_host_allowed():
     assert p.is_allowed_saas_host("192.0.2.10", 443)
 
 
+@pytest.mark.parametrize("port", [80, 9510, 19510])
+@pytest.mark.parametrize("address,allowed", [
+    ("8.8.8.8", True), ("2606:4700:4700::1111", True),
+    ("127.0.0.1", False), ("10.1.2.3", False), ("192.168.1.2", False), ("169.254.1.2", False),
+    ("240.0.0.1", False), ("224.0.0.1", False), ("0.0.0.0", False), ("100.64.0.1", False),
+    ("::1", False), ("fc00::1", False), ("fe80::1", False), ("::ffff:127.0.0.1", False), ("4000::1", False),
+])
+def test_saas_ports_require_safe_address(address, allowed, port):
+    """SaaS service ports accept global addresses; no connection or DNS lookup occurs."""
+    assert p.is_allowed_saas_host(address, port) is allowed
+
+
+@pytest.mark.parametrize("port", [9510, 19510])
+@pytest.mark.parametrize("extra", ["8.8.4.4", "127.0.0.1", "10.1.2.3", "192.0.2.10"])
+def test_saas_service_ports_require_every_dns_answer_global(port, extra):
+    """Mixed DNS answers and TEST-NET cannot bypass the service-port address rule."""
+    def resolver(host, service_port, **kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, service_port)) for ip in ("8.8.8.8", extra)]
+
+    assert p.is_allowed_saas_host("fixture.invalid", port, resolver) is (extra == "8.8.4.4")
+
+
 def test_resolver_all_addresses():
     """Pin injected DNS and reject mixed safe/unsafe answers (review P1-2)."""
     calls = []

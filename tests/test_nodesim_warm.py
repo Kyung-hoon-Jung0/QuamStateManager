@@ -449,6 +449,20 @@ def test_s13_bad_lease_not_relayed(rig, host):
     assert "lease" not in rig.ops()
 
 
+def test_snapshot_chip_contains_only_state_and_wiring(tmp_path):
+    """The QUAM directory has no identity JSON; the sibling retains all three ids without QUAM."""
+    chip, after = tmp_path / "chip", tmp_path / "after"
+    chip.mkdir()
+    after.mkdir()
+    for name in ("state.json", "wiring.json"):
+        (after / name).write_text("{}", encoding="ascii")
+    copies = SimpleNamespace(after=after, seq=7, store_id="store")
+    identity = pool.WorkerClient.snapshot(SimpleNamespace(chip=chip), copies, "click")
+    assert sorted(path.name for path in chip.iterdir()) == ["state.json", "wiring.json"]
+    assert json.loads((chip.parent / "_snapshot.json").read_text()) == identity
+    assert identity == dict(seq=7, store_id="store", click_id="click")
+
+
 def test_s14_scratch_is_per_owner_pid(rig):
     """S-14: equal worker keys in two owner processes cannot share snapshots (D-14)."""
     first = rig.module.WorkerClient(sys.executable, rig.lib, rig.live, CREDS["host"],
@@ -460,7 +474,7 @@ def test_s14_scratch_is_per_owner_pid(rig):
         assert first.scratch != second.scratch
         first.snapshot(rig.copies, "first")
         second.snapshot(rig.copies, "second")
-        assert json.loads((first.chip / "_snapshot.json").read_text())["click_id"] == "first"
+        assert json.loads((first.chip.parent / "_snapshot.json").read_text())["click_id"] == "first"
     finally:
         first.close()
         second.close()

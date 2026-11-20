@@ -155,7 +155,7 @@ def owner(args):
         deadline = time.monotonic() + 8
         while not (directory / "owners-continue").exists() and time.monotonic() < deadline:
             threading.Event().wait(.02)
-        ready["identity_kept"] = json.loads((worker.chip / "_snapshot.json").read_text()) == identity
+        ready["identity_kept"] = json.loads((worker.chip.parent / "_snapshot.json").read_text()) == identity
         publish(result_file, ready)
     finally:
         pool.close()

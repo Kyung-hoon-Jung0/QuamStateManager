@@ -153,7 +153,8 @@ class Worker:
             self.phase("build")
             self.emit("build_started", click_id=self.click_id)
             self.guard.enter_build()
-            snapshot = json.loads((Path(self.job["chip_copy"]) / "_snapshot.json").read_text(encoding="utf-8"))
+            snapshot_path = Path(self.job["chip_copy"]).parent / "_snapshot.json"
+            snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
             # D-50: echo the ids of the copy actually loaded, so SM's check_snapshot can fail on a stale copy.
             result.update({key: snapshot[key] for key, kind in proto.SNAPSHOT.items()
                            if type(snapshot.get(key)) is kind})

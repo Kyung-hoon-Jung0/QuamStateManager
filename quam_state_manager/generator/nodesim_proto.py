@@ -227,8 +227,6 @@ def is_allowed_saas_host(host, port, resolver=None):
     """Check every resolved address, allowing offline TEST-NET fixtures (D-11, review P1-2)."""
     if type(host) is not str or not host or type(port) is not int or not 1 <= port <= 65535:
         return False
-    if port in (9510, 19510):
-        return False
     try:
         try:
             addresses = [ipaddress.ip_address(host)]
@@ -241,7 +239,10 @@ def is_allowed_saas_host(host, port, resolver=None):
             address = getattr(address, "ipv4_mapped", None) or address
             test_net = address.version == 4 and any(address in ipaddress.ip_network(net) for net in
                                                    ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24"))
-            if address.is_loopback or address.is_link_local or address.is_unspecified or address.is_multicast:
+            if (address.is_loopback or address.is_link_local or address.is_unspecified
+                    or address.is_multicast or address.is_reserved):
+                return False
+            if port in (9510, 19510) and not address.is_global:
                 return False
             if not address.is_global and not test_net:
                 return False
