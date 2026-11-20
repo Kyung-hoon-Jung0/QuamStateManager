@@ -1,0 +1,155 @@
+'use strict';
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const puppeteer = require('puppeteer-core');
+const root = path.join(__dirname, '..');
+const web = path.join(root, 'quam_state_manager', 'web', 'static');
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const row = id => ({ id, f: 'folder', exp: 'ramsey', date: '2026-11-20', time: '01:00:00',
+    t: 1000000 + id, q: ['q1'], p: [], oc: {}, tags: [], sm: {}, pm: {}, status: 'finished' });
+let browser;
+async function mount() {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1366, height: 768 });
+    const rows = Array.from({ length: 320 }, (_, i) => row(320 - i));
+    await page.setContent(`<div id="sidebar-tree"><details open><summary>day</summary><ul>
+        <li><span class="tree-entry-click" data-uid="folder:320">320</span></li></ul></details></div>
+        <div id="inspector-pane"><div id="ds-detail-root" data-uid="folder:240"></div></div>
+        <div id="table-pane"><div class="datasets-page"><div class="ds-digest-band"><span>2026-11-20</span>
+        <span>320 runs</span><span>all OK</span></div>
+        <script id="ds-rows-data" data-now="1000">${JSON.stringify(rows)}</script>
+        <div id="datasets-scroll" class="datasets-scroll"><table class="datasets-table-virtual">
+        <thead id="datasets-thead"></thead><tbody id="datasets-tbody"></tbody></table></div></div></div>`);
+    await page.addStyleTag({ path: path.join(web, 'style.css') });
+    await page.addStyleTag({ path: path.join(web, 'ui-kit.css') });
+    await page.addStyleTag({ content: `#table-pane {position:relative;top:20px;left:240px;
+        width:850px;height:550px;overflow:auto} .datasets-page {display:block}
+        table {border-collapse:collapse;width:100%} th,td {padding:0;border:0}
+        tbody tr:not(.ds-spacer) {height:32px} .ds-digest-band {width:230px;font-size:13px;line-height:20px}
+        .ds-new-pill {display:block;height:26px;margin:0;padding:0} [hidden] {display:none!important}` });
+    await page.evaluate(() => {
+        window.answers = [];
+        window.fetch = url => String(url).includes('changes-since')
+            ? Promise.resolve({ ok: true, json: () => Promise.resolve(window.answers.shift()
+                || { now: 2000, updated: [], vanished: [] }) }) : new Promise(() => {});
+        window.UI_CONFIG = { datasetPollInterval: 3600 };
+    });
+    for (const file of ['sync-badge.js', 'dataset-virtual.js', 'live-wake.js'])
+        await page.addScriptTag({ path: path.join(web, file) });
+    await page.evaluate(() => window.DatasetVirtual.init());
+    return page;
+}
+async function deliver(page, rows, wake = false) {
+    await page.evaluate((rows, wake) => {
+        window.answers.push({ now: Date.now() / 1000, updated: rows, vanished: [] });
+        if (wake) window.LiveWake._wake({}, true);
+        else window.DatasetVirtual.pollNow();
+    }, rows, wake);
+    await sleep(80);
+}
+async function scrolled(page) {
+    await page.evaluate(() => { document.getElementById('table-pane').scrollTop = 2700; });
+    await sleep(5200); // beyond the user-interaction gate
+}
+async function run() {
+    browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH
+        || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true,
+        args: ['--no-first-run', '--no-default-browser-check'] });
+    console.log('owned browser PID ' + browser.process().pid);
+    const pin = process.env.ARRIVAL_PIN || 'all';
+    if (pin === 'all' || pin === 'scroll') {
+        const page = await mount();
+        await deliver(page, []); // initial catch-up is complete
+        await scrolled(page);
+        const probe = await page.evaluate(() => {
+            const pane = document.getElementById('table-pane').getBoundingClientRect();
+            const rows = [...document.querySelectorAll('#datasets-tbody tr[data-id]')];
+            const tr = rows.find(r => r.getBoundingClientRect().top >= pane.top + 50);
+            window.probeUid = tr.dataset.id;
+            window.probeY = tr.getBoundingClientRect().top;
+            window.samples = [];
+            window.sampleTimer = setInterval(() => {
+                const r = [...document.querySelectorAll('#datasets-tbody tr[data-id]')]
+                    .find(r => r.dataset.id === window.probeUid);
+                const bar = document.getElementById('ds-new-pill');
+                window.samples.push({ dy: r ? r.getBoundingClientRect().top - window.probeY : null,
+                    count: bar && !bar.hidden ? parseInt(bar.textContent, 10) : 0 });
+            }, 100);
+            return { uid: tr.dataset.id, rendered: rows.length, paneY: pane.top };
+        });
+        assert.ok(probe.rendered < 100, 'large day is virtualized');
+        await deliver(page, [row(321)], true);
+        await sleep(700);
+        await deliver(page, [row(321)]); // duplicate poll after the wake
+        await page.evaluate(() => {
+            const tree = document.getElementById('sidebar-tree');
+            tree.querySelector('[data-uid]').dataset.uid = 'folder:321';
+            tree.dispatchEvent(new CustomEvent('htmx:afterSwap', { bubbles: true, detail: { target: tree } }));
+        });
+        await deliver(page, [row(322)], true);
+        await sleep(4200);
+        const samples = await page.evaluate(() => { clearInterval(window.sampleTimer); return window.samples; });
+        if (process.env.ARRIVAL_EVIDENCE) {
+            fs.mkdirSync(process.env.ARRIVAL_EVIDENCE, { recursive: true });
+            fs.writeFileSync(path.join(process.env.ARRIVAL_EVIDENCE, 'samples.json'), JSON.stringify(samples));
+            await page.screenshot({ path: path.join(process.env.ARRIVAL_EVIDENCE, 'scrolled.png') });
+        }
+        assert.ok(samples.length >= 50, 'sample every 100 ms for at least five seconds');
+        assert.ok(samples.every(s => s.dy !== null && Math.abs(s.dy) <= 1), JSON.stringify(samples));
+        assert.ok(samples.every(s => s.count >= 1), 'bar stays through sidebar swap and duplicate delivery');
+        assert.equal(samples.at(-1).count, 2, 'both unseen runs counted');
+        const paneY = await page.$eval('#table-pane', el => el.getBoundingClientRect().top);
+        assert.ok(paneY - probe.paneY >= 26, 'fixture: the external bar moves the scroller origin');
+        await page.click('#ds-new-pill');
+        await sleep(100);
+        assert.ok(await page.$eval('#ds-new-pill', el => el.hidden), 'bar click clears it');
+        await deliver(page, [row(323)]);
+        assert.ok(await page.$eval('#ds-new-pill', el => el.hidden), 'at top arrivals need no bar');
+        await page.close();
+        console.log('scroll pin passed');
+    }
+    if (pin === 'all' || pin === 'top') {
+        const page = await mount();
+        await deliver(page, []);
+        await page.evaluate(() => { document.getElementById('table-pane').scrollTop = 2700; });
+        await sleep(100);
+        await deliver(page, [row(321)], true);
+        assert.equal(await page.evaluate(() => window.DatasetVirtual.getRow('folder:321')), null,
+            'fixture: scrolling holds the arrival');
+        await page.evaluate(() => { document.getElementById('table-pane').scrollTop = 0; });
+        await sleep(100);
+        assert.ok(await page.evaluate(() => window.DatasetVirtual.getRow('folder:321')),
+            'scrolling to the top reveals held arrivals immediately');
+        assert.ok(await page.$eval('#ds-new-pill', el => el.hidden), 'scrolling to top clears the bar');
+        await page.close();
+        console.log('top pin passed');
+    }
+    if (pin === 'all' || pin === 'highlight') {
+        const page = await mount();
+        await deliver(page, []);
+        await scrolled(page);
+        await deliver(page, [row(321)], true);
+        assert.ok(await page.$eval('tr[data-id="folder:240"]', tr => tr.classList.contains('ds-row-active')),
+            'detail run stays highlighted after insertion');
+        await page.evaluate(() => window.DatasetVirtual.applyFilters());
+        await sleep(100);
+        assert.ok(await page.$eval('tr[data-id="folder:240"]', tr => tr.classList.contains('ds-row-active')),
+            'detail run stays highlighted after filtering');
+        await page.close();
+        console.log('highlight pin passed');
+    }
+    if (pin === 'all' || pin === 'load') {
+        const page = await mount();
+        await scrolled(page);
+        const landing = Object.assign(row(322), { t: Date.now() });
+        await deliver(page, [landing], true);
+        assert.ok(await page.$eval('#ds-new-pill', el => el.hidden), 'landing during initial load is baseline');
+        assert.equal(await page.evaluate(() => window.DatasetVirtual.rowCount()), 321);
+        await page.close();
+        console.log('load pin passed');
+    }
+}
+run().catch(e => { console.error(e); process.exitCode = 1; }).finally(async () => {
+    if (browser) await browser.close();
+});

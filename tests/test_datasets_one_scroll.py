@@ -115,7 +115,8 @@ class TestOneScroller:
         ack = _strip_js_comments(js[i:i + 700])
         assert "listMetrics()" in ack and "state.scrollEl.scrollTop" not in ack, ack
         j = js.index("function onScroll(")
-        assert "_arrivalOnScreen()" in _strip_js_comments(js[j:j + 1500])
+        end = js.index("\n    function ", j + 1)
+        assert "_arrivalOnScreen()" in _strip_js_comments(js[j:end])
 
 
 class TestTheSortBandStartsFolded:

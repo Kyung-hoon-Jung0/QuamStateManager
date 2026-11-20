@@ -134,14 +134,19 @@ function ids(w) {
   // (an arrival applied onto the visible rows is not news, docs/104 #3).
   async function arrive(held, landed) {
     const delta = { now: 2000, vanished: [], updated: [landed] };
-    let served = 0;
+    let served = 0, baseline = true;
     const w = bootDatasets([held]);
     w.fetch = (url) => {
+      if (String(url).indexOf('/datasets/changes-since') >= 0 && baseline) {
+        baseline = false;
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ now: 1001, updated: [] }) });
+      }
       if (String(url).indexOf('/datasets/changes-since') >= 0 && !served++)
         return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(delta) });
       return new Promise(() => {});
     };
     global.fetch = w.fetch;
+    w.DatasetVirtual.pollNow();
     await tick(60);
     w.document.getElementById('datasets-scroll').dispatchEvent(new w.Event('scroll'));
     w.document.dispatchEvent(new w.Event('visibilitychange'));

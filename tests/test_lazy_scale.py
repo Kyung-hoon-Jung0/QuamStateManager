@@ -337,6 +337,13 @@ class TestLazySidebarGroups:
         lazy_zone = html.split('data-tpath="2026-03-02"')[1]
         assert "tree-lazy-hint" in lazy_zone.split("</details>")[0]
 
+    def test_refresh_includes_open_group_without_a_second_fetch(self, client):
+        html = client.get("/workspace/tree", query_string={
+            "open_groups": json.dumps(["2026-03-02"])}).get_data(as_text=True)
+        zone = html.split('data-tpath="2026-03-02"')[1].split("</details>")[0]
+        assert "tree-lazy-hint" not in zone
+        assert zone.count("tree-entry-click") == 3
+
     def test_group_fetch_returns_capped_rows(self, client):
         r = client.get("/workspace/tree/group", query_string={
             "capped": "1", "root": str(self.root.resolve()),

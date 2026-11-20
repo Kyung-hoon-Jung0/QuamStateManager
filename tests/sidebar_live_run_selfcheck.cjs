@@ -33,12 +33,19 @@ async function wakeChecks() {
     let hold = null;
     w.fetch = function (url) {
         polls.push(String(url));
-        const body = { v: 1, rescanned: false };
+        const body = { v: 1, rescanned: true };
         const res = { json: () => Promise.resolve(body) };
         if (hold) return new Promise((r) => { hold.push(() => r(res)); });
         return Promise.resolve(res);
     };
-    w.htmx = { ajax: () => Promise.resolve(), process: () => {} };
+    w.document.getElementById('sidebar-tree').innerHTML = '<details class="tree-dir" open '
+        + 'data-tpath="2026-11-20"><summary>day</summary><ul class="tree-entries">'
+        + '<li class="tree-entry-click">run</li></ul></details>';
+    const refreshes = [];
+    w.htmx = { ajax: (method, url, opts) => {
+        refreshes.push({ method, url, opts });
+        return Promise.resolve();
+    }, process: () => {} };
     w.UI_CONFIG = { autoRefreshInterval: 3600 };   // the interval never fires in this check
     const scope = {
         alive: true,
@@ -51,6 +58,9 @@ async function wakeChecks() {
     w.__smBase = { replace: () => scope };
     w.eval(sidebarScript());
     await wait(30);
+    assert.equal(refreshes.length, 1, 'baseline refresh includes the visible group');
+    assert.deepEqual(JSON.parse(refreshes[0].opts.values.open_groups), ['2026-11-20'],
+        'the replacement asks for open groups already filled');
     const base = polls.length;
     assert.equal(base, 1, 'the baseline check runs once on load');
     w.document.dispatchEvent(new w.CustomEvent('sm:runs-changed', { detail: {} }));

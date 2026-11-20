@@ -40022,6 +40022,16 @@ def workspace_tree():
 
     # RAM P7: the run-watch worker rescans (and pre-renders) in the
     # background, so this is normally a memo hit -- see _unfiltered_tree_html.
+    # A refresh renders already-open groups with their entries in the same response.
+    # Otherwise the swap paints empty placeholders until a second request fills them.
+    try:
+        open_groups = json.loads(request.args.get("open_groups", "[]"))
+    except (ValueError, TypeError):
+        open_groups = []
+    if isinstance(open_groups, list) and open_groups:
+        ctx = _tree_render_ctx(ws.tree if ws else {}, ws=ws)
+        ctx["eager_tpaths"].update(p for p in open_groups if isinstance(p, str))
+        return render_template("_sidebar_tree.html", **ctx, tree_ws_version=ws.version if ws else None)
     return _unfiltered_tree_html(ws)
 
 
