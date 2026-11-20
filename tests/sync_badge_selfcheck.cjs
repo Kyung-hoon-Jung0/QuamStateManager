@@ -182,5 +182,48 @@ const chip = (win) => win.document.querySelector('.state-status-notice');
   ok(win.document.querySelector('.state-status-notice') === null, 'and renders nothing');
 }
 
+// ---------------------------------------------------------------------------
+// 8. The chip does not count runs the page already shows (the same rule as
+//    the Datasets "new runs" bar, SyncBadge.runShown): listed in the sidebar
+//    tree with every group around it open, or on screen in the Datasets table.
+//    A run listed only inside a closed group, or not listed at all, counts.
+// ---------------------------------------------------------------------------
+{
+  const win = world();
+  const doc = win.document;
+  const tree = doc.createElement('div');
+  tree.id = 'sidebar-tree';
+  tree.innerHTML = '<details open><summary>today</summary><ul>'
+    + ['f:1', 'f:2', 'f:3'].map(u => '<li><span class="tree-entry-click" data-uid="' + u + '"></span></li>').join('')
+    + '</ul></details><details id="old"><summary>older</summary><ul>'
+    + '<li><span class="tree-entry-click" data-uid="f:4"></span></li></ul></details>';
+  doc.body.appendChild(tree);
+  win.SyncBadge.note('new', { count: 3, uids: ['f:1', 'f:2', 'f:3'] });
+  ok(chip(win) === null, 'three runs the open sidebar group lists: no chip');
+  win.SyncBadge.note('new', { count: 4, uids: ['f:1', 'f:2', 'f:3', 'f:4'] });
+  ok(chip(win) && chip(win).textContent === '1 new',
+     'a run listed only in a closed group still counts (got "' + (chip(win) && chip(win).textContent) + '")');
+  const old = doc.getElementById('old');
+  old.open = true;
+  old.dispatchEvent(new win.Event('toggle'));
+  ok(chip(win) === null, 'opening the group that lists it recounts: no chip');
+  old.open = false;
+  old.dispatchEvent(new win.Event('toggle'));
+  ok(chip(win) === null, 'closing it again does not count a run the page has shown');
+  win.SyncBadge.note('new', { count: 6, uids: ['f:1', 'f:2', 'f:3', 'f:4', 'f:5', 'f:6'] });
+  ok(chip(win) && chip(win).textContent === '2 new', 'runs nothing lists are counted');
+  win.DatasetVirtual = { isOnScreen: (u) => u === 'f:5' };
+  win.SyncBadge.render();
+  ok(chip(win) && chip(win).textContent === '1 new', 'a run on screen in the Datasets table is not counted');
+  const li = doc.createElement('li');
+  li.innerHTML = '<span class="tree-entry-click" data-uid="f:6"></span>';
+  tree.querySelector('details ul').appendChild(li);
+  tree.dispatchEvent(new win.CustomEvent('htmx:afterSwap', { bubbles: true, detail: { target: tree } }));
+  ok(chip(win) === null, 'the sidebar swap that lists the last one clears the chip');
+  win.SyncBadge.clear();
+  win.SyncBadge.note('new', { count: 2 });
+  ok(chip(win) && chip(win).textContent === '2 new', 'a count without uids is shown as the server sent it');
+}
+
 if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
 console.log('all checks passed (' + asserts + ' assertions)');

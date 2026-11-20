@@ -127,10 +127,15 @@ function ids(w) {
   // The table holds the +09:00 run (folder 10:00:00 = 01:00Z). A delta brings a
   // -04:00 run whose folder says 00:07:48 (04:07:48Z): by digits it is older and
   // would land silently; by instant it is the newest run -- announced.
-  {
-    const delta = { now: 2000, vanished: [], updated: [row(1182, '2026-04-03', '00:07:48', T_A, 'fa')] };
+  // A3b is the reverse: the table holds the -04:00 run and the delta brings the
+  // +09:00 one, newer by its folder digits but older by instant -- the cold
+  // build catching up, listed silently.
+  // The user is scrolling, so the delta is held and the run is not on screen
+  // (an arrival applied onto the visible rows is not news, docs/104 #3).
+  async function arrive(held, landed) {
+    const delta = { now: 2000, vanished: [], updated: [landed] };
     let served = 0;
-    const w = bootDatasets([row(5, '2026-04-03', '10:00:00', T_B, 'fk')]);
+    const w = bootDatasets([held]);
     w.fetch = (url) => {
       if (String(url).indexOf('/datasets/changes-since') >= 0 && !served++)
         return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(delta) });
@@ -138,12 +143,21 @@ function ids(w) {
     };
     global.fetch = w.fetch;
     await tick(60);
+    w.document.getElementById('datasets-scroll').dispatchEvent(new w.Event('scroll'));
     w.document.dispatchEvent(new w.Event('visibilitychange'));
     await tick(120);
     const pill = w.document.getElementById('ds-new-pill');
-    ok(served === 1, 'fixture: the delta was served (' + served + ')');
-    ok(pill && !pill.hidden && /^1 new run/.test(pill.textContent),
-       'A3: the -04:00 arrival is announced as new (instant 04:07Z > 01:00Z): "' + (pill && pill.textContent) + '"');
+    return { served: served, shown: !!(pill && !pill.hidden), text: pill ? pill.textContent : '' };
+  }
+  {
+    const a = await arrive(row(5, '2026-04-03', '10:00:00', T_B, 'fk'), row(1182, '2026-04-03', '00:07:48', T_A, 'fa'));
+    ok(a.served === 1, 'fixture: the delta was served (' + a.served + ')');
+    ok(a.shown && /^1 new run/.test(a.text),
+       'A3: the -04:00 arrival is announced as new (instant 04:07Z > 01:00Z): "' + a.text + '"');
+    const b = await arrive(row(1182, '2026-04-03', '00:07:48', T_A, 'fa'), row(5, '2026-04-03', '10:00:00', T_B, 'fk'));
+    ok(b.served === 1, 'fixture: the second delta was served (' + b.served + ')');
+    ok(!b.shown,
+       'A3b: a run newer by folder digits but older by instant (01:00Z < 04:07Z) is not announced: "' + b.text + '"');
   }
 
   // ---------------- B. the Trends axis ----------------

@@ -94,6 +94,22 @@ class TestANewRunDoesNotThrowAwayWhereYouWere:
         # …and the filter's own input handler does not
         assert base.count("SidebarScroll.arm()") == 1
 
+    def test_capture_and_restore_keep_the_view_selfcheck(self):
+        """Driven in jsdom (tests/sidebar_scroll_selfcheck.cjs): at the top a
+        refetch that adds a run scrolls nothing; scrolled into the runs the
+        row being read keeps its place."""
+        import shutil
+        import subprocess
+        if shutil.which("node") is None:
+            pytest.skip("node not on PATH")
+        root = Path(__file__).resolve().parent.parent
+        r = subprocess.run(["node", str(root / "tests" / "sidebar_scroll_selfcheck.cjs")],
+                           capture_output=True, text=True, encoding="utf-8", cwd=str(root), timeout=300)
+        if r.returncode == 2:
+            pytest.skip("jsdom not installed (run `npm install jsdom`)")
+        assert r.returncode == 0, (r.stdout + r.stderr)
+        assert "all checks passed" in r.stdout, (r.stdout + r.stderr)
+
     def test_the_refresh_button_counts_as_the_same_gesture(self):
         blk = self._block()
         assert "btn-workspace-refresh" in blk

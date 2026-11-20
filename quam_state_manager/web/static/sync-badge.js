@@ -64,13 +64,53 @@
         return t ? t.querySelector('.state-status-badge') : null;
     }
 
+    // One rule for "the page already shows this run", used by this chip and by
+    // the Datasets "new runs" bar: its row is on screen in the Datasets table,
+    // or the sidebar tree lists it with every group around it open.
+    function listedInTree(uid) {
+        var tree = document.getElementById('sidebar-tree');
+        if (!tree || uid == null) return false;
+        var q = (window.CSS && window.CSS.escape) ? window.CSS.escape(String(uid)) : String(uid).split('"').join('');
+        var e = tree.querySelector('.tree-entry-click[data-uid="' + q + '"]');
+        if (!e) return false;
+        var d = e.closest('details');
+        while (d) {
+            if (!d.open) return false;
+            d = d.parentElement ? d.parentElement.closest('details') : null;
+        }
+        return true;
+    }
+    function runShown(uid) {
+        var dv = window.DatasetVirtual;
+        if (dv && dv.isOnScreen && dv.isOnScreen(uid)) return true;
+        return listedInTree(uid);
+    }
+
+    // A counted run the page has shown stays acknowledged (closing its group
+    // later does not count it again); the chip counts only the rest.
+    var shownNew = {};
+    function unseenCount(p) {
+        var uids = (p && p.uids) || [], shown = 0;
+        for (var i = 0; i < uids.length; i++) {
+            if (shownNew[uids[i]] || runShown(uids[i])) { shownNew[uids[i]] = true; shown++; }
+        }
+        return Math.max(0, p.count - shown);
+    }
+
     function render() {
         var host = tray();
         var anchor = pill();
         var el = host ? host.querySelector('.state-status-notice') : null;
-        var kind = null;
+        var kind = null, shownPayload = null;
         for (var i = 0; i < ORDER.length; i++) {
-            if (pending[ORDER[i]]) { kind = ORDER[i]; break; }
+            var p = pending[ORDER[i]];
+            if (!p) continue;
+            if (ORDER[i] === 'new' && typeof p.count === 'number') {
+                var c = unseenCount(p);
+                if (!c) continue;          // every counted run is already on the page
+                p = { count: c, uids: p.uids, run: p.run };
+            }
+            kind = ORDER[i]; shownPayload = p; break;
         }
         if (!kind || !host || !anchor) {
             if (el && el.parentNode) el.parentNode.removeChild(el);
@@ -99,7 +139,8 @@
         var spec = KINDS[kind];
         el.setAttribute('data-kind', kind);
         el.className = 'state-status-notice ' + spec.cls;
-        el.textContent = spec.text(pending[kind]);
+        var txt = spec.text(shownPayload);
+        if (el.textContent !== txt) el.textContent = txt;
         el.title = spec.title;
     }
 
@@ -110,6 +151,7 @@
     }
     function clear(kind) {
         if (kind) delete pending[kind]; else pending = {};
+        if (!kind || kind === 'new') shownNew = {};
         render();
     }
     function ackHandler(kind, fn) { onAck[kind] = fn; }
@@ -123,9 +165,19 @@
         if (t && (t.id === 'pending-tray' || (t.querySelector && t.querySelector('#pending-tray')))) render();
     });
     document.addEventListener('sm:tray-swapped', render);
+    // The sidebar listing a counted run, or opening the group that holds it,
+    // shows it: count again.
+    document.addEventListener('htmx:afterSwap', function (ev) {
+        var t = ev && ev.detail && ev.detail.target;
+        if (pending['new'] && t && t.closest && t.closest('#sidebar-tree')) render();
+    });
+    document.addEventListener('toggle', function (ev) {
+        var t = ev && ev.target;
+        if (pending['new'] && t && t.closest && t.closest('#sidebar-tree')) render();
+    }, true);
 
     window.SyncBadge = {
-        note: note, clear: clear, onAck: ackHandler, render: render,
+        note: note, clear: clear, onAck: ackHandler, render: render, runShown: runShown,
         _pending: function () { return pending; }
     };
 })();

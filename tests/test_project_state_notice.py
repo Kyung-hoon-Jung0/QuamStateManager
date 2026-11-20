@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -167,3 +169,16 @@ class TestNoChipOpen:
             html = c.get(url).get_data(as_text=True)
             assert 'data-no-chip="1"' not in html, url
         assert "not open in SM" not in c.get("/qualibrate", headers=HX).get_data(as_text=True)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")
+def test_notice_shows_once_per_page_selfcheck():
+    """With a run open on /datasets the table and the run detail both carry
+    the notice; the page shows it once (app.js _onePerPageNotices)."""
+    root = Path(__file__).resolve().parent.parent
+    r = subprocess.run(["node", str(root / "tests" / "project_state_notice_selfcheck.cjs")],
+                       capture_output=True, text=True, encoding="utf-8", cwd=str(root), timeout=300)
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed (run `npm install jsdom`)")
+    assert r.returncode == 0, (r.stdout + r.stderr)
+    assert "all checks passed" in r.stdout, (r.stdout + r.stderr)
