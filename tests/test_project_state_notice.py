@@ -122,6 +122,16 @@ class TestProjectStateNotice:
             html = routes.render_template("_project_state_notice.html")
         assert MARK in html and "chip_a" in html and "chip_b" in html
 
+    def test_param_notice_precedes_baseline_box(self, proj):
+        c = proj["c"]
+        c.post("/load", data={"folder": str(proj["a"])})
+        _point_alpha_at(proj, proj["b"].as_posix())
+        html = c.get("/param-history", headers=HX).get_data(as_text=True)
+        assert MARK in html
+        assert html.index(MARK) < html.index('class="ph-drift-card')
+        for url in ("/topology", "/wiring", "/qualibrate"):
+            assert MARK in c.get(url, headers=HX).get_data(as_text=True), url
+
     def test_case_variant_spelling_is_the_same_folder(self, proj):
         if os.name != "nt":
             pytest.skip("case-insensitive folder identity is a Windows rule")

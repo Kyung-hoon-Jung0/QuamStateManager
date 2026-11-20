@@ -74,6 +74,7 @@ class TestSoftBreaks:
                 "{% from '_sidebar_tree_macros.html' import entry_rows %}{{ entry_rows([entry]) }}",
                 entry=entry)
         assert 'title="18b_xy_coupler_delay"' in html
+        assert 'class="tree-entry-click" title="18b_xy_coupler_delay"' in html
         assert ('<span class="entry-name-lead">18b_<wbr>xy_<wbr></span>'
                 '<span class="entry-name-head">coupler_<wbr></span>'
                 '<span class="entry-name-tail">delay</span>') in html

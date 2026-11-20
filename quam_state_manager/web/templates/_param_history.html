@@ -74,6 +74,7 @@
      dispatch, and whenever a sync/apply/reset fires liveDriftChanged. #}
   {# S10 walk (N4): the OPEN chip's live drift and its chip pill are not shown
      over an archived chip's history (the banner below names both chips) #}
+  {% include '_project_state_notice.html' %}
   {% if is_loaded_chip %}
   <details class="ph-drift-card ui-disclosure" open>
     <summary class="ph-drift-title ui-disclosure-summary">Live changes since baseline

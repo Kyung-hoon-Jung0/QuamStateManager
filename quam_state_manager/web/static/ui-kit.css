@@ -13,6 +13,7 @@
  */
 
 :root {
+    --ui-role-rr-in: #506432;
     --ui-port-trace-real: #3b82f6;
     --ui-port-trace-imag: #f59e0b;
     --ui-rule-choice-padding: 0 1.4rem 0 var(--ui-gap-1);

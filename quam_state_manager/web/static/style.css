@@ -230,7 +230,7 @@
        the SVG wiring diagram circles.                                  */
     --role-xy-color:        #9b59b6;   /* XY drive port       — purple   */
     --role-rr-color:        #e3781a;   /* Readout resonator   — orange   */
-    --role-rr-in-color:     #c026d3;   /* Readout input - fuchsia (the kit's line-2): a hue apart from rr */
+    --role-rr-in-color:     var(--ui-role-rr-in); /* Readout input: olive, apart from every port role. */
     --role-z-color:         #2e86c1;   /* Flux / Z line - blue; dark theme 3.55:1 on the FEM card */
     --role-coupler-color:   #1abc9c;   /* Coupler             — teal     */
     --role-twpa-pump-color: #dc4535;   /* TWPA pump - red; dark theme 3.32:1 on the FEM card */
@@ -15328,7 +15328,7 @@ details.jargon > .jargon-explain {
     --section-header-bg: rgba(255, 255, 255, 0.06);
     --role-xy-color: #9b59b6;
     --role-rr-color: #e67e22;
-    --role-rr-in-color: #c026d3;
+    --role-rr-in-color: var(--ui-role-rr-in);
     --role-z-color: #2471a3;
     --role-coupler-color: #1abc9c;
     --role-twpa-pump-color: #c8392b;
