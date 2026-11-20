@@ -53,9 +53,8 @@ SERIALIZATION = "QUA serialization validation failed: "
 #: tries of one ``_status.json`` replace, and the pause between them (a reader holds the file for milliseconds)
 STATUS_REPLACE_TRIES = 20
 STATUS_REPLACE_WAIT_S = 0.01
-# Every class the cold sim step constructs (R3-1); Guard.install_classes captures each one.
-COLD_SIM_NAMES = ("qm.QuantumMachinesManager", "qm.SimulationConfig",
-                  "qm_saas.QmSaas", "qm_saas.QOPVersion", "qm_saas.ClusterConfig")
+# Every class the cold sim step constructs (R3-1): the Guard's one list, never a second copy here.
+COLD_SIM_NAMES = tuple(f"{m}.{n}" for m, n in nb.Guard.SIM_NAMES + nb.Guard.SAAS_NAMES)
 #: qm's answer when the cloud simulator refuses a window (P0b item 4, D-41, Q-4)
 TOO_LONG_MARKS = ("Internal Server Error", "StatusCode.UNKNOWN")
 
@@ -458,7 +457,8 @@ def main():
         nb.verify_config_raw(guard)
         nb.preimport_trusted()  # D-33 / D-39: the one shared pre-import list
         try:
-            # R3-1: loaded before node code so install_classes captures its classes.
+            # R3-1: loaded before node code so install_classes captures its classes. Cold only, outside the
+            # D-33 shared list on purpose: the warm worker never imports qm_saas (module level opens no socket).
             import qm_saas  # noqa: F401
         except ImportError:
             pass  # the sim step then refuses with "not captured", before any login
