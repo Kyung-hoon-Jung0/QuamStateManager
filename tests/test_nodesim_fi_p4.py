@@ -28,7 +28,6 @@ from tests.test_nodesim_child import Click, assert_guard, generator_dir, listene
 from tests.test_nodesim_fi import decoy_listener
 from tests.test_nodesim_warm_child import no_worker_orphans, ok_click, ready, session  # noqa: F401
 
-FINDING_QMM = "FI4-1: a node-substituted qm.QuantumMachinesManager is constructed at sim time"
 
 
 # ---------------------------------------------------------------- shared pieces
@@ -379,20 +378,22 @@ qm.QuantumMachinesManager = Sub
 '''
 
 
-@pytest.mark.xfail(strict=True, reason=FINDING_QMM + " (cold child)")
+QMM_LINE = "GUARD FAIL barrier qm.QuantumMachinesManager replaced"
+
+
 def test_fi1c_substitute_cold(tmp_path, generator_dir):
-    """A node-made QMM subclass on the qm module must not be the class the sim step constructs."""
+    """FI4-1: a node-made QMM subclass on the qm module is refused before the sim step; Sub never runs."""
     click = Click(tmp_path / "cold", generator_dir)
     with listener() as (login_port, login), listener() as (inst_port, inst):
         node = write_node(click.library, "11_fake_rabi.py", SUBSTITUTE)
         result = click.start(node, login_port, inst_port).finish()
+    click.connections = {"login": login["connections"], "instance": inst["connections"]}
     assert not (click.chip / "fi4_sub_ran").exists(), "node code ran as the sim-time QMM"
-    assert result["kind"] == "guard", result
+    assert_guard(click, result, QMM_LINE)
 
 
-@pytest.mark.xfail(strict=True, reason=FINDING_QMM + " (warm worker, renewed lease)")
 def test_fi1c_substitute_warm(session):
-    """Click 2 after a lease renewal: the substituted class must not be constructed in the sim phase."""
+    """FI4-1: click 2 after a lease renewal; the rebinding is refused by name and Sub never runs."""
     ready(session)
     ok_click(session)
     session.lease(lease_seq=2)
@@ -402,8 +403,12 @@ def test_fi1c_substitute_warm(session):
     event = session.events.get(timeout=20)
     while event["ev"] not in ("guard", "result", "bye", "eof"):
         event = session.events.get(timeout=20)
-    assert not (session.chip / "fi4_sub_ran").exists(), "node code ran as the sim-time QMM"
     assert event["ev"] == "guard", event
+    assert event["line"] == QMM_LINE, event
+    assert session.event("bye")["why"] == "guard"
+    session.proc.wait(timeout=10)
+    assert not (session.chip / "fi4_sub_ran").exists(), "node code ran as the sim-time QMM"
+    assert session.log().count("simulate") == 1  # only the clean first click simulated
 
 
 # ---------------------------------------------------------------- env rows (FI-2, 4, 5, 10, 13, 14)

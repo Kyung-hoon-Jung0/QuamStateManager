@@ -310,8 +310,10 @@ def close_instance(inst, counters):
 
 def simulate(saas, built, req, guard, status, stopping, counters, box):
     """One cloud instance: login, spawn, connect, submit, wait (capped), report, close."""
-    from qm import QuantumMachinesManager, SimulationConfig
+    from qm import SimulationConfig
     from qm_saas import QmSaas, QOPVersion
+    # FI4-1: refuse a rebound module name; construct only the class whose __init__ the guard patched.
+    QuantumMachinesManager = guard.check_qmm_binding()
     window_ns = int(req["window_ns"])
     wait_cap = float(req.get("wait_cap_s") or WAIT_CAP_S)
     status.begin("login")

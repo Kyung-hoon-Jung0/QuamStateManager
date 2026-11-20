@@ -192,6 +192,8 @@ class Guard:
         build, so every QMM construction is refused there.
         """
         from qm import QuantumMachinesManager
+        # FI4-1: the sim step constructs exactly this object, never a fresh name lookup.
+        self.qmm_class = QuantumMachinesManager
         original = QuantumMachinesManager.__init__
         source = self.lease if lease is None else lease
 
@@ -221,6 +223,13 @@ class Guard:
         QuamRoot.save = self.block("machine.save", "refused")
         from qualibrate.core.storage.local_storage_manager import LocalStorageManager
         LocalStorageManager.save = self.block("storage.save", "refused")
+
+    def check_qmm_binding(self):
+        """Refuse a node that rebound ``qm.QuantumMachinesManager`` (FI4-1); return the captured class."""
+        import qm
+        if vars(qm).get("QuantumMachinesManager") is not self.qmm_class:
+            self.fail("barrier", "qm.QuantumMachinesManager replaced")
+        return self.qmm_class
 
     def install_library(self, library_root):
         import quam_config

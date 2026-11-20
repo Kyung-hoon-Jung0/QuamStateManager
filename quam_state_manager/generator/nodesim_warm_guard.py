@@ -98,6 +98,9 @@ class WarmGuard(Guard):
         QMM.simulate = simulate
         for name in ("__init__", "simulate", "open_qm"):
             self.remember(name, QMM, name)
+        import qm
+        # FI4-1: pin the module binding too, so a node-made subclass is never the sim-time class.
+        self.remember("qm.QuantumMachinesManager", qm, "QuantumMachinesManager")
 
         from qm.quantum_machine import QuantumMachine
         from qm.api.v2.qm_api import QmApi
