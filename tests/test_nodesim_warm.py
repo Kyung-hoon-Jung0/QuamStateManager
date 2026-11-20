@@ -70,8 +70,8 @@ MUTATIONS = {
     "S-13": ('if not proto.is_allowed_saas_host(lease["host"], lease["port"]):', 'if False:'),
     "S-14": ('f"{self.key}-{pid or os.getpid()}"', 'f"{self.key}"'),
     "S-15": ('if trigger not in ("worker_unready", "broker_unstarted"):', 'if False:'),
-    "S-P2-1": ('# Any answer to a req this client never sent is dropped (D-48, review S P2-1, P3-7).\n'
-               '                    continue', 'pass'),
+    "S-P2-1": ('if req is not None and event.get("req") != req:\n                    continue',
+               'if False:\n                    continue'),
     "S-P3-10": ('broker.send(dict(op="release", instance_id=lease["instance_id"], why="host_refused"))', 'pass'),
     "S-F3": ('box["error"] = PoolError("failed", message=CLUSTER_FAILED + event["message"])\n'
              '                        break', 'raise PoolError("worker_crashed", code=None)'),
@@ -701,9 +701,18 @@ def test_p2_1_foreign_answers_are_dropped(module):
     """Review S P2-1: an acquire takes only its own req's answer and a status call only a status event."""
     client = object.__new__(module.BrokerClient)
     client.lock, client.messages, client.sent = threading.Lock(), queue.Queue(), []
-    client.send = client.sent.append
-    client.messages.put(dict(ev="no_slot", req="other", in_use_here=3, earliest_close=None))
-    client.messages.put(dict(ev="spawn_failed", req="mine", line="own answer"))
+    client.pending_replies, client.status_lock = {}, threading.Lock()
+    client.disconnected = threading.Event()
+
+    def send(message):
+        """D-19: inject the reply into its registered request queue."""
+        client.sent.append(message)
+        if message.get("req") == "mine":
+            target = client.pending_replies["mine"]
+            target.put(dict(ev="no_slot", req="other", in_use_here=3, earliest_close=None))
+            target.put(dict(ev="spawn_failed", req="mine", line="own answer"))
+
+    client.send = send
     message = dict(op="acquire", req="mine")
     assert client.request(message, cap=2)["line"] == "own answer"
     client.messages.put(dict(ev="closed", instance_id="instance-a"))

@@ -103,6 +103,8 @@ def kill(proc):
 
 
 #: W F3: the window line when the chip copy's FEM layout cannot be generated
+#: an instance status answer older than this is shown with its age (P1-R2-3)
+STATUS_STALE_S = 5
 CLUSTER_FAILED = "The chip copy's FEM layout could not be read from its config: "
 #: review S P3-8: the line when the worker could not read a message from SM
 PROTOCOL_ERROR = ("The simulator process could not read a message from SM and stopped; "
@@ -394,6 +396,8 @@ class BrokerClient:
         self.credentials = dict(credentials)
         self.connector, self.starter = connector or Client, starter
         self.lock, self.messages = threading.Lock(), queue.Queue()
+        self.pending_replies = {}
+        self.status_lock = threading.Lock()
         self.write_lock = threading.Lock()
         self.pushes, self.secrets = [], [credentials.get("password")]
         self.connection = None
@@ -407,7 +411,7 @@ class BrokerClient:
 
     def connect(self):
         """Start if needed, then authenticate with a bounded handshake (spec 3.1)."""
-        record, started = None, False
+        record, started, launched = None, False, None
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             try:
@@ -419,11 +423,19 @@ class BrokerClient:
             except (OSError, ValueError, KeyError, psutil.Error):
                 pass
             if not started:
-                self.starter(self.python, self.directory)
+                try:
+                    launched = self.starter(self.python, self.directory)
+                except OSError as exc:
+                    raise PoolError("broker_failed", message=f"The simulation broker did not start: {exc}") from None
                 started = True
+            # Exit code 0 is a broker that lost the election to one already running, not a crash.
+            code = launched.poll() if hasattr(launched, "poll") else None
+            if code not in (None, 0):
+                raise PoolError("broker_failed", message=f"The simulation broker did not start: exit code {code}.")
             self.closed.wait(.05)
         if record is None:
-            raise PoolError("broker_unstarted")
+            raise PoolError("broker_unstarted", message="The simulation broker did not start: "
+                            "no authenticated reply.")
         if record.get("proto") != proto.PROTO:
             raise PoolError("broker_failed", message="Protocol version differs.")
         key = (self.directory / "broker.key").read_bytes()
@@ -443,7 +455,8 @@ class BrokerClient:
                 finished.set()
         threading.Thread(target=open_pipe, daemon=True).start()
         if not finished.wait(5) or "error" in box or "conn" not in box:
-            raise PoolError("broker_unstarted")
+            raise PoolError("broker_unstarted", message="The simulation broker did not start: "
+                            "no authenticated reply.")
         self.connection = box["conn"]
         self.reader = threading.Thread(target=self._read, args=(self.connection,), daemon=True)
         self.reader.start()
@@ -466,10 +479,18 @@ class BrokerClient:
                 if event["ev"] in ("renew_offer", "replaced", "closed"):
                     self.pushes.append(event)
                 else:
-                    self.messages.put(event)
+                    with self.lock:
+                        target = self.pending_replies.get(event.get("req"))
+                    if target is not None:
+                        target.put(event)
+                    elif "req" not in event:
+                        self.messages.put(event)
         except (EOFError, OSError, ValueError):
             self.disconnected.set()
             self.messages.put(None)
+            with self.lock:
+                for target in self.pending_replies.values():
+                    target.put(None)
 
     def send(self, message):
         """Send JSON bytes with no logging (D-11, spec 4.1)."""
@@ -488,8 +509,19 @@ class BrokerClient:
         return event
 
     def request(self, message, *, stop=None, on_event=lambda event: None, cap=300):
-        """Serialize acquire/status answers while allowing cancellation (D-19, spec 4.5)."""
-        with self.lock:
+        """Route replies by request id; never hold the framing lock across a wait (D-19)."""
+        req = message.get("req")
+        replies = queue.Queue() if req is not None else self.messages
+        # Status has no protocol request id, so only status calls share this short bounded gate.
+        gate = self.status_lock if req is None else threading.Lock()
+        if not gate.acquire(timeout=min(cap, 1)):
+            raise PoolError("broker_failed", message="The manager status is still pending.")
+        try:
+            if req is not None:
+                with self.lock:
+                    self.pending_replies[req] = replies
+                if self.disconnected.is_set():
+                    raise PoolError("broker_disconnected")
             self.send(message)
             deadline, cancelled = time.monotonic() + cap, False
             while time.monotonic() < deadline:
@@ -498,18 +530,14 @@ class BrokerClient:
                     cancelled = True
                     raise PoolError("stopped_spawning")
                 try:
-                    event = self.messages.get(timeout=.05)
+                    event = replies.get(timeout=min(.05, max(.001, deadline - time.monotonic())))
                 except queue.Empty:
                     continue
                 if event is None:
                     raise PoolError("broker_disconnected")
-                if "req" not in message:
-                    # A status call takes only the status answer (review S P2-1).
-                    if event["ev"] == "status":
-                        return event
+                if req is None and event["ev"] != "status":
                     continue
-                if event.get("req") != message["req"]:
-                    # Any answer to a req this client never sent is dropped (D-48, review S P2-1, P3-7).
+                if req is not None and event.get("req") != req:
                     continue
                 if event["ev"] == "spawning":
                     on_event(event)
@@ -517,6 +545,10 @@ class BrokerClient:
                 if event["ev"] == "cancelled":
                     continue
                 return event
+        finally:
+            with self.lock:
+                self.pending_replies.pop(req, None)
+            gate.release()
         raise PoolError("broker_failed", message="The manager did not answer.")
 
     def close(self):
@@ -541,6 +573,9 @@ class WarmPool:
         self.directory = Path(directory or broker_dir())
         self.workers, self.leases, self.secrets = {}, {}, []
         self.waiting = {}
+        self.broker_waits = {}
+        self.status_cache, self.status_at = None, None
+        self.status_refresh = threading.Lock()
         self.spawning = set()
         self.notices = {}
         self.lock = threading.RLock()
@@ -715,6 +750,8 @@ class WarmPool:
                     self.workers[key] = worker
                 if key in self.leases:
                     worker.set_lease(self.leases[key])
+                    self.broker_send(dict(op="adopt", instance_id=self.leases[key]["instance_id"],
+                                          worker_pid=worker.proc.pid))
                 notify("ready")
         except BaseException:
             if worker is not None:
@@ -754,7 +791,11 @@ class WarmPool:
         if not proto.is_allowed_saas_host(lease["host"], lease["port"]):
             broker.send(dict(op="release", instance_id=lease["instance_id"], why="host_refused"))
             raise PoolError("lease_failed", message="The instance address was refused.")
+        if old and reason != "renew" and old["instance_id"] != lease["instance_id"]:
+            # P2-R2-1: release before the overwrite, or the old instance leaks; a renew closes it by "swapped".
+            self.release(worker.key, "lease_replaced")
         self.leases[worker.key] = lease
+        self.notices.pop(worker.key, None)
         return lease
 
     def run(self, *, python, library, live, credentials, copies, request, stop, notify, retried=False):
@@ -786,7 +827,11 @@ class WarmPool:
                 """Keep lease material exclusively in memory (D-11)."""
                 nonlocal spawned, phase
                 phase = "lease"
-                lease = self.acquire(worker, python, credentials, event, stop, notify)
+                self.broker_waits[command["click_id"]] = worker
+                try:
+                    lease = self.acquire(worker, python, credentials, event, stop, notify)
+                finally:
+                    self.broker_waits.pop(command["click_id"], None)
                 spawned = True
                 worker.set_lease(lease, active=True)
 
@@ -918,8 +963,12 @@ class WarmPool:
                 raise PoolError("build_watchdog")
             if "error" in box:
                 raise box["error"]
-            lease = self.acquire(worker, python, credentials, box["result"], stop, notify, "intent")
-            worker.set_lease(lease)
+            lease = self.leases.get(worker.key)
+            # P2-R2-1: a live lease for the same config is handed over; a panel open never acquires again.
+            if not (lease and lease["cluster_hash"] == box["result"]["hash"] and remaining(lease) > 20):
+                lease = self.acquire(worker, python, credentials, box["result"], stop, notify, "intent")
+            if worker.lease is not lease:
+                worker.set_lease(lease)
         finally:
             worker.busy = False
 
@@ -929,7 +978,20 @@ class WarmPool:
             raise PoolError("broker_failed", message=self.broker_error)
         if not self.broker:
             return dict(rows=[], in_use_here=0, limit=3)
-        event = self.broker.request(dict(op="status"))
+        if self.status_refresh.acquire(blocking=False):
+            try:
+                self.status_cache = self.broker.request(dict(op="status"), cap=.75)
+                self.status_at = time.monotonic()
+            except PoolError:
+                pass
+            finally:
+                self.status_refresh.release()
+        event = dict(self.status_cache or dict(rows=[], in_use_here=0, limit=3))
+        age = None if self.status_at is None else round(time.monotonic() - self.status_at, 1)
+        event["status_age_s"] = age
+        # P1-R2-3: never block on a busy broker; an old or missing answer is named, a fresh one is silent.
+        event["status_line"] = ("Instance status not read yet." if age is None else
+                                f"Instance status last read {age:g} s ago." if age > STATUS_STALE_S else None)
         allowed = {"state", "instance_id", "expires_at", "version", "cluster_hash", "owner_pid", "worker_pid",
                    "broker_pid", "last_click_at", "spawned_at", "in_job", "purpose"}
         event["rows"] = [{k: v for k, v in row.items() if k in allowed} for row in event["rows"]]
@@ -979,7 +1041,8 @@ class WarmPool:
                             if lease["instance_id"] == event["instance_id"]:
                                 self.leases.pop(key, None)
                                 if event.get("why") == "idle":
-                                    self.notices[key] = dict(state="idle_closed")
+                                    self.notices[key] = dict(state="idle_closed", at=time.time(),
+                                                             cluster_hash=lease["cluster_hash"])
                     elif event["ev"] == "renew_offer":
                         for key, lease in self.leases.items():
                             if lease["instance_id"] == event["instance_id"]:

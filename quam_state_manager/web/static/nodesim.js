@@ -25,12 +25,15 @@
     "use strict";
 
     var POLL_MS = 2000;            // while a run is live (the server heartbeat is 12 s)
-    var IDLE_POLL_MS = 10000;      // after a result: only to see the chip move on
+    var VISIBLE_POLL_MS = 2000;    // after a result, page on screen: another window's job shows soon (P3-f)
+    var IDLE_POLL_MS = 10000;      // after a result, page hidden: only to see the chip move on
     var MISS_LIMIT = 3;            // failed status fetches in a row before NO_ANSWER shows
     var WINDOWS_US = [10, 20, 50, 100];
     var DEFAULT_US = 20;
     var PHASES = ["copy", "build", "login", "spawn", "connect", "submit", "wait", "report", "close"];
     var WARM_PHASES = ["copy", "lock", "build", "lease", "connect", "submit", "wait", "report"];
+    var FAILED_LINE = { failed: 1, node_error: 1, serializer: 1, spawn_failed: 1, broker_failed: 1,
+        lease_failed: 1, timeout: 1, worker_crashed: 1, build_watchdog: 1 };
     var LIVE = { busy: 1, busy_chip: 1, starting: 1, running: 1, warming: 1, renewing: 1, expired_retry: 1 };
     var NOT_IN_LIBRARY = "The node asked for is not in the calibration library of this chip.";
     var STALE = "chip changed since - re-simulate";
@@ -216,7 +219,7 @@
         var state = str(j && j.state);
         box.setAttribute("data-state", state);
         var parts = line.split("\n");
-        var head = parts[0], rest = parts.slice(1).join(" ");
+        var head = parts[0];
         var how = SHOW[state] || ["verdict", "neutral"];
         var node;
         if (how[0] === "callout") node = window.UI.callout(how[1], how[2], line);
@@ -232,7 +235,11 @@
                 node.appendChild(e);
             }
             node.appendChild(phaseList(j));
-        } else node = window.UI.verdict(how[1], head, rest, true);
+        } else {
+            // P3-b: every line of a failure is its own text element, never one joined run.
+            node = window.UI.verdict(how[1], head, parts[1] || "", true);
+            parts.slice(2).forEach(function (part) { node.appendChild(el("span", "ui-verdict-why", part)); });
+        }
         box.appendChild(node);
         if (!LIVE[state] && Array.isArray(j.phases) && j.phases.length) {
             box.appendChild(window.UI.disclosure("Phases", j.phases.length, [], false));
@@ -365,6 +372,11 @@
             return aq.length ? [aq[0]] : [];
         }
         function pickNode(file) {
+            // P3-c: a failure line belongs to the node it ran; a newly picked node starts without it.
+            if (S.answer && FAILED_LINE[S.answer.state]) {
+                clear(status);
+                S.answer = null;
+            }
             S.node = file;
             var it = item();
             pickNote.textContent = it && it.refused ? (it.refused_line || "") : "";
@@ -530,7 +542,10 @@
             idle = idle || (root.getAttribute("data-warm-pool") === "true" && S.answer
                 && ["ready", "renew_offer", "needs_instance", "idle_closed"].indexOf(S.answer.state) >= 0);
             if (!live && !idle) return;
-            S.timer = setTimeout(function () { poll(gen); }, live ? POLL_MS : IDLE_POLL_MS);
+            // P3-f: another window's job ("busy") is live; an idle panel on screen sees it within 2 s.
+            var visible = !document.hidden && !root.hidden;
+            var delay = live ? POLL_MS : (visible ? VISIBLE_POLL_MS : IDLE_POLL_MS);
+            S.timer = setTimeout(function () { poll(gen); }, delay);
         }
         /* D-19, P2 spec 1: display the server's progress and instance rows. */
         function poll(gen) {
@@ -568,6 +583,11 @@
                 schedule(S.gen);
             });
         }
+        // P3-f: a panel shown again resumes the faster poll at once instead of waiting for a click.
+        document.addEventListener("visibilitychange", function onShown() {
+            if (!root.isConnected) { document.removeEventListener("visibilitychange", onShown); return; }
+            if (!document.hidden && !S.timer) schedule(S.gen);
+        });
         simBtn.addEventListener("click", start);
         stopBtn.addEventListener("click", stop);
 
@@ -583,6 +603,9 @@
             return call("/api/nodesim/instances").then(function (j) {
                 if (!j || !Array.isArray(j.rows)) return;
                 clear(instanceHost);
+                if (typeof j.status_line === "string") {
+                    instanceHost.appendChild(UI.badge(j.status_line, "neutral"));
+                }
                 j.rows.forEach(function (r) {
                     if (typeof r.line === "string") instanceHost.appendChild(UI.badge(r.line, "neutral"));
                 });

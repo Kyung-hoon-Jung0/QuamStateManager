@@ -358,9 +358,13 @@ function renderMode(file) {
     ok(txt('[data-nodesim-save-line]') === 'Saved 11_rabi_simulated.py.', 'the save answer line is shown verbatim');
 
     /* ---- C-3: the chip moved on ------------------------------------------ */
-    ok(liveTimers().length === 1 && liveTimers()[0].ms > 4000, 'after a result the page keeps asking, slowly');
+    ok(liveTimers().length === 1 && liveTimers()[0].ms === 2000,
+       'R2B P3-f: after a result a page on screen keeps asking every 2 s');
+    Object.defineProperty(doc, 'hidden', { configurable: true, get: () => true });
     M.queue['/api/nodesim/status'] = [doneAnswer({ chip_seq: 44 })];
     await fireTimer();
+    ok(liveTimers().length === 1 && liveTimers()[0].ms > 4000, 'R2B P3-f: a hidden page keeps asking, slowly');
+    delete doc.hidden;
     ok(txt('[data-nodesim-stale]') === 'chip changed since - re-simulate'
        && $('[data-nodesim-stale]').classList.contains('ui-badge--warn'),
        'C-3: chip seq past the copy seq: the strip says chip changed since - re-simulate');
@@ -534,6 +538,15 @@ function renderMode(file) {
             const b = window.NodeSim.renderAnswer({ state: state, line: 'Server verdict for ' + state });
             ok(b.textContent.indexOf('Server verdict for ' + state) >= 0, 'P2: verbatim ' + state);
         });
+    /* R2B P3-b / P3-c: every failure line reaches the page as text; a new pick clears an old failure. */
+    const multi = window.NodeSim.renderAnswer({ state: 'failed', line: 'Head line\nSecond line\nThird line' });
+    ok(['Head line', 'Second line', 'Third line'].every((l) => $$('*', multi).some((e) => e.textContent === l)),
+       'R2B P3-b: each failure line is its own text element');
+    warm.apply({ state: 'failed', line: 'Old failure of the earlier node' });
+    ok(warmPage.textContent.indexOf('Old failure of the earlier node') >= 0, 'R2B P3-c: failure line shown');
+    wpick.value = '06_flux.py'; change(wpick);
+    await tick();
+    ok(warmPage.textContent.indexOf('Old failure of the earlier node') < 0, 'R2B P3-c: a new pick clears it');
 
     /* ---- static rules on the source ------------------------------------------ */
     const src = NODESIM_SRC;
