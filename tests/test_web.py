@@ -4385,6 +4385,13 @@ def _seed_config_cache(client):
 
 
 class TestConfigViewer:
+    @pytest.mark.parametrize("hx", [False, True], ids=["reload", "menu"])
+    def test_config_page_without_a_chip_shows_the_no_chip_state(self, client, hx):
+        # a reload of /config with no chip gets the page shell, never a bare status fragment
+        html = client.get("/config", headers={"HX-Request": "true"} if hx else {}).data.decode()
+        assert 'class="pane-empty"' in html and "No state loaded" not in html
+        assert ("<html" in html) is not hx
+
     def test_config_page_renders_empty_when_no_cache(self, loaded_client):
         html = loaded_client.get("/config").data.decode()
         assert "Config Viewer" in html

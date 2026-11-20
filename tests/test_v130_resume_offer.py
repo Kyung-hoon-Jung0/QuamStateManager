@@ -44,7 +44,7 @@ def _offer(html: str):
 
 
 @pytest.mark.parametrize("page", ["/qubits", "/bulk", "/topology?view=trends", "/journal",
-                                  "/datasets", "/trends"])
+                                  "/datasets", "/trends", "/config"])
 @pytest.mark.parametrize("hx", [False, True], ids=["reload", "menu"])
 def test_every_deep_page_offers_the_chip_that_was_open(restarted, page, hx):
     c, chip = restarted
