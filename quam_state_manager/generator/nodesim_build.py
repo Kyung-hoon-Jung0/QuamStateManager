@@ -54,6 +54,8 @@ def verify_env(job, guard):
         "QUALIBRATE_CONFIG_FILE": str(root / "config.toml"),
         "QUAM_CONFIG_FILE": str(root / "config.toml"), "QUAM_STATE_PATH": str(state),
         "TMP": str(root / "tmp"), "TEMP": str(root / "tmp"),
+        "LOCALAPPDATA": str(root / "localappdata"), "APPDATA": str(root / "appdata"),
+        "XDG_CACHE_HOME": str(root / "cache"),
         "MPLCONFIGDIR": str(root / "mpl"), "PYTHONPATH": str(Path(job["library_root"]).resolve()),
     }
     for key, value in expected.items():

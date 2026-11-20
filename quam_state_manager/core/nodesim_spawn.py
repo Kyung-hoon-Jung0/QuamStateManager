@@ -19,7 +19,11 @@ def pinned_env(scratch, library_root, chip_copy, base=None):
         "QUALIBRATE_CONFIG_FILE": str(root / "config.toml"),
         "QUAM_CONFIG_FILE": str(root / "config.toml"),
         "QUAM_STATE_PATH": str(Path(chip_copy).resolve()),
+        # D-36: per-user cache and temp roots point into scratch, so library caches
+        # (e.g. an entry-point cache under LOCALAPPDATA) land inside the guard boundary.
         "TMP": str(root / "tmp"), "TEMP": str(root / "tmp"),
+        "LOCALAPPDATA": str(root / "localappdata"), "APPDATA": str(root / "appdata"),
+        "XDG_CACHE_HOME": str(root / "cache"),
         "PYTHONDONTWRITEBYTECODE": "1", "MPLCONFIGDIR": str(root / "mpl"),
         "MPLBACKEND": "Agg", "QDAC_DISABLE": "1",
         "PYTHONPATH": str(Path(library_root).resolve()), "PYTHONUTF8": "1",
@@ -33,7 +37,8 @@ def prepare_scratch(scratch, chip_copy):
     state = Path(chip_copy).resolve()
     if not state.is_relative_to(root):
         raise ValueError("chip copy must be under scratch")
-    for path in (root, state, root / "tmp", root / "mpl", root / "logs", root / "storage"):
+    for path in (root, state, root / "tmp", root / "mpl", root / "logs", root / "storage",
+                 root / "localappdata", root / "appdata", root / "cache"):
         path.mkdir(parents=True, exist_ok=True)
     quote = lambda p: json.dumps(Path(p).as_posix())
     (root / "config.toml").write_text(

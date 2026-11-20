@@ -11,6 +11,7 @@ from pathlib import Path
 import socket
 import subprocess
 import threading
+import uuid
 
 import pytest
 
@@ -54,6 +55,9 @@ def test_env_pins(tmp_path):
     assert env["PYTHONPATH"] == str(tmp_path / "library")
     assert env["QUAM_STATE_PATH"] == str(tmp_path / "state")
     assert env["TMP"] == env["TEMP"] == str(tmp_path / "tmp")
+    assert env["LOCALAPPDATA"] == str(tmp_path / "localappdata")
+    assert env["APPDATA"] == str(tmp_path / "appdata")
+    assert env["XDG_CACHE_HOME"] == str(tmp_path / "cache")
     assert env["PYTHONDONTWRITEBYTECODE"] == env["QDAC_DISABLE"] == "1"
     assert env["MPLCONFIGDIR"] == str(tmp_path / "mpl")
     assert env["MPLBACKEND"] == "Agg"
@@ -145,6 +149,26 @@ def create_qua_program(node):
 """
 
 
+SPAWN = Path(__file__).resolve().parents[1] / "quam_state_manager" / "core" / "nodesim_spawn.py"
+D36_PIN = """        "LOCALAPPDATA": str(root / "localappdata"), "APPDATA": str(root / "appdata"),
+        "XDG_CACHE_HOME": str(root / "cache"),
+"""
+
+
+def env_builder(tmp_path, row):
+    """The SM-side pinned_env; FI-13-pin* mutations load a copy with the D-36 pin removed."""
+    if os.getenv("SM_NODESIM_MUTATION") != row or not row.startswith("FI-13-pin"):
+        return pinned_env
+    source = SPAWN.read_text(encoding="utf-8")
+    assert source.count(D36_PIN) == 1
+    mutant = tmp_path / "nodesim_spawn_mutant.py"
+    mutant.write_text(source.replace(D36_PIN, ""), encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("quam_state_manager.core.nodesim_spawn_mutant", mutant)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.pinned_env
+
+
 def child(tmp_path, lab, source, row, *, env_changes=None, config_change=None, transport=False, expect_ok=False):
     interpreter, library = lab
     scratch = tmp_path / "scratch"
@@ -160,7 +184,8 @@ def child(tmp_path, lab, source, row, *, env_changes=None, config_change=None, t
     node_file.write_text(source, encoding="utf-8")
     if config_change:
         config_change(scratch / "config.toml")
-    env = pinned_env(scratch, library, state, {**os.environ, "QUAM_STATE_PATH": str(tmp_path / "decoy_live")})
+    env = env_builder(tmp_path, row)(scratch, library, state,
+                                     {**os.environ, "QUAM_STATE_PATH": str(tmp_path / "decoy_live")})
     for key, value in (env_changes or {}).items():
         if value is None:
             env.pop(key, None)
@@ -200,6 +225,20 @@ def child(tmp_path, lab, source, row, *, env_changes=None, config_change=None, t
             widened = "True" if row == "FI-12-write" else "False"
             guard_source = guard_source.replace("if os.path.normcase(raw) == os.path.normcase(os.devnull):",
                                                 f"if {widened}:")
+        elif row == "FI-13-pin":
+            pass  # D-36 pin removed on the SM side only (env_builder); the child's env check refuses.
+        elif row == "FI-13-pin-both":
+            # D-36 pin removed on the SM side and in the child's env check: the write guard refuses.
+            check = """        "LOCALAPPDATA": str(root / "localappdata"), "APPDATA": str(root / "appdata"),
+        "XDG_CACHE_HOME": str(root / "cache"),
+"""
+            assert build_source.count(check) == 1
+            build_source = build_source.replace(check, "")
+        elif row == "FI-13-real":
+            # The rejected alternative to D-36: widen the guard to the real per-user cache root.
+            guard_source = guard_source.replace(
+                "if not inside(path, self.scratch):",
+                'if not inside(path, self.scratch) and not inside(path, Path.home() / "AppData" / "Local"):')
         elif row == "FI-12-preimport":
             build_source = build_source.replace('for name in ("lmfit", "sklearn"):', 'for name in ("lmfit",):')
         elif row.startswith("FI-11") or row == "FI-12-ctypes":
@@ -456,3 +495,39 @@ def test_no_program_is_reported(tmp_path, lab):
     assert result["errors"] == ["RuntimeError: create_qua_program built no program "
                                 "(node.namespace['qua_program'] is None)"]
     assert any("missing prerequisite" in record for record in result["logs"])
+
+
+def test_pinned_appdata_write_builds(tmp_path, lab):
+    """FI-13-pin / FI-13-pin-both (D-36): cache writes under the pinned per-user roots land in scratch."""
+    keys = ("LOCALAPPDATA", "APPDATA", "XDG_CACHE_HOME", "TEMP", "TMP")
+    source = ("import os\nfrom pathlib import Path\n"
+              f"for key in {keys!r}:\n"
+              "    folder = Path(os.environ[key]) / 'nodesim_probe'\n"
+              "    folder.mkdir(exist_ok=True)\n"
+              "    (folder / (key + '.txt')).write_text('x')\n" + HEADER +
+              "    from qm.qua import program, declare\n"
+              "    with program() as p:\n"
+              "        declare(int)\n"
+              "    node.namespace['qua_program'] = p\n")
+    for row in ("FI-13-pin", "FI-13-pin-both"):
+        if os.getenv("SM_NODESIM_MUTATION") in {None, "", row}:
+            child(tmp_path / row, lab, source, row, expect_ok=True)
+            scratch = tmp_path / row / "scratch"
+            for key, sub in (("LOCALAPPDATA", "localappdata"), ("APPDATA", "appdata"),
+                             ("XDG_CACHE_HOME", "cache"), ("TEMP", "tmp"), ("TMP", "tmp")):
+                assert (scratch / sub / "nodesim_probe" / (key + ".txt")).is_file()
+
+
+def test_real_localappdata_write_fails(tmp_path, lab):
+    """FI-13-real (D-36): a write to the real per-user LOCALAPPDATA is still a GUARD FAIL.
+
+    The target folder does not exist, so even a broken guard creates no file there.
+    """
+    real = os.environ.get("LOCALAPPDATA")
+    if not real:
+        pytest.skip("no LOCALAPPDATA in this environment")
+    target = Path(real) / f"nodesim_fi_absent_{uuid.uuid4().hex}" / "probe.txt"
+    assert not target.parent.exists()
+    result = child(tmp_path, lab, f"open({str(target)!r}, 'w').write('x')\n", "FI-13-real")
+    assert result["verdict"] == "GUARD FAIL write " + str(target.resolve())
+    assert not target.parent.exists()
