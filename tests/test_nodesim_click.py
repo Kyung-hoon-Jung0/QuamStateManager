@@ -258,7 +258,9 @@ class TestStates:
         assert rig.removed == rig.copies     # the copy goes after the run
         req = json.loads(rig.procs[0].lines[1])
         assert req["window_ns"] == 20000 and req["overrides"] == {"qubits": ["q1"], "num_shots": 1}
-        assert set(req) == {"scratch", "chip_copy", "library", "node", "targets", "window_ns", "overrides"}
+        assert set(req) == {"scratch", "chip_copy", "library", "node", "targets", "window_ns", "overrides",
+                            "saas_host"}
+        assert req["saas_host"] == CREDS["host"]  # the child refuses any other host (1a)
         run = json.loads((rig.procs[0].work / "_run.json").read_text(encoding="utf-8"))
         assert run["SIMULATED"] is True and run["meta"]["target"] == "saas"
 

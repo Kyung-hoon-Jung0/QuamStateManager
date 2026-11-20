@@ -15,7 +15,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 SELFCHECK = ROOT / "tests" / "nodesim_selfcheck.cjs"
 BUNDLE = ROOT / "quam_state_manager" / "web" / "static" / "nodesim.js"
-MIN_ASSERTIONS = 106     # the count when this pin was written; fewer means assertions were lost
+MIN_ASSERTIONS = 112     # the count when this pin was written; fewer means assertions were lost
 
 
 def _node_env():

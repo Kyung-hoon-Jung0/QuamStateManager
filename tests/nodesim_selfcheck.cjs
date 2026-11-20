@@ -11,6 +11,8 @@
  * element and output port, I/Q de-duplicated, readout lanes, digital marks),
  * banners and provenance, the script fold and its save, and the fault rows
  * C-1..C-5. NODESIM_JS points at another copy of nodesim.js (mutation runs).
+ * NODESIM_ANSWERS names a JSON list of server answers: each is rendered and one
+ * "render {...}" line per answer is printed (the end-to-end test reads them).
  *
  * Exit 2 = jsdom not installed. */
 'use strict';
@@ -199,7 +201,34 @@ function doneWith(id, report) {
 }
 const EMPTY = '[data-nodesim-chart] .ui-state--empty';
 
+/* ---- render mode: answers the server gave in the end-to-end test --------- */
+function shownOf(box) {
+    const verdict = box.querySelector('.ui-verdict');
+    if (verdict) {
+        return [verdict.querySelector('.ui-verdict-key').textContent]
+            .concat([...verdict.querySelectorAll('.ui-verdict-why')].map((x) => x.textContent)).join('\n');
+    }
+    const live = box.querySelector('[data-nodesim-line]');
+    if (live) return live.textContent;
+    return (box.querySelector('.ui-notice-text, .ui-callout-text') || {}).textContent || '';
+}
+function renderMode(file) {
+    window.eval(NODESIM_SRC);
+    JSON.parse(fs.readFileSync(file, 'utf8')).forEach((a) => {
+        const box = window.NodeSim.renderAnswer(a);
+        const v = box.querySelector('.ui-verdict');
+        const tone = v ? (v.className.match(/ui-verdict--(\w+)/) || [])[1] : null;
+        const tl = a.result && a.result.report ? window.NodeSim.reportToTimeline(a.result.report) : null;
+        console.log('render ' + JSON.stringify({
+            state: box.getAttribute('data-state'), tone: tone, shown: shownOf(box),
+            phases: [...box.querySelectorAll('[data-nodesim-phases] li')].map((l) => l.getAttribute('data-phase')),
+            lanes: tl ? tl.lanes.length : null, cannot_draw: tl ? tl.cannot_draw : null }));
+    });
+    process.exit(errors.length ? 1 : 0);
+}
+
 (async () => {
+    if (process.env.NODESIM_ANSWERS) return renderMode(process.env.NODESIM_ANSWERS);
     const page = $('#page');
     M.queue['/api/nodesim/nodes'] = [NODES];
     M.queue['/api/nodesim/status'] = [{ ok: true, state: 'idle', line: '' }];
@@ -430,6 +459,37 @@ const EMPTY = '[data-nodesim-chart] .ui-state--empty';
     await S.start();
     ok(txt('[data-nodesim-lost] .ui-notice-text') === 'No answer from SM; the run stops if this page stops asking.',
        'a start SM does not answer shows the no-answer line');
+
+    /* ---- a cache hit shows only the phases that ran ------------------------ */
+    const hit = window.NodeSim.renderAnswer(doneAnswer({ cached: true,
+        phases: [{ name: 'copy', s: 0.03 }, { name: 'cache', s: 0.001 }] }));
+    ok($$('[data-nodesim-phases] li', hit).map((l) => l.getAttribute('data-phase')).join(',') === 'copy,cache',
+       'a cache hit lists exactly copy and cache, no build or spawn');
+    ok($$('[data-nodesim-phases] li', hit).every((l) => l.classList.contains('is-done')),
+       'a cache hit marks both phases done');
+
+    /* ---- a node in a subfolder, preselected from the link ------------------- */
+    const subItem = nodeItem('sub/12_ramsey.py', 'qubits');
+    const sub = doc.createElement('div');
+    sub.setAttribute('data-node', 'sub/12_ramsey.py');
+    doc.body.appendChild(sub);
+    M.queue['/api/nodesim/nodes'] = [Object.assign({}, NODES, { items: NODES.items.concat([subItem]) })];
+    M.queue['/api/nodesim/status'] = [{ ok: true, state: 'idle', line: '' }];
+    await window.NodeSim.mount(sub).ready;
+    ok(callsTo('/api/nodesim/nodes').pop().url === '/api/nodesim/nodes?node=sub%2F12_ramsey.py',
+       'the page names the wanted node to the server (a subfolder node is not in the folder scan)');
+    ok($('[data-nodesim-node]', sub).value === 'sub/12_ramsey.py' && sub.__nodesim.node === 'sub/12_ramsey.py',
+       'a node in a subfolder is preselected');
+    ok($('[data-nodesim-pick-note]', sub).hidden, 'a found node shows no pick note');
+    const away = doc.createElement('div');
+    away.setAttribute('data-node', 'elsewhere/13_t1.py');
+    doc.body.appendChild(away);
+    M.queue['/api/nodesim/nodes'] = [NODES];
+    M.queue['/api/nodesim/status'] = [{ ok: true, state: 'idle', line: '' }];
+    await window.NodeSim.mount(away).ready;
+    ok($('[data-nodesim-pick-note]', away).textContent
+       === 'The node asked for is not in the calibration library of this chip.'
+       && !$('[data-nodesim-pick-note]', away).hidden, 'a node not in the library says so, not a silent swap');
 
     /* ---- static rules on the source ------------------------------------------ */
     const src = NODESIM_SRC;
