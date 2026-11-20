@@ -77,14 +77,6 @@ def test_gate_reader_distinguishes_an_uncomputed_check(world, monkeypatch, case)
         assert ('gate suspect' if case in ('suspect', 'mixed') else 'gate not checked') in html
         if case not in ('suspect', 'mixed'):
             assert 'jr-gate-unknown' in html and 'jr-gate-suspect' not in html
-    # Exercise the real Datasets detail route with the same saved-run facts.
-    from quam_state_manager.web import routes
-    monkeypatch.setattr(routes, '_resolve_run', lambda uid: (world['ds'], 104, 'sample'))
-    result = app.test_client().get('/dataset/sample:104', headers={'HX-Request': 'true'})
-    assert result.status_code == 200
-    text = result.get_data(as_text=True)
-    expected = 'suspect:' if case in ('suspect', 'mixed') else 'gate not checked:'
-    assert expected in text and (reason if case != 'missing' else 'missing in ds_raw') in text
 
 
 def test_gate_reader_handles_a_checker_exception(tmp_path):

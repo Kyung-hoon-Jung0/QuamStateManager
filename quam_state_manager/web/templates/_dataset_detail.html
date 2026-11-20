@@ -85,10 +85,6 @@
 {% endset %}
 {% include '_inspector_header.html' %}
 {% include '_project_state_notice.html' %}
-{% if gate is defined and gate %}
-<p class="ui-note">{{ 'gate not checked' if gate.verdict == 'unknown' else gate.verdict }}:{#
-    #} {{ gate.reason }}</p>
-{% endif %}
 
 {#- docs/301 F9: opened from a value (a Trends point, a value drawer row) whose
     writer the ledger cannot prove. Said HERE, on the run, so the run is never
