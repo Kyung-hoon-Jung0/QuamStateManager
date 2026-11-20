@@ -74,6 +74,13 @@ def version_refusal(credentials):
     return VERSION_SAVED_LINE if source == "saved" else VERSION_ENV_LINE
 
 
+
+def python_env_name(python):
+    """Name an interpreter by its env folder, including venv Scripts and bin layouts."""
+    parent = Path(python).parent
+    return parent.parent.name if parent.name.lower() in {"scripts", "bin"} else parent.name
+
+
 class PoolError(RuntimeError):
     """A server verdict, with separate state and scrubbed detail (spec 1)."""
 
@@ -627,7 +634,7 @@ class WarmPool:
             raise PoolError("no_env")
         found = self.probe(python)
         if not version_ok(found):
-            raise PoolError("blocked", found=found, python=python, env=Path(python).parent.name)
+            raise PoolError("blocked", found=found, python=python, env=python_env_name(python))
         if not Path(library, "quam_config").is_dir():
             raise PoolError("no_library")
         key = worker_key(python, library, live)
@@ -701,7 +708,7 @@ class WarmPool:
             while gone:
                 gone.pop().close()
             if worker is None:
-                notify("warming", env=Path(python).parent.name)
+                notify("warming", env=python_env_name(python))
                 worker = self.worker_factory(python, library, live, credentials["host"], root=self.root)
                 worker.busy = True
                 with self.lock:

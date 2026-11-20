@@ -523,6 +523,11 @@ def finish(result_file, result, counters, secret, done, guard=None, status=None)
     if status is not None:
         status.end(write=False)
         result["phases"] = list(status.phases)
+    if guard is not None and guard.library_patches:
+        line = "library patched at import, barrier restored: " + ", ".join(guard.library_patches)
+        logs = result.setdefault("logs", [])
+        if line not in logs:
+            logs.insert(0, line)
     if guard is not None and guard.verdict:
         result["guard_lines"] = [guard.verdict]
     result["instances_opened"] = counters.get("opened", 0)

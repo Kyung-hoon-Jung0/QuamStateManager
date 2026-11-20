@@ -927,3 +927,12 @@ def test_int1_scratch_guard_survives_an_extended_length_root(tmp_path, monkeypat
     nodesim_spawn.prepare_scratch(tmp_path / "scratch", tmp_path / "scratch" / "chip")
     monkeypatch.undo()
     assert (tmp_path / "scratch" / "config.toml").exists() and (tmp_path / "scratch" / "chip").is_dir()
+
+
+@pytest.mark.parametrize("scripts", ["Scripts", "bin"])
+def test_p3_warming_names_env_folder(rig, scripts):
+    python = f"C:/envs/demo/{scripts}/python.exe"
+    worker = rig.p.worker(python, rig.lib, rig.live, CREDS, rig.notify)
+    worker.busy = False
+    warming = [row for row in rig.notifications if row["state"] == "warming"]
+    assert warming and warming[0]["line"] == click.line("warming", env="demo")

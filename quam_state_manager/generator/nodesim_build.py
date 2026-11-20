@@ -229,18 +229,21 @@ def build_one(job, guard, result, holder):
     module = types.ModuleType("_nodesim_node")
     module.__file__ = str(node_file)
     sys.modules[module.__name__] = module
+    import_logs = (["library patched at import, barrier restored: " + ", ".join(guard.library_patches)]
+                   if guard.library_patches else [])
     nodes = stub.instances
     try:
         exec(compile(node_file.read_text(encoding="utf-8"), str(node_file), "exec"), module.__dict__)
     finally:
         # The node's own log (e.g. its preflight refusal reasons) is reported on failure too.
-        result["logs"] = [record for node in nodes for record in node.log.records]
+        result["logs"] = import_logs + [record for node in nodes for record in node.log.records]
     if len(nodes) != 1 or not nodes[0].ran:
         raise RuntimeError("create_qua_program did not run")
     if "qua_program" not in nodes[0].namespace:
         raise RuntimeError("create_qua_program set no node.namespace['qua_program']")
     if nodes[0].namespace["qua_program"] is None:
         raise RuntimeError("create_qua_program built no program (node.namespace['qua_program'] is None)")
+    guard.check_barriers()
     from qm import generate_qua_script
     script = generate_qua_script(nodes[0].namespace["qua_program"])
     if "SERIALIZATION VALIDATION ERROR" in script:
@@ -259,7 +262,7 @@ def build_one(job, guard, result, holder):
             imported[str(path)] = holder["sources"].setdefault(str(path), current)
     return {"program_script": script.split("\nconfig =", 1)[0],
             "replaced_hosts": replaced, "library_file": str(library.__file__),
-            "logs": nodes[0].log.records, "imported_sources": imported}
+            "logs": import_logs + nodes[0].log.records, "imported_sources": imported}
 
 
 def preimport_trusted():

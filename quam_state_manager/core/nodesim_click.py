@@ -773,6 +773,7 @@ class Manager:
         from quam_state_manager.core.nodesim_pool import PoolError, clean
         rid = uuid.uuid4().hex
         job = dict(stop=threading.Event(), answer=answer("running", id=rid, phase="copy"),
+                   store_id=meta.get("store_id"), live=Path(live).resolve() if live else None,
                    window=window_key(window), started=time.monotonic(), seen=time.monotonic())
         with self._lock:
             if any(j["window"] == job["window"] and not j["done"] for j in self.warm_jobs.values()):
@@ -931,7 +932,8 @@ class Manager:
 
     def _set_intent(self, key, value):
         """Record an intent answer; its notifies never move the intent's start time (int r2 N-1)."""
-        self.intent_answers[key] = value
+        if value.get("state") != "busy_chip":
+            self.intent_answers[key] = value
 
     def _mark_latest(self, key, rid):
         """Record a window's newest click and its time (review S P2-5)."""
@@ -1084,9 +1086,28 @@ class Manager:
     # -- status / stop -------------------------------------------------------
 
     def status(self, window: Any, rid: Optional[str] = None, *, seq: Any = None,
-               store_id: Any = None) -> dict:
+               store_id: Any = None, live_folder: Any = None) -> dict:
         """Return warm or cold progress and mark stale snapshots (D-14, D-26)."""
         key = window_key(window)
+        live = Path(live_folder).resolve() if live_folder else None
+        with self._lock:
+            warm_jobs = list(self.warm_jobs.values())
+            cold_jobs = list(self.jobs.values())
+        own = any(j["window"] == key and not j["done"] for j in warm_jobs)
+        own = own or any(j["runs"].window == key and j["runs"].busy() for j in cold_jobs)
+        if not own:
+            for job in warm_jobs:
+                same = (live is not None and job.get("live") == live)
+                same = same or (store_id is not None and job.get("store_id") == store_id)
+                if same and job["window"] != key and not job["done"]:
+                    return {**answer("busy"), "line": job["answer"]["line"],
+                            "shared_state": job["answer"]["state"]}
+            for job in cold_jobs:
+                same = live is not None and job.get("live") and Path(job["live"]).resolve() == live
+                same = same or (store_id is not None and job["meta"].get("store_id") == store_id)
+                if same and job["runs"].window != key and job["runs"].busy():
+                    progress = _read_status(job["runs"].current["work"] / "_status.json") or {}
+                    return {**answer("busy"), "line": line("running", phase=progress.get("phase"))}
         newest = not rid or rid == self.latest.get(key)
         started = self.intent_started.get(key, 0)
         if newest and key in self.intent_answers and started > self.latest_at.get(key, -1):

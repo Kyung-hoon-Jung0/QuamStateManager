@@ -166,7 +166,7 @@ def _row(info, folder) -> dict:
     key = node_key(folder, str(info.file)) or Path(info.file).name
     row.update({"file": key, "file_name": Path(info.file).name,
                 "refused": bool(reason), "reason": reason,
-                "refused_line": click.REFUSED_LIST_LINE if reason else None,
+                "refused_line": click.line("refused", reason=reason) if reason else None,
                 "estimates": estimates,
                 "warm_estimate_lines": {k: v["line"] for k, v in warm.items()},
                 "estimate_lines": {k: v["line"] for k, v in estimates.items()}})
@@ -202,7 +202,7 @@ def _context(want: str | None = None) -> dict:
     pairs = store.qubit_pair_names if store else []
     active_q = [q for q in merged.get("active_qubit_names") or [] if q in qubits] or qubits[:1]
     active_p = [p for p in merged.get("active_qubit_pair_names") or [] if p in pairs] or pairs[:1]
-    chip = getattr(getattr(store, "folder_path", None), "name", None) if store else None
+    chip = r._active_chip_label() if store else None
     lib_text = str(library) if library else None
     qop = (saas or {}).get("version")
     return {"chip": chip, "env": env, "python": bool(python), "library": lib_text,
@@ -281,7 +281,12 @@ def _seq():
 @nodesim_bp.route("/api/nodesim/status")
 def nodesim_status():
     seq, sid = _seq()
-    ans = manager().status(_window(), request.args.get("id"), seq=seq, store_id=sid)
+    ctx = _r()._active_ctx() or {}
+    live = getattr(ctx.get("working_copy"), "live_folder", None) or ctx.get("path")
+    ans = manager().status(_window(), request.args.get("id"), seq=seq, store_id=sid, live_folder=live)
+    shared = ans.pop("shared_state", None)
+    if ans.get("state") == "busy_chip" or shared == "busy_chip":
+        ans["line"] = click.line("busy_chip", name=_r()._active_chip_label() or "chip")
     return jsonify(ok=True, chip_seq=seq, **ans)
 
 

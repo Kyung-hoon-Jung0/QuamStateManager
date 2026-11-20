@@ -84,9 +84,6 @@ class WarmGuard(Guard):
 
     def install_classes(self, lease=None):
         """Install cold barriers once and gate the kept QMM simulate method (P2 spec 2.3)."""
-        import importlib
-        import qualang_tools.multi_user as multi_user
-        session_module = importlib.import_module(multi_user.qm_session.__module__)
         super().install_classes()
         from qm import QuantumMachinesManager as QMM
         original = QMM.simulate
@@ -99,22 +96,9 @@ class WarmGuard(Guard):
             return original(instance, *args, **kwargs)
 
         QMM.simulate = simulate
+        self.barrier_assignments.append(("simulate", QMM, "simulate", simulate))
         for name in ("__init__", "simulate", "open_qm"):
             self.remember(name, QMM, name)
         # FI4-1, R3-1: pin every captured module binding, so a node-made subclass is never a sim-time class.
         for key, (module, attribute) in self.sim_owners.items():
             self.remember(key, module, attribute)
-
-        from qm.quantum_machine import QuantumMachine
-        from qm.api.v2.qm_api import QmApi
-        from qm.api.v2.qmm_api import QmmApi
-        from quam.components import BasicQuam
-        from quam.core.quam_classes import QuamRoot
-        from qualibrate.core.storage.local_storage_manager import LocalStorageManager
-        for name, owner, attribute in (
-                ("QuantumMachine.execute", QuantumMachine, "execute"),
-                ("QmApi.execute", QmApi, "execute"), ("QmmApi.open_qm", QmmApi, "open_qm"),
-                ("qm_session", multi_user, "qm_session"), ("qm_session.definition", session_module, "qm_session"),
-                ("BasicQuam.connect", BasicQuam, "connect"), ("QuamRoot.save", QuamRoot, "save"),
-                ("LocalStorageManager.save", LocalStorageManager, "save")):
-            self.remember(name, owner, attribute)

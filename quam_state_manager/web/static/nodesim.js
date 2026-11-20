@@ -11,7 +11,7 @@
  * - every server answer is {state, line, ...}; `line` is shown verbatim (a
  *   newline splits it into a conclusion and its reason), never re-worded, and
  *   an unknown state still shows its line; the only client-worded lines are
- *   NO_ANSWER (SM itself did not answer), REFUSED_PICK and NO_READOUT;
+ *   NO_ANSWER (SM itself did not answer) and NO_READOUT;
  * - the report has no samples (report only): a segment carries its time span
  *   and operation name, never an invented level;
  * - lanes are one per (element, output port); two lanes that end up with the
@@ -31,11 +31,10 @@
     var DEFAULT_US = 20;
     var PHASES = ["copy", "build", "login", "spawn", "connect", "submit", "wait", "report", "close"];
     var WARM_PHASES = ["copy", "lock", "build", "lease", "connect", "submit", "wait", "report"];
-    var LIVE = { starting: 1, running: 1, warming: 1, renewing: 1, expired_retry: 1 };
+    var LIVE = { busy: 1, busy_chip: 1, starting: 1, running: 1, warming: 1, renewing: 1, expired_retry: 1 };
     var NOT_IN_LIBRARY = "The node asked for is not in the calibration library of this chip.";
     var STALE = "chip changed since - re-simulate";
     var NO_ANSWER = "No answer from SM; the run stops if this page stops asking.";
-    var REFUSED_PICK = "This node is not simulated here (it writes or sweeps outside one program).";
     var NO_READOUT = "No readout inside this window; try a longer window.";
     var NO_ANALOG = "cannot draw: the report has no analog waveform inside this window";
     var BAD_REPORT = "cannot draw: the report has a form SM does not read";
@@ -311,7 +310,7 @@
         /* P2 spec 1: replacement actions appear only with their offer. */
         function buttons() {
             var live = !!(S.answer && LIVE[S.answer.state]);
-            stopBtn.hidden = !live;
+            stopBtn.hidden = !(live && S.answer.id && S.answer.id === S.run);
             simBtn.disabled = !canStart();
             renewBtn.hidden = !(S.answer && S.answer.state === "renew_offer");
             newBtn.hidden = !(S.answer && S.answer.state === "needs_instance");
@@ -368,7 +367,7 @@
         function pickNode(file) {
             S.node = file;
             var it = item();
-            pickNote.textContent = it && it.refused ? REFUSED_PICK : "";
+            pickNote.textContent = it && it.refused ? (it.refused_line || "") : "";
             pickNote.hidden = !pickNote.textContent;
             S.targets = defaultTargets();
             drawTargets();
@@ -380,9 +379,10 @@
             clear(nodeHost);
             var items = nodeItems(S.nodes);
             var sel = UI.select({ label: "Node", value: S.node,
-                                  options: items.map(function (x) {
-                                      return { value: x.file, label: x.name || x.file, disabled: !!x.refused };
-                                  }) });
+                                  options: [{ value: "", label: "Pick a node" }].concat(items.map(function (x) {
+                                      return { value: x.file, label: (x.name || x.file)
+                                          + (x.refused_line ? " - " + x.refused_line : ""), disabled: !!x.refused };
+                                  })) });
             sel.setAttribute("data-nodesim-node", "");
             sel.addEventListener("change", function () { pickNode(sel.value); intent(true); });
             nodeHost.appendChild(sel);
@@ -631,9 +631,8 @@
                 if (n.context) drawContext(n.context); else ctxRow.hidden = true;
                 if (typeof n.line === "string" && n.line && n.state) clear(status).appendChild(renderAnswer(n));
                 var items = nodeItems(n);
-                var first = items.filter(function (x) { return !x.refused; })[0] || items[0];
                 var found = items.some(function (x) { return x.file === want; });
-                S.node = found ? want : (first ? first.file : null);
+                S.node = found ? want : "";
                 drawPickers();
                 pickNode(S.node);
                 if (want && !found) { pickNote.textContent = NOT_IN_LIBRARY; pickNote.hidden = false; }

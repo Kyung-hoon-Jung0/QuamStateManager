@@ -125,7 +125,7 @@ const NODES = {
             '10': 'About 79 s from a cold instance.', '20': 'About 81 s from a cold instance.',
             '50': 'About 87 s from a cold instance.', '100': 'About 98 s from a cold instance.' } }),
         nodeItem('32a_cz.py', 'qubit_pairs'),
-        nodeItem('90_sweep_all.py', 'qubits', { refused: true }),
+        nodeItem('90_sweep_all.py', 'qubits', { refused: true, refused_line: 'Server refusal verbatim.' }),
         nodeItem('graph.py', 'qubits', { kind: 'graph' })],
     qubits: ['q1', 'q2', 'q3'], pairs: ['q1-2', 'q2-3'], active_qubits: ['q1', 'q2', 'q3'], active_pairs: [],
     context: { chip: 'chipA', env: 'labenv', library: 'D:/lib', qop: 'v3_7_3' },
@@ -269,7 +269,7 @@ function renderMode(file) {
     sel.value = '06_flux.py'; change(sel);
     ok($('[data-nodesim-estimate]').hidden, 'a node with no estimate line shows none');
     sel.value = '90_sweep_all.py'; change(sel);
-    ok(txt('[data-nodesim-pick-note]') === 'This node is not simulated here (it writes or sweeps outside one program).',
+    ok(txt('[data-nodesim-pick-note]') === 'Server refusal verbatim.',
        'a refused node says why under the picker');
     ok($('[data-nodesim-start]').disabled, 'a refused node cannot be started');
     sel.value = '11_rabi.py'; change(sel);
@@ -548,6 +548,22 @@ function renderMode(file) {
     ok(!/[^\x0d\x0a\x20-\x7e]/.test(src), 'nodesim.js is printable ASCII');
     ok(src.split('\n').every((l) => l.length <= 120), 'nodesim.js lines are at most 120 characters');
     ok(errors.length === 0, 'no uncaught error in the page' + (errors.length ? ': ' + errors.join('; ') : ''));
+
+    const emptyPage = doc.createElement('div');
+    emptyPage.setAttribute('data-nodesim', '');
+    doc.body.appendChild(emptyPage);
+    M.queue['/api/nodesim/nodes'] = [NODES];
+    M.queue['/api/nodesim/intent'] = [{ state: 'warming', line: 'Preparing env demo.', id: null }];
+    M.queue['/api/nodesim/status'] = [{ state: 'warming', line: 'Preparing env demo.', id: null }];
+    const emptyState = window.NodeSim.mount(emptyPage);
+    await emptyState.ready;
+    const emptyPick = $('[data-nodesim-node]', emptyPage);
+    ok(emptyPick.value === '' && emptyPick.options[0].textContent === 'Pick a node',
+       'P3-2: no default utility or refused node');
+    ok($('[data-nodesim-stop]', emptyPage).hidden, 'P3-6: warming without a run hides Stop');
+    const refusedOption = [...emptyPick.options].find((o) => o.value === '90_sweep_all.py');
+    ok(refusedOption.disabled && refusedOption.textContent.includes('Server refusal verbatim.'),
+       'P3-3: disabled option includes the server refusal verbatim');
 
     console.log((failed ? 'FAIL' : 'ok') + ' nodesim_selfcheck (' + n + ' assertions)');
     process.exit(failed ? 1 : 0);
