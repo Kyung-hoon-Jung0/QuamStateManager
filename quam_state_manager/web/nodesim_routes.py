@@ -101,15 +101,10 @@ def nodesim_replace():
     try:
         if pool and all(facts.get(k) for k in ("python", "library", "live_folder")):
             key = worker_key(facts["python"], facts["library"], facts["live_folder"])
-            worker = pool.workers.get(key)
-            if worker and worker.busy:
-                return jsonify(ok=False, **click.answer("busy"))
             if request.path.endswith("new-instance"):
-                pool.release(key, "hash_changed")
-            if request.path.endswith("new-instance") and worker and worker.lease:
-                worker.send(dict(op="drop_lease", lease_seq=worker.lease_seq))
-                worker.receive(5)
-                worker.lease = None
+                pool.drop_instance(key)  # review S P2-6: under the worker's job lock, never raw I/O here
+            elif pool.workers.get(key) and pool.workers[key].busy:
+                return jsonify(ok=False, **click.answer("busy"))
         return jsonify(ok=True, **manager().intent(_window(data), explicit=True,
                                                    renew=request.path.endswith("renew"), **facts))
     except PoolError as exc:

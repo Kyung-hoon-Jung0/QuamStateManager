@@ -36,7 +36,8 @@ def main():
 
     spec = dict(mw=[1], lf=[])
     for raw in sys.stdin:
-        request = proto.decode(raw)
+        request = json.loads(raw)
+        proto.validate(request)
         op = request["op"]
         with ledger.open("a", encoding="ascii") as stream:
             # Never put lease headers into a test ledger.
@@ -63,7 +64,9 @@ def main():
                 if plan.get("mode") != "wait_stop":
                     result()
         elif op == "cluster":
-            if plan.get("mode") != "hang_cluster":
+            if plan.get("mode") == "cluster_fail":
+                emit("cluster_failed", seq=request["seq"], message="fake layout error")
+            elif plan.get("mode") != "hang_cluster":
                 emit("cluster", seq=request["seq"], spec=spec, hash=proto.cluster_hash(spec))
         elif op == "drop_lease":
             lease = None
@@ -105,6 +108,13 @@ def main():
             break
 
 
+def publish(path, data):
+    """Write the owner's answer through tmp + replace, so a reader never sees half a file (review S P3-9)."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data), encoding="ascii")
+    os.replace(tmp, path)
+
+
 def owner(args):
     """Run a real second SM pool process to pin scratch isolation (D-14, S-14)."""
     from types import SimpleNamespace
@@ -135,12 +145,12 @@ def owner(args):
         worker = pool.worker(sys.executable, library, live, dict(host="192.0.2.2"), lambda *a, **k: None)
         identity = worker.snapshot(SimpleNamespace(after=after, seq=1, store_id=str(os.getpid())), str(os.getpid()))
         ready = dict(scratch=str(worker.scratch), worker_pid=worker.proc.pid)
-        result_file.write_text(json.dumps(ready), encoding="ascii")
+        publish(result_file, ready)
         deadline = time.monotonic() + 8
         while not (directory / "owners-continue").exists() and time.monotonic() < deadline:
             threading.Event().wait(.02)
         ready["identity_kept"] = json.loads((worker.chip / "_snapshot.json").read_text()) == identity
-        result_file.write_text(json.dumps(ready), encoding="ascii")
+        publish(result_file, ready)
     finally:
         pool.close()
 

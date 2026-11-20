@@ -11,8 +11,8 @@ MARKER = "@@NODESIM1 "
 WORKER_OPS = frozenset("hello cluster lease drop_lease click stop exit".split())
 BROKER_OPS = frozenset("hello acquire touch in_job cancel release status bye swapped".split())
 WORKER_EVENTS = frozenset(
-    "ready cluster lease_ok lease_failed lease_dropped phase build_started build_done need_lease result guard "
-    "idle bye proto_mismatch".split()
+    "ready cluster cluster_failed lease_ok lease_failed lease_dropped phase build_started build_done need_lease "
+    "result guard idle bye proto_mismatch".split()
 )
 BROKER_EVENTS = frozenset(
     "hello_ok account_mismatch login_failed spawning lease no_slot spawn_failed cancelled closed status "
@@ -21,9 +21,12 @@ BROKER_EVENTS = frozenset(
 OPS = WORKER_OPS | BROKER_OPS
 EVENTS = WORKER_EVENTS | BROKER_EVENTS
 RELEASE_WHYS = frozenset(
-    "worker_died_in_job hash_changed stop_spawned sm_exit swap_failed stopped_in_job".split()
+    "worker_died_in_job hash_changed stop_spawned sm_exit swap_failed stopped_in_job expired host_refused "
+    "cold_fallback".split()
 )
 CLOSED_WHYS = frozenset("idle expired release reaper".split())
+#: worker bye reasons; protocol_error is the one W sends for an unreadable SM message (review S P3-8)
+BYE_WHYS = frozenset("guard idle exit proto_mismatch saas_env protocol_error".split())
 ERROR_CODES = frozenset(
     "proto_mismatch account_mismatch login_failed lease_failed no_slot spawn_failed".split()
 )
@@ -60,7 +63,8 @@ OP_FIELDS = {
 EVENT_FIELDS = {
     "ready": dict(pid=int, proto=int, imports_s=NUMBER, quam_config_file=str, qm_version=str, sources=dict),
     "cluster": dict(seq=int, spec=SPEC, hash=str),
-    "lease_ok": dict(lease_seq=int, connect_s=NUMBER),
+    "cluster_failed": dict(seq=int, message=str),
+    "lease_ok": dict(lease_seq=int, connect_s=(int, float, type(None))),
     "lease_failed": dict(lease_seq=int, message=str), "lease_dropped": dict(lease_seq=int),
     "phase": dict(click_id=str, phase=PHASES, phases=list),
     "build_started": dict(click_id=str), "build_done": dict(click_id=str, s=NUMBER, sources_new=dict),
@@ -69,11 +73,11 @@ EVENT_FIELDS = {
                    script_ok=bool, program_chars=int, qop_version=str, window_ns=int,
                    last_adc_end_ns=(int, float, type(None)), lease_seq=(int, type(None)),
                    cluster_hash=str, dropped_overrides=list, replaced_hosts=list),
-    "guard": dict(click_id=str, line=str), "idle": {}, "bye": dict(why=str),
+    "guard": dict(click_id=str, line=str), "idle": {}, "bye": dict(why=BYE_WHYS),
     "hello_ok": dict(account=str, qm_saas_file=str), "account_mismatch": {},
     "login_failed": dict(line=str), "spawning": dict(req=str, in_use_here=int, limit=int),
     "lease": dict(LEASE, req=str, spawned=bool, spawn_s=NUMBER),
-    "no_slot": dict(in_use_here=int, earliest_close=NULL_STRING), "spawn_failed": dict(line=str),
+    "no_slot": dict(req=str, in_use_here=int, earliest_close=NULL_STRING), "spawn_failed": dict(req=str, line=str),
     "cancelled": dict(req=str), "closed": dict(instance_id=str),
     "status": dict(rows=list, in_use_here=int, limit=int),
     "renew_offer": dict(instance_id=str, expires_at=str), "replaced": dict(old=str, lease=LEASE),
@@ -139,6 +143,17 @@ def encode(msg):
     """Return an ASCII protocol line, including its terminating newline (P2 spec 4.1)."""
     validate(msg)
     return MARKER + json.dumps(msg, ensure_ascii=True, separators=(",", ":"), allow_nan=False) + "\n"
+
+
+def encode_request(msg):
+    """Return one plain JSON line for SM -> worker stdin; the marker frames worker -> SM only (D-45)."""
+    validate(msg)
+    return json.dumps(msg, ensure_ascii=True, separators=(",", ":"), allow_nan=False) + "\n"
+
+
+def same_created(a, b):
+    """One PID-reuse check for two creation times of the same process: |a - b| <= 0.01 s (D-46)."""
+    return type(a) in (int, float) and type(b) in (int, float) and abs(a - b) <= 0.01
 
 
 def decode(line):

@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import queue
 import subprocess
 import sys
 import threading
@@ -69,6 +70,11 @@ MUTATIONS = {
     "S-13": ('if not proto.is_allowed_saas_host(lease["host"], lease["port"]):', 'if False:'),
     "S-14": ('f"{self.key}-{pid or os.getpid()}"', 'f"{self.key}"'),
     "S-15": ('if trigger not in ("worker_unready", "broker_unstarted"):', 'if False:'),
+    "S-P2-1": ('# Any answer to a req this client never sent is dropped (D-48, review S P2-1, P3-7).\n'
+               '                    continue', 'pass'),
+    "S-P3-10": ('broker.send(dict(op="release", instance_id=lease["instance_id"], why="host_refused"))', 'pass'),
+    "S-F3": ('box["error"] = PoolError("failed", message=CLUSTER_FAILED + event["message"])\n'
+             '                        break', 'raise PoolError("worker_crashed", code=None)'),
     "S-16": ('self.sources.update(ready["sources"])',
               'self.sources.update(ready["sources"]); lab_worker.register(self)'),
 }
@@ -277,7 +283,9 @@ def test_s4b_cluster_watchdog_and_stop_during_lock(rig):
     stop = threading.Event()
     stop.set()
     try:
-        verdict(rig, "stopped_kept", lambda: rig.run(stop))
+        # Review S P2-4: no lease is held here, so the line says no instance was open.
+        a = verdict(rig, "stopped_none", lambda: rig.run(stop))
+        assert a["line"] == click.LINES["stopped_none"]
         assert "click" not in rig.ops()
     finally:
         rig.lock.release()
@@ -657,3 +665,37 @@ def test_expired_instance_retries_once(rig):
     assert rig.run()["ok"]
     assert len([a for a in rig.notifications if a["state"] == "expired_retry"]) == 1
     assert len([c for c in rig.broker.calls if c["op"] == "acquire"]) == 2
+
+
+def test_p3_10_refused_host_is_released_once(rig):
+    """Review S P3-10: a lease on a refused host is released once, with its own reason (D-11, D-17)."""
+    rig.broker.host = "127.0.0.1"
+    verdict(rig, "lease_failed", rig.run)
+    assert [c["why"] for c in rig.broker.calls if c["op"] == "release"] == ["host_refused"]
+    assert not rig.p.leases
+
+
+def test_p2_1_foreign_answers_are_dropped(module):
+    """Review S P2-1: an acquire takes only its own req's answer and a status call only a status event."""
+    client = object.__new__(module.BrokerClient)
+    client.lock, client.messages, client.sent = threading.Lock(), queue.Queue(), []
+    client.send = client.sent.append
+    client.messages.put(dict(ev="no_slot", req="other", in_use_here=3, earliest_close=None))
+    client.messages.put(dict(ev="spawn_failed", req="mine", line="own answer"))
+    message = dict(op="acquire", req="mine")
+    assert client.request(message, cap=2)["line"] == "own answer"
+    client.messages.put(dict(ev="closed", instance_id="instance-a"))
+    client.messages.put(dict(ev="status", rows=[], in_use_here=0, limit=3))
+    assert client.request(dict(op="status"), cap=2)["ev"] == "status"
+
+
+def test_f3_cluster_failure_keeps_worker(rig):
+    """W F3: a cluster_failed answer gives the honest line, frees the lock and keeps the worker alive."""
+    rig.plan["mode"] = "cluster_fail"
+    a = verdict(rig, "failed", lambda: rig.intent(True))
+    assert a["line"].startswith(click.line("failed", message=rig.module.CLUSTER_FAILED)[:20])
+    assert rig.module.CLUSTER_FAILED + "fake layout error" in json.dumps(a)
+    assert rig.lock.acquire(blocking=False)
+    rig.lock.release()
+    assert len(rig.procs) == 1 and rig.procs[0].poll() is None
+    assert not [c for c in rig.broker.calls if c["op"] == "acquire"]

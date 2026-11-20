@@ -41,9 +41,9 @@ class FakeBroker:
             else:
                 raise PoolError("broker_failed", message="Fake spawn cap hit.")
         if self.state == "no_slot":
-            return dict(ev="no_slot", in_use_here=3, earliest_close=self.lease["expires_at"])
+            return dict(ev="no_slot", req=message["req"], in_use_here=3, earliest_close=self.lease["expires_at"])
         if self.state != "lease":
-            return dict(ev=self.state, line="fake refusal")
+            return dict(ev=self.state, req=message["req"], line="fake refusal")
         self.lease.update(host=self.host, cluster_hash=message["hash"])
         return dict(ev="lease", req=message["req"], spawned=True, spawn_s=0, **self.lease)
 

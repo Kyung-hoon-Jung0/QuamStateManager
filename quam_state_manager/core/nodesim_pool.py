@@ -73,6 +73,13 @@ def kill(proc):
         lab_worker._close_owner(proc)
 
 
+#: W F3: the window line when the chip copy's FEM layout cannot be generated
+CLUSTER_FAILED = "The chip copy's FEM layout could not be read from its config: "
+#: review S P3-8: the line when the worker could not read a message from SM
+PROTOCOL_ERROR = ("The simulator process could not read a message from SM and stopped; "
+                  "the next click starts a fresh one.")
+
+
 class WorkerClient:
     """One protocol reader and one lock-owning execution thread (D-18)."""
 
@@ -102,6 +109,8 @@ class WorkerClient:
         self.used, self.busy = time.monotonic(), False
         self.closed = threading.Event()
         self.retired = False
+        self.bye = None
+        self.rss_at = 0.0
         self.reader = threading.Thread(target=self._read, daemon=True)
         self.thread = threading.Thread(target=self._work, daemon=True)
         self.reader.start()
@@ -127,6 +136,8 @@ class WorkerClient:
                     self.events.put(None)
                     kill(self.proc)
                     break
+                if message["ev"] == "bye":
+                    self.bye = message["why"]  # review S P2-2: a worker that said bye is never reused.
                 self.events.put(message)
         except (OSError, ValueError, UnicodeError):
             self.events.put(None)
@@ -137,7 +148,7 @@ class WorkerClient:
     def send(self, message):
         """Write only validated protocol messages, without logging (D-11, spec 4)."""
         with self.write_lock:
-            self.proc.stdin.write(proto.encode(message))
+            self.proc.stdin.write(proto.encode_request(message))
             self.proc.stdin.flush()
 
     def receive(self, cap):
@@ -186,6 +197,7 @@ class WorkerClient:
             command, stop, on_event, lease_provider, done, box = task
             held = False
             sent = False
+            parked = None
             try:
                 deadline = time.monotonic() + self.lock_s
                 on_event(dict(ev="phase", phase="lock", phases=[]))
@@ -215,16 +227,18 @@ class WorkerClient:
                     try:
                         event = self.events.get(timeout=.02)
                     except queue.Empty:
-                        try:
-                            if psutil.Process(self.proc.pid).memory_info().rss > 2 * 1024**3:
-                                kill(self.proc)
-                        except psutil.Error:
-                            pass
+                        if time.monotonic() - self.rss_at >= .5:  # review S P3-6: a cap needs no 20 ms poll.
+                            self.rss_at = time.monotonic()
+                            try:
+                                if psutil.Process(self.proc.pid).memory_info().rss > 2 * 1024**3:
+                                    kill(self.proc)
+                            except psutil.Error:
+                                pass
                         continue
                     if event is None:
                         raise PoolError("worker_crashed", code=self.proc.poll())
                     ev = event["ev"]
-                    if ev in ("build_done", "result", "cluster", "guard", "bye") and held:
+                    if ev in ("build_done", "result", "cluster", "cluster_failed", "guard", "bye") and held:
                         self.machine_lock.release()
                         held = False
                     if ev == "build_done":
@@ -232,7 +246,14 @@ class WorkerClient:
                             self.sources.setdefault(path, stat)
                     on_event(event)
                     if ev == "need_lease":
-                        lease_provider(event)
+                        try:
+                            lease_provider(event)
+                        except PoolError as exc:
+                            if exc.state != "stopped_spawning":
+                                raise
+                            # Review S P3-1: the worker gets a stop and answers; it is not killed.
+                            parked = exc
+                            continue
                     if ev == "guard":
                         raise PoolError("guard", guard_line=event["line"])
                     if ev == "lease_failed":
@@ -240,12 +261,21 @@ class WorkerClient:
                     if ev == "cluster":
                         box["result"] = event
                         break
+                    if ev == "cluster_failed":
+                        # W F3: the worker stays up; the window shows the build line, no respawn.
+                        box["error"] = PoolError("failed", message=CLUSTER_FAILED + event["message"])
+                        break
                     if ev == "result":
                         proto.check_snapshot(command, event)
                         box["result"] = event
                     if ev == "idle":
+                        if parked:
+                            box.pop("result", None)
+                            box["error"] = parked
                         break
                     if ev == "bye":
+                        if event["why"] == "protocol_error":
+                            raise PoolError("failed", message=PROTOCOL_ERROR)
                         raise PoolError("worker_crashed", code=self.proc.poll())
                 else:
                     kill(self.proc)
@@ -347,7 +377,7 @@ class BrokerClient:
             try:
                 candidate = json.loads((self.directory / "broker.json").read_text(encoding="utf-8"))
                 process = psutil.Process(candidate["pid"])
-                if process.create_time() == candidate["created"] and process.is_running():
+                if proto.same_created(process.create_time(), candidate["created"]) and process.is_running():
                     record = candidate
                     break
             except (OSError, ValueError, KeyError, psutil.Error):
@@ -437,12 +467,18 @@ class BrokerClient:
                     continue
                 if event is None:
                     raise PoolError("broker_disconnected")
+                if "req" not in message:
+                    # A status call takes only the status answer (review S P2-1).
+                    if event["ev"] == "status":
+                        return event
+                    continue
+                if event.get("req") != message["req"]:
+                    # Any answer to a req this client never sent is dropped (D-48, review S P2-1, P3-7).
+                    continue
                 if event["ev"] == "spawning":
                     on_event(event)
                     continue
                 if event["ev"] == "cancelled":
-                    continue
-                if "req" in event and event["req"] != message.get("req"):
                     continue
                 return event
         raise PoolError("broker_failed", message="The manager did not answer.")
@@ -469,6 +505,7 @@ class WarmPool:
         self.directory = Path(directory or broker_dir())
         self.workers, self.leases, self.secrets = {}, {}, []
         self.waiting = {}
+        self.spawning = set()
         self.notices = {}
         self.lock = threading.RLock()
         self.broker = None
@@ -505,11 +542,24 @@ class WarmPool:
     def ensure_broker(self, python, credentials):
         """Use only an interpreter that passed the environment gates (D-16, spec 3.3)."""
         with self.broker_lock:
-            if self.broker is None:
-                self.broker = self.broker_factory(self.directory, python, credentials)
+            if self.broker is None or self.broker.disconnected.is_set():
+                # A lost manager is replaced on the next use even with no lease held (review S P1-4); the old
+                # client stays in place until the new one connects, so its pending messages are not dropped.
+                fresh = self.broker_factory(self.directory, python, credentials)
+                if self.broker is not None:
+                    self.broker.close()
+                self.broker = fresh
+                self.flush_pending()
             self.credentials, self.broker_python = dict(credentials), python
-        self.secrets.extend([credentials.get("password")])
+        self.add_secret(credentials.get("password"))
         return self.broker
+
+    def flush_pending(self):
+        """Deliver occupancy/release messages kept while the manager was away (D-17, spec 3.3)."""
+        while self.pending:
+            self.broker.send(self.pending[0])
+            self.pending.pop(0)
+        self.broker_error = None
 
     def start_reaper(self, credentials):
         """Validate the recorded interpreter before startup reaping (spec 3.3, review r2 P2-D)."""
@@ -554,59 +604,84 @@ class WarmPool:
         while time.monotonic() < deadline:
             with self.lock:
                 if self.waiting[key] != ticket:
-                    raise PoolError("stopped_kept")
+                    raise PoolError(self.stop_state(key))
                 existing = self.workers.get(key)
-                capacity = len(self.workers) < 2 or any(not w.busy for w in self.workers.values())
-                available = not existing.busy if existing else capacity
+                capacity = (len(self.workers) + len(self.spawning) < 2 or
+                            any(not w.busy for w in self.workers.values()))
+                available = not existing.busy if existing else capacity and key not in self.spawning
                 if available:
+                    # Review S P3-3: the reservation is taken in the same locked step as the check.
+                    if existing:
+                        existing.busy = True
+                    else:
+                        self.spawning.add(key)
                     break
             notify("busy_chip", name=Path(live).name)
             if self.closed.wait(.05) or (stop is not None and stop.is_set()):
-                raise PoolError("stopped_kept")
+                raise PoolError(self.stop_state(key))
         else:
             raise PoolError("busy_chip", name=Path(live).name)
-        old = None
-        with self.lock:
-            worker = self.workers.get(key)
-            if worker is None:
-                for candidate in list(self.workers.values()):
-                    if (not candidate.busy and candidate.live == Path(live).resolve() and
-                            candidate.library.resolve() == Path(library).resolve()):
-                        old = candidate
-                        self.workers.pop(candidate.key)
-                        if candidate.key in self.leases:
-                            self.leases[key] = self.leases.pop(candidate.key)
-                        break
-            if worker and worker.busy:
-                raise PoolError("busy")
-            if worker:
-                changed = worker.changed()
-                if changed or worker.proc.poll() is not None:
-                    old, worker = worker, None
-                    self.workers.pop(key)
-                    if changed:
-                        notify("worker_restart", file=changed)
-            if worker is None and len(self.workers) >= 2:
-                idle = [w for w in self.workers.values() if not w.busy]
-                if not idle:
-                    raise PoolError("busy_chip", name=Path(live).name)
-                retired = min(idle, key=lambda w: w.used)
-                self.workers.pop(retired.key)
-                retired.close()
-            if old:
-                old.close()
+        old = retired = worker = None
+        try:
+            with self.lock:
+                worker = self.workers.get(key)
+                if worker is None:
+                    for candidate in list(self.workers.values()):
+                        if (not candidate.busy and candidate.live == Path(live).resolve() and
+                                candidate.library.resolve() == Path(library).resolve()):
+                            old = candidate
+                            self.workers.pop(candidate.key)
+                            if candidate.key in self.leases:
+                                self.leases[key] = self.leases.pop(candidate.key)
+                            break
+                if worker:
+                    changed = worker.changed()
+                    if changed or worker.proc.poll() is not None or worker.bye:
+                        old, worker = worker, None
+                        self.workers.pop(key)
+                        self.spawning.add(key)
+                        if changed:
+                            notify("worker_restart", file=changed)
+                if worker is None and len(self.workers) >= 2:
+                    idle = [w for w in self.workers.values() if not w.busy]
+                    if not idle:
+                        raise PoolError("busy_chip", name=Path(live).name)
+                    retired = min(idle, key=lambda w: w.used)
+                    self.workers.pop(retired.key)
+            # Review S P3-2: closing and spawning (up to 60 s) run outside the pool lock.
+            for gone in (retired, old):
+                if gone:
+                    gone.close()
             if worker is None:
                 notify("warming", env=Path(python).parent.name)
                 worker = self.worker_factory(python, library, live, credentials["host"], root=self.root)
-                self.workers[key] = worker
+                worker.busy = True
+                with self.lock:
+                    self.workers[key] = worker
                 if key in self.leases:
                     worker.set_lease(self.leases[key])
                 notify("ready")
-            worker.busy = True
+        except BaseException:
+            if worker is not None:
+                worker.busy = False
+            raise
+        finally:
+            with self.lock:
+                self.spawning.discard(key)
         return worker
 
     def acquire(self, worker, python, credentials, event, stop, notify, reason="click"):
         """Request by hash and relay only a validated lease (D-13, spec 3.5)."""
+        version = credentials.get("version")
+        version = version.strip() if isinstance(version, str) else ""
+        if not version:
+            # D-47: never let the broker guess a version; refuse before any acquire, naming the source.
+            if "version" not in credentials:
+                line = ("No QOP version: the cloud login comes from SM's SAAS_* environment variables, which carry "
+                        "none. Save the login with a QOP version under Settings, Simulator login.")
+            else:
+                line = "The saved Simulator login has no QOP version. Add one under Settings, Simulator login."
+            raise PoolError("spawn_failed", message=line)
         broker = self.ensure_broker(python, credentials)
         old = self.leases.get(worker.key)
         if old and old["cluster_hash"] != event["hash"]:
@@ -614,7 +689,7 @@ class WarmPool:
             raise PoolError("needs_instance")
         response = broker.request(dict(op="acquire", req=uuid.uuid4().hex,
                                        owner=dict(sm_pid=os.getpid(), worker_pid=worker.proc.pid),
-                                       version=credentials.get("version") or "", spec=event["spec"],
+                                       version=version, spec=event["spec"],
                                        hash=event["hash"], reason=reason), stop=stop,
                                   on_event=lambda e: notify("starting", in_use_here=e["in_use_here"]))
         ev = response["ev"]
@@ -623,9 +698,9 @@ class WarmPool:
         if ev != "lease":
             raise PoolError("spawn_failed", message=response.get("line", ev))
         lease = {k: response[k] for k in proto.LEASE}
-        self.secrets.append(lease["headers"]["simulation-auth"])
+        self.add_secret(lease["headers"]["simulation-auth"])
         if not proto.is_allowed_saas_host(lease["host"], lease["port"]):
-            broker.send(dict(op="release", instance_id=lease["instance_id"], why="swap_failed"))
+            broker.send(dict(op="release", instance_id=lease["instance_id"], why="host_refused"))
             raise PoolError("lease_failed", message="The instance address was refused.")
         self.leases[worker.key] = lease
         return lease
@@ -683,7 +758,7 @@ class WarmPool:
             if (not retried and not stop.is_set() and lease and remaining(lease) <= 5 and
                     phase in ("submit", "wait") and result.get("kind") in ("failed", "expired")):
                 notify("expired_retry")
-                self.release(worker.key, "hash_changed")
+                self.release(worker.key, "expired")
                 kill(worker.proc)
                 worker.busy = False
                 return self.run(python=python, library=library, live=live, credentials=credentials,
@@ -695,7 +770,7 @@ class WarmPool:
                 if spawned:
                     self.release(worker.key, "stop_spawned")
                     raise PoolError("stopped")
-                raise PoolError("stopped_kept")
+                raise PoolError(self.stop_state(worker.key))
             if lease:
                 self.broker_send(dict(op="in_job", instance_id=lease["instance_id"], click_id=None))
             return clean(result, self.secrets)
@@ -704,7 +779,8 @@ class WarmPool:
                 self.release(worker.key, "worker_died_in_job")
             if exc.state == "guard":
                 kill(worker.proc)
-            raise PoolError(exc.state, **clean(exc.fields, self.secrets)) from None
+            state = self.stop_state(worker.key) if exc.state == "stopped_kept" else exc.state
+            raise PoolError(state, **clean(exc.fields, self.secrets)) from None
         finally:
             worker.busy = False
 
@@ -734,6 +810,42 @@ class WarmPool:
             raise
         finally:
             worker.busy = False
+
+    def add_secret(self, value):
+        """Scrub list without duplicates, so a re-queued push does not grow it (review S P3-4)."""
+        if value and value not in self.secrets:
+            self.secrets.append(value)
+
+    def drop_instance(self, key):
+        """Close this key's instance and clear the worker's lease while holding its job (review S P2-6)."""
+        with self.lock:
+            worker = self.workers.get(key)
+            if worker and worker.busy:
+                raise PoolError("busy")
+            if worker:
+                worker.busy = True
+        try:
+            self.release(key, "hash_changed")
+            if worker and worker.lease:
+                worker.send(dict(op="drop_lease", lease_seq=worker.lease_seq))
+                if worker.receive(5)["ev"] != "lease_dropped":
+                    raise PoolError("lease_failed", message="The previous instance could not be dropped.")
+                worker.lease = None
+        except OSError:
+            kill(worker.proc)
+            raise PoolError("worker_crashed", code=worker.proc.poll()) from None
+        except PoolError as exc:
+            if exc.state == "worker_unready":
+                kill(worker.proc)
+                raise PoolError("worker_crashed", code=worker.proc.poll()) from None
+            raise
+        finally:
+            if worker:
+                worker.busy = False
+
+    def stop_state(self, key):
+        """A Stop names a kept instance only when one is held for this key (review S P2-4, contract 11)."""
+        return "stopped_kept" if key in self.leases else "stopped_none"
 
     def release(self, key, why):
         """Close only this owner's named instance (D-17, spec 4.5)."""
@@ -775,7 +887,7 @@ class WarmPool:
         """Permit only the two fallback triggers and reserve a local slot (spec 2.7)."""
         if trigger not in ("worker_unready", "broker_unstarted"):
             return False
-        self.release(key, "sm_exit")
+        self.release(key, "cold_fallback")
         if self.broker and not self.broker.disconnected.is_set():
             status = self.instances()
             return status["in_use_here"] <= 2
@@ -789,19 +901,19 @@ class WarmPool:
                     with self.lock:
                         self.workers.pop(worker.key, None)
                     worker.close()
-            if self.broker and self.leases and self.broker.disconnected.is_set():
-                if self.broker_error:
-                    continue
+            if (self.broker and (self.leases or self.pending) and self.broker.disconnected.is_set() and
+                    not self.broker_error):
                 for attempt in range(3):
                     if self.closed.is_set():
                         break
                     try:
-                        self.broker.close()
-                        self.broker = self.broker_factory(self.directory, self.broker_python, self.credentials)
-                        for message in self.pending:
-                            self.broker.send(message)
-                        self.pending.clear()
-                        self.broker_error = None
+                        with self.broker_lock:
+                            if not self.broker or not self.broker.disconnected.is_set():
+                                break
+                            self.broker.close()
+                            self.broker = self.broker_factory(self.directory, self.broker_python,
+                                                              self.credentials)
+                            self.flush_pending()
                         break
                     except (PoolError, OSError):
                         if attempt == 2:
@@ -821,7 +933,7 @@ class WarmPool:
                             if lease["instance_id"] == event["instance_id"]:
                                 self.notices[key] = dict(state="renew_offer", expires_at=event["expires_at"])
                     elif event["ev"] == "replaced":
-                        self.secrets.append(event["lease"]["headers"]["simulation-auth"])
+                        self.add_secret(event["lease"]["headers"]["simulation-auth"])
                         for key, old in list(self.leases.items()):
                             worker = self.workers.get(key)
                             if old["instance_id"] != event["old"]:

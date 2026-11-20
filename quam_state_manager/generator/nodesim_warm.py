@@ -99,7 +99,7 @@ class Worker:
             self.guard.replace_lease(params, endpoints)
             self.secrets.append(message["headers"]["simulation-auth"])
             self.lease, self.qmm = message, None
-            self.emit("lease_ok", lease_seq=seq, connect_s=0.0)
+            self.emit("lease_ok", lease_seq=seq, connect_s=None)  # F5: null until a connect is measured.
         except (ValueError, OSError) as exc:
             self.emit("lease_failed", lease_seq=seq, message=str(exc))
 
@@ -153,6 +153,9 @@ class Worker:
             self.emit("build_started", click_id=self.click_id)
             self.guard.enter_build()
             snapshot = json.loads((Path(self.job["chip_copy"]) / "_snapshot.json").read_text(encoding="utf-8"))
+            # D-50: echo the ids of the copy actually loaded, so SM's check_snapshot can fail on a stale copy.
+            result.update({key: snapshot[key] for key, kind in proto.SNAPSHOT.items()
+                           if type(snapshot.get(key)) is kind})
             try:
                 proto.check_snapshot(request, snapshot)
             except ValueError:
@@ -350,7 +353,14 @@ class Worker:
                         return  # Guard retirement: P2 spec 2.3, Q-9.
                     idle_deadline = time.monotonic() + idle_s
                 elif op == "cluster":
-                    self.cluster(message)
+                    try:
+                        self.cluster(message)
+                    except Exception as exc:
+                        if self.guard.verdict:
+                            raise
+                        # W F3: a chip that does not build answers one error event; the worker stays up.
+                        text = (str(exc).strip().splitlines() or [type(exc).__name__])[0][:300]
+                        self.emit("cluster_failed", seq=message["seq"], message=text)
                 elif op != "stop":
                     raise ValueError("unexpected operation")
         except BaseException:

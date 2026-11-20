@@ -82,7 +82,7 @@ STATES = ("none", "blocked", "no_env", "no_library", "not_configured", "needs_ta
           "chip_changed", "too_long", "timeout", "stopped", "failed")
 STATES += tuple("warming ready instance no_slot spawn_failed needs_instance renew_offer renewing expired_retry "
                 "lab_busy build_watchdog worker_crashed worker_restart busy_chip stopped_spawning stopped_kept "
-                "idle_closed broker_failed cold_fallback lease_failed".split())
+                "idle_closed broker_failed cold_fallback lease_failed stopped_none".split())
 
 #: the child's result kinds (child protocol, spec section 4)
 KINDS = ("ok", "node_error", "serializer", "guard", "refused", "too_long", "timeout", "failed")
@@ -109,6 +109,7 @@ LINES = {
                        "released."),
     "stopped_spawning": "Stopped. The cloud instance is still starting and is closed as soon as it is up.",
     "stopped_kept": "Stopped. The cloud instance stays open for the next click.",
+    "stopped_none": "Stopped. No cloud instance was open.",
     "idle_closed": "The cloud instance was closed after 10 min without a click.",
     "cold_fallback": "Using a one-off simulator process this time.",
 }
@@ -433,7 +434,7 @@ def _read_text(path: Path) -> str:
 
 
 def _scrub_files(work: Path, secret: Optional[str]) -> None:
-    """Rewrite every text file of the run folder that carries the password."""
+    """Rewrite every text file of the run folder that carries the password (D-11)."""
     if not secret:
         return
     for path in Path(work).iterdir():
@@ -523,7 +524,7 @@ class ClickRuns(ptr.Runs):
         return bool(cur and cur["proc"].poll() is None)
 
     def status(self, rid: Optional[str] = None) -> dict:
-        """The heartbeat touch and the run clock only. The port test's status also opens ``_status.json``;
+        """The heartbeat touch and the run clock only (P2 spec 2.5). The port test's status also opens ``_status.json``;
         every open of it can make the child's replace of that file fail on Windows, so the click reads it
         once per poll, itself (``_read_status``)."""
         run = self.current
@@ -617,6 +618,8 @@ class Manager:
         self.pool = pool
         self.warm_jobs: dict = {}
         self.intent_answers: dict = {}
+        self.intent_at: dict = {}
+        self.latest_at: dict = {}
 
     def runs(self, window: Any) -> ClickRuns:
         key = window_key(window)
@@ -700,7 +703,7 @@ class Manager:
                 final["id"] = rid
                 with self._lock:
                     self.final[rid] = final
-                    self.latest[runs.window] = rid
+                    self._mark_latest(runs.window, rid)
                 return copy.deepcopy(final)
             before = self.digest(live_folder) if live_folder else None
             if self.pool is not None:
@@ -721,7 +724,7 @@ class Manager:
                    "ikey": ikey, "estimate_s": est["estimate_s"], "t0": time.monotonic()}
             with self._lock:
                 self.jobs[rid] = job
-                self.latest[runs.window] = rid
+                self._mark_latest(runs.window, rid)
             threading.Thread(target=self._reap, args=(job,), daemon=True).start()
             return answer("running", id=rid, phase="build", phases=[copy_phase],
                           estimate_s=est["estimate_s"], limit_s=self.limit_s, elapsed_s=0.0)
@@ -742,8 +745,12 @@ class Manager:
             if any(j["window"] == job["window"] and not j["done"] for j in self.warm_jobs.values()):
                 return answer("busy")
             job["done"] = False
+            # Review S P3-5: finished jobs no window still points at are dropped, so the table stays bounded.
+            keep = set(self.latest.values())
+            for old in [k for k, j in self.warm_jobs.items() if j["done"] and k not in keep]:
+                self.warm_jobs.pop(old, None)
             self.warm_jobs[rid] = job
-            self.latest[job["window"]] = rid
+            self._mark_latest(job["window"], rid)
         # The start caller removes its transient copies in finally; the worker receives immutable bytes here.
         from types import SimpleNamespace
         detached = self.instance / "nodesim" / job["window"] / rid / "copy"
@@ -760,6 +767,16 @@ class Manager:
                                   self.pool.secrets)
 
         def run():
+            """Always finalise the job, so a failure in the fallback never leaves the window busy (review S P2-3)."""
+            try:
+                body()
+            except Exception as exc:
+                job["answer"] = clean(answer("failed", message=str(exc), id=rid),
+                                      self.pool.secrets + [saas.get("password")])
+            finally:
+                job["done"] = True
+
+        def body():
             """Complete and record the verdict off the request thread (D-9, D-22)."""
             import shutil
             try:
@@ -847,7 +864,7 @@ class Manager:
         if not saas:
             return answer("not_configured")
         key = window_key(window)
-        self.intent_answers[key] = answer("warming", env=env_name)
+        self._set_intent(key, answer("warming", env=env_name))
 
         def run():
             """Keep the page responsive while imports or an intent spawn runs (D-19)."""
@@ -858,24 +875,34 @@ class Manager:
                 fields = {} if renew else dict(explicit=explicit)
                 operation(python=python, library=library, live=live_folder, credentials=saas,
                           copies=copies, **fields,
-                          notify=lambda state, **kw: self.intent_answers.update(
-                              {key: clean(answer(state, **kw), self.pool.secrets)}))
-                self.intent_answers[key] = answer("ready")
+                          notify=lambda state, **kw: self._set_intent(
+                              key, clean(answer(state, **kw), self.pool.secrets)))
+                self._set_intent(key, answer("ready"))
             except PoolError as exc:
                 state = exc.state if exc.state in STATES else "broker_failed"
-                self.intent_answers[key] = answer(state, **exc.fields)
+                self._set_intent(key, answer(state, **exc.fields))
             except Exception as exc:
-                self.intent_answers[key] = answer("failed", message=str(exc), secret=saas.get("password"))
+                self._set_intent(key, answer("failed", message=str(exc), secret=saas.get("password")))
             finally:
                 if copies:
                     self.remove_copy(copies)
         threading.Thread(target=run, daemon=True).start()
         return self.intent_answers[key]
 
+    def _set_intent(self, key, value):
+        """Record an intent answer with its time, for status's newest-answer rule (review S P2-5)."""
+        self.intent_at[key] = time.monotonic()
+        self.intent_answers[key] = value
+
+    def _mark_latest(self, key, rid):
+        """Record a window's newest click and its time (review S P2-5)."""
+        self.latest_at[key] = time.monotonic()
+        self.latest[key] = rid
+
     # -- end -----------------------------------------------------------------
 
     def _reap(self, job: dict, poll_s: float = 0.5) -> None:
-        """Ask the run to stop past the limit; finalize once it ended."""
+        """Ask the run to stop past the limit; finalize once it ended (P2 spec 2.5, D-18)."""
         runs, rid = job["runs"], job["rid"]
         run = runs.current
         cap = self.limit_s + ptr.SAAS_STOP_GRACE_S + 60
@@ -1021,6 +1048,9 @@ class Manager:
                store_id: Any = None) -> dict:
         """Return warm or cold progress and mark stale snapshots (D-14, D-26)."""
         key = window_key(window)
+        if not rid and key in self.intent_answers and self.intent_at.get(key, 0) > self.latest_at.get(key, -1):
+            # Review S P2-5: renew / new-instance progress after a click is the newest answer, so it shows.
+            return copy.deepcopy(self.intent_answers[key])
         warm = self.warm_jobs.get(rid or self.latest.get(key))
         if warm:
             warm["seen"] = time.monotonic()

@@ -163,7 +163,7 @@ def test_contract_table_coverage():
     assert p.EVENTS == set("ready cluster lease_ok lease_failed lease_dropped phase build_started build_done "
                            "need_lease result guard idle bye hello_ok account_mismatch login_failed spawning "
                            "lease no_slot spawn_failed cancelled closed status renew_offer replaced swapped "
-                           "already_running proto_mismatch".split())
+                           "already_running proto_mismatch cluster_failed".split())
     assert set(p.OP_FIELDS) | {"hello"} == p.OPS
     assert set(p.EVENT_FIELDS) == p.EVENTS
     assert (p.KIND_NEEDS_INSTANCE, p.KIND_EXPIRED) == ("needs_instance", "expired")

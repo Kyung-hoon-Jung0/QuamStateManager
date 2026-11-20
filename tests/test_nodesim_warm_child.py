@@ -63,6 +63,9 @@ MUTATIONS.update({
     "W-15-late": ("nodesim_warm.py", 'if hello.get("proto") != proto.PROTO:',
                   'self.start(hello)\n            if hello.get("proto") != proto.PROTO:'),
     "F9-classify": ("nodesim_warm.py", 'cold.classify(exc, self.guard, "")', '("failed", str(exc))'),
+    "F3": ("nodesim_warm.py", 'self.emit("cluster_failed", seq=message["seq"], message=text)', 'raise'),
+    "F5": ("nodesim_warm.py", 'connect_s=None)', 'connect_s=0)'),
+    "D-50": ("nodesim_warm.py", 'if type(snapshot.get(key)) is kind})', 'if False})'),
 })
 
 
@@ -343,6 +346,30 @@ def test_w4_snapshot(session, field):
     result = session.event("result")
     assert result["kind"] == "failed"
     assert result["message"] == f"chip copy {field} {snapshot[field]} is not the click's {request[field]}"
+    # D-50: the result names the copy the worker loaded, so SM's own identity check also refuses it.
+    assert result[field] == snapshot[field]
+    with pytest.raises(ValueError):
+        proto.check_snapshot(request, {k: result[k] for k in proto.SNAPSHOT})
+
+
+def test_f5_lease_ok_has_no_connect_time(session):
+    """W F5: the worker opens no connection when a lease arrives, so connect_s is null (P2 spec 4.3)."""
+    ready(session)
+    session.lease(lease_seq=2)
+    assert session.event("lease_ok")["connect_s"] is None
+
+
+def test_f3_cluster_failure_keeps_worker(session):
+    """W F3: an unreadable chip copy answers one cluster_failed; no bye, and the next cluster works."""
+    ready(session)
+    (session.chip / "state.json").write_text("{not json")
+    session.send(dict(op="cluster", seq=7))
+    failed = session.event("cluster_failed")
+    assert failed["seq"] == 7 and failed["message"]
+    (session.chip / "state.json").write_text("{}")
+    session.send(dict(op="cluster", seq=8))
+    assert session.event("cluster")["seq"] == 8
+    assert session.proc.poll() is None
 
 
 def test_w5_forgery(session):
