@@ -15,7 +15,7 @@
     }
 
     // Port diagrams and wiring badges share the kit's readout-input token.
-    if (window.UI_CONFIG) {
+    if (window.UI_CONFIG && UI_CONFIG.roleColors) {
         UI_CONFIG.roleColors.rr_in = cssVar('--ui-role-rr-in', UI_CONFIG.roleColors.rr_in);
     }
 
