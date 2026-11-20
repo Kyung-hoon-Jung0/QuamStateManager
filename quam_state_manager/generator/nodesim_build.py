@@ -199,10 +199,18 @@ def build(job, guard, result):
     module = types.ModuleType("_nodesim_node")
     module.__file__ = str(node_file)
     sys.modules[module.__name__] = module
-    exec(compile(node_file.read_text(encoding="utf-8"), str(node_file), "exec"), module.__dict__)
     nodes = stub.instances
+    try:
+        exec(compile(node_file.read_text(encoding="utf-8"), str(node_file), "exec"), module.__dict__)
+    finally:
+        # The node's own log (e.g. its preflight refusal reasons) is reported on failure too.
+        result["logs"] = [record for node in nodes for record in node.log.records]
     if len(nodes) != 1 or not nodes[0].ran:
         raise RuntimeError("create_qua_program did not run")
+    if "qua_program" not in nodes[0].namespace:
+        raise RuntimeError("create_qua_program set no node.namespace['qua_program']")
+    if nodes[0].namespace["qua_program"] is None:
+        raise RuntimeError("create_qua_program built no program (node.namespace['qua_program'] is None)")
     from qm import generate_qua_script
     script = generate_qua_script(nodes[0].namespace["qua_program"])
     if "SERIALIZATION VALIDATION ERROR" in script:
@@ -239,6 +247,13 @@ def main():
         import dateutil.tz  # noqa: F401
         # Font discovery reads the Windows registry; its cache is env-pinned.
         import matplotlib.pyplot  # noqa: F401
+        # D-33: trusted analysis libraries whose import-time initializers probe
+        # os.devnull (dill, via lmfit) or load an OpenMP runtime (sklearn).
+        import importlib
+        import importlib.util
+        for name in ("lmfit", "sklearn"):
+            if importlib.util.find_spec(name) is not None:
+                importlib.import_module(name)
         if os.name == "nt":
             import click._winconsole  # noqa: F401
             # Some adapters resolve these symbols lazily on the first output.

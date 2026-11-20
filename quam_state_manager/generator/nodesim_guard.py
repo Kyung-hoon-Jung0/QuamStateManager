@@ -41,7 +41,11 @@ class Guard:
     def write(self, path):
         if isinstance(path, int):
             self.fail("write", f"fd:{path}")
-        path = str(Path(os.fsdecode(path)).resolve())
+        raw = os.fsdecode(path)
+        # D-33: exactly os.devnull is a sink; it reaches no file and no host.
+        if os.path.normcase(raw) == os.path.normcase(os.devnull):
+            return
+        path = str(Path(raw).resolve())
         if not inside(path, self.scratch):
             self.fail("write", path)
         self.writes.append(path)

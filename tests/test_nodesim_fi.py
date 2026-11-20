@@ -145,7 +145,7 @@ def create_qua_program(node):
 """
 
 
-def child(tmp_path, lab, source, row, *, env_changes=None, config_change=None, transport=False):
+def child(tmp_path, lab, source, row, *, env_changes=None, config_change=None, transport=False, expect_ok=False):
     interpreter, library = lab
     scratch = tmp_path / "scratch"
     state = scratch / "state"
@@ -195,9 +195,17 @@ def child(tmp_path, lab, source, row, *, env_changes=None, config_change=None, t
             guard_source = guard_source.replace('self.block("execute", "refused")', 'lambda *a, **k: None')
         elif row == "FI-1d":
             guard_source = guard_source.replace('self.fail("socket.connect", detail)', 'return')
-        elif row.startswith("FI-11"):
+        elif row in {"FI-12-write", "FI-12-devnull"}:
+            # FI-12-write: the D-33 exemption widened to every path; FI-12-devnull: removed.
+            widened = "True" if row == "FI-12-write" else "False"
+            guard_source = guard_source.replace("if os.path.normcase(raw) == os.path.normcase(os.devnull):",
+                                                f"if {widened}:")
+        elif row == "FI-12-preimport":
+            build_source = build_source.replace('for name in ("lmfit", "sklearn"):', 'for name in ("lmfit",):')
+        elif row.startswith("FI-11") or row == "FI-12-ctypes":
             # Replace only the matching event's refusal. Keep other audit barriers.
-            event = {"FI-11-popen": "subprocess.Popen", "FI-11-system": "os.system", "FI-11-ctypes": "ctypes.dlopen"}[row]
+            event = {"FI-11-popen": "subprocess.Popen", "FI-11-system": "os.system", "FI-11-ctypes": "ctypes.dlopen",
+                     "FI-12-ctypes": "ctypes.dlopen"}[row]
             guard_source = guard_source.replace('self.fail(event, str(args[0]) if args else "refused")',
                                                 f'\n            if event != {event!r}:\n                self.fail(event, str(args[0]) if args else "refused")')
         else:
@@ -230,6 +238,9 @@ Guard.install_classes = install
     (tmp_path / "child.stderr.txt").write_text(stderr, encoding="utf-8")
     (tmp_path / "process.json").write_text(json.dumps({"pid": process.pid, "reaped": process.poll() is not None}))
     result = parse_output(stdout)
+    if expect_ok:
+        assert result["ok"] and result["verdict"] is None, (stdout, stderr)
+        return result
     assert result["verdict"] is not None, (stdout, stderr)
     assert not result["ok"]
     if row == "FI-2":
@@ -376,3 +387,72 @@ def test_write_boundary(tmp_path, event, args):
     with pytest.raises(mod.GuardViolation) as raised:
         guard.audit(event, args)
     assert raised.value.verdict == "GUARD FAIL write " + str(Path(args[0]).resolve())
+
+
+def test_devnull_exemption_is_exact(tmp_path):
+    """D-33: exactly os.devnull passes; any other path outside scratch still fails."""
+    mod = load_module("nodesim_guard")
+    guard = mod.Guard(tmp_path / "scratch")
+    guard.write(os.devnull)
+    guard.audit("open", (os.devnull, "r+b", 0))
+    guard.audit("open", (os.fsencode(os.devnull), "wb", 0))
+    assert guard.writes == []
+    for outside in (tmp_path / "outside.txt", tmp_path / (os.devnull + ".txt")):
+        with pytest.raises(mod.GuardViolation) as raised:
+            guard.audit("open", (str(outside), "w", 0))
+        assert raised.value.verdict == "GUARD FAIL write " + str(outside.resolve())
+    with pytest.raises(mod.GuardViolation):
+        guard.write(1)
+
+
+def test_write_outside_scratch_still_fails(tmp_path, lab):
+    """FI-12-write: a real file outside scratch is refused after the D-33 exemption."""
+    target = tmp_path / "outside_scratch.txt"
+    source = f"open({str(target)!r}, 'w').write('x')\n"
+    result = child(tmp_path, lab, source, "FI-12-write")
+    assert result["verdict"] == "GUARD FAIL write " + str(target.resolve())
+    assert not target.exists()
+
+
+def test_ctypes_load_after_preimport_still_fails(tmp_path, lab):
+    """FI-12-ctypes: pre-importing sklearn does not allow a later native load of its runtime."""
+    source = ("import ctypes, glob, os, sklearn\n"
+              "libs = sorted(glob.glob(os.path.join(os.path.dirname(sklearn.__file__), '.libs', '*.dll')))\n"
+              "ctypes.CDLL(libs[0] if libs else 'kernel32')\n")
+    result = child(tmp_path, lab, source, "FI-12-ctypes")
+    assert result["verdict"].startswith("GUARD FAIL ctypes.dlopen "), result
+
+
+def test_devnull_and_trusted_imports_build(tmp_path, lab):
+    """FI-12-devnull / FI-12-preimport: lmfit, sklearn and an os.devnull probe build a program."""
+    source = ("import os\n"
+              "from lmfit import Model\n"
+              "from sklearn.mixture import GaussianMixture\n"
+              "open(os.devnull, 'r+b').close()\n" + HEADER +
+              "    from qm.qua import program, declare\n"
+              "    with open(os.devnull, 'w') as sink:\n"
+              "        sink.write('x')\n"
+              "    with program() as p:\n"
+              "        declare(int)\n"
+              "    node.namespace['qua_program'] = p\n")
+    for row in ("FI-12-devnull", "FI-12-preimport"):
+        if os.getenv("SM_NODESIM_MUTATION") in {None, "", row}:
+            child(tmp_path / row, lab, source, row, expect_ok=True)
+
+
+def test_no_program_is_reported(tmp_path, lab):
+    """A node whose own preflight leaves no program gets a named error and keeps its log."""
+    source = HEADER + "    node.log('every target refused: missing prerequisite')\n    node.namespace['qua_program'] = None\n"
+    interpreter, library = lab
+    scratch = tmp_path / "scratch"
+    state = scratch / "state"
+    state.mkdir(parents=True)
+    for filename in ("state.json", "wiring.json"):
+        (state / filename).write_text('{}')
+    node = tmp_path / "fake.py"
+    node.write_text(source, encoding="utf-8")
+    result = build_node(interpreter, node, library, state, scratch)
+    assert not result["ok"] and result["verdict"] is None
+    assert result["errors"] == ["RuntimeError: create_qua_program built no program "
+                                "(node.namespace['qua_program'] is None)"]
+    assert any("missing prerequisite" in record for record in result["logs"])
