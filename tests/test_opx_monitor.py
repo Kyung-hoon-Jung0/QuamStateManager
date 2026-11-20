@@ -1948,6 +1948,51 @@ def test_stale_open_qm_table_is_never_shown_as_current(env):
     assert 'No QM is open.' not in html and 'No QM was open at the last good read' in html
 
 
+def _open_qms_zone(html):
+    return re.search(r'aria-label="Open QMs">(.*?)</section>', html, re.S)[1]
+
+
+@pytest.mark.parametrize('how', ['list_refused', 'answer_without_a_read'])
+def test_never_read_open_qms_say_unknown_on_card_header_and_body(env, how):
+    app, m, w, clock, _ = env
+    if how == 'list_refused':
+        a = answer(refused={'list_open_qms': 'timed out'})
+        a['open_qms'] = None
+        w.script[:] = [a]
+        m.poll_once()
+        assert m.status()['age_s'] is not None
+    else:  # an answer is held but no good read of it is on record
+        m.last_answer, m.last_error = answer(qms=()), 'connect failed'
+        assert m.status()['age_s'] is None
+    assert m.status()['answer']['open_qms'] is None
+    html = page(app, 'live')
+    tile = re.search(r'>Open QMs</[^>]+>(.*?)</div>', html, re.S)[1]
+    zone = _open_qms_zone(html)
+    assert '>unknown<' in tile and '<span class="ui-zone-sum">unknown</span>' in zone
+    assert 'no successful read yet' in zone and 'ui-table' not in zone
+    for wrong in ('0 open', 'at an unknown time', 'No QM was open', 'has not been read yet'):
+        assert wrong not in html
+    cleanup = page(app, 'cleanup')
+    assert 'No QM is open.' not in cleanup and '0 open' not in cleanup
+    assert 'Not current.' not in page(app, 'jobs')
+
+
+def test_known_open_qm_reads_keep_their_count_and_age(env):
+    app, m, w, clock, _ = env
+    w.script[:] = [answer(qms=())]
+    m.poll_once()
+    assert 'No QM is open: the hardware is free.' in page(app, 'live')
+    w.script[:] = [answer()]
+    clock.t += 1
+    m.poll_once()
+    w.script[:] = [om.WorkerError('connect failed')]
+    clock.t += 99
+    m.poll_once()
+    zone = _open_qms_zone(page(app, 'live'))
+    assert '1 open' in zone and 'last good read 99 s ago' in zone
+    assert 'Not current.' in zone and 'data-stale="1"' in zone
+
+
 def test_returning_viewer_keeps_the_age_on_slot_cards(env):
     app, m, w, clock, _ = env
     w.script[:] = [answer(temps={'FEM 0': 45.0})]

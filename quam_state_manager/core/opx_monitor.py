@@ -1128,6 +1128,22 @@ def health(answer, admin, thresholds, state):
     count = len(ans.get('open_qms') or [])
     return {'color': 'amber' if count else 'green', 'reason': f"{count} open QM{'' if count == 1 else 's'} claim{'s' if count == 1 else ''} resources" if count else 'admin operational' if admin.get('known') else 'reported temperatures within configured limits'}
 
+def known_answer(answer, section_times, age_s):
+    """The one "never read" rule for the status answer.
+
+    A section (controllers, open QMs, jobs) counts as read only when SM holds a good read of
+    it: the answer carries it, a read time is on record for it, and a last good read exists
+    (``age_s`` is not None). A section that fails the rule is returned as ``None``, so every
+    surface (Live card, zone header, zone body, badge, band) says "unknown" alike and none of
+    them counts, lists or dates a read that never happened."""
+    if answer is None:
+        return None
+    times = section_times or {}
+    masked = {field: None for field in ('controllers', 'open_qms', 'jobs')
+              if answer.get(field) is not None and (age_s is None or not times.get(field))}
+    return {**answer, **masked} if masked else answer
+
+
 def verdict(answer, health_state, idle_states, state=None, age_s=None):
     if state == 'unconfigured':
         return {'label': 'Health not assessed', 'reason': 'Set up a connection in Monitor settings'}
@@ -1753,7 +1769,8 @@ class Monitor:
             sentence = f"Updated {age:.0f} s ago."
         # an alarm is judged only on a fresh answer: stale or failed data never alarms
         alarms = list(self.alarms) if (s.get("alarms_armed") and state == "ok") else []
-        health_state = health(self.last_answer, self.admin, s['thresholds'], state)
+        answer = known_answer(self.last_answer, self.section_times, age)
+        health_state = health(answer, self.admin, s['thresholds'], state)
         sentence_shown = None
         if self.last_error or self.section_errors or (self.last_answer or {}).get('refused'):
             errors = (self.last_answer or {}).get('refused') or self.section_errors
@@ -1767,8 +1784,8 @@ class Monitor:
                               else 'No good read yet.')
         return {"section_times": self.section_times, "section_errors": self.section_errors, "state": state, "sentence": sentence, "sentence_shown": sentence_shown or sentence, "age_s": age,
                 'health': health_state, 'admin': self.admin,
-                'badge_label': badge_label(self.last_answer, health_state, state),
-                "answer": self.last_answer, "target_label": target_label(s.get("target") or {}),
+                'badge_label': badge_label(answer, health_state, state),
+                "answer": answer, "target_label": target_label(s.get("target") or {}),
                 "target_kind": (s.get("target") or {}).get("kind"),
                 "target_source": s.get("target_source"),
                 "valid_for_ms": max(0, int((STALE_INTERVALS * self.poll_interval() - (age or 0)) * 1000)) if state == 'ok' else 0,

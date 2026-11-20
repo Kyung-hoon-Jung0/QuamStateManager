@@ -51790,7 +51790,8 @@ def config_browser():
     """Top-level Config Viewer page (Surface C)."""
     store = _store()
     if not store:
-        return render_template("_status.html", message="No state loaded", level="warning")
+        # a reload of /config (the URL htmx pushed) gets the page shell, not a bare fragment
+        return _no_chip("the Config Viewer", "config_browser")
     cfg = store.generated_config
     top_keys = config_view.top_level_keys(cfg) if cfg else []
     env_selected = bool(config_generator.get_selected_env(current_app.instance_path))
