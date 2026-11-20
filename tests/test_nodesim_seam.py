@@ -42,6 +42,11 @@ MUTATIONS = {
                   'and row["cluster_hash"] == message["hash"]]'),
     "SEAM-P1-4": ("pool", "if self.broker is None or self.broker.disconnected.is_set():",
                   "if self.broker is None:"),
+    # E-1 (tests/test_nodesim_p2_e2e.py): the restart's reaper closes a dead owner's lease; a stale pending is a ghost.
+    "SEAM-E1-reap": ("broker", 'if row["state"] == "closing" or not owner_alive or (',
+                     'if row["state"] == "closing" or ('),
+    "SEAM-E1-ghost": ("broker", 'if row["state"] == "pending" and now - row["pending_at"] > SPAWN_CAP:',
+                      'if False:'),
 }
 
 
