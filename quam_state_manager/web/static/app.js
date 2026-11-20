@@ -25159,7 +25159,13 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     // unconditional timer put a background request into every jsdom harness
     // that evaluates app.js, which is what made version_diff_selfcheck.cjs
     // flake (a failure this range introduced and the handoff called inherited).
-    if (document.getElementById('new-run-popup')) _schedule(1500);
+    // Recheck 3: base.html loads this file in <head>, before the popup exists, so
+    // this check never armed the first poll; it came only from the next wake
+    // (~3 s) and the top bar's "last:" line stayed blank until then. Check once
+    // the document is parsed, and ask at once: the baseline is the render time.
+    function _firstPoll() { if (document.getElementById('new-run-popup')) _schedule(0); }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _firstPoll);
+    else _firstPoll();
 
     // docs/170: what the "N new" chip does when clicked -- the same two
     // presses a person makes to see new runs: the sidebar's ↻ (always on the
