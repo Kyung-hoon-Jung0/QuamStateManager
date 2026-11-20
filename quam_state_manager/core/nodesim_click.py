@@ -153,6 +153,13 @@ def first_line(text: Any) -> str:
     return "The simulation failed without a message."
 
 
+def full_message(text: Any, empty: str = "The simulation failed without a message.") -> str:
+    """Every non-blank line of a failure, bounded to 600 characters; the page renders each as text (P3-b)."""
+    lines = [part.rstrip() for part in str(text or "").splitlines() if part.strip()]
+    joined = "\n".join(lines)
+    return (joined[:597] + "...") if len(joined) > 600 else (joined or empty)
+
+
 def line(state: str, **kw) -> str:
     """The one user-facing text of a state (P1 spec 1.2, P2 spec 1)."""
     if state == "warming":
@@ -169,7 +176,12 @@ def line(state: str, **kw) -> str:
     if state == "spawn_failed":
         return "The cloud simulator instance could not start: " + first_line(kw.get("message"))
     if state == "broker_failed":
-        return "The cloud instance manager could not start: " + first_line(kw.get("message"))
+        text = full_message(kw.get("message"), "")
+        if not text:
+            return "The simulation broker did not start: no reason was reported."
+        if text.startswith("The simulation broker did not start"):
+            return text
+        return "The cloud instance manager could not start: " + first_line(text)
     if state == "lease_failed":
         return first_line(kw.get("message"))
     if state == "renew_offer":
@@ -211,8 +223,24 @@ def line(state: str, **kw) -> str:
         return (f"No answer from the cloud simulator after {_g(kw.get('limit_s'))} s; "
                 "the instance was closed.")
     if state == "failed":
-        return first_line(kw.get("message"))
+        return full_message(kw.get("message"))
     return LINES.get(state, LINES["none"])
+
+
+def warm_watchdog_cause(job, pool, rid, now):
+    """Name why a warm click must stop, or None (D-19, P1-R2-3).
+
+    While a broker request for this click is in flight and its worker process and threads are alive, delayed
+    browser status polls do not count as a dead click: the browser poll can be late behind that wait.
+    """
+    worker = getattr(pool, "broker_waits", {}).get(rid)
+    if worker is not None:
+        if worker.proc.poll() is not None or not worker.reader.is_alive() or not worker.thread.is_alive():
+            return "The simulation worker stopped while waiting for the simulation broker."
+        return None
+    if now - job["seen"] > 12:
+        return "No heartbeat for 12 s from the browser window; the simulation was stopped."
+    return None
 
 
 def _hhmm(value):
@@ -867,6 +895,9 @@ class Manager:
                 final = answer("failed", message=str(exc))
             finally:
                 shutil.rmtree(detached, ignore_errors=True)
+            if job.get("watchdog_cause") and final.get("state") in ("stopped", "stopped_kept", "stopped_none"):
+                # A watchdog stop names its real cause instead of a generic stop line (P1-R2-3).
+                final = answer("failed", message=job["watchdog_cause"])
             final = clean({**final, "id": rid}, self.pool.secrets + [saas.get("password")])
             _write_json(detached.parent / "_answer.json", final)
             self.runs(window)._prune()
@@ -879,7 +910,11 @@ class Manager:
             """Carry the page heartbeat and total deadline over to warm jobs (P2 spec 2.5, D-18)."""
             deadline = time.monotonic() + self.limit_s
             while not job["done"] and time.monotonic() < deadline:
-                if time.monotonic() - job["seen"] > 12 or job["stop"].wait(.2):
+                cause = warm_watchdog_cause(job, self.pool, rid, time.monotonic())
+                if cause:
+                    job["watchdog_cause"] = cause
+                    break
+                if job["stop"].wait(.2):
                     break
             if not job["done"]:
                 job["stop"].set()

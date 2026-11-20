@@ -33,6 +33,8 @@ SPAWN_CAP = 240
 REAP_S = 30
 RENEW_S = 5
 EMPTY_S = 60
+#: a row whose worker died is closed when no restarted worker adopts it within the swap grace (P2-R2-1)
+ADOPT_GRACE_S = 120
 HANDSHAKE_S = 5
 
 
@@ -378,6 +380,7 @@ class Broker:
                        spawned_at=None, expires_at=None, version=message["version"], cluster_hash=message["hash"],
                        owner_pid=peer.owner[0], owner_created=peer.owner[1], worker_pid=worker,
                        broker_pid=os.getpid(), broker_created=self.created, purpose="nodesim", last_click_at=None,
+                       worker_created=process_created(worker) if worker is not None else None,
                        in_job=None, close_on_ready=False)
             self.rows.append(row)
             self._specs[(peer.owner[0], worker, message["hash"])] = message
@@ -552,7 +555,11 @@ class Broker:
                 for row in owned:
                     if row["instance_id"] != message.get("instance_id"):
                         continue
-                    if op == "touch":
+                    if op == "adopt":
+                        row["worker_pid"] = message["worker_pid"]
+                        row["worker_created"] = process_created(message["worker_pid"])
+                        row.pop("worker_dead_at", None)
+                    elif op == "touch":
                         row["last_click_at"] = min(clock(), message["click_at"])
                     elif op == "in_job":
                         row["in_job"] = message["click_id"]
@@ -600,8 +607,18 @@ class Broker:
                             row.update(broker_pid=os.getpid(), broker_created=self.created)
                             self.save()
                     basis = row["last_click_at"] if row["last_click_at"] is not None else row["spawned_at"]
-                    why = "reaper" if not owner_alive else "idle"
-                    if row["state"] == "closing" or not owner_alive or (
+                    # Only rows this broker reserved with a worker identity are tracked; older rows stay as they were.
+                    tracked = row.get("worker_pid") is not None and row.get("worker_created") is not None
+                    worker_created = process_created(row["worker_pid"]) if tracked else None
+                    worker_dead = tracked and (worker_created is None or not proto.same_created(
+                        worker_created, row["worker_created"]))
+                    if worker_dead:
+                        row.setdefault("worker_dead_at", now)
+                    else:
+                        row.pop("worker_dead_at", None)
+                    abandoned = worker_dead and now - row["worker_dead_at"] >= ADOPT_GRACE_S
+                    why = "reaper" if not owner_alive or abandoned else "idle"
+                    if row["state"] == "closing" or not owner_alive or abandoned or (
                             not row["in_job"] and basis is not None and now - basis > 600):
                         self.schedule_close(row, why)
             except Exception as exc:

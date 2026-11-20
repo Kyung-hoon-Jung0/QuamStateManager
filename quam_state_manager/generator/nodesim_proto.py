@@ -9,7 +9,7 @@ import socket
 PROTO = 1
 MARKER = "@@NODESIM1 "
 WORKER_OPS = frozenset("hello cluster lease drop_lease click stop exit".split())
-BROKER_OPS = frozenset("hello acquire touch in_job cancel release status bye swapped".split())
+BROKER_OPS = frozenset("hello acquire adopt touch in_job cancel release status bye swapped".split())
 WORKER_EVENTS = frozenset(
     "ready cluster cluster_failed lease_ok lease_failed lease_dropped phase build_started build_done need_lease "
     "result guard idle bye proto_mismatch".split()
@@ -22,7 +22,7 @@ OPS = WORKER_OPS | BROKER_OPS
 EVENTS = WORKER_EVENTS | BROKER_EVENTS
 RELEASE_WHYS = frozenset(
     "worker_died_in_job hash_changed stop_spawned sm_exit swap_failed stopped_in_job expired host_refused "
-    "cold_fallback".split()
+    "cold_fallback lease_replaced".split()
 )
 CLOSED_WHYS = frozenset("idle expired release reaper".split())
 #: worker bye reasons; protocol_error is the one W sends for an unreadable SM message (review S P3-8)
@@ -57,6 +57,7 @@ OP_FIELDS = {
     "stop": dict(click_id=str), "exit": {},
     "acquire": dict(req=str, owner=dict(sm_pid=int, worker_pid=int), version=str, spec=SPEC,
                     hash=str, reason=ACQUIRE_REASONS),
+    "adopt": dict(instance_id=str, worker_pid=int),
     "touch": dict(instance_id=str, click_at=NUMBER),
     "in_job": dict(instance_id=str, click_id=NULL_STRING),
     "cancel": dict(req=str), "release": dict(instance_id=str, why=RELEASE_WHYS),

@@ -181,7 +181,7 @@ def test_review_names():
 def test_contract_table_coverage():
     """Independently pin all op/event names in P2 spec 4 and the review additions."""
     assert p.OPS == set("hello cluster lease drop_lease click stop exit acquire touch in_job cancel release "
-                        "status bye swapped".split())
+                        "status bye swapped adopt".split())
     assert p.EVENTS == set("ready cluster lease_ok lease_failed lease_dropped phase build_started build_done "
                            "need_lease result guard idle bye hello_ok account_mismatch login_failed spawning "
                            "lease no_slot spawn_failed cancelled closed status renew_offer replaced swapped "

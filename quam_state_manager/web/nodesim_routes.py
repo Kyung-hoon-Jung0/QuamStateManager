@@ -70,6 +70,22 @@ def nodesim_settings():
         return jsonify(ok=False, error=str(exc)), 400
 
 
+def fresh_notices(notices, rows):
+    """Drop an idle_closed notice older than the newest live row for its config (P3-e)."""
+    out = []
+    for fields in list(notices):
+        fields = dict(fields)
+        newest = max((r.get("spawned_at") or 0 for r in rows
+                      if r.get("state") == "live" and r.get("cluster_hash") == fields.get("cluster_hash")),
+                     default=0)
+        at = fields.pop("at", 0)
+        fields.pop("cluster_hash", None)
+        if fields.get("state") == "idle_closed" and at <= newest:
+            continue
+        out.append(fields)
+    return out
+
+
 @nodesim_bp.route("/api/nodesim/instances")
 def nodesim_instances():
     """Return token-free instance rows and server-produced strip text (D-11, P2 spec 1)."""
@@ -81,8 +97,11 @@ def nodesim_instances():
             if row.get("state") == "live":
                 row["line"] = click.line("instance", expires_at=row["expires_at"],
                                          in_use_here=status["in_use_here"])
-        notices = [click.answer(**fields) for fields in pool.notices.values()] if pool else []
-        return jsonify(ok=True, notices=notices, **{k: status[k] for k in ("rows", "in_use_here", "limit")})
+        notices = [click.answer(**fields) for fields in fresh_notices(pool.notices.values() if pool else [],
+                                                                      status["rows"])]
+        return jsonify(ok=True, notices=notices, status_line=status.get("status_line"),
+                       status_age_s=status.get("status_age_s"),
+                       **{k: status[k] for k in ("rows", "in_use_here", "limit")})
     except PoolError as exc:
         return jsonify(ok=False, **click.answer("broker_failed", **exc.fields))
 
