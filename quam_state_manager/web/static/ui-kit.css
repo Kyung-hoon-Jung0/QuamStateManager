@@ -13,7 +13,7 @@
  */
 
 :root {
-    --ui-role-rr-in: #506432;
+    --ui-role-rr-in: #5a7246; /* Olive: >=3:1 on dark, white labels >=4.5:1. */
     --ui-port-trace-real: #3b82f6;
     --ui-port-trace-imag: #f59e0b;
     --ui-rule-choice-padding: 0 1.4rem 0 var(--ui-gap-1);
@@ -472,6 +472,15 @@
 .ui-notice-text { flex: 0 1 auto; min-width: 0; }
 .ui-notice > .ui-actions { margin-left: auto; flex-wrap: wrap; }
 .ui-notice + .ui-notice { border-top: var(--ui-bw) solid var(--ui-border); }
+
+/* A folded state-origin notice keeps the explanation available without moving the page content. */
+.ui-notice.ui-disclosure {
+    display: block;
+    margin: 0;
+    font-size: var(--ui-fs-sm);
+}
+.ui-notice.ui-disclosure > .ui-disclosure-summary { color: inherit; line-height: var(--ui-lh-dense); }
+.ui-notice.ui-disclosure > .ui-disclosure-body { max-width: var(--ui-measure); }
 
 /* K5 callout (only the note variant is used at stage 0) ---------------- */
 .ui-callout { margin: var(--ui-gap-2) 0; padding: var(--ui-gap-2) var(--ui-gap-3); border-left: var(--ui-bw-strip) solid var(--ui-accent); background: var(--ui-surface-2); color: var(--ui-text); font-size: var(--ui-fs-sm); line-height: var(--ui-lh-read); }

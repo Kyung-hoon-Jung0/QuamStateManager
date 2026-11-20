@@ -96,7 +96,7 @@ function dE(a, b) { const p = lab(a), q = lab(b); return Math.hypot(p[0] - q[0],
             + ', CIE76 ' + r2(near[1]) + ' >= 40)');
         ['light', 'dark'].forEach((t) => {
             const cb = contrast(inn, BG[t]);
-            ok(cb >= 2.5, 'Readout in stands out on the ' + t + ' page (contrast ' + r2(cb) + ' >= 2.5)');
+            ok(cb >= 3, 'Readout in stands out on the ' + t + ' page (contrast ' + r2(cb) + ' >= 3)');
         });
         const cl = contrast(inn, [255, 255, 255]);
         ok(cl >= 4.5, 'the white port label reads on a Readout in port (contrast ' + r2(cl) + ' >= 4.5)');

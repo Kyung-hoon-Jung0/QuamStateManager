@@ -192,3 +192,36 @@ def test_notice_shows_once_per_page_selfcheck():
         pytest.skip("jsdom not installed (run `npm install jsdom`)")
     assert r.returncode == 0, (r.stdout + r.stderr)
     assert "all checks passed" in r.stdout, (r.stdout + r.stderr)
+
+
+@pytest.mark.parametrize("kind", ["folder", "content"])
+def test_notice_is_folded_with_full_state_origin_details(proj, kind):
+    from xml.etree import ElementTree as ET
+
+    mismatch = {
+        "kind": kind, "project": "survey", "project_state": "state_a", "chip_folder": "state_b",
+        "run_id": 7, "count": 2, "examples": [{"path": "qubits.q1.f_01", "run": "5.2e9", "chip": "5.3e9"}],
+    }
+    with proj["app"].test_request_context("/"):
+        html = routes.render_template("_project_state_notice.html", project_state_mismatch=lambda: mismatch)
+    root = ET.fromstring(html)
+    details = root.find("details")
+    assert details is not None and "open" not in details.attrib
+    assert {"ui-notice", "ui-disclosure"} <= set(details.attrib["class"].split())
+    assert details.find("summary").text == "Runs come from another state."
+    body = details.find("div").text
+    if kind == "folder":
+        assert all(s in body for s in ("survey", "state_a", "state_b", "values can differ"))
+    else:
+        assert all(s in body for s in ("#7", "2 values", "qubits.q1.f_01", "5.2e9", "5.3e9"))
+        assert "not counting the values that run wrote itself" in body
+
+
+def test_compact_notice_uses_block_flow_and_dense_kit_type():
+    import re
+
+    css = (Path(__file__).resolve().parents[1] / "quam_state_manager/web/static/ui-kit.css").read_text()
+    rule = re.search(r"\.ui-notice\.ui-disclosure\s*\{([^}]+)\}", css)
+    assert rule, "compact notice must override the flex notice layout for native details"
+    assert "display: block;" in rule[1] and "margin: 0;" in rule[1]
+    assert "font-size: var(--ui-fs-sm);" in rule[1]

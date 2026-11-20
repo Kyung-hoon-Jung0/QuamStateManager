@@ -1255,7 +1255,7 @@
         } else {
             band.appendChild(span('ds-digest-item', 'no run errors'));
         }
-        if (qs.length) band.appendChild(span('ds-digest-item ds-digest-oclabel', 'failed outcomes:'));
+        if (qs.length) band.appendChild(span('ds-digest-oclabel ui-text-quiet', 'fit not accepted:'));
         qs.forEach(function (q) {
             var b = document.createElement('button');
             b.className = 'ds-help-example ds-digest-qchip';
