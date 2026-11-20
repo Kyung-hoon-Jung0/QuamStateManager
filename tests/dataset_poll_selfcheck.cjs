@@ -45,6 +45,8 @@ try {
 
 const SRC = path.join(__dirname, '..', 'quam_state_manager', 'web', 'static',
                       'dataset-virtual.js');
+const BADGE_SRC = path.join(__dirname, '..', 'quam_state_manager', 'web', 'static',
+                            'sync-badge.js');
 
 // The true Node setInterval, captured ONCE — each boot() installs a recording
 // pass-through over it (never over a previous boot's recorder).
@@ -134,6 +136,8 @@ function boot(fetchImpl, uiConfig, page) {
     };
     w.fetch = stub;
     global.fetch = stub;
+    // The top-bar badge's helper first: the "already shown" rule lives there.
+    w.eval(fs.readFileSync(BADGE_SRC, 'utf8'));
     const code = fs.readFileSync(SRC, 'utf8');
     w.eval(code);
     w.DatasetVirtual.init();
@@ -695,6 +699,107 @@ function jsonResponse(body, status) {
             await wait(40);
             const pill = w.document.getElementById('ds-new-pill');
             ok(pill && pill.hidden === false, 'a run taken after the render is still announced on the first poll');
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 16. A run landing while the table is scrolled down does not move what
+    //     the user looks at (contract 4): the row inserted above the view and
+    //     the "new runs" bar appearing above it are compensated in scrollTop,
+    //     so the first visible row keeps its screen y. At the top nothing is
+    //     compensated (the new run shows at the top, no bar), and the bar
+    //     click still jumps to the new run.
+    //     Geometry: #table-pane is 400 px high, the list starts 100 px down
+    //     it, plus 26 px while the bar shows (it sits in the digest band).
+    // ------------------------------------------------------------------
+    {
+        const mk = (id) => ({ id, exp: 'rabi', date: '2026-08-01', time: '01:00:00', q: ['q1'], p: [],
+            oc: {}, metric: '', bm: false, tags: [], status: 'successful', dur: 1, note: '',
+            parent: null, hs: false, sm: {}, pm: {}, f: 'fold1' });
+        const rows = [];
+        for (let i = 60; i >= 1; i--) rows.push(mk(i));          // pos 0..59
+        const NEW_ROW = Object.assign(mk(61), { date: '2026-08-20', time: '07:00:00' });   // sorts at pos 0
+        const BAR = 26;
+        function geometry(w) {
+            const pane = w.document.getElementById('table-pane');
+            const tb = w.document.getElementById('datasets-tbody');
+            const g = { S: 0, writes: [] };
+            const barH = () => {
+                const pill = w.document.getElementById('ds-new-pill');
+                return pill && !pill.hidden ? BAR : 0;
+            };
+            Object.defineProperty(pane, 'scrollTop', { configurable: true,
+                get: () => g.S, set: (v) => { g.S = v; g.writes.push(v); } });
+            Object.defineProperty(pane, 'clientHeight', { configurable: true, get: () => 400 });
+            pane.getBoundingClientRect = () => ({ top: 0, bottom: 400, left: 0, right: 900, width: 900, height: 400 });
+            tb.getBoundingClientRect = () => {
+                const top = 100 + barH() - g.S;
+                return { top, bottom: top + 1952, left: 0, right: 900, width: 900, height: 1952 };
+            };
+            // screen y of the row at list position `pos` (rows sort by id, newest first)
+            g.rowY = (pos) => tb.getBoundingClientRect().top + pos * 32;
+            g.pane = pane; g.tb = tb;
+            return g;
+        }
+        // (a) idle apply while scrolled down: the row and the bar are compensated
+        {
+            let polls = 0;
+            const NEXT_ROW = Object.assign(mk(62), { date: '2026-08-20', time: '08:00:00' });
+            const { w } = boot(() => jsonResponse({ updated: [++polls === 1 ? NEW_ROW : NEXT_ROW],
+                                                    vanished: [], now: 8000 + polls }),
+                               undefined, { rows, band: '' });
+            const g = geometry(w);
+            g.S = 600;
+            const pos0 = Math.floor((600 - 100) / 32);   // the first visible row (id 60 - pos0)
+            const y0 = g.rowY(pos0);
+            pump(w);
+            await wait(40);
+            const pill = w.document.getElementById('ds-new-pill');
+            ok(w.DatasetVirtual.getRow('fold1:61') != null && pill && pill.hidden === false,
+               'scrolled down: the idle-applied run is announced in the bar');
+            ok(g.S === 600 + 32 + BAR,
+               `scrolled down: scrollTop absorbs the inserted row and the bar (got ${g.S}, want ${600 + 32 + BAR})`);
+            const y1 = g.rowY(pos0 + 1);                 // one run sorted in above it
+            ok(g.tb.querySelector('tr[data-id="fold1:' + (60 - pos0) + '"]') != null && Math.abs(y1 - y0) < 1,
+               `the first visible row is rendered and keeps its screen y (${y0} -> ${y1})`);
+            await wait(60);
+            ok(pill.hidden === false, 'the compensating scroll is not read as the user reaching the run');
+            // The browser fires a scroll event for that scrollTop write: it is not
+            // the user's, so the next run is still applied (not held as if busy).
+            g.pane.dispatchEvent(new w.Event('scroll'));
+            pump(w);
+            await wait(40);
+            ok(w.DatasetVirtual.getRow('fold1:62') != null && g.S === 600 + 2 * 32 + BAR,
+               `after the compensating scroll the next run is applied and compensated too (scrollTop ${g.S})`);
+            pill.click();
+            ok(g.writes[g.writes.length - 1] === 0,
+               `the bar click still jumps to the new run (scrollTop ${g.writes[g.writes.length - 1]}, want 0)`);
+        }
+        // (b) at the top: no compensation, the run shows at the top, no bar
+        {
+            const { w } = boot(() => jsonResponse({ updated: [NEW_ROW], vanished: [], now: 8000 }),
+                               undefined, { rows, band: '' });
+            const g = geometry(w);
+            pump(w);
+            await wait(40);
+            const pill = w.document.getElementById('ds-new-pill');
+            ok(w.DatasetVirtual.getRow('fold1:61') != null && g.S === 0 && g.writes.length === 0,
+               `at the top nothing scrolls (writes ${JSON.stringify(g.writes)})`);
+            ok(!pill || pill.hidden === true, 'at the top the run on screen needs no bar');
+        }
+        // (c) a HELD run while scrolled down: only the bar appears, and it is compensated
+        {
+            const { w } = boot(() => jsonResponse({ updated: [NEW_ROW], vanished: [], now: 8000 }),
+                               undefined, { rows, band: '' });
+            const g = geometry(w);
+            g.S = 600;
+            g.pane.dispatchEvent(new w.Event('scroll'));   // the user is active -> the delta is held
+            pump(w);
+            await wait(40);
+            const pill = w.document.getElementById('ds-new-pill');
+            ok(pill && pill.hidden === false && w.DatasetVirtual.getRow('fold1:61') == null,
+               'held while scrolled down: announced, not inserted');
+            ok(g.S === 600 + BAR, `the bar appearing is compensated (got ${g.S}, want ${600 + BAR})`);
         }
     }
 

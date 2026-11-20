@@ -47647,6 +47647,10 @@ def note_readdress():
         "_notes_panel.html", **_notes_state()))
 
 
+# At most this many counted runs are named by uid in a poll reply.
+_POLL_NEW_UIDS_CAP = 500
+
+
 @bp.route("/datasets/poll")
 def datasets_poll():
     """New-run poll across ALL active folders.
@@ -47689,6 +47693,9 @@ def datasets_poll():
     except ValueError:
         since_t = None
     new_count = 0
+    # The counted runs' uids (capped), so the page can leave out of the count
+    # the runs it already lists (sync-badge.js runShown).
+    new_uids: list[str] = []
 
     latest_key: tuple | None = None
     latest_uid: str | None = None
@@ -47697,10 +47704,13 @@ def datasets_poll():
         for run in fol["store"].runs_snapshot():
             key = _run_recency(run)
             if since_t is not None:
-                if run.instant_us is not None and run.instant_us // 1000 > since_t:
-                    new_count += 1
-            elif since is not None and (run.date or "", run.time or "") > since:
+                is_new = run.instant_us is not None and run.instant_us // 1000 > since_t
+            else:
+                is_new = since is not None and (run.date or "", run.time or "") > since
+            if is_new:
                 new_count += 1
+                if len(new_uids) < _POLL_NEW_UIDS_CAP:
+                    new_uids.append(_dataset_uid(fol["key"], run.run_id))
             if latest_key is None or key > latest_key:
                 latest_key = key
                 latest_uid = _dataset_uid(fol["key"], run.run_id)
@@ -47720,6 +47730,7 @@ def datasets_poll():
     }
     if since is not None or since_t is not None:
         payload["new_count"] = new_count
+        payload["new_uids"] = new_uids
     return jsonify(payload)
 
 

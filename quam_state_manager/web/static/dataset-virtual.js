@@ -1535,7 +1535,11 @@
     }
 
     function onScroll() {
-        markInteraction();
+        // A scroll this module made to keep the view still is not the user's.
+        var own = state.selfScrollTop != null && state.scrollEl &&
+                  Math.abs(state.scrollEl.scrollTop - state.selfScrollTop) < 1;
+        state.selfScrollTop = null;
+        if (!own) markInteraction();
         // A scroll means this pointer gesture is a SCROLL, not a row press-hold — drop the
         // freeze NOW so renderWindow follows the scroll. Without this a touch finger-scroll
         // (pointerdown, no click) keeps pressActive=true and freezes the virtual window
@@ -1553,6 +1557,7 @@
             _updateNewPill();
         }
         scheduleRender(false);   // window-dedup: skip the rebuild if first/last unchanged
+        _recountBadge();         // a counted run scrolled into view is shown
     }
 
     function onTbodyClick(e) {
@@ -2074,6 +2079,7 @@
     }
 
     function applyDelta(data) {
+        var anchor = _viewAnchor();   // rows inserted above the view must not move it
         var changed = false;
         var newUids = [];          // genuinely-new runs (insert, not in-place update)
         var updated = data.updated || [];
@@ -2173,6 +2179,7 @@
             _buildQubitPicker();   // surface any new qubit
             _buildPairPicker();    // …and any new qubit-pair
         }
+        _keepAnchor(anchor);
         _ackShownArrivals();       // an inserted row already on screen is not news
     }
 
@@ -2246,29 +2253,29 @@
     // tree lists it in an open group (the tree refreshes on the same run-landed
     // signal this table polls on). Each is acknowledged by itself: a run that
     // landed while the user is scrolled down stays counted, nothing scrolls.
+    // The rule itself lives in sync-badge.js (SyncBadge.runShown), shared with
+    // the top-bar chip, which counts the same runs.
     function _ackShownArrivals() {
         if (state.arrivalUids && state.arrivalUids.size) {
+            var badge = window.SyncBadge;
             var onScreen = _onScreenUids();
-            var tree = document.getElementById('sidebar-tree');
             var done = [];
             state.arrivalUids.forEach(function (uid) {
-                if (onScreen.has(uid) || _listedInTree(tree, uid)) done.push(uid);
+                if (badge && badge.runShown ? badge.runShown(uid) : onScreen.has(uid)) done.push(uid);
             });
             for (var i = 0; i < done.length; i++) state.arrivalUids.delete(done[i]);
         }
         _updateNewPill();
+        _recountBadge();
     }
-    function _listedInTree(tree, uid) {
-        if (!tree) return false;
-        var q = (window.CSS && window.CSS.escape) ? window.CSS.escape(String(uid)) : String(uid).split('"').join('');
-        var e = tree.querySelector('.tree-entry-click[data-uid="' + q + '"]');
-        if (!e) return false;
-        var d = e.closest('details');
-        while (d) {
-            if (!d.open) return false;
-            d = d.parentElement ? d.parentElement.closest('details') : null;
-        }
-        return true;
+    function _recountBadge() {
+        if (window.SyncBadge && window.SyncBadge.render) window.SyncBadge.render();
+    }
+    // Whether run `uid`'s row is inside the table's viewport now (false when
+    // the Datasets table is not on the page).
+    function isOnScreen(uid) {
+        if (!state.tbody || !state.tbody.isConnected || !state.scrollEl) return false;
+        return _onScreenUids().has(uid);
     }
 
     // Whether a row should carry the flash class on THIS render; expired
@@ -2308,9 +2315,53 @@
         var el = _ensureNewPill();
         if (!el) return;
         var n = state.arrivalUids ? state.arrivalUids.size : 0;
+        // The bar sits above the list inside the scroller: showing or hiding it
+        // while the user is scrolled down keeps the rows where they were.
+        var sc = state.scrollEl, tb = state.tbody;
+        var keep = (sc && tb && sc.scrollTop > 0) ? tb.getBoundingClientRect().top : null;
+        _showNewPill(el, n);
+        if (keep != null) _scrollViewBy(tb.getBoundingClientRect().top - keep);
+    }
+    function _showNewPill(el, n) {
         if (!n) { el.hidden = true; return; }
         el.textContent = n + ' new run' + (n === 1 ? '' : 's') + ' ↑';
         el.hidden = false;
+    }
+
+    // What the user looks at must not move when runs land (docs/144,
+    // docs/221). While the list is scrolled past its start, remember the first
+    // visible row and its screen y; after the change, scroll by however far it
+    // moved. With the list's start on screen nothing is kept: new runs appear
+    // at the top, where the user sees them.
+    function _viewAnchor() {
+        var el = state.scrollEl, tb = state.tbody;
+        if (!el || !tb || !state.visible || !state.visible.length || !el.isConnected) return null;
+        var m = listMetrics();
+        if (m.top <= 0) return null;
+        var pos = Math.min(state.visible.length - 1, Math.floor(m.top / ROW_HEIGHT));
+        var r = state.rows[state.visible[pos]];
+        return r ? { uid: r.uid, y: _listRowY(pos) } : null;
+    }
+    function _listRowY(pos) {
+        return state.tbody.getBoundingClientRect().top - state.scrollEl.getBoundingClientRect().top
+            + pos * ROW_HEIGHT;
+    }
+    function _keepAnchor(a) {
+        if (!a || !state.scrollEl || !state.tbody) return;
+        var idx = state.rowsById.get(a.uid);
+        var pos = idx == null ? -1 : state.visible.indexOf(idx);
+        if (pos < 0) return;               // the row left the list: nothing to keep
+        var dy = _listRowY(pos) - a.y;
+        if (Math.abs(dy) < 0.5) return;
+        renderWindow(true);                // spacers first, so the new scrollTop is not clamped
+        _scrollViewBy(dy);
+        scheduleRender();
+    }
+    function _scrollViewBy(dy) {
+        if (Math.abs(dy) < 0.5) return;
+        var el = state.scrollEl;
+        el.scrollTop = el.scrollTop + dy;
+        state.selfScrollTop = el.scrollTop;
     }
 
     // QA F2: where the first arrival sits in the CURRENT order. The pill
@@ -3290,6 +3341,7 @@
 
     window.DatasetVirtual = {
         init: init,
+        isOnScreen: isOnScreen,   // SyncBadge.runShown: is this run's row on screen
         // docs/141 4p: live-wake.js says a run folder changed -- run the delta
         // poll now (a wake during an in-flight poll runs once more after it)
         pollNow: function () {

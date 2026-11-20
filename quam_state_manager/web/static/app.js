@@ -24197,6 +24197,19 @@ var _dsScroll = { intent: null, userMoved: true, pin: null, recaptured: false,
                   picked: null, fromRun: undefined,
                   fromList: undefined };  // see _dsListNav below
 
+// One project-state notice per page (_project_state_notice.html): with a run
+// open on /datasets both the run table and the run detail carry it. The first
+// in page order shows, the others are hidden; run again after every swap, so
+// the one left when the other goes (the detail closed, the table replaced)
+// shows again.
+function _onePerPageNotices() {
+    var all = document.querySelectorAll('[data-project-state-mismatch]');
+    for (var i = 0; i < all.length; i++) all[i].hidden = i > 0;
+}
+document.addEventListener('htmx:afterSettle', _onePerPageNotices);
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _onePerPageNotices);
+else _onePerPageNotices();
+
 // w9 uxpolish (user decision 2026-09-28): only the Datasets run LIST switches
 // runs -- the sidebar run tree, the Datasets / Collections table, ]/[ and
 // j+Enter (all of which end in the tree's click handler, the table's
@@ -25033,6 +25046,7 @@ document.addEventListener('htmx:afterSwap', function(evt) {
                     if (window.SyncBadge) {
                         window.SyncBadge.note('new', {
                             count: (typeof data.new_count === 'number') ? data.new_count : null,
+                            uids: data.new_uids || null,
                             run: data
                         });
                     } else {
@@ -25140,6 +25154,9 @@ document.addEventListener('htmx:afterSwap', function(evt) {
             var sc = _scroller(), tree = document.getElementById('sidebar-tree');
             if (!sc || !tree) return null;
             var top = sc.getBoundingClientRect().top;
+            // The tree's start is on screen (or below it): what the reader sees
+            // above the first row does not move, and a new run shows at the top.
+            if (tree.getBoundingClientRect().top >= top) return { id: null, offset: 0, scrollTop: sc.scrollTop };
             var rows = _rowsIn(tree);
             for (var i = 0; i < rows.length; i++) {
                 var r = rows[i].getBoundingClientRect();

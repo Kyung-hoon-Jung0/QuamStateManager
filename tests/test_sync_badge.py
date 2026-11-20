@@ -142,6 +142,20 @@ class TestTheCountComesFromAnAcknowledgedStamp:
         for k in ("uid", "run_id", "experiment_name", "qubits", "time", "date"):
             assert k in got, k
 
+    def test_the_counted_runs_are_named_by_uid(self, tmp_path):
+        """The page leaves out of the count the runs it already lists
+        (sync-badge.js runShown), so it needs to know WHICH runs were counted:
+        their uids, exactly the counted ones."""
+        got = self._poll(tmp_path, "2026-01-02", "09:00:00")
+        assert got.get("new_count") == 1, got
+        uids = got.get("new_uids")
+        assert isinstance(uids, list) and len(uids) == 1, got
+        assert uids[0] == got["uid"], got            # the one counted run is the newest
+        got = self._poll(tmp_path, "2026-01-01", "10:00:00")
+        assert len(got["new_uids"]) == got["new_count"] == 3, got
+        assert all(u.endswith((":2", ":3", ":4")) for u in got["new_uids"]), got
+        assert "new_uids" not in self._poll(tmp_path), "no stamp, no list"
+
     # helpers -----------------------------------------------------------
     def _poll_raw(self, tmp_path, query=""):
         c = _client(tmp_path, self.RUNS)
