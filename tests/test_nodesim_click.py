@@ -580,3 +580,47 @@ def test_save_script(rig, tmp_path):
     assert not rig.m.save_script(d["id"], str(rig.lib), forbidden=(rig.lib,))["ok"]
     assert not rig.m.save_script(d["id"], str(rig.m.instance))["ok"]
     assert not rig.m.save_script("../x", str(out))["ok"]
+
+
+@pytest.mark.parametrize("state,fields,expected", [
+    ("warming", {"env": "envx"}, "Preparing the node simulator in env envx (about 5 s)."),
+    ("ready", {}, "Node simulator ready."),
+    ("starting", {"in_use_here": 1}, "Starting a cloud simulator instance (about 62 s); "
+     "1 of 3 instances of this account in use on this PC."),
+    ("spawn_failed", {"message": "reason\nsecond line"}, "The cloud simulator instance could not start: reason"),
+    ("broker_failed", {"message": "reason\nsecond line"}, "The cloud instance manager could not start: reason"),
+    ("needs_instance", {}, "This chip's FEM layout differs from the open instance; "
+     "it needs a new instance (about 62 s)."),
+    ("renewing", {}, "Starting a replacement cloud instance; "
+     "clicks keep using the current one until it is ready."),
+    ("expired_retry", {}, "The cloud instance expired during this click; "
+     "simulating again on a fresh instance (about 62 s)."),
+    ("lab_busy", {}, "The lab environment is busy with another check; try again."),
+    ("build_watchdog", {}, "The node's build took over 30 s; "
+     "the simulator process was stopped and the lab lock released."),
+    ("worker_crashed", {"code": 7}, "The simulator process stopped unexpectedly (exit code 7); "
+     "the next click starts a fresh one."),
+    ("worker_restart", {"file": "source.py"}, "A lab file changed (source.py); "
+     "the simulator process restarts (about 5 s). The cloud instance is kept."),
+    ("busy_chip", {"name": "copy"}, "The simulator is busy with chip copy; this click waits."),
+    ("stopped_spawning", {}, "Stopped. The cloud instance is still starting and is closed as soon as it is up."),
+    ("stopped_kept", {}, "Stopped. The cloud instance stays open for the next click."),
+    ("idle_closed", {}, "The cloud instance was closed after 10 min without a click."),
+    ("cold_fallback", {}, "Using a one-off simulator process this time."),
+])
+def test_p2_exact_lines(state, fields, expected):
+    """Pin every P2 state line independently of the renderer (P2 spec 1, review r2 P3-5)."""
+    assert contract(click.answer(state, **fields))["line"] == expected
+
+
+def test_p2_expiry_lines_use_local_server_time():
+    """The expiry strip and offers use the server timestamp (D-17, P2 spec 1)."""
+    stamp = "2026-01-01T12:34:00+00:00"
+    from datetime import datetime
+    hhmm = datetime.fromisoformat(stamp).astimezone().strftime("%H:%M")
+    assert click.line("instance", expires_at=stamp, in_use_here=1) == (
+        f"Cloud instance open until {hhmm}; it closes after 10 min without a click. 1 of 3 in use on this PC.")
+    assert click.line("no_slot", earliest_close=stamp, in_use_here=3) == (
+        f"All 3 cloud simulator instances of this account are in use (3 by this PC). "
+        f"The earliest one here closes at {hhmm}.")
+    assert click.line("renew_offer", expires_at=stamp) == f"The cloud instance closes at {hhmm}."

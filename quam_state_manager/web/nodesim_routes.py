@@ -24,10 +24,96 @@ def _r():
 
 
 def manager() -> click.Manager:
+    """Own the warm pool per app, using only validated broker interpreters (P2 spec 3.3)."""
     m = current_app.config.get("nodesim_manager")
     if m is None:
         m = current_app.config["nodesim_manager"] = click.Manager(current_app.instance_path)
+        if m.pool:
+            m.pool.start_reaper(_saas())
     return m
+
+
+def _pool_context(data):
+    """Gather trusted active-chip facts without accepting paths from the page (D-12, P2 spec 2)."""
+    r = _r()
+    ctx = r._active_ctx() or {}
+    python, env = _env()
+    return dict(python=python, env_name=env, library=click.library_root(r._calibrations_folder(ctx)),
+                store=r._store(), live_folder=getattr(ctx.get("working_copy"), "live_folder", None)
+                or ctx.get("path"), saas=_saas())
+
+
+@nodesim_bp.route("/api/nodesim/intent", methods=["POST"])
+def nodesim_intent():
+    """Warm panel imports and distinguish a deliberate node pick (D-12, P2 spec 2.6)."""
+    try:
+        data = request_body.json_object({})
+    except request_body.BadBody as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    facts = _pool_context(data)
+    if facts["store"] is None:
+        return jsonify(ok=False, **click.answer("failed", message="Open a chip first."))
+    return jsonify(ok=True, **manager().intent(_window(data), explicit=data.get("explicit") is True, **facts))
+
+
+@nodesim_bp.route("/api/nodesim/settings", methods=["GET", "POST"])
+def nodesim_settings():
+    """Expose only the keep-warm setting (D-11, P2 spec 1)."""
+    from quam_state_manager.core.nodesim_pool import KEEP_LABEL, KEEP_NOTE
+    try:
+        data = request_body.json_object({}) if request.method == "POST" else {}
+        pool = manager().pool
+        if pool:
+            return jsonify(ok=True, **pool.setting(data.get("keep_warm")))
+        return jsonify(ok=True, keep_warm=False, label=KEEP_LABEL, note=KEEP_NOTE)
+    except (request_body.BadBody, ValueError) as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+
+
+@nodesim_bp.route("/api/nodesim/instances")
+def nodesim_instances():
+    """Return token-free instance rows and server-produced strip text (D-11, P2 spec 1)."""
+    from quam_state_manager.core.nodesim_pool import PoolError
+    pool = manager().pool
+    try:
+        status = pool.instances() if pool else dict(rows=[], in_use_here=0, limit=3)
+        for row in status.get("rows", []):
+            if row.get("state") == "live":
+                row["line"] = click.line("instance", expires_at=row["expires_at"],
+                                         in_use_here=status["in_use_here"])
+        notices = [click.answer(**fields) for fields in pool.notices.values()] if pool else []
+        return jsonify(ok=True, notices=notices, **{k: status[k] for k in ("rows", "in_use_here", "limit")})
+    except PoolError as exc:
+        return jsonify(ok=False, **click.answer("broker_failed", **exc.fields))
+
+
+@nodesim_bp.route("/api/nodesim/renew", methods=["POST"])
+@nodesim_bp.route("/api/nodesim/new-instance", methods=["POST"])
+def nodesim_replace():
+    """Request replacement only on an explicit action (D-13, D-17, P2 spec 3.4)."""
+    from quam_state_manager.core.nodesim_pool import PoolError, worker_key
+    try:
+        data = request_body.json_object({})
+    except request_body.BadBody as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    facts = _pool_context(data)
+    pool = manager().pool
+    try:
+        if pool and all(facts.get(k) for k in ("python", "library", "live_folder")):
+            key = worker_key(facts["python"], facts["library"], facts["live_folder"])
+            worker = pool.workers.get(key)
+            if worker and worker.busy:
+                return jsonify(ok=False, **click.answer("busy"))
+            if request.path.endswith("new-instance"):
+                pool.release(key, "hash_changed")
+            if request.path.endswith("new-instance") and worker and worker.lease:
+                worker.send(dict(op="drop_lease", lease_seq=worker.lease_seq))
+                worker.receive(5)
+                worker.lease = None
+        return jsonify(ok=True, **manager().intent(_window(data), explicit=True,
+                                                   renew=request.path.endswith("renew"), **facts))
+    except PoolError as exc:
+        return jsonify(ok=False, **click.answer(exc.state, **exc.fields))
 
 
 def _window(data: dict | None = None) -> str:
@@ -69,15 +155,18 @@ def node_key(folder, value) -> str | None:
 
 
 def _row(info, folder) -> dict:
+    """Add both cold and warm estimates to each scanned node (D-31, P2 spec 1)."""
     reason = click.refusal(info)
     row = info.to_dict()
     estimates = {str(w): click.estimate(info.file, w) for w in click.WINDOWS_US}
+    warm = {str(w): click.warm_estimate(info.file, w) for w in click.WINDOWS_US}
     # ``file`` is the calibrations-relative name the start body sends back (never a library path)
     key = node_key(folder, str(info.file)) or Path(info.file).name
     row.update({"file": key, "file_name": Path(info.file).name,
                 "refused": bool(reason), "reason": reason,
                 "refused_line": click.REFUSED_LIST_LINE if reason else None,
                 "estimates": estimates,
+                "warm_estimate_lines": {k: v["line"] for k, v in warm.items()},
                 "estimate_lines": {k: v["line"] for k, v in estimates.items()}})
     return row
 

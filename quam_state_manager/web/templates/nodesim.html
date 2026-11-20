@@ -5,5 +5,5 @@
                  ~ 'Report only, no samples; nothing is written to the chip.' %}
 {{ ui_head('Simulate a node', page=True, gist=ns_gist) }}
 <div id="nodesim-page" data-nodesim data-node="{{ ns_node }}"
-     data-qubit="{{ ns.selected_qubit or ns.default_qubit or '' }}"></div>
+     data-qubit="{{ ns.selected_qubit or ns.default_qubit or '' }}" data-warm-pool="true"></div>
 {% endblock %}
