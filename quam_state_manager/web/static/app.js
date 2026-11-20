@@ -24489,6 +24489,30 @@ function _openTreeAncestors(el) {
     }
 }
 
+/* Contract 4: a tree refetch (a run landing, the periodic check) or a group
+ * load rebuilds the entries, and the server draws none of them active. Put the
+ * marker back on the run the detail pane SHOWS, so the highlight never leaves
+ * it for another row. Nothing is opened or scrolled: the view stays as it was. */
+function _reapplyShownTreeHighlight(scopeEl) {
+    var tree = document.getElementById('sidebar-tree');
+    if (!tree || !scopeEl || !tree.contains(scopeEl)) return;
+    var shown = document.querySelector('#inspector-pane #ds-detail-root')
+        || document.getElementById('ds-detail-root');
+    var uid = shown && shown.getAttribute('data-uid');
+    if (!uid) return;
+    var match = tree.querySelector('.tree-entry-click[data-uid="' + CSS.escape(String(uid)) + '"]');
+    if (!match || match.classList.contains('tree-entry-active')) return;
+    tree.querySelectorAll('.tree-entry-click.tree-entry-active').forEach(function (e) {
+        e.classList.remove('tree-entry-active');
+    });
+    match.classList.add('tree-entry-active');
+    if (window._markActiveTreeBranch) window._markActiveTreeBranch(match);
+}
+document.addEventListener('htmx:afterSwap', function (evt) {
+    var t = evt.detail && evt.detail.target;
+    if (t && t.closest && t.closest('#sidebar-tree')) _reapplyShownTreeHighlight(t);
+});
+
 function syncSidebarTreeHighlight(uid, date) {
     var tree = document.getElementById('sidebar-tree');
     if (!tree || !uid) return;

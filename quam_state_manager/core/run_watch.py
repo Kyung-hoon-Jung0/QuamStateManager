@@ -87,7 +87,14 @@ def signature(root: str) -> tuple | None:
     if not runs:
         return (st.st_mtime_ns, newest, dst.st_mtime_ns, None, 0, 0)
     rname, rmt = max(runs, key=lambda x: (x[1], x[0]))   # the run being written moves last
-    return (st.st_mtime_ns, newest, dst.st_mtime_ns, rname, rmt, len(runs))
+    # state.json / wiring.json landing in the newest run's quam_state move
+    # only that dir, never the run folder: one more stat, so a run whose
+    # saved state is written last still ticks when it becomes complete.
+    try:
+        qmt = os.stat(os.path.join(dpath, rname, "quam_state")).st_mtime_ns
+    except OSError:
+        qmt = 0
+    return (st.st_mtime_ns, newest, dst.st_mtime_ns, rname, rmt, len(runs), qmt)
 
 
 class RunWatcher:

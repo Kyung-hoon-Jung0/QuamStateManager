@@ -140,6 +140,13 @@
         // briefly (uid → expiry ms) when the virtual scroller renders it.
         arrivalUids: new Set(),
         flashUids: new Map(),
+        // A fresh page's first delta (and any partial ones while the server's
+        // index was still filling) completes what the page should have shown
+        // at load: a run in it that was taken before the page was drawn is
+        // listed quietly, never announced as an arrival.
+        catchUp: true,
+        renderTs: 0,
+        baselineUids: new Set(),
         // Liveness bookkeeping for the poll (docs/80): when the current request
         // started (watchdog), how many consecutive failures (backoff), until
         // when to skip polling, and whether the server asked us back early
@@ -1961,6 +1968,9 @@
                 } else if (!data.partial) {
                     state.pollCatchUps = 0;
                 }
+                var quiet = state.catchUp;
+                if (!data.partial || state.pollCatchUps >= POLL_MAX_CATCHUPS) state.catchUp = false;
+                if (quiet) _noteBaseline(data);
                 if (activeRecently()) {
                     // Hold the delta until the user is idle to avoid jumping
                     // their search/scroll out from under them — but SAY SO
@@ -2078,7 +2088,7 @@
                 if (_inHead(row)) headDelta++;
                 state.rows.push(row);
                 state.rowsById.set(row.uid, state.rows.length - 1);
-                if (_stampOf(row) > newestBefore
+                if (_stampOf(row) > newestBefore && !state.baselineUids.has(row.uid)
                     && !(state.collections && !(row.tags && row.tags.length)))   // QA datasets-r2-14
                     newUids.push(row.uid);
             } else {
@@ -2163,6 +2173,7 @@
             _buildQubitPicker();   // surface any new qubit
             _buildPairPicker();    // …and any new qubit-pair
         }
+        _ackShownArrivals();       // an inserted row already on screen is not news
     }
 
     function refreshOpenDetail(data) {
@@ -2210,11 +2221,54 @@
         for (var i = 0; i < updated.length; i++) {
             var uid = (updated[i].f || '') + ':' + updated[i].id;
             if ((!state.rowsById || !state.rowsById.has(uid)) &&
-                _stampOf(updated[i]) > newest &&
+                _stampOf(updated[i]) > newest && !state.baselineUids.has(uid) &&
                 !(state.collections && !(updated[i].tags && updated[i].tags.length)))   // QA datasets-r2-14
                 state.arrivalUids.add(uid);   // docs/170
         }
+        _ackShownArrivals();
+    }
+
+    // The rows of a catch-up delta whose run time is before the page was
+    // drawn belong to the page as loaded (see catchUp). A row with no run
+    // time, or one taken after the render, is still announced.
+    function _noteBaseline(data) {
+        var updated = (data && data.updated) || [];
+        var drawnMs = (state.renderTs || 0) * 1000;
+        for (var i = 0; i < updated.length; i++) {
+            var t = updated[i].t;
+            if (typeof t === 'number' && drawnMs > 0 && t < drawnMs)
+                state.baselineUids.add((updated[i].f || '') + ':' + updated[i].id);
+        }
+    }
+
+    // The pill counts only runs the user cannot see listed yet. A run counts
+    // as shown once its table row is inside the viewport, or once the sidebar
+    // tree lists it in an open group (the tree refreshes on the same run-landed
+    // signal this table polls on). Each is acknowledged by itself: a run that
+    // landed while the user is scrolled down stays counted, nothing scrolls.
+    function _ackShownArrivals() {
+        if (state.arrivalUids && state.arrivalUids.size) {
+            var onScreen = _onScreenUids();
+            var tree = document.getElementById('sidebar-tree');
+            var done = [];
+            state.arrivalUids.forEach(function (uid) {
+                if (onScreen.has(uid) || _listedInTree(tree, uid)) done.push(uid);
+            });
+            for (var i = 0; i < done.length; i++) state.arrivalUids.delete(done[i]);
+        }
         _updateNewPill();
+    }
+    function _listedInTree(tree, uid) {
+        if (!tree) return false;
+        var q = (window.CSS && window.CSS.escape) ? window.CSS.escape(String(uid)) : String(uid).split('"').join('');
+        var e = tree.querySelector('.tree-entry-click[data-uid="' + q + '"]');
+        if (!e) return false;
+        var d = e.closest('details');
+        while (d) {
+            if (!d.open) return false;
+            d = d.parentElement ? d.parentElement.closest('details') : null;
+        }
+        return true;
     }
 
     // Whether a row should carry the flash class on THIS render; expired
@@ -2273,18 +2327,26 @@
         return -1;
     }
 
-    // Whether any arrival's row is inside the scroller's viewport now.
-    function _arrivalOnScreen() {
+    // The uids whose rows are inside the scroller's viewport now.
+    function _onScreenUids() {
+        var out = new Set();
+        if (!state.scrollEl || !state.visible) return out;
         var m = listMetrics();
-        if (state.scrollEl.clientHeight > 0 && m.viewport <= 0) return false;   // list below the fold
+        if (state.scrollEl.clientHeight > 0 && m.viewport <= 0) return out;   // list below the fold
         var from = Math.floor(m.top / ROW_HEIGHT);
         var to = Math.min(state.visible.length,
                           Math.ceil((m.top + Math.max(m.viewport, ROW_HEIGHT)) / ROW_HEIGHT));
         for (var i = Math.max(0, from); i < to; i++) {
             var r = state.rows[state.visible[i]];
-            if (r && state.arrivalUids.has(r.uid)) return true;
+            if (r) out.add(r.uid);
         }
-        return false;
+        return out;
+    }
+    // Whether any arrival's row is inside the scroller's viewport now.
+    function _arrivalOnScreen() {
+        var on = _onScreenUids(), hit = false;
+        state.arrivalUids.forEach(function (uid) { if (on.has(uid)) hit = true; });
+        return hit;
     }
 
     // Scroll so list position `pos` sits one row below the sticky header.
@@ -2325,6 +2387,12 @@
     }
     if (!window._dsPillDismissBound) {
         window._dsPillDismissBound = true;
+        // The sidebar tree just listed new runs: those are no longer news.
+        document.addEventListener('htmx:afterSwap', function (e) {
+            var t = e.detail && e.detail.target;
+            if (t && t.closest && t.closest('#sidebar-tree') && state.tbody && state.tbody.isConnected)
+                _ackShownArrivals();
+        });
         document.addEventListener('keydown', function (e) {
             if (e.key === 'Escape') _dismissNewPill();
         });
@@ -3068,6 +3136,9 @@
         // bookkeeping resets (the old pill node died with the swapped pane).
         state.arrivalUids = new Set();
         state.flashUids = new Map();
+        state.catchUp = true;
+        state.renderTs = initialTs || 0;
+        state.baselineUids = new Set();
         state.digestLive = false;   // QA F2: a fresh render's band is current
         // Poll interval (docs/104 #3, tightened by docs/132): a run that
         // just finished must appear near-real-time (customer), so the

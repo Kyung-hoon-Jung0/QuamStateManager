@@ -444,9 +444,9 @@ function jsonResponse(body, status) {
     }
 
     // ------------------------------------------------------------------
-    // 12. An idle apply (no hold) still announces: pill shows, and the
-    //     user reaching the top of the list acknowledges it (the pill's
-    //     own click performs that same scroll-to-top).
+    // 12. An idle apply (no hold) whose row lands ON SCREEN is not news:
+    //     the row flashes, the pill stays hidden (it used to count a run the
+    //     user was already looking at, and never reset).
     // ------------------------------------------------------------------
     {
         const NEW_ROW = { id: 9, exp: 'idle_run', date: '2026-08-10', time: '04:00:00',
@@ -458,10 +458,10 @@ function jsonResponse(body, status) {
         await wait(40);
         ok(w.DatasetVirtual.getRow('fold1:9') != null, 'idle poll applies directly');
         const pill = w.document.getElementById('ds-new-pill');
-        ok(pill && pill.hidden === false, 'an applied arrival still shows the pill');
-        // The user scrolls (jsdom scrollTop stays 0 = at the top) → acknowledged.
-        w.document.getElementById('datasets-scroll').dispatchEvent(new w.Event('scroll'));
-        ok(pill.hidden === true, 'reaching the top of the list acknowledges applied arrivals');
+        ok(pill && pill.hidden === true, 'an applied arrival already on screen is not announced');
+        await wait(60);
+        const tr = w.document.querySelector('#datasets-tbody tr[data-id="fold1:9"]');
+        ok(tr != null && tr.classList.contains('ds-row-new'), 'the on-screen arrival flashes instead');
     }
 
     // ------------------------------------------------------------------
@@ -490,9 +490,6 @@ function jsonResponse(body, status) {
         await wait(40);
         ok(w.DatasetVirtual.getRow('fold1:0') != null, 'the backfilled (older) run lands in the store');
         ok(w.DatasetVirtual.getRow('fold1:11') != null, 'and so does the genuinely new one');
-        const pill = w.document.getElementById('ds-new-pill');
-        ok(pill && pill.hidden === false && /1 new run/.test(pill.textContent),
-           `only the newer run is announced (got "${pill && pill.textContent}")`);
         await wait(120);
         const tbody = w.document.getElementById('datasets-tbody');
         const oldTr = tbody.querySelector('tr[data-id="fold1:0"]');
@@ -613,6 +610,91 @@ function jsonResponse(body, status) {
             w.DatasetVirtual.toggleFolder('');
             ok(band.querySelector('.ds-digest-date').textContent === '2026-08-20' && !band.hasAttribute('data-filtered'),
                'clearing it shows the live band, not the stale server one');
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 15. The pill counts only runs the user cannot see listed yet.
+    //     (a) a held arrival the sidebar tree already lists (open group) is
+    //         not counted; one it does not list yet is, until the tree swap
+    //         that lists it; one in a CLOSED group stays counted.
+    //     (b) a fresh page: the first delta's run taken before the page was
+    //         drawn is listed quietly; one taken after it is announced.
+    // ------------------------------------------------------------------
+    {
+        const mk = (id, t) => ({ id, exp: 'rabi', date: '2026-08-20', time: '07:00:00', t, q: ['q1'],
+            p: [], oc: {}, metric: '', bm: false, tags: [], status: 'successful', dur: 1, note: '',
+            parent: null, hs: false, sm: {}, pm: {}, f: 'fold1' });
+        const LATE = 2000 * 1000;   // ms; the page was drawn at data-now = 1000 s
+        const PAGE = { rows: [mk(1, 100 * 1000)], band: '' };   // the newest run the page holds
+        const busy = (w) => ['table-pane', 'datasets-scroll'].forEach(function (id) {
+            const el = w.document.getElementById(id);
+            if (el) el.dispatchEvent(new w.Event('scroll'));
+        });
+        function tree(w, uids, open) {
+            let t = w.document.getElementById('sidebar-tree');
+            if (!t) {
+                t = w.document.createElement('div');
+                t.id = 'sidebar-tree';
+                w.document.body.appendChild(t);
+            }
+            t.innerHTML = '<details' + (open ? ' open' : '') + '><summary>d</summary><ul>'
+                + uids.map(u => '<li><span class="tree-entry-click" data-uid="' + u + '"></span></li>').join('')
+                + '</ul></details>';
+            return t;
+        }
+        function swapped(w, t) {
+            const ev = new w.CustomEvent('htmx:afterSwap', { bubbles: true, detail: { target: t } });
+            t.dispatchEvent(ev);
+        }
+        // (a) held: listed in the tree -> not counted
+        {
+            const delta = { updated: [mk(20, LATE)], vanished: [], now: 9000 };
+            const { w } = boot(() => jsonResponse(delta), undefined, PAGE);
+            tree(w, ['fold1:20'], true);
+            busy(w);   // the user is active: the delta is held
+            pump(w);
+            await wait(40);
+            const pill = w.document.getElementById('ds-new-pill');
+            ok(w.DatasetVirtual.getRow('fold1:20') == null && pill && pill.hidden === true,
+               'a held run the sidebar already lists is not counted as new');
+        }
+        // (a) held, not listed yet -> counted, cleared by the tree swap that lists it
+        {
+            const delta = { updated: [mk(21, LATE)], vanished: [], now: 9000 };
+            const { w } = boot(() => jsonResponse(delta), undefined, PAGE);
+            const t = tree(w, [], true);
+            busy(w);
+            pump(w);
+            await wait(40);
+            const pill = w.document.getElementById('ds-new-pill');
+            ok(pill && pill.hidden === false && /1 new run/.test(pill.textContent),
+               'a held run nothing lists yet is announced');
+            tree(w, ['fold1:21'], false);
+            swapped(w, t);
+            ok(pill.hidden === false, 'listed only inside a closed group: still counted');
+            tree(w, ['fold1:21'], true);
+            swapped(w, t);
+            ok(pill.hidden === true, 'the sidebar swap that lists it clears the count');
+        }
+        // (b) fresh page: a run taken before the render is not news
+        {
+            const delta = { updated: [mk(22, 500 * 1000)], vanished: [], now: 9000 };
+            const { w } = boot(() => jsonResponse(delta), undefined, PAGE);
+            busy(w);
+            pump(w);
+            await wait(40);
+            const pill = w.document.getElementById('ds-new-pill');
+            ok(pill && pill.hidden === true, 'a fresh load shows no new-runs bar for a run taken before it');
+        }
+        {
+            const delta = { updated: [mk(23, LATE)], vanished: [], now: 9000 };
+            const { w } = boot(() => jsonResponse(delta), undefined, PAGE);
+            busy(w);
+            pump(w);
+            await wait(40);
+            const pill = w.document.getElementById('ds-new-pill');
+            ok(pill && pill.hidden === false, 'a run taken after the render is still announced on the first poll');
         }
     }
 

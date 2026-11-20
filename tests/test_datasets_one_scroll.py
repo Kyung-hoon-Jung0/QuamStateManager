@@ -110,7 +110,8 @@ class TestOneScroller:
         # QA F2: the arrival acknowledgement asks "is an arrival's ROW on
         # screen" (it was "is the list top on screen", which is not where new
         # runs sort once several folders' run ids mix) -- through listMetrics.
-        i = js.index("function _arrivalOnScreen(")
+        # The row test lives in _onScreenUids (it also feeds the new-runs count).
+        i = js.index("function _onScreenUids(")
         ack = _strip_js_comments(js[i:i + 700])
         assert "listMetrics()" in ack and "state.scrollEl.scrollTop" not in ack, ack
         j = js.index("function onScroll(")
