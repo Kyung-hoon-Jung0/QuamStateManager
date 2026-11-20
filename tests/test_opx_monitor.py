@@ -3002,3 +3002,32 @@ def test_explicit_contention_stays_deferred_without_inventing_occupancy(env, fir
         assert 'No QM is open: the hardware is free.' not in html
     else:
         assert 'BUSY' in html and 'last good read was 240 s ago' in html
+
+
+def test_status_does_not_wait_for_a_poll_in_its_request(env):
+    """A slow server request holds the poll lock; the badge and page still read the monitor at once."""
+    import threading
+    import time as _time
+    app, m, worker, clock, _ = env
+    m.poll_once()
+    entered, release = threading.Event(), threading.Event()
+    real = worker.request
+
+    def slow(op, timeout=None, **kw):
+        if op == 'poll':
+            entered.set()
+            release.wait(10)
+        return real(op, timeout=timeout, **kw)
+
+    worker.request = slow
+    t = threading.Thread(target=m.poll_once, daemon=True)
+    t.start()
+    try:
+        assert entered.wait(5)
+        t0 = _time.monotonic()
+        st = m.status()
+        assert _time.monotonic() - t0 < 2
+        assert st['state'] in ('ok', 'stale')
+    finally:
+        release.set()
+        t.join(10)

@@ -1356,6 +1356,9 @@ def live_tiles(answer, idle_states, hottest, limit, state, failures):
     return tiles
 
 
+STATUS_LOCK_WAIT_S = 0.25  # a status read waits at most this long for a poll in progress
+
+
 class Monitor:
     """One poller per SM process. ``worker_factory(python, target)`` is
     injectable so tests drive it with fake answers."""
@@ -1814,10 +1817,19 @@ class Monitor:
                 and all(read_kind(e) in ('timeout', 'busy') for e in errors.values()))
 
     def status(self) -> dict:
+        """One coherent read of the monitor for every surface of a page.
+
+        A poll holds ``_lock`` for its whole server request, which can take seconds on a busy server. A page or
+        badge must not wait for that: when the lock is not free soon, read without it, as the monitor did before.
+        The poll changes its fields only after the request returns, so such a read sees the previous poll."""
+        from copy import deepcopy
         self.sync_target()
-        with self._lock:
-            from copy import deepcopy
+        got = self._lock.acquire(timeout=STATUS_LOCK_WAIT_S)
+        try:
             return {**deepcopy(self._status()), 'snapshot_id': str(time.monotonic_ns())}
+        finally:
+            if got:
+                self._lock.release()
 
     def _status(self) -> dict:
         s = self.settings()
