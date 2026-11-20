@@ -440,7 +440,8 @@ const EMPTY = '[data-nodesim-chart] .ui-state--empty';
     ok(!/innerHTML|outerHTML|insertAdjacentHTML|\beval\(|new Function/.test(src), 'text only: no HTML, no eval');
     ok(!/\.style\b|setAttribute\(\s*["']style/.test(src), 'no inline style');
     ok(!/#[0-9a-fA-F]{3,6}\b|rgba?\(/.test(src), 'no colour literal');
-    ok(!/[^\x0a\x20-\x7e]/.test(src), 'nodesim.js is printable ASCII');
+    // A Windows checkout (core.autocrlf) puts CR before every LF; CR is a line ending, not content.
+    ok(!/[^\x0d\x0a\x20-\x7e]/.test(src), 'nodesim.js is printable ASCII');
     ok(src.split('\n').every((l) => l.length <= 120), 'nodesim.js lines are at most 120 characters');
     ok(errors.length === 0, 'no uncaught error in the page' + (errors.length ? ': ' + errors.join('; ') : ''));
 
