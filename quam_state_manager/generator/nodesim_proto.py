@@ -174,27 +174,30 @@ def cluster_hash(spec):
 
 
 def cluster_spec(config):
-    """Extract sorted [controller, slot] pairs by FEM type (D-13, P2 spec 4.4)."""
-    spec = {"mw": [], "lf": []}
-    for name, controller in sorted(config.get("controllers", {}).items()):
-        for slot, fem in sorted(controller.get("fems", {}).items(), key=lambda item: int(item[0])):
-            kind = fem.get("type")
-            if kind not in ("MW", "LF"):
-                raise ValueError("unsupported FEM type: " + str(kind))
-            spec[kind.lower()].append([name, int(slot)])
-    return spec
+    """The config's FEM slots by type, read exactly as the P1 child's ``cluster_of`` reads them (P2 spec 4.4):
+    slots merged over all controllers (first type seen wins), MW slots under "mw", every other FEM under "lf",
+    each list sorted."""
+    slots = {}
+    for controller in (config.get("controllers") or {}).values():
+        for slot, fem in (controller.get("fems") or {}).items():
+            slots.setdefault(int(slot), fem.get("type"))
+    return {"mw": sorted(s for s, kind in slots.items() if kind == "MW"),
+            "lf": sorted(s for s, kind in slots.items() if kind != "MW")}
 
 
 def cluster_config(spec, module):
-    """Map a spec to the injected module's ClusterConfig once (D-13, review P3-3)."""
+    """The one spec -> ``module.ClusterConfig`` mapping (review P3-3), with the calls the P1 child proved on the
+    cloud simulator: one controller, ``mw_fems(*slots)`` and ``lf_fems(*slots)``."""
     _check(spec, SPEC, "spec")
-    cluster = module.ClusterConfig()
-    controllers = {}
     for kind in ("mw", "lf"):
-        for name, slot in spec[kind]:
-            if name not in controllers:
-                controllers[name] = cluster.controller(name)
-            getattr(controllers[name], kind + "_fem")(slot)
+        for slot in spec[kind]:
+            _check(slot, int, "spec." + kind)
+    cluster = module.ClusterConfig()
+    controller = cluster.controller()
+    if spec["mw"]:
+        controller.mw_fems(*spec["mw"])
+    if spec["lf"]:
+        controller.lf_fems(*spec["lf"])
     return cluster
 
 

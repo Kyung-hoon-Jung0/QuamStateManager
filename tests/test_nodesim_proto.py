@@ -205,26 +205,42 @@ def test_snapshot_mismatch(field):
         p.check_snapshot(request, result)
 
 
+class _FakeCluster:
+    """Record the ClusterConfig surface the P1 child proved on the cloud simulator."""
+
+    def __init__(self):
+        self.calls = []
+
+    def controller(self, *args):
+        self.calls.append(("controller",) + args)
+        return SimpleNamespace(mw_fems=lambda *s: self.calls.append(("mw",) + s),
+                               lf_fems=lambda *s: self.calls.append(("lf",) + s))
+
+
 def test_cluster_spec_and_mapping():
-    """Pin deterministic extraction and the sole mapping using a fake module (D-13, review P3-3)."""
-    config = {"controllers": {"controller_b": {"fems": {"2": {"type": "LF"}}},
-                              "controller_a": {"fems": {3: {"type": "MW"}, 1: {"type": "MW"}}}}}
-    spec = {"mw": [["controller_a", 1], ["controller_a", 3]], "lf": [["controller_b", 2]]}
-    assert p.cluster_spec(config) == spec
+    """Slots merged over controllers, non-MW counted as LF, one controller, plural calls (P2 spec 4.4)."""
+    config = {"controllers": {"con_b": {"fems": {"2": {"type": "LF"}, "5": {"type": "OTHER"}}},
+                              "con_a": {"fems": {3: {"type": "MW"}, 1: {"type": "MW"}}}}}
+    spec = p.cluster_spec(config)
+    assert spec == {"mw": [1, 3], "lf": [2, 5]}
     assert p.cluster_spec({}) == {"mw": [], "lf": []}
-    calls = []
+    cluster = p.cluster_config(spec, SimpleNamespace(ClusterConfig=_FakeCluster))
+    assert cluster.calls == [("controller",), ("mw", 1, 3), ("lf", 2, 5)]
+    empty = p.cluster_config({"mw": [], "lf": [4]}, SimpleNamespace(ClusterConfig=_FakeCluster))
+    assert empty.calls == [("controller",), ("lf", 4)]
 
-    class FakeCluster:
-        """Record only the ClusterConfig surface used by review P3-3."""
 
-        def controller(self, name):
-            """Record controller selection (P2 spec 4.4)."""
-            calls.append(("controller", name))
-            return SimpleNamespace(mw_fem=lambda slot: calls.append(("mw", slot)),
-                                   lf_fem=lambda slot: calls.append(("lf", slot)))
-
-    assert isinstance(p.cluster_config(spec, SimpleNamespace(ClusterConfig=FakeCluster)), FakeCluster)
-    assert calls == [("controller", "controller_a"), ("mw", 1), ("mw", 3),
-                     ("controller", "controller_b"), ("lf", 2)]
-    with pytest.raises(ValueError, match="unsupported FEM"):
-        p.cluster_spec({"controllers": {"controller_a": {"fems": {1: {"type": "unknown"}}}}})
+def test_cluster_config_matches_p1_child(monkeypatch):
+    """The one mapping gives the same ClusterConfig calls as the P1 child's cluster_of (contract 10)."""
+    import sys
+    import types
+    fake = types.ModuleType("qm_saas")
+    fake.ClusterConfig = _FakeCluster
+    monkeypatch.setitem(sys.modules, "qm_saas", fake)
+    from quam_state_manager.generator import nodesim_click
+    for config in ({"controllers": {"c1": {"fems": {"1": {"type": "MW"}, "3": {"type": "LF"}}},
+                                    "c2": {"fems": {"2": {"type": "MW"}, "1": {"type": "LF"}}}}},
+                   {"controllers": {"c1": {"fems": {"4": {"type": "LF"}}}}}):
+        old = nodesim_click.cluster_of(config).calls
+        new = p.cluster_config(p.cluster_spec(config), fake).calls
+        assert new == old
