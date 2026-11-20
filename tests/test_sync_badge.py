@@ -54,13 +54,20 @@ class TestTheWiring:
         import time
         from quam_state_manager.web.app import create_app
         app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        client = app.test_client()
         before = int(time.time() * 1000)
-        html = app.test_client().get("/datasets").get_data(as_text=True)
+        resp = client.get("/datasets")
         after = int(time.time() * 1000)
-        m = re.search(r"window\.__pageRenderT = (\w+);", html)
-        assert m, "base.html must set window.__pageRenderT"
-        assert m.group(1).isdigit(), m.group(1)
+        html = resp.get_data(as_text=True)
+        # the send time is a response header, so a cached page stays byte-equal
+        m = re.search(r'(?:^|,)\s*sm-sent;desc="(\d+)"', resp.headers.get("Server-Timing", ""))
+        assert m, resp.headers.get("Server-Timing")
         assert before <= int(m.group(1)) <= after
+        assert "sm-sent" in html and "serverTiming" in html, "base.html must read the header"
+        # two sends of the same page: equal bodies, each with its own send time
+        resp2 = client.get("/datasets")
+        assert resp2.get_data(as_text=True) == html
+        assert "sm-sent" in resp2.headers.get("Server-Timing", "")
         head = html[:html.index("</head>")]
         assert head.index("window.__pageRenderT") < head.index("app.js"), (
             "the render time must be set before app.js seeds the poller")
