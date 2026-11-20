@@ -61,7 +61,8 @@ def verify_env(job, guard):
     for key, value in expected.items():
         if os.path.normcase(os.environ.get(key, "")) != os.path.normcase(value):
             guard.fail("env", key)
-    for key, value in {"PYTHONDONTWRITEBYTECODE": "1", "MPLBACKEND": "Agg", "QDAC_DISABLE": "1"}.items():
+    for key, value in {"PYTHONDONTWRITEBYTECODE": "1", "PYTHONHASHSEED": "0",
+                       "MPLBACKEND": "Agg", "QDAC_DISABLE": "1"}.items():
         if os.environ.get(key) != value:
             guard.fail("env", key)
     if Path.cwd().resolve() != root:

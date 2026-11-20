@@ -24,6 +24,8 @@ def pinned_env(scratch, library_root, chip_copy, base=None):
         "TMP": str(root / "tmp"), "TEMP": str(root / "tmp"),
         "LOCALAPPDATA": str(root / "localappdata"), "APPDATA": str(root / "appdata"),
         "XDG_CACHE_HOME": str(root / "cache"),
+        # D-37: generate_qua_script text follows set iteration order; one seed keeps it reproducible.
+        "PYTHONHASHSEED": "0",
         "PYTHONDONTWRITEBYTECODE": "1", "MPLCONFIGDIR": str(root / "mpl"),
         "MPLBACKEND": "Agg", "QDAC_DISABLE": "1",
         "PYTHONPATH": str(Path(library_root).resolve()), "PYTHONUTF8": "1",

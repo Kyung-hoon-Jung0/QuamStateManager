@@ -56,6 +56,7 @@ def test_env_pins(tmp_path):
     assert env["QUAM_STATE_PATH"] == str(tmp_path / "state")
     assert env["TMP"] == env["TEMP"] == str(tmp_path / "tmp")
     assert env["LOCALAPPDATA"] == str(tmp_path / "localappdata")
+    assert env["PYTHONHASHSEED"] == "0"
     assert env["APPDATA"] == str(tmp_path / "appdata")
     assert env["XDG_CACHE_HOME"] == str(tmp_path / "cache")
     assert env["PYTHONDONTWRITEBYTECODE"] == env["QDAC_DISABLE"] == "1"
@@ -153,16 +154,19 @@ SPAWN = Path(__file__).resolve().parents[1] / "quam_state_manager" / "core" / "n
 D36_PIN = """        "LOCALAPPDATA": str(root / "localappdata"), "APPDATA": str(root / "appdata"),
         "XDG_CACHE_HOME": str(root / "cache"),
 """
+D37_PIN = """        "PYTHONHASHSEED": "0",
+"""
+SPAWN_PINS = {"FI-13-pin": D36_PIN, "FI-13-pin-both": D36_PIN, "FI-14-pin": D37_PIN, "FI-14-pin-both": D37_PIN}
 
 
 def env_builder(tmp_path, row):
-    """The SM-side pinned_env; FI-13-pin* mutations load a copy with the D-36 pin removed."""
-    if os.getenv("SM_NODESIM_MUTATION") != row or not row.startswith("FI-13-pin"):
+    """The SM-side pinned_env; FI-13-pin* / FI-14-pin* mutations load a copy with that pin removed."""
+    if os.getenv("SM_NODESIM_MUTATION") != row or row not in SPAWN_PINS:
         return pinned_env
     source = SPAWN.read_text(encoding="utf-8")
-    assert source.count(D36_PIN) == 1
+    assert source.count(SPAWN_PINS[row]) == 1
     mutant = tmp_path / "nodesim_spawn_mutant.py"
-    mutant.write_text(source.replace(D36_PIN, ""), encoding="utf-8")
+    mutant.write_text(source.replace(SPAWN_PINS[row], ""), encoding="utf-8")
     spec = importlib.util.spec_from_file_location("quam_state_manager.core.nodesim_spawn_mutant", mutant)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -184,8 +188,10 @@ def child(tmp_path, lab, source, row, *, env_changes=None, config_change=None, t
     node_file.write_text(source, encoding="utf-8")
     if config_change:
         config_change(scratch / "config.toml")
-    env = env_builder(tmp_path, row)(scratch, library, state,
-                                     {**os.environ, "QUAM_STATE_PATH": str(tmp_path / "decoy_live")})
+    base = {**os.environ, "QUAM_STATE_PATH": str(tmp_path / "decoy_live")}
+    if os.getenv("SM_NODESIM_MUTATION") == row and row.startswith("FI-14-pin"):
+        base.pop("PYTHONHASHSEED", None)  # without the D-37 pin every child draws its own seed
+    env = env_builder(tmp_path, row)(scratch, library, state, base)
     for key, value in (env_changes or {}).items():
         if value is None:
             env.pop(key, None)
@@ -234,6 +240,13 @@ def child(tmp_path, lab, source, row, *, env_changes=None, config_change=None, t
 """
             assert build_source.count(check) == 1
             build_source = build_source.replace(check, "")
+        elif row == "FI-14-pin":
+            pass  # D-37 pin removed on the SM side only (env_builder); the child's env check refuses.
+        elif row == "FI-14-pin-both":
+            # D-37 pin removed on the SM side and in the child's env check: the two scripts differ.
+            check = '"PYTHONDONTWRITEBYTECODE": "1", "PYTHONHASHSEED": "0",'
+            assert build_source.count(check) == 1
+            build_source = build_source.replace(check, '"PYTHONDONTWRITEBYTECODE": "1",')
         elif row == "FI-13-real":
             # The rejected alternative to D-36: widen the guard to the real per-user cache root.
             guard_source = guard_source.replace(
@@ -531,3 +544,28 @@ def test_real_localappdata_write_fails(tmp_path, lab):
     result = child(tmp_path, lab, f"open({str(target)!r}, 'w').write('x')\n", "FI-13-real")
     assert result["verdict"] == "GUARD FAIL write " + str(target.resolve())
     assert not target.parent.exists()
+
+
+def test_hash_seed_makes_script_reproducible(tmp_path, lab):
+    """FI-14-pin / FI-14-pin-both (D-37): two builds of one node give identical program_script text.
+
+    The node emits one assign per element of a set of strings, so its order follows str hashing.
+    """
+    source = (HEADER +
+              "    from qm.qua import program, declare, assign\n"
+              "    names = {'alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel'}\n"
+              "    with program() as p:\n"
+              "        x = declare(int)\n"
+              "        for name in names:\n"
+              "            assign(x, ord(name[0]))\n"
+              "    node.namespace['qua_program'] = p\n")
+    for row in ("FI-14-pin", "FI-14-pin-both"):
+        if os.getenv("SM_NODESIM_MUTATION") in {None, "", row}:
+            first = child(tmp_path / row / "1", lab, source, row, expect_ok=True)["program_script"]
+            second = child(tmp_path / row / "2", lab, source, row, expect_ok=True)["program_script"]
+            # qm stamps the wall-clock time into one header line; everything else must match.
+            first, second = ([line for line in script.splitlines()
+                              if not line.startswith("# Single QUA script generated at ")]
+                             for script in (first, second))
+            assert sum("assign(" in line for line in first) == 8
+            assert first == second
