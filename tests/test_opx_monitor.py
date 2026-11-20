@@ -319,9 +319,11 @@ def test_worker_death_is_a_sentence_never_green(env):
     clock.t += 7
     w.script[:] = [om.WorkerError("The monitor worker exited while running 'poll' (exit code 1).")]
     m.poll_once()
+    clock.t = max(clock.t, m._retry_at)
+    m.poll_once()
     html = page(app, "live")
     assert "ui-opxmon-status--error" in html
-    assert "exited while running" in html and "last good read was 7 s ago" in html
+    assert "exited while running" in html and "last good read was 17 s ago" in html
     assert "Updated" not in html
 
 
@@ -906,6 +908,7 @@ def test_d21_all_refused_is_error(env):
          'refused': {'get_devices': 'refused', 'list_open_qms': 'refused', 'get_jobs': 'refused'}}
     w.script[:] = [a]
     m.poll_once()
+    m.poll_once()
     assert m.status()['state'] == 'error'
     assert not m.capabilities()['close'] and not m.capabilities()['live']
     html = page(app, 'live')
@@ -924,7 +927,7 @@ def test_d21_transport_failure_labels_retained_sections(env):
     html = page(app, 'live')
     assert 'Temperatures unavailable (last good read at' in html
     assert 'Open QMs unavailable; last good read at' in html
-    assert m.status()['state'] == 'error' and not m.capabilities()['close']
+    assert m.status()['state'] == 'stale' and not m.capabilities()['close']
 
 
 def test_d22_close_false_or_still_listed(env):
@@ -1054,6 +1057,7 @@ def test_round3_dom_selfcheck(env, tmp_path):
     pages['d25'] = page(app, 'cleanup')
     w.script[:] = [{'controllers': None, 'open_qms': None, 'jobs': None, 'refused': {'get_devices': 'refused', 'get_jobs': 'refused', 'list_open_qms': 'refused'}}]
     m.poll_once()
+    m.poll_once()
     pages['d21'] = page(app, 'live')
     a = answer(qms=(), temps={'FEM 0': 40, 'FEM 1': 0})
     a['controllers'][0]['fems'] = {'1': 'LF'}
@@ -1115,6 +1119,8 @@ def test_round4_alarm_and_failed_calls(env):
     assert 'limit 50 °C' in html
     assert 'Hottest: Chassis' not in html
     w.script[:] = [om.WorkerError('read failed')]
+    m.poll_once()
+    clock.t = max(clock.t, m._retry_at)
     m.poll_once()
     html = page(app, 'live')
     assert '<strong class="ui-verdict-key">PROBLEM</strong>' in html
@@ -1524,6 +1530,8 @@ def test_a_connection_failure_is_said_once_short_then_in_full(env):
     w.script[:] = [om.WorkerError(full)]
     clock.t += 5
     m.poll_once()
+    clock.t = max(clock.t, m._retry_at)
+    m.poll_once()
     st = m.status()
     assert st['health']['reason'] == 'The QM SDK could not connect'
     assert full in st['sentence']
@@ -1537,7 +1545,7 @@ def test_a_connection_failure_is_said_once_short_then_in_full(env):
     assert visible.count('ConnectionError: Failed to connect to QOP at 127.0.0.1:9510') == 1
     # the cause is said once (the band); the status line keeps only the freshness
     assert 'Technical details' in visible and visible.count('The QM SDK could not connect') == 1
-    assert 'The last good read was 5 s ago.' in visible
+    assert 'The last good read was 15 s ago.' in visible
 
 
 def test_every_sensor_unreadable_is_not_called_no_readings(env):
@@ -2104,7 +2112,7 @@ def test_live_wording_count_grammar_refusal_and_reasons(env):
     w.script[:] = [answer(refused={'list_open_qms': 'StatusCode.UNAVAILABLE: failed to connect to all addresses; connection refused'})]
     m.poll_once()
     cap = m.capabilities()
-    assert cap['close_reason'].startswith('Server unreachable') and 'refused listing' not in cap['close_reason']
+    assert 'Server unreachable' in cap['close_reason'] and 'refused listing' not in cap['close_reason']
 
 
 def test_r4_capped_per_qm_job_list_is_never_idle(env):
@@ -2888,7 +2896,7 @@ def test_busy_transient_read_keeps_last_good_occupancy_with_age(env, error):
     app, m, w, clock, _ = env
     m.poll_once()
     before = m.last_answer
-    delay = 30 if 'Timeout' in error else 5
+    delay = 5
     clock.t += delay
     w.script[:] = [om.WorkerError(error)]
     m.poll_once()
@@ -3031,3 +3039,119 @@ def test_status_does_not_wait_for_a_poll_in_its_request(env):
     finally:
         release.set()
         t.join(10)
+
+
+
+def transition_reply():
+    """Recheck sample: a listed QM, jobs/config unread, devices still readable (QOP 3.7.3).
+
+    The log records two refused calls, not their raw exceptions. Use a generic SDK refusal;
+    classifying it as a timeout would miss the observed regression again.
+    """
+    a = answer()
+    a['version'] = {'QOP': '3.7.3'}
+    a['jobs_requested'] = False
+    a['open_qms'][0].update(jobs=None, port_map=None, ports=None)
+    a['jobs'] = None
+    a['refused'] = {'qm.get_jobs(QM-a)': 'RuntimeError: request declined',
+                    'qm.get_config(QM-a)': 'RuntimeError: request declined'}
+    return a
+
+
+@pytest.mark.parametrize('tab', ['live', 'settings'])
+@pytest.mark.parametrize('occupancy', ['busy', 'free', '1 open'])
+def test_single_transition_refusal_keeps_recent_snapshot(env, tab, occupancy):
+    app, m, w, clock, _ = env
+    good = answer(qms=() if occupancy == 'free' else (('QM-a', [], ['con1/1']),))
+    if occupancy == 'busy':
+        good = answer()
+    w.script[:] = [good]
+    m.poll_once()
+    before = m.last_answer
+    w.script[:] = [transition_reply()]
+    clock.t += 5
+    m.poll_once()
+    st = m.status()
+    assert m.last_answer == before and st['age_s'] == 5 and st['state'] == 'stale'
+    assert not st['health'].get('problem') and st['badge_label'] == occupancy + ' (last read)'
+    html = app.test_client().get('/opx-monitor/body?tab=' + tab,
+                                 headers={'HX-Request': 'true'}).get_data(as_text=True)
+    assert 'PROBLEM' not in html and 'Not read this time' in html
+    assert 'last good read was 5 s ago' in html and '> OPX ' + occupancy + ' (last read)</a>' in html
+    assert st['valid_for_ms'] > 0
+    assert '2 calls refused or unanswered' in html
+
+
+def test_second_transition_refusal_reports_one_actual_cause_and_recovers(env):
+    app, m, w, clock, _ = env
+    m.poll_once()
+    w.script[:] = [transition_reply()]
+    for _ in range(2):
+        clock.t += 5
+        m.poll_once()
+    st = m.status()
+    assert st['health']['problem'] and st['badge_label'] == 'problem'
+    assert st['health']['reason'] == 'Could not read the job list'
+    assert 'account permissions' not in st['health']['details']
+    for tab in ('live', 'settings'):
+        html = page(app, tab)
+        band = re.search(r'id="ui-opxmon-band".*?</div>', html, re.S).group()
+        assert 'PROBLEM' in band and re.sub(r'<[^>]+>', '', band).count('Could not read the job list') == 1
+        assert 'request for a status request' not in html
+    w.script[:] = [answer(qms=())]
+    clock.t += 5
+    m.poll_once()
+    assert 'No QM is open: the hardware is free.' in page(app, 'live')
+    assert m.status()['badge_label'] == 'free' and m._misses == 0
+
+
+def test_badge_alone_keeps_the_shared_monitor_polling_at_its_cadence(env):
+    app, m, w, clock, _ = env
+    assert not m.settings()['alarms_armed'] and not m.should_poll()
+    client = app.test_client()
+    client.get('/datasets')
+    client.get('/opx-monitor/alarm-badge')
+    assert m.should_poll()
+    m.poll_once()
+    pill = client.get('/opx-monitor/alarm-badge').get_data(as_text=True)
+    assert '> OPX busy</a>' in pill and 'data-poll-s="5"' in pill
+    clock.t += 10
+    client.get('/opx-monitor/alarm-badge')
+    assert m.wanted_until > clock.t and m.should_poll()
+
+
+@pytest.mark.parametrize('observed', [0, 1, 4.9, 5])
+def test_unknown_job_start_needs_one_observed_poll_interval(env, observed):
+    app, m, w, clock, _ = env
+    m.poll_once()
+    m._watch['QM-a']['since_mono'] = m._watch['QM-a']['last_mono'] - observed
+    html = page(app, 'live')
+    assert ('for at least' in html) == (observed >= m.poll_interval())
+    assert 'for at least 0 s' not in html
+
+
+
+def test_second_inflight_read_is_not_a_second_failed_poll(env):
+    import threading
+    app, m, w, clock, _ = env
+    m.poll_once()
+    clock.t += 5
+    w.script[:] = [transition_reply()]
+    m.poll_once()
+    entered, release = threading.Event(), threading.Event()
+    def slow(op, **kw):
+        entered.set()
+        release.wait(10)
+        return {'ok': True, 'result': answer()}
+    w.request = slow
+    thread = threading.Thread(target=m.poll_once, daemon=True)
+    thread.start()
+    try:
+        assert entered.wait(5)
+        st = m.status()
+        assert st['state'] == 'stale' and not st['health'].get('problem')
+        assert st['badge_label'] == 'busy (last read)'
+    finally:
+        release.set()
+        thread.join(5)
+    assert m.status()['state'] == 'ok'

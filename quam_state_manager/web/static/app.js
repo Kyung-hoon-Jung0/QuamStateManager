@@ -17705,6 +17705,23 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
     // docs/135: size the rack(s) now that they are in the document, and offer
     // the overview when the rack is wider than its host.
     _applyInstrumentFit(container);
+    if (options && options.captionLongNames) {
+        container.querySelectorAll('.iw-port-circle text[data-iw-tiny]').forEach(function(text) {
+            var cell = text.closest('[data-port]');
+            if (!cell) return;
+            text.textContent = cell.dataset.port;
+            text.removeAttribute('data-iw-tiny');
+            text.style.removeProperty('display');
+            text.parentNode.classList.add('iw-port-short');
+        });
+        var key = container.querySelector('.ui-iw-key-compact');
+        if (key) {
+            var note = document.createElement('span');
+            note.className = 'ui-note';
+            note.textContent = 'Numbered circles: port numbers. Hover for element names.';
+            key.appendChild(note);
+        }
+    }
 
     // Keep popup alive when mouse enters it (cursor-popup mode only)
     var popup = onPortHover ? null : document.getElementById('port-popup');

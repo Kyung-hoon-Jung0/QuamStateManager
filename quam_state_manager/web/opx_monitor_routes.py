@@ -256,7 +256,7 @@ def _view(tab: str, st=None) -> dict:
     busy_text = om.busy_since_text(verdict.get('since'), skew, st.get('answer'), m.clock())
     if verdict['label'].startswith('BUSY') and (not busy_text or 'busy time unknown' in busy_text):
         observed = st.get('busy_observed_s')
-        if observed is not None:
+        if observed is not None and observed >= st['interval_s']:
             busy_text = f' for at least {om._span_words(observed)} (observed by SM)'
     owner_ctx['busy_since'] = busy_text
     return {**owner_ctx, 'temperature_failed': 'controllers' in st['section_errors'] or any(k.endswith('.temperatures') for k in (st.get('answer') or {}).get('refused', {})), 'unreadable_temps': om.unreadable_temperatures(st.get('answer')), 'last_job': last_job, 'hottest': hottest, 'local_time': om.local_time, 'plain_error': plain_error, 'call_failure': om.call_failure, 'raw_error': raw_error(st), 'stale_time': stale_time, 'opx_time': om.opx_time, 'pc_zone': om.zone_text(), 'words': om.words, 'job_activity': om.job_activity, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': verdict, 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason, skew=skew) if not run_reason else {}, 'clock_skew': skew, 'skew_text': om.skew_text(skew, m.clock()), 'metric_known': om.metric_known, 'job_list_cap': om.JOB_LIST_CAP, 'value_vs_limit': om.value_vs_limit,
@@ -319,7 +319,7 @@ def opx_monitor_status():
 def opx_alarm_badge():
     """The top-bar badge; fires a toast once per new alarm in this process."""
     m = monitor()
-    m.ensure_running_if_armed()
+    m.want()
     st = m.status()
     resp = make_response(render_template("_opx_alarm_badge.html", st=st, value_vs_limit=om.value_vs_limit))
     fresh = m.new_alarm_toasts() if st.get("alarms_armed") else []

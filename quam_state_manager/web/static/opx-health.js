@@ -41,6 +41,15 @@
     }
     var WATCHED = ".ui-opxmon-health[data-valid-ms], .ui-opxmon-verdict[data-valid-ms]";
     function watch() {
+        var slot = document.getElementById('ui-opxmon-alarm-slot');
+        var badge = slot && slot.querySelector('[data-poll-s]');
+        if (badge && window.htmx) {
+            var trigger = 'every ' + badge.dataset.pollS + 's';
+            if (slot.getAttribute('hx-trigger') !== trigger) {
+                slot.setAttribute('hx-trigger', trigger);
+                window.htmx.process(slot);
+            }
+        }
         var body = document.getElementById('ui-opxmon-body');
         if (body && body.dataset.snapshot && BigInt(body.dataset.snapshot) > latest) {
             latest = BigInt(body.dataset.snapshot);

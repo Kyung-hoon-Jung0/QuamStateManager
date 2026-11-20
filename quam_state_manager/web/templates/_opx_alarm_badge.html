@@ -4,7 +4,8 @@
 {%- set tip = tip ~ ('. Set an admin URL or temperature limits in Monitor settings.' if unset else '') -%}
 {%- set label = st.badge_label or ('problem' if h.problem else ('not checked' if h.color == 'grey' else h.reason)) -%}
 <a href="/opx-monitor/live" class="ui-opxmon-health" data-health="{{ h.color }}" data-valid-ms="{{ st.valid_for_ms }}"
-   title="{{ tip }}"><span class="ui-opxmon-health-dot {{ 'ui-opxmon-health-dot--' ~ h.color }}"
+   data-poll-s="{{ 1 if st.settling else st.interval_s|int }}"
+   title="{{ st.sentence }} {{ tip }}"><span class="ui-opxmon-health-dot {{ 'ui-opxmon-health-dot--' ~ h.color }}"
    aria-hidden="true">&#9679;</span> OPX {{ label }}</a>
 {%- if st.alarms_armed and st.alarms -%}
 <a class="ui-opxmon-alarm-badge" href="/opx-monitor/live" hx-get="/opx-monitor/live" hx-target="#table-pane" hx-push-url="true"

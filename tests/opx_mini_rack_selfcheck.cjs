@@ -83,12 +83,22 @@ try {
         'a highlighted assignment retains its role color');
     check(a.querySelector('[data-slot="7"][data-port="2"][data-io="output"] .iw-port-circle'),
         'a declared port with no elements is filled');
+    const numbered = a.querySelector('[data-element="capture"]');
+    check(numbered.querySelector('text').textContent === '2' &&
+        numbered.querySelector('text').style.display !== 'none' &&
+        numbered.querySelector('title').textContent.includes('capture') &&
+        compact.textContent.includes('Numbered circles: port numbers'),
+        'long-name circles show port numbers with a full title and a legend entry');
     const shortLabel = a.querySelector('.iw-port-short text');
     check(shortLabel && shortLabel.textContent === 'q3', 'short labels opt into readable mini rack typography');
     const kit = fs.readFileSync(path.join(staticDir, 'ui-kit.css'), 'utf8');
     check(/\.ui-opxmon-rack \.iw-port-short text\s*\{ font-size: var\(--ui-fs-lg\)/.test(kit) &&
         /font-weight: var\(--ui-fw-normal\)/.test(kit.split('.ui-opxmon-rack .iw-port-circle text')[1]?.split('}')[0]),
         'mini labels use larger kit type and normal weight for distinct digits at 0.8x');
+    const digitRule = kit.split('.ui-opxmon-rack .iw-port-caption, .ui-opxmon-rack .iw-port-num')[1];
+    check(digitRule && digitRule.split('}')[0].includes('font-size: var(--ui-fs-lg)') &&
+        digitRule.split('}')[0].includes('font-family: var(--ui-font-mono)'),
+        'port-list digits use larger kit mono type at the mini scale');
     check(a.textContent.includes('type unknown'), 'unknown type stays honest');
     check(!a.querySelector('button, .iw-port-grip, [data-play], .iw-fitbar, .iw-sizebar'),
         'mini rack offers no editing, playback or size controls');
@@ -106,7 +116,9 @@ try {
         'coupler circles expose the full assignment as a hover title');
     const shownNames = Array.from(longHost.querySelectorAll('.iw-port-circle text'))
         .filter(t => t.style.display !== 'none');
-    check(shownNames.every(t => !/\u2026|-$/.test(t.textContent) && Number(t.getAttribute('font-size')) * 0.8 >= 8.95),
+    check(shownNames.every(t => !/\u2026|-$/.test(t.textContent) &&
+        (t.parentNode.classList.contains('iw-port-short') ||
+            Number(t.getAttribute('font-size')) * 0.8 >= 8.95)),
         'every in-circle name shown at the mini scale is whole and at least 9 px on screen');
     check(shownNames.some(t => t.textContent === 'q1'), 'a short name stays readable inside its circle');
     check(Array.from(longHost.querySelectorAll('text.iw-port-caption')).some(t =>
