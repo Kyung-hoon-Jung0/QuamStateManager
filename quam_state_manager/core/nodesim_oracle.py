@@ -9,7 +9,6 @@ file before and after; any change is a hard failure.
 import difflib
 import hashlib
 import json
-import os
 from pathlib import Path
 import subprocess
 
@@ -36,15 +35,14 @@ def folder_digest(folder):
 
 
 def run_real_node(interpreter, node_file, library_root, chip_copy, scratch,
-                  overrides=None, live_folder=None, timeout=180, script=None, mode="real",
-                  hash_seed="0"):
+                  overrides=None, live_folder=None, timeout=180, script=None, mode="real"):
     """Oracle child; ``mode`` "real" runs the real node, "stub" runs
-    ``nodesim_build.main`` unchanged after the oracle's pre-imports. Returns the
+    ``nodesim_build.main`` unchanged. Returns the
     parsed result plus ``pid`` and the decoy digests.
 
-    ``hash_seed`` pins PYTHONHASHSEED for both sides: some programs emit
-    ``align(...)`` element order from a set, so two builds of the same node in
-    two processes differ unless the seed is equal (measured in W5)."""
+    D-39: both sides get the builder's env (``pinned_env``: D-7, D-36, and the
+    D-37 hash-seed pin) and the child checks it with the builder's
+    ``verify_env``; the oracle adds no pin of its own."""
     if mode not in ("real", "stub"):
         raise ValueError(mode)
     root = Path(scratch).resolve()
@@ -63,8 +61,7 @@ def run_real_node(interpreter, node_file, library_root, chip_copy, scratch,
         process = subprocess.Popen([str(interpreter), "-B", str(script or CHILD)],
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    text=True, encoding="utf-8", cwd=str(root),
-                                   env=pinned_env(root, library_root, chip_copy,
-                                                  {**os.environ, "PYTHONHASHSEED": str(hash_seed)}))
+                                   env=pinned_env(root, library_root, chip_copy))
         stdout, stderr = process.communicate(json.dumps(job), timeout=timeout)
         result = parse_output(stdout)
         if process.returncode and result["ok"]:

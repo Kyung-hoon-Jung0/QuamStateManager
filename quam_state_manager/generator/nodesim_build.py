@@ -235,6 +235,34 @@ def build(job, guard, result):
             "logs": nodes[0].log.records, "imported_sources": imported}
 
 
+def preimport_trusted():
+    """Trusted imports that run before ``Guard.install_audit`` (D-33).
+
+    The one pre-import list for every guarded child (builder and oracle, D-39).
+    """
+    # Initialize installed console/native adapters before denying ctypes.
+    # They do not read framework config or load the selected library.
+    import numpy  # noqa: F401
+    import colorama  # noqa: F401
+    import dateutil.tz  # noqa: F401
+    # Font discovery reads the Windows registry; its cache is env-pinned.
+    import matplotlib.pyplot  # noqa: F401
+    # D-33: trusted analysis libraries whose import-time initializers probe
+    # os.devnull (dill, via lmfit) or load an OpenMP runtime (sklearn).
+    import importlib
+    import importlib.util
+    for name in ("lmfit", "sklearn"):
+        if importlib.util.find_spec(name) is not None:
+            importlib.import_module(name)
+    if os.name == "nt":
+        import click._winconsole  # noqa: F401
+        # Some adapters resolve these symbols lazily on the first output.
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleTitleW
+        ctypes.windll.shell32.CommandLineToArgvW
+        ctypes.windll.kernel32.LocalFree
+
+
 def main():
     job = json.loads(sys.argv[1]) if len(sys.argv) > 1 else json.load(sys.stdin)
     guard = Guard(job["scratch"])  # P0a has no SaaS lease: empty network allow-list.
@@ -245,27 +273,7 @@ def main():
             guard.fail("node", "unsupported execute path")
         verify_env(job, guard)
         verify_config_raw(guard)
-        # Initialize installed console/native adapters before denying ctypes.
-        # They do not read framework config or load the selected library.
-        import numpy  # noqa: F401
-        import colorama  # noqa: F401
-        import dateutil.tz  # noqa: F401
-        # Font discovery reads the Windows registry; its cache is env-pinned.
-        import matplotlib.pyplot  # noqa: F401
-        # D-33: trusted analysis libraries whose import-time initializers probe
-        # os.devnull (dill, via lmfit) or load an OpenMP runtime (sklearn).
-        import importlib
-        import importlib.util
-        for name in ("lmfit", "sklearn"):
-            if importlib.util.find_spec(name) is not None:
-                importlib.import_module(name)
-        if os.name == "nt":
-            import click._winconsole  # noqa: F401
-            # Some adapters resolve these symbols lazily on the first output.
-            import ctypes
-            ctypes.windll.kernel32.SetConsoleTitleW
-            ctypes.windll.shell32.CommandLineToArgvW
-            ctypes.windll.kernel32.LocalFree
+        preimport_trusted()
         guard.install_audit()
         # Framework initialization, including logging, is audited too.
         import qm  # noqa: F401

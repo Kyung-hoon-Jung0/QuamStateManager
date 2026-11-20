@@ -27,11 +27,6 @@ import nodesim_build  # noqa: E402
 from nodesim_guard import Guard  # noqa: E402
 
 SIMULATE_ACTION = "simulate_qua_program"
-# Imported before the audit hook in BOTH oracle children: dill opens os.devnull
-# with "r+b" at import, which the write barrier refuses (finding, reported in W5;
-# the click path nodesim_build.main has the same refusal until the guard owner
-# decides). Pre-importing is the same treatment numpy/matplotlib get there.
-PREIMPORTS = ("dill",)
 
 
 class OracleStop(BaseException):
@@ -137,20 +132,10 @@ def build_real(job, guard, result):
             "parameters": json.loads(node.parameters.model_dump_json())}
 
 
-def preimport():
-    import importlib
-    for name in PREIMPORTS:
-        try:
-            importlib.import_module(name)
-        except ImportError:
-            pass
-
-
 def main():
     job = json.loads(sys.argv[1]) if len(sys.argv) > 1 else json.load(sys.stdin)
     if job.get("mode") == "stub":
-        # The stub side of the comparison: nodesim_build.main unchanged, after preimport().
-        preimport()
+        # The stub side of the comparison: nodesim_build.main unchanged.
         sys.argv = [sys.argv[0], json.dumps(job)]
         return nodesim_build.main()
     guard = Guard(job["scratch"])  # No SaaS lease: empty network allow-list.
@@ -161,18 +146,8 @@ def main():
             guard.fail("node", "unsupported execute path")
         nodesim_build.verify_env(job, guard)
         nodesim_build.verify_config_raw(guard)
-        # Same pre-imports as nodesim_build.main, before ctypes is denied.
-        import numpy  # noqa: F401
-        import colorama  # noqa: F401
-        import dateutil.tz  # noqa: F401
-        import matplotlib.pyplot  # noqa: F401
-        if os.name == "nt":
-            import click._winconsole  # noqa: F401
-            import ctypes
-            ctypes.windll.kernel32.SetConsoleTitleW
-            ctypes.windll.shell32.CommandLineToArgvW
-            ctypes.windll.kernel32.LocalFree
-        preimport()
+        # D-39: the builder's own pre-import list (D-33), one definition.
+        nodesim_build.preimport_trusted()
         guard.install_audit()
         import qm  # noqa: F401
         import qualibrate  # noqa: F401

@@ -111,6 +111,23 @@ def test_gate_pins_skip_and_run(tmp_path):
     assert outcomes["oracle"][0] == 0 and "1 passed" in outcomes["oracle"][1], outcomes["oracle"]
 
 
+def test_oracle_shares_builder_pins():
+    """D-39: the oracle child takes the D-33 pre-imports and the D-36/D-37 env pins
+    from the builder's own definitions; no copy of either lives in the oracle."""
+    child_source = (GENERATOR / "nodesim_oracle.py").read_text(encoding="utf-8")
+    build_source = (GENERATOR / "nodesim_build.py").read_text(encoding="utf-8")
+    driver_source = (GENERATOR.parent / "core" / "nodesim_oracle.py").read_text(encoding="utf-8")
+    assert build_source.count("def preimport_trusted():") == 1
+    assert build_source.count("        preimport_trusted()\n") == 1  # nodesim_build.main
+    assert child_source.count("nodesim_build.preimport_trusted()") == 1  # the real-node child
+    assert "nodesim_build.verify_env(job, guard)" in child_source  # the builder's D-36/D-37 env check
+    for copy in ("lmfit", "sklearn", "dill", "import numpy", "matplotlib", "ctypes", "PREIMPORT"):
+        assert copy not in child_source, copy
+    for copy in ("PYTHONHASHSEED", "LOCALAPPDATA", "APPDATA", "TEMP", "XDG_CACHE_HOME", "os.environ"):
+        assert copy not in driver_source, copy
+    assert "env=pinned_env(root, library_root, chip_copy))" in driver_source
+
+
 # ---------------------------------------------------------------- oracle (opt-in)
 
 @pytest.fixture(scope="module")
@@ -149,6 +166,9 @@ def sources(tmp_path, row):
         "OR-qmm": ("nodesim_guard.py", 'self.fail("QuantumMachinesManager", "unleased")',
                    "return original(instance, *args, **kwargs)"),
         "OR-stop": ("nodesim_oracle.py", "            raise OracleStop()", "            return None"),
+        "OR-preimport": ("nodesim_oracle.py", "        nodesim_build.preimport_trusted()\n", ""),
+        # The shared D-33 list emptied: the oracle child sees it because it has no copy (D-39).
+        "OR-preimport-d33": ("nodesim_build.py", 'for name in ("lmfit", "sklearn"):', "for name in ():"),
     }
     name, old, new = edits[row]
     assert texts[name].count(old) == 1, (row, old)
@@ -299,3 +319,23 @@ def test_oracle_fault_rows(tmp_path, oracle, row, expected):
     assert result["live_before"] == result["live_after"]
     assert not result["ok"]
     assert result["verdict"] == "GUARD FAIL " + expected.format(live=(live / "state.json").resolve())
+
+
+PREIMPORT_DECOY = DECOY.replace("from pathlib import Path\n",
+                                "from pathlib import Path\nimport lmfit\nfrom sklearn.mixture import GaussianMixture\n")
+
+
+def test_oracle_real_child_preimports(tmp_path, oracle):
+    """D-39 / OR-preimport, OR-preimport-d33: a real node importing lmfit and sklearn
+    (D-33 libraries) builds in the real-node child; without the shared pre-import, or
+    with the shared D-33 list emptied, the guard refuses."""
+    chip = chip_source(oracle[1])
+    live = decoy_live(tmp_path, chip)
+    node = tmp_path / "oracle_decoy.py"
+    node.write_text(PREIMPORT_DECOY.format(create="    pass", simulate="    node.machine.connect()",
+                                           save="    pass"), encoding="utf-8")
+    script = sources(tmp_path, "OR-preimport") or sources(tmp_path, "OR-preimport-d33")
+    result = child(oracle, tmp_path, node, {}, live, "real", script, chip=chip)
+    assert result["live_before"] == result["live_after"]
+    assert result["verdict"] is None and result["ok"], (result.get("verdict"), result.get("errors"))
+    assert result["stopped_in"] == "simulate_qua_program"
