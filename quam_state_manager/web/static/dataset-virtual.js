@@ -1898,8 +1898,8 @@
         if (state.pollSkipUntil && Date.now() < state.pollSkipUntil) return;
         // Table swapped away (navigated to another menu) → stop polling so we
         // don't fetch + server-rescan forever against a detached DOM.
-        if (!state.scrollEl || !document.body.contains(state.scrollEl)) {
-            stopPolling();
+        if (!_mounted()) {
+            _teardown();
             return;
         }
         var dateInp = document.getElementById('ds-active-date');
@@ -2407,7 +2407,7 @@
     // The uids whose rows are inside the scroller's viewport now.
     function _onScreenUids() {
         var out = new Set();
-        if (!state.scrollEl || !state.visible) return out;
+        if (!state.scrollEl || !state.tbody || !state.visible) return out;
         var m = listMetrics();
         if (state.scrollEl.clientHeight > 0 && m.viewport <= 0) return out;   // list below the fold
         var from = Math.floor(m.top / ROW_HEIGHT);
@@ -2488,7 +2488,28 @@
             var host = document.getElementById('ds-arrivals');
             if (host) host.remove();
         }
+        if (state.tbody && !_mounted()) _teardown();
     });
+
+    /* Recheck 3: the one rule for "the Datasets page is gone": its tbody left the
+       document. #table-pane is the one scroller and it SURVIVES a menu swap, so the
+       old scroller check kept this module alive on the next page: its poll went on,
+       the held delta landed there, the anchor keep scrolled that page 32 px per run
+       (measured from a detached tbody) and arrivals "on screen" in the detached list
+       were acknowledged in the shared seen set, so the top-bar chip lost them. Once
+       the table is gone nothing of this module acts until init() mounts one again. */
+    function _mounted() {
+        return !!(state.tbody && state.tbody.isConnected && state.scrollEl && state.scrollEl.isConnected);
+    }
+    function _teardown() {
+        stopPolling();
+        state.pendingDelta = null;
+        if (state.scrollEl) state.scrollEl.removeEventListener('scroll', onScroll);
+        state.scrollEl = null;
+        state.listEl = null;
+        state.tbody = null;
+        state.selfScrollTop = null;
+    }
 
     function startPolling() {
         if (state.pollTimer) clearInterval(state.pollTimer);
