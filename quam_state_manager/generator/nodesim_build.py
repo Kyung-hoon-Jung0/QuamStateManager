@@ -216,7 +216,9 @@ def build(job, guard, result):
     from qm import generate_qua_script
     script = generate_qua_script(nodes[0].namespace["qua_program"])
     if "SERIALIZATION VALIDATION ERROR" in script:
-        raise RuntimeError("QUA serialization validation failed")
+        # Keep qm's own validation text so the failure can be traced to a construct.
+        detail = script.split("SERIALIZATION VALIDATION ERROR", 1)[1].strip().replace("\n", " ")[:300]
+        raise RuntimeError("QUA serialization validation failed: " + detail)
     imported = {}
     for module in list(sys.modules.values()):
         filename = getattr(module, "__file__", None)
