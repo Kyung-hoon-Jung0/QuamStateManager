@@ -1340,26 +1340,32 @@ def qm_state(q, idle_value):
 
 def live_tiles(answer, idle_states, hottest, limit, state, failures):
     """The four Live tiles. A tile carries a state tone only from a known abnormal value;
-    an unknown value is quiet (grey). ``failures`` = number of calls refused or unanswered."""
+    an unknown value is quiet (grey). ``failures`` = number of calls refused or unanswered.
+
+    One word per state, the same as the zones: no answer and no failed try says "not read yet"; no answer
+    after a failed try ('error', or 'stale' with no answer) says "unavailable"; a section an answer lacks
+    stays "unknown"."""
     ans = answer or {}
     fresh = state == 'ok'
+    never_read = answer is None and state not in ('error', 'stale')
+    missing = 'not read yet' if never_read else ('unavailable' if answer is None else 'unknown')
     qms = ans.get('open_qms')
     tiles = []
     if qms is None:
-        tiles.append({'label': 'Open QMs', 'value': 'unknown', 'note': 'QM list not read', 'tone': 'quiet'})
+        tiles.append({'label': 'Open QMs', 'value': missing, 'note': 'QM list not read', 'tone': 'quiet'})
     else:
         idle = sum(bool((idle_states.get(q['id']) or {}).get('idle')) for q in qms)
         tiles.append({'label': 'Open QMs', 'value': str(len(qms)),
                       'note': (f'{idle} idle' if idle else ('none idle' if qms else 'no QM open')),
                       'tone': 'warn' if idle and fresh else None})
     if qms is None or any(q.get('jobs') is None for q in qms):
-        tiles.append({'label': 'Jobs', 'value': 'unknown', 'note': 'job list not read', 'tone': 'quiet'})
+        tiles.append({'label': 'Jobs', 'value': missing, 'note': 'job list not read', 'tone': 'quiet'})
     else:
         n = sum(job_activity(j.get('status')) == 'active' for q in qms for j in q.get('jobs') or [])
         tiles.append({'label': 'Jobs', 'value': str(n) + ' running, queued or processing',
                       'note': ''})
     if hottest is None:
-        tiles.append({'label': 'Hottest sensor', 'value': 'unknown', 'note': 'no temperature reading', 'tone': 'quiet'})
+        tiles.append({'label': 'Hottest sensor', 'value': missing, 'note': 'no temperature reading', 'tone': 'quiet'})
     else:
         over = limit is not None and hottest['value'] > limit
         tiles.append({'label': 'Hottest sensor', 'value': '%.1f' % hottest['value'], 'unit': '°C',
@@ -1376,7 +1382,7 @@ def live_tiles(answer, idle_states, hottest, limit, state, failures):
     else:
         note, tone = 'all calls answered', None
     # Before any read there is no version to report: the same words as the zones ("not read yet").
-    value = ('QOP ' + str(qop)) if qop else ('QOP not reported' if answer is not None else 'not read yet')
+    value = ('QOP ' + str(qop)) if qop else ('QOP not reported' if answer is not None else missing)
     tiles.append({'label': 'Server', 'value': value, 'note': note,
                   'tone': tone if (qop or tone in ('danger', 'warn')) else 'quiet'})
     if not fresh:

@@ -168,6 +168,19 @@ async function search(w, q) {
     const pill = w.document.getElementById('ds-new-pill');
     ok(served === 2 && pill && !pill.hidden && /^1 new run /.test(pill.textContent),
        'collections: a HELD delta announces only the tagged arrival (' + (pill && pill.textContent) + ')');
+    // final round P3-5: Enter on the focused pill hides it; keyboard focus moves to the first new
+    // row's select box, never to BODY
+    if (pill) {
+      pill.focus();
+      pill.click();
+      await tick(80);
+      const a = w.document.activeElement;
+      const tr = a && a.closest ? a.closest('tr[data-id]') : null;
+      ok(pill.hidden && a && a !== w.document.body && a.matches('input.ds-check')
+         && tr && tr.getAttribute('data-id') === 'f1:801',
+         'pill: focus lands on the first new row after Enter (' + (a && (a.id || a.className || a.tagName))
+         + ' in ' + (tr && tr.getAttribute('data-id')) + ')');
+    }
   }
 
   // ── C. the title's count follows the table (r2-14 / F2 review) ──────────

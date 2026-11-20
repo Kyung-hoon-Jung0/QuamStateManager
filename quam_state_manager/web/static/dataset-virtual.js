@@ -622,6 +622,19 @@
         for (var q in oc) { n++; if (!marksFailure(oc[q])) return false; }
         return n > 0;
     }
+    // The run status that leads a target count in the Status cell ("error, "), or '' when the run
+    // status is not a failure (a successful run's cell reads "2 of 5 failed" alone).
+    function failedRunLead(row) {
+        var s = row && row.status;
+        return marksFailure(s) ? String(s).trim().toLowerCase() + ', ' : '';
+    }
+    // The text the Status cell shows for a run (the same words its render writes).
+    function statusCellText(row) {
+        var lead = failedRunLead(row), f = failedTargets(row);
+        if (allTargetsFailed(row)) return lead + 'all failed';
+        if (f) return lead + f.k + ' of ' + f.n + ' failed';
+        return String((row && row.status) || '');
+    }
     // A run whose node marked SOME targets failed: {k, n}, or null when none
     // failed or no outcomes were recorded.
     function failedTargets(row) {
@@ -701,15 +714,17 @@
          }},
         {key: 'status', label: 'Status', on: true, w: 124, sortKey: 'status', type: 'str',   // L9: 96 clipped "finished"; W2-11: 104 fit "all failed" by 2 px at the default size and clipped it at a larger one
          render: function (r) {
+             // a failed run status (error, aborted) stays on the cell beside the target count
+             var lead = failedRunLead(r);
              return allTargetsFailed(r)
                  ? '<span class="ds-status ds-status-err ds-all-failed" title="' + escapeHtml(r.status || 'no status')
-                   + '; the node marked every target of this run as failed">all failed</span>'
+                   + '; the node marked every target of this run as failed">' + escapeHtml(lead) + 'all failed</span>'
                  : (failedTargets(r)
                      ? (function (f) {
                          return '<span class="ds-status ds-status-err" data-failed="' + f.k + '/' + f.n
                            + '" title="' + escapeHtml(r.status || 'no status') + '; the node marked '
                            + f.k + ' of ' + f.n + ' targets of this run as failed">'
-                           + f.k + ' of ' + f.n + ' failed</span>';
+                           + escapeHtml(lead) + f.k + ' of ' + f.n + ' failed</span>';
                        })(failedTargets(r))
                      : statusChip(r.status));
          }},
@@ -766,7 +781,32 @@
     }
     function colWidth(c) {
         if (colState.widths[c.key] != null) return colState.widths[c.key];
+        if (c.key === 'status') return Math.max(c.w, statusColNeed());
         return c.key === 'id' ? Math.max(c.w, idColNeed()) : c.w;
+    }
+    /* The Status column fits its longest label ("error, 2 of 5 failed"), so the chip never ends in an
+       ellipsis: the chip's .72rem bold characters (about 0.62 em each), its .35rem side padding and
+       1 px border, and the cell's .4rem side padding. A width the user dragged still wins. */
+    var _statusCharsAt = -1;
+    function statusColChars() {
+        var most = 0, rows = state.rows || [];
+        for (var i = 0; i < rows.length; i++) {
+            if (!rows[i]) continue;
+            var n = statusCellText(rows[i]).length;
+            if (n > most) most = n;
+        }
+        return most;
+    }
+    function statusColNeed() {
+        var chars = statusColChars(), root = 16;
+        _statusCharsAt = chars;
+        try { root = parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16; }
+        catch (e) { /* the estimate below still holds */ }
+        return Math.ceil(root * 0.72 * 0.62 * chars + root * 0.7 + 2 + root * 0.8 + 8);
+    }
+    function refitStatusCol() {
+        if (colState.widths.status != null) return;
+        if (statusColChars() !== _statusCharsAt) buildColgroup();
     }
     /* v1.5.1 (r6 P2-2): the ID column fits its content. A fixed 58 px clipped
        every 4-digit id to "#175..." at 1280 and hid the wrote-state mark
@@ -2207,6 +2247,7 @@
             _rebuildFitKeys();     // a delta may introduce a brand-new fit key / qubit
             _rebuildParamFacets(); // …or a brand-new param key/value facet
             refitIdCol();          // v1.5.1 (r6 P2-2): ...or a longer id / a first wrote mark
+            refitStatusCol();      // ...or a longer Status label ("aborted, 3 of 12 failed")
             applyFilters();        // re-sorts (sm is on the merged rows → in-slot placement)
             _buildSortBanner();    // surface any new fit-metric / param badge
             _buildQubitPicker();   // surface any new qubit
@@ -2484,14 +2525,45 @@
     }
 
     function _onNewPillClick() {
+        var pill = document.getElementById('ds-new-pill');
+        var hadFocus = !!(pill && document.activeElement === pill);   // the pill hides: its focus must go on
+        var held = new Set(state.arrivalUids || []);   // a flush acknowledges arrivals already on screen
         flushPendingNow();                 // held runs land NOW (explicit request)
         var pos = _firstArrivalPos();      // read BEFORE the count clears (QA F2)
+        var first = pos >= 0 ? state.rows[state.visible[pos]] : null;
+        for (var k = 0; !first && k < state.visible.length; k++) {   // focus only: the scroll keeps pos
+            var cand = state.rows[state.visible[k]];
+            if (cand && held.has(cand.uid)) first = cand;
+        }
         if (window.SyncBadge) window.SyncBadge.acknowledge(Array.from(state.arrivalUids));
         if (state.arrivalUids) state.arrivalUids.clear();
         _updateNewPill();
-        if (!state.scrollEl) return;
-        if (pos < 0) { state.scrollEl.scrollTop = 0; return; }   // filtered out: the old top
-        _scrollToListPos(pos);             // where the new runs ACTUALLY sort
+        if (state.scrollEl) {
+            if (pos < 0) state.scrollEl.scrollTop = 0;   // filtered out: the old top
+            else _scrollToListPos(pos);    // where the new runs ACTUALLY sort
+        }
+        if (hadFocus) _focusAfterPill(first ? first.uid : null);
+    }
+    // Keyboard focus after the pill hides: the first new row's select box once the scroll has
+    // rendered it, else the Sort bar's toggle; never BODY. preventScroll keeps the position the
+    // pill just scrolled to (a mouse click lands exactly where it did before).
+    function _focusAfterPill(uid) {
+        var go = function () {
+            var target = null, tb = state.tbody;
+            if (uid != null && tb && tb.rows) {
+                for (var i = 0; i < tb.rows.length && !target; i++) {
+                    if (tb.rows[i].getAttribute('data-id') === String(uid)) {
+                        target = tb.rows[i].querySelector('input.ds-check');
+                    }
+                }
+            }
+            if (!target) target = document.getElementById('sort-banner-toggle');
+            if (!target || !target.focus) return;
+            try { target.focus({preventScroll: true}); } catch (e) { target.focus(); }
+        };
+        // after scheduleRender's frame drew the rows (rAF is called on window: unbound it throws)
+        if (window.requestAnimationFrame) window.requestAnimationFrame(function () { setTimeout(go, 0); });
+        else setTimeout(go, 16);
     }
 
     // docs/126 item 6.5: Esc or a click anywhere else DISMISSES the announcement

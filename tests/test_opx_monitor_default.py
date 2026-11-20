@@ -261,9 +261,14 @@ def test_a_monitor_that_never_read_counts_nothing_and_dates_nothing(rig, chip):
         assert "(not reported)" not in html and ", not reported" not in html, tab
     live = html_unescape(_body(app, "live"))
     assert "QOP not reported" not in live, "the Server tile says what its zone says: not read yet"
-    if not chip:  # with a target set but no answer yet, the zones say "not available" instead
-        assert "Open QMs</h3><span class=\"ui-zone-sum\">not read yet" in live
-        assert "Temperatures</h3><span class=\"ui-zone-sum\">not read yet" in live
+    # final round P3-1: one word before the first read, in every zone and tile, target set or not
+    assert "Open QMs</h3><span class=\"ui-zone-sum\">not read yet" in live
+    assert "Temperatures</h3><span class=\"ui-zone-sum\">not read yet" in live
+    zone = lambda name: live.split('aria-label="' + name + '"', 1)[1].split("</section>", 1)[0]
+    assert "not read yet" in zone("Open QMs").lower(), zone("Open QMs")
+    assert "Temperatures not read yet." in zone("Temperatures"), zone("Temperatures")
+    assert "unavailable" not in live and "not available" not in live
+    if not chip:
         assert "No QM list." in html_unescape(_body(app, "jobs"))
 
 
@@ -309,6 +314,13 @@ def test_the_unconfigured_line_names_every_remedy(rig):
 def test_the_server_tile_before_any_read_says_not_read_yet():
     server = lambda ans, state: om.live_tiles(ans, {}, None, None, state, 0)[-1]["value"]
     assert server(None, "starting") == "not read yet"
+    tiles = lambda ans, state: {t["label"]: t["value"] for t in om.live_tiles(ans, {}, None, None, state, 0)}
+    # final round P3-1: never read says "not read yet" on every tile; a failed read keeps "unavailable"
+    never = tiles(None, "starting")
+    assert never and all(v == "not read yet" for v in never.values()), never
+    for failed in ("error", "stale"):
+        got = tiles(None, failed)
+        assert got and all(v == "unavailable" for v in got.values()), (failed, got)
     assert server({"open_qms": []}, "ok") == "QOP not reported"
     assert server({"version": {"QOP": "3.5"}}, "ok") == "QOP 3.5"
 

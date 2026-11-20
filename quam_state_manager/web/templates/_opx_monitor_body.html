@@ -16,7 +16,12 @@
 {%- set poll_s = 1 if st.settling else st.interval_s|int -%}
 {%- set ps = posted if posted_form == 'settings' else none -%}{%- set pn = posted if posted_form == 'names' else none -%}
 {%- macro flash_line() -%}<p class="ui-state {{ 'ui-state--error' if flash_error else 'ui-opxmon-flash' }}" role="status">{{ flash }}</p>{%- endmacro -%}
-{%- set unavailable_key = 'Not available for this target.' if settings.target and settings.target.get('kind', 'qmm') != 'qmm' else ('Server unreachable.' if st.state == 'error' else 'Not available yet.') -%}
+{#- never read: no answer and no failed try ('error' / 'stale' with no answer is a read that was tried and failed);
+    every zone and tile then says "not read yet", and "unavailable" is kept for a failed read -#}
+{%- set never_read = st.answer is none and st.state not in ('error', 'stale') -%}
+{%- set unavailable_key = 'Not available for this target.' if settings.target and settings.target.get('kind', 'qmm')
+    != 'qmm' else ('Server unreachable.' if st.state == 'error' else ('Not read yet.' if never_read
+    else 'Not available yet.')) -%}
 <div id="ui-opxmon-body" class="ui-opxmon-body" data-tab="{{ tab }}" data-state="{{ st.state }}"
      data-snapshot="{{ st.snapshot_id }}"
      {% if st.age_s is not none %}data-age="{{ '%.1f'|format(st.age_s) }}"{% endif %}
@@ -54,8 +59,9 @@
   {#- Zone: Open QMs -#}
   {%- set qms = ans.open_qms %}
   <section class="ui-zone" aria-label="Open QMs"><div class="ui-zone-head"><h3 class="ui-zone-title">Open QMs</h3>{#
-    #}<span class="ui-zone-sum">{% if not cap.live %}not available{% elif qms is none %}
-    {{- 'unknown' if st.answer else 'not read yet' }}{% else %}
+    #}<span class="ui-zone-sum">{% if not cap.live %}{{ 'not read yet' if never_read else 'not available' }}{%
+    elif qms is none %}
+    {{- 'not read yet' if never_read else ('unknown' if st.answer else 'unavailable') }}{% else %}
     {{- qms|length }} open{% set idle_n = idle_states.values()|selectattr('idle')|list|length %}
     {%- if idle_n %} &middot; {{ idle_n }} idle{% endif %}{% if owners_stale and
     owners_age %} &middot; last good read {{ owners_age }}{% endif %}{% endif %}</span></div>
@@ -64,7 +70,8 @@
     <p class="ui-state ui-state--empty"><span class="ui-state-key">{{ unavailable_key }}</span> {{ plain_error(cap.live_reason) }}</p>
   {%- elif qms is none %}
     <p class="ui-zone-empty">{% if read_time(st.section_times.get('open_qms')) %}Open QM list unavailable;
-    last good read at {{ read_time(st.section_times.get('open_qms')) }}.{% else %}
+    last good read at {{ read_time(st.section_times.get('open_qms')) }}.{% elif never_read %}
+    Open QM list not read yet.{% else %}
     Open QM list: no successful read yet.{% endif %}</p>
   {%- elif not qms %}
     <p class="ui-zone-empty">{% if owners_stale %}No QM was open at the last good read{% if
@@ -84,13 +91,14 @@
     #}Temperatures</h3><span class="ui-zone-sum">{% if hottest and not temperature_failed %}
     {%- if hottest_limit is not none and hottest.value > hottest_limit %}<span class="ui-text-danger">Above limit:{#
     #} {{ hottest.label }} {{ '%.1f'|format(hottest.value) }} °C</span>{% else %}Hottest: {{ hottest.label }}{#
-    #} {{ '%.1f'|format(hottest.value) }} °C{% endif %}{% elif temperature_failed or
-    read_time(st.section_times.get('controllers')) and ans.controllers is none %}unavailable{% elif ans.controllers is
-    none %}not read yet{% else %}no readings{% endif %}</span></div>
+    #} {{ '%.1f'|format(hottest.value) }} °C{% endif %}{% elif never_read %}not read yet
+    {%- elif temperature_failed or ans.controllers is none %}unavailable{% else %}no readings{% endif %}</span></div>
   <div class="ui-zone-body">
-  {% if temperature_failed or ans.controllers is none %}<p class="ui-note">Temperatures unavailable ({% set read_at =
+  {#- one bracket level: read_time already carries "(UTC+9)", so the read time is set off by semicolons -#}
+  {% if never_read %}<p class="ui-note">Temperatures not read yet.</p>
+  {%- elif temperature_failed or ans.controllers is none %}<p class="ui-note">Temperatures unavailable; {% set read_at =
     read_time(st.section_times.get('controllers')) %}{{ 'last good read at ' ~ read_at if read_at else
-    'no successful read yet' }}){% if ans.controllers %}; the values below are stale{% endif %}</p>{% elif not
+    'no successful read yet' }}{% if ans.controllers %}; the values below are stale{% endif %}.</p>{% elif not
     (ans.controllers or [])|selectattr('temperatures')|list and not unreadable_temps %}<p class="ui-zone-empty">No{#
     #} temperature readings.</p>{% endif %}
   {% set temps_stale = (temperature_failed or st.state != 'ok') and ans.controllers %}{% set stale_at = stale_time(st.section_times.get('controllers')) if st.section_times.get('controllers') else '' %}
