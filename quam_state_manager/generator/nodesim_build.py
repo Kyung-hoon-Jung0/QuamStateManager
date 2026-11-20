@@ -165,14 +165,48 @@ def stub_class(guard, overrides):
     return StubNode
 
 
+def install_once(job, guard, holder):
+    """Install class and library barriers once per worker (P2 spec 2.3, D-15)."""
+    holder["job"] = job
+    if not holder.get("classes_installed"):
+        guard.install_classes()
+    library = guard.install_library(job["library_root"])
+    # Pathless loads are bound to this request's freshly sanitized copy.
+    original_load = library.Quam.load.__func__
+
+    def load(cls, path=None, *args, **kwargs):
+        """Bind pathless loads to the current copy (D-14)."""
+        if path is None:
+            path = holder["job"]["chip_copy"]
+        if not isinstance(path, (str, Path)) or Path(path).resolve() != Path(holder["job"]["chip_copy"]).resolve():
+            guard.fail("Quam.load", str(path))
+        return original_load(cls, path, *args, **kwargs)
+
+    library.Quam.load = classmethod(load)
+    holder["library"] = library
+    holder["sources"] = {}
+    if hasattr(guard, "remember"):
+        guard.remember("Quam.load", library.Quam, "load")
+        guard.remember("Quam.connect", library.Quam, "connect")
+        guard.remember("Quam.save", library.Quam, "save")
+
+
 def build(job, guard, result):
+    """Keep the cold build entry point using the shared split (P2 spec 2.3)."""
+    return build_one(job, guard, result, {})
+
+
+def build_one(job, guard, result, holder):
+    """Build one node and retain first-seen module stats (D-5, P2 spec 2.3)."""
+    holder["job"] = job
     node_file = Path(job["node_file"]).resolve()
-    # Refuse without importing or executing the selected node.
     if node_file.stem.startswith("15p"):
         guard.fail("node", "unsupported execute path")
     verify_env(job, guard)
     verify_config(job, guard)
-    guard.install_classes()
+    if "library" not in holder:
+        guard.install_classes()
+        holder["classes_installed"] = True
     source_stats = {}
     for folder in ("calibration_utils", "quam_config"):
         for path in (Path(job["library_root"]) / folder).rglob("*.py"):
@@ -184,21 +218,15 @@ def build(job, guard, result):
         clean, paths = sanitize(json.loads(path.read_text(encoding="utf-8")), filename)
         path.write_text(json.dumps(clean), encoding="utf-8")
         replaced.extend(paths)
-    library = guard.install_library(job["library_root"])
-    # Pathless loads are bound to this request's freshly sanitized copy.
-    original_load = library.Quam.load.__func__
-
-    def load(cls, path=None, *args, **kwargs):
-        if path is None:
-            path = job["chip_copy"]
-        if not isinstance(path, (str, Path)) or Path(path).resolve() != Path(job["chip_copy"]).resolve():
-            guard.fail("Quam.load", str(path))
-        return original_load(cls, path, *args, **kwargs)
-
-    library.Quam.load = classmethod(load)
+    if "library" not in holder:
+        install_once(job, guard, holder)
+    library = holder["library"]
     import qualibrate
     stub = stub_class(guard, job.get("overrides", {}))
     qualibrate.QualibrationNode = stub
+    if hasattr(guard, "remember"):
+        guard.remember("QualibrationNode", qualibrate, "QualibrationNode")
+        guard.remember("stub", sys.modules[__name__], "stub_class")
     module = types.ModuleType("_nodesim_node")
     module.__file__ = str(node_file)
     sys.modules[module.__name__] = module
@@ -229,7 +257,7 @@ def build(job, guard, result):
             current = [stat.st_mtime_ns, stat.st_size]
             if current != source_stats[str(path)]:
                 guard.fail("source.changed", str(path))
-            imported[str(path)] = current
+            imported[str(path)] = holder["sources"].setdefault(str(path), current)
     return {"program_script": script.split("\nconfig =", 1)[0],
             "replaced_hosts": replaced, "library_file": str(library.__file__),
             "logs": nodes[0].log.records, "imported_sources": imported}
