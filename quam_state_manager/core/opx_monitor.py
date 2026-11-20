@@ -1050,6 +1050,36 @@ def opx_time(value):
     return datetime.fromtimestamp(t).astimezone().strftime('%Y-%m-%d %H:%M:%S')
 
 
+def _span_words(seconds):
+    s = int(seconds)
+    if s < 60:
+        return f'{s} s'
+    if s < 3600:
+        return f'{s // 60} min'
+    return f'{s // 3600} h {s % 3600 // 60} min'
+
+
+def busy_since_text(since, skew, answer, now):
+    """How long the OPX has been busy, never as a clock time in this PC's future.
+
+    With a measured offset (``skew_s`` = PC - OPX) the start is shown in this PC's
+    clock, capped at ``now``. Without one only an OPX-clock span is honest: job start
+    to the newest OPX-clock time in the same answer, a lower bound of the elapsed
+    time. With neither, no time is shown."""
+    t = timestamp(since)
+    if t is None:
+        return ''
+    if isinstance(skew, dict) and skew.get('skew_s') is not None:
+        pc = min(t + skew['skew_s'], now)
+        return (' since ' + datetime.fromtimestamp(pc).astimezone().strftime('%H:%M:%S')
+                + f" (this PC's clock; {skew_text(skew, now)})")
+    newest = max(server_times(answer), default=None)
+    if newest is not None and newest - t >= 1:
+        return (f' for at least {_span_words(newest - t)} (OPX clock, job start to the newest server time;'
+                ' offset from this PC unknown)')
+    return ' (busy time unknown: the OPX clock offset from this PC is unknown)'
+
+
 def words(value):
     if value is None:
         return 'not reported'
@@ -1790,6 +1820,9 @@ class Monitor:
                 "target_source": s.get("target_source"),
                 "valid_for_ms": max(0, int((STALE_INTERVALS * self.poll_interval() - (age or 0)) * 1000)) if state == 'ok' else 0,
                 "interval_s": self.poll_interval(), "alarms": alarms,
+                # a read is on its way (none yet, or a viewer just asked for a fresh one):
+                # pages poll every second until it lands, so every page shows it at once
+                "settling": state in ('starting', 'stale') and (age is None or self.viewer_check_pending),
                 "alarms_armed": s.get("alarms_armed"), "capabilities": self.capabilities()}
 
     def new_alarm_toasts(self) -> list[dict]:

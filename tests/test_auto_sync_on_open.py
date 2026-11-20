@@ -257,3 +257,33 @@ class TestPanelDefaults:
         _open(world)
         s = _sess(world)
         assert {k: s[k] for k in routes_mod.AUTO_SYNC_DEFAULT_MODES} == routes_mod.AUTO_SYNC_DEFAULT_MODES
+
+
+class TestReopenHint:
+    """The no-chip Re-open button says opening arms Auto-Sync only when the open rule will."""
+
+    _HINT = "data-resume-arms-auto-sync"
+
+    def _restart_offering(self, world):
+        app, c = world["new_app"]()
+        world["app"], world["client"] = app, c
+        # after create_app: its startup hygiene drops a last path under the OS temp dir
+        (world["inst"] / "last_session.json").write_text(
+            json.dumps({"last_quam_state_path": str(world["live"])}), encoding="utf-8")
+        html = c.get("/datasets").get_data(as_text=True)
+        assert 'class="resume-offer"' in html and f'value="{world["live"]}"' in html
+        return html
+
+    def test_hint_when_opening_will_arm(self, world):
+        assert self._HINT in self._restart_offering(world)
+
+    def test_no_hint_for_a_chip_the_user_turned_off(self, world):
+        _open(world)
+        assert world["client"].post("/auto-apply/disarm").status_code == 200
+        assert self._HINT not in self._restart_offering(world)
+        _open(world)
+        assert not _sess(world)
+
+    def test_no_hint_when_the_setting_is_off(self, world):
+        world["client"].post("/settings/auto-sync-on-open", json={"enabled": False})
+        assert self._HINT not in self._restart_offering(world)

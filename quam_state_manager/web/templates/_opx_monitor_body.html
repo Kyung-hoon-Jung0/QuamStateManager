@@ -11,18 +11,20 @@
 {%- endmacro -%}
 {%- set owners_age = read_age('open_qms') -%}
 {%- set polls = tab in ('live', 'jobs', 'history', 'cleanup') and st.state != 'unconfigured' -%}
+{#- before the poller's first read both polls come back each second, so the first read shows at once -#}
+{%- set poll_s = 1 if st.settling else st.interval_s|int -%}
 {%- set ps = posted if posted_form == 'settings' else none -%}{%- set pn = posted if posted_form == 'names' else none -%}
 {%- macro flash_line() -%}<p class="ui-state {{ 'ui-state--error' if flash_error else 'ui-opxmon-flash' }}" role="status">{{ flash }}</p>{%- endmacro -%}
 {%- set unavailable_key = 'Not available for this target.' if settings.target and settings.target.get('kind', 'qmm') != 'qmm' else ('Server unreachable.' if st.state == 'error' else 'Not available yet.') -%}
 <div id="ui-opxmon-body" class="ui-opxmon-body" data-tab="{{ tab }}" data-state="{{ st.state }}"
      {% if st.age_s is not none %}data-age="{{ '%.1f'|format(st.age_s) }}"{% endif %}
-     {% if polls %}hx-get="/opx-monitor/body?tab={{ tab }}&limit={{ job_limit }}" hx-trigger="every {{ st.interval_s|int }}s" hx-swap="outerHTML"{% endif %}>
+     {% if polls %}hx-get="/opx-monitor/body?tab={{ tab }}&limit={{ job_limit }}" hx-trigger="every {{ poll_s }}s" hx-swap="outerHTML"{% endif %}>
 {#- The verdict band: the state word, one reason, one next step, and freshness as one quiet line. -#}
 {#- The settings tab does not poll (it would replace a form being typed); its band polls alone instead. -#}
 {%- set band_polls = tab == 'settings' and st.state != 'unconfigured' -%}
 <div class="ui-verdict ui-verdict--strong ui-verdict--{{ band.tone }} ui-opxmon-verdict" id="ui-opxmon-band"
-     {%- if band_polls %} hx-get="/opx-monitor/body?tab=settings" hx-select="#ui-opxmon-band" hx-trigger="every {{ st.interval_s|int }}s" hx-swap="outerHTML"{% endif %} role="{{ 'alert' if band.tone == 'danger' else 'status' }}" data-valid-ms="{{ st.valid_for_ms }}" data-health="{{ st.health.color }}"><span class="ui-dot" aria-hidden="true"></span><strong class="ui-verdict-key">{{ verdict.label }}</strong>
-{%- set why_text %}{{ plain_error(verdict.reason) }}{% if verdict.since %} since {{ opx_time(verdict.since) }} (OPX clock{% if clock_skew %}; {{ skew_text }}{% else %}; offset from this PC unknown{% endif %}){% endif %}{% endset %}
+     {%- if band_polls %} hx-get="/opx-monitor/body?tab=settings" hx-select="#ui-opxmon-band" hx-trigger="every {{ poll_s }}s" hx-swap="outerHTML"{% endif %} role="{{ 'alert' if band.tone == 'danger' else 'status' }}" data-valid-ms="{{ st.valid_for_ms }}" data-health="{{ st.health.color }}"><span class="ui-dot" aria-hidden="true"></span><strong class="ui-verdict-key">{{ verdict.label }}</strong>
+{%- set why_text %}{{ plain_error(verdict.reason) }}{% if verdict.since %}{{ busy_since }}{% endif %}{% endset %}
 <span class="ui-verdict-why">{{ why_text[:1]|upper }}{{ why_text[1:] }}{{ '' if why_text.endswith('.') else '.' }}{% if band.next %} {{ band.next }}{% endif %}</span>
 <span class="ui-verdict-meta ui-opxmon-status {{ 'ui-opxmon-status--' ~ st.state }}">
   {%- if st.target_label %}<span class="ui-opxmon-target">{{ st.target_label }}</span> &middot; {% endif -%}

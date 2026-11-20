@@ -11927,7 +11927,9 @@ def _resume_offer() -> dict | None:
             return None
         return {"path": path, "name": _chip_display_name(Path(path)),
                 # v1.5.1 (U P2-31): the edits waiting in it are named
-                "waiting": _waiting_note(path)}
+                "waiting": _waiting_note(path),
+                # the press also arms Auto-Sync (/load); said only when it will
+                "arms_auto_sync": _auto_sync_open_allowed(_auto_sync_chip_key({"path": path}))}
     except (OSError, ValueError, TypeError):
         return None
 
@@ -33097,6 +33099,15 @@ def _open_drift_is_lossless(ctx: dict) -> bool:
         return False
 
 
+def _auto_sync_open_allowed(key: str) -> bool:
+    """The part of the arm-on-open rule known before a chip opens: the machine
+    setting is on and the person has not switched Auto-Sync off for this chip.
+    One rule for the open routes and for every hint that says opening arms it."""
+    if not key or not _auto_sync_on_open_enabled():
+        return False
+    return key not in _auto_sync_chips_read()["off"]
+
+
 def _maybe_auto_arm_on_open(ctx: dict | None) -> bool:
     """Arm Auto-Sync (take live keeping edits + push) for a chip a PERSON just
     opened. Called only from the user-facing open routes; the scheduler, the
@@ -33104,12 +33115,10 @@ def _maybe_auto_arm_on_open(ctx: dict | None) -> bool:
     try:
         if not ctx or ctx.get("type") != "quam" or ctx.get("auto_apply"):
             return False
-        if not _auto_sync_on_open_enabled():
-            return False
         key = _auto_sync_chip_key(ctx)
-        chips = _auto_sync_chips_read()
-        if not key or key in chips["off"]:
+        if not _auto_sync_open_allowed(key):
             return False
+        chips = _auto_sync_chips_read()
         if ctx.get("working_dirty"):
             # The working copy holds saved content the chip does not, and no
             # person staged it in this session (a write that failed earlier,
