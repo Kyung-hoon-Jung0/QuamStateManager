@@ -3,7 +3,7 @@
  *
  * They were two near-identical oranges (#e67e22 and #f0a030), then orange
  * and a dark burnt orange (#9e4f00) that users still could not tell apart on
- * the rack. Readout in is a different hue now (the kit's line-2 fuchsia), far
+ * the rack. Readout in uses the kit's olive token, far
  * from Readout out and from every other port role in CIE76 distance, and the
  * white port label still reads on it.
  * The driver (tests/test_v151_r6_wiring_readout_colours.py) renders the REAL
@@ -28,7 +28,7 @@ try { ({ JSDOM } = require('jsdom')); } catch (e) {
 const FX = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const STATIC = path.join(__dirname, '..', 'quam_state_manager', 'web', 'static');
 const APP = fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8');
-const CSS = ['pico.min.css', 'style.css'].map((f) => fs.readFileSync(path.join(STATIC, f), 'utf8'));
+const CSS = ['pico.min.css', 'style.css', 'ui-kit.css'].map((f) => fs.readFileSync(path.join(STATIC, f), 'utf8'));
 const BG = { light: [255, 255, 255], dark: [19, 22.5, 30.5] };   // Pico's --pico-background-color per theme
 
 let fails = 0, n = 0;
@@ -74,7 +74,11 @@ function dE(a, b) { const p = lab(a), q = lab(b); return Math.hypot(p[0] - q[0],
     w.IntersectionObserver = class { observe() {} unobserve() {} disconnect() {} };
     w.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
     w.console.log = () => {};
+    const kit = fs.readFileSync(path.join(STATIC, 'ui-kit.css'), 'utf8');
+    const token = /--ui-role-rr-in:\s*(#[0-9a-f]{6})/i.exec(kit);
+    if (token) d.documentElement.style.setProperty('--ui-role-rr-in', token[1]);
     w.eval(APP);
+    w.eval(fs.readFileSync(path.join(STATIC, 'plot-theme.js'), 'utf8'));
     scripts.forEach((s) => { try { w.eval(s); } catch (e) { /* a page script needing more of the app */ } });
     await tick();
 
@@ -88,8 +92,8 @@ function dE(a, b) { const p = lab(a), q = lab(b); return Math.hypot(p[0] - q[0],
         ok(e >= 60, 'Readout in and Readout out are different hues (CIE76 ' + r2(e) + ' >= 60)');
         const near = Object.keys(w.UI_CONFIG.roleColors).filter((r) => r !== 'rr_in' && r !== 'fallback')
             .map((r) => [r, dE(inn, rgb(w.UI_CONFIG.roleColors[r]))]).sort((a, b) => a[1] - b[1])[0];
-        ok(near[1] >= 30, 'Readout in is apart from every other port role (nearest ' + near[0]
-            + ', CIE76 ' + r2(near[1]) + ' >= 30)');
+        ok(near[1] >= 40, 'Readout in is apart from every other port role (nearest ' + near[0]
+            + ', CIE76 ' + r2(near[1]) + ' >= 40)');
         ['light', 'dark'].forEach((t) => {
             const cb = contrast(inn, BG[t]);
             ok(cb >= 2.5, 'Readout in stands out on the ' + t + ' page (contrast ' + r2(cb) + ' >= 2.5)');
@@ -101,12 +105,27 @@ function dE(a, b) { const p = lab(a), q = lab(b); return Math.hypot(p[0] - q[0],
            'the drawn input ports wear the legend\'s colour: ' + (port && port.getAttribute('fill')));
     }
 
+    // Check the full role legend, including optional TWPA, digital and QDAC lines.
+    // Existing close pairs keep their measured floors; every other pair needs 40.
+    // Readout input has no exception, and is also checked against all roles above.
+    const existingFloors = {
+        'coupler/cr': 26, 'digital/z': 19, 'rr/z_qdac': 28,
+        'rr/twpa_pump': 33, 'rr/twpa_ro': 37, 'twpa_pump/twpa_ro': 11,
+    };
+    const key = Object.keys(w.UI_CONFIG.roleColors).filter(r => r !== 'fallback').sort();
+    key.forEach((a, i) => key.slice(i + 1).forEach((b) => {
+        const distance = dE(rgb(w.UI_CONFIG.roleColors[a]), rgb(w.UI_CONFIG.roleColors[b]));
+        const floor = existingFloors[a + '/' + b] || 40;
+        ok(distance >= floor, a + '/' + b + ': legend CIE76 ' + r2(distance) + ' >= ' + floor);
+    }));
+
     // the Wiring table's role badge: same colour (one palette), readable text, both themes
     ['light', 'dark'].forEach((t) => {
         const tdom = new JSDOM('<!doctype html><html data-theme="' + t + '"><head>' + CSS.map((c) => '<style>' + c + '</style>').join('')
             + '</head><body><span class="role-badge rr_in">rr_in</span></body></html>', { pretendToBeVisual: true });
         const tw = tdom.window;
-        const root = tw.getComputedStyle(tw.document.documentElement).getPropertyValue('--role-rr-in-color').trim();
+        let root = tw.getComputedStyle(tw.document.documentElement).getPropertyValue('--role-rr-in-color').trim();
+        if (root === 'var(--ui-role-rr-in)') root = token && token[1];
         ok(!!inn && JSON.stringify(rgb(root)) === JSON.stringify(inn),
            t + ': the table badge colour is the diagram\'s (' + root + ')');
         const badge = tw.document.querySelector('.role-badge.rr_in');

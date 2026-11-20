@@ -14,6 +14,11 @@
         return (v && v.trim()) || fallback;
     }
 
+    // Port diagrams and wiring badges share the kit's readout-input token.
+    if (window.UI_CONFIG) {
+        UI_CONFIG.roleColors.rr_in = cssVar('--ui-role-rr-in', UI_CONFIG.roleColors.rr_in);
+    }
+
     /* The card ground every framed plot box uses (hover label, legend backing). */
     function cardBg() {
         return cssVar('--plot-hover-bg', cssVar('--pico-card-background-color', '#222'));
