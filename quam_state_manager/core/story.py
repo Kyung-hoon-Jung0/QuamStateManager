@@ -219,7 +219,9 @@ def _outcome(outcomes: dict | None) -> str | None:
         return "failed"
     if all(c == "ok" for c in classes):
         return "ok"
-    return "mixed"
+    # skipped / pending is neutral, never a warning: some ok and the rest neutral is "mixed",
+    # no target with a verdict at all is "neutral"; both render in the neutral style
+    return "mixed" if "ok" in classes else "neutral"
 
 
 def _folder_key(folder) -> str:

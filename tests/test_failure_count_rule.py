@@ -76,7 +76,9 @@ def test_the_calibration_log_counts_an_aborted_target_as_failed():
     # while the Datasets digest counted it as a failure
     assert story._outcome({"q1": "aborted"}) == "failed"
     assert story._outcome({"q1": "error", "q2": "successful"}) == "failed"
-    assert story._outcome({"q1": "skipped"}) == "mixed"
+    # skipped is neutral, never a warning: alone it is "neutral", beside an ok target "mixed"
+    assert story._outcome({"q1": "skipped"}) == "neutral"
+    assert story._outcome({"q1": "skipped", "q2": "successful"}) == "mixed"
     assert story._outcome({"q1": "successful"}) == "ok"
 
 
