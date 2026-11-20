@@ -19,6 +19,21 @@ def _fn(src, marker, n=900):
     return src[i:i + n]
 
 
+def _body(src, marker):
+    """The whole function that starts at `marker`, by brace matching (no fixed window)."""
+    i = src.index(marker)
+    j = src.index("{", i)
+    depth = 0
+    for k in range(j, len(src)):
+        if src[k] == "{":
+            depth += 1
+        elif src[k] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[i:k + 1]
+    raise AssertionError("unbalanced braces after " + marker)
+
+
 class TestVirtualScrollerPressRace:
     def test_row_press_and_click_mark_interaction(self):
         # A clicker must count as interacting so the 60s delta-poll merge defers and
@@ -38,8 +53,10 @@ class TestVirtualScrollerPressRace:
     def test_scroll_releases_the_press_freeze(self):
         # A touch finger-scroll is a pointerdown with no click; onScroll must drop the
         # freeze (else the table stays blank until the 1500ms safety timeout).
-        sc = _fn(_DV, "function onScroll", 500)
+        sc = _body(_DV, "function onScroll")
         assert "clearPress()" in sc
+        # Called on every scroll, not only on the user's own: a press freeze must drop either way.
+        assert "if (!own) clearPress()" not in sc
 
     def test_pointerup_and_cancel_release_the_press(self):
         # Belt-and-suspenders: lifting the pointer / the browser taking the gesture for

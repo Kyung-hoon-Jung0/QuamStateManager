@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -104,7 +105,11 @@ class TestReplaceRetryLadder:
         dst = tmp_path / "f.json"
         dst.write_text("{}")
         sleeps: list[float] = []
-        monkeypatch.setattr(safe_io.time, "sleep", lambda s: sleeps.append(s))
+        # time.sleep is process-wide: threads earlier tests left running sleep too.
+        # Count only this thread's sleeps; every other thread still really sleeps.
+        me, real_sleep = threading.get_ident(), time.sleep
+        monkeypatch.setattr(safe_io.time, "sleep",
+                            lambda s: sleeps.append(s) if threading.get_ident() == me else real_sleep(s))
 
         class Busy(OSError):
             winerror = 1175
