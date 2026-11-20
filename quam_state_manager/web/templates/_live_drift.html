@@ -38,6 +38,7 @@
 {% elif error %}
   <p class="muted live-drift-note">&#9888;&#65039; Could not read the live chip: {{ error }}</p>
 {% else %}
+  {% include '_project_state_notice.html' %}
   <div class="live-drift-bar">
     <div class="live-drift-summary ui-verdict ui-verdict--{{ 'warn' if total > 0 else 'neutral' }}"><span class="ui-dot" aria-hidden="true"></span>
       {% if total > 0 %}
