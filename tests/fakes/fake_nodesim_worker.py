@@ -26,7 +26,10 @@ def main():
         source = plan.get("source")
         script = Path(source).read_text(encoding="ascii") if source else "program()"
         kind = "failed" if stopped else plan.get("kind", "ok")
-        emit("result", **{k: current[k] for k in proto.SNAPSHOT}, ok=kind == "ok",
+        ids = {k: current[k] for k in proto.SNAPSHOT}
+        if plan.get("mode") == "stale":
+            ids["seq"] += 1  # a copy other than the click's was loaded (D-50)
+        emit("result", **ids, ok=kind == "ok",
              kind=kind,
              message="Stopped." if stopped else plan.get("error", ""), report={}, script=script,
              script_ok=True, program_chars=len(script), qop_version="v3_7_3", window_ns=current["window_ns"],
@@ -56,7 +59,7 @@ def main():
                  quam_config_file=str(library / "quam_config" / "__init__.py"), qm_version="fake", sources=sources)
         elif op == "lease":
             lease = request
-            emit("lease_ok", lease_seq=request["lease_seq"], connect_s=0)
+            emit("lease_ok", lease_seq=request["lease_seq"], connect_s=None)  # the real W sends null (F5)
             if current:
                 emit("phase", click_id=current["click_id"], phase="wait", phases=[])
                 if plan.get("mode") == "die_wait":
@@ -77,6 +80,9 @@ def main():
             mode = plan.get("mode")
             if mode == "die_build":
                 os._exit(8)
+            if mode == "bye_protocol":
+                emit("bye", why="protocol_error")
+                break
             if mode == "unmarked":
                 print("unmarked", flush=True)
                 continue

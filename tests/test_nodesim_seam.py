@@ -35,8 +35,7 @@ MUTATIONS = {
                   "self.proc.stdin.write(proto.encode(message))"),
     "SEAM-P0-2": ("pool", 'proto.same_created(process.create_time(), candidate["created"])',
                   'process.create_time() == candidate["created"]'),
-    "SEAM-P1-1": ("pool", 'version = version.strip() if isinstance(version, str) else ""\n        if not version:',
-                  'version = version.strip() if isinstance(version, str) else ""\n        if False:'),
+    "SEAM-P1-1": ("pool", "refused = version_refusal(credentials)\n", "refused = None\n"),
     "SEAM-P1-2": ("broker", 'if old is None and message["reason"] == "renew":', "if False:"),
     "SEAM-P1-3": ("broker", 'and row["worker_pid"] == worker and row["cluster_hash"] == message["hash"]]',
                   'and row["cluster_hash"] == message["hash"]]'),
@@ -290,6 +289,45 @@ def test_seam_empty_version_refused_before_acquire(seam):
     assert caught.value.state == "spawn_failed", caught.value.state
     assert "QOP version" in caught.value.fields["message"]
     assert "environment" in caught.value.fields["message"]
+    assert seam.ledger("launch") == [] and seam.ledger("versions") == []
+
+
+def env_login(monkeypatch, version, instance):
+    """D-51: the routes' _saas() over fake SAAS_* variables (env login wins), no saved settings file."""
+    from flask import Flask
+
+    from quam_state_manager.web import nodesim_routes
+    for name, value in (("SAAS_EMAIL", CREDS["email"]), ("SAAS_PASSWORD", PASSWORD), ("SAAS_HOST", CREDS["host"])):
+        monkeypatch.setenv(name, value)
+    if version is None:
+        monkeypatch.delenv("SAAS_VERSION", raising=False)
+    else:
+        monkeypatch.setenv("SAAS_VERSION", version)
+    return Flask("seam-d51", instance_path=str(instance)), nodesim_routes
+
+
+def test_seam_env_login_version_reaches_simulator(seam, monkeypatch):
+    """D-51 end to end: an env login with SAAS_VERSION set acquires with exactly that version (fake qm_saas)."""
+    app, routes = env_login(monkeypatch, "v3_6_0", seam.tmp / "instance-app")
+    with app.app_context():
+        credentials = routes._saas()
+    assert credentials["version"] == "v3_6_0" and credentials["version_source"] == "env"
+    result = seam.run(seam.pool(), seam.chip(), credentials=credentials)
+    assert result["kind"] == "ok", result
+    assert [entry["version"] for entry in seam.ledger("launch")] == ["v3_6_0"]
+
+
+def test_seam_env_login_without_version_names_saas_version(seam, monkeypatch):
+    """D-51: env login, no SAAS_VERSION, nothing saved: refused before acquire, the line says to set SAAS_VERSION."""
+    app, routes = env_login(monkeypatch, None, seam.tmp / "instance-app")
+    with app.app_context():
+        credentials = routes._saas()
+    assert credentials["version"] is None and credentials["version_source"] == "env"
+    with pytest.raises(pool.PoolError) as caught:
+        seam.run(seam.pool(), seam.chip(), credentials=credentials)
+    assert caught.value.state == "spawn_failed"
+    assert "Set SAAS_VERSION" in caught.value.fields["message"]
+    assert "Settings" not in caught.value.fields["message"]
     assert seam.ledger("launch") == [] and seam.ledger("versions") == []
 
 

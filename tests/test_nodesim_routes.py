@@ -13,6 +13,9 @@ import pytest
 
 from quam_state_manager.core import nodesim_click as click
 from tests.test_nodesim_click import CREDS, PW, FakeProc, child_writes, ok_result
+from quam_state_manager.web import nodesim_routes as _routes_module
+
+REAL_SAAS = _routes_module._saas  # the real D-51 ladder, kept before App patches it
 
 START, STATUS, STOP = "/api/nodesim/start", "/api/nodesim/status", "/api/nodesim/stop"
 H = {"X-SM-Window-ID": "w1"}
@@ -259,3 +262,105 @@ def test_p2_bad_json_is_rejected(warm_app, route):
     """Each new POST route checks its body before side effects (P2 spec 5)."""
     app, rig = warm_app
     assert app.c.post("/api/nodesim/" + route, data="[]", content_type="application/json").status_code == 400
+
+
+def _warm_click(app):
+    """One warm click through the HTTP door, waited to done; returns its id."""
+    request = {"node": "11_rabi_demo.py", "targets": ["q1"], "window_us": 20}
+    first = app.c.post(START, json=request, headers=H).get_json()
+    assert first["id"], first
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline and not app.m.warm_jobs[first["id"]]["done"]:
+        time.sleep(.01)
+    assert app.m.warm_jobs[first["id"]]["done"]
+    return first["id"]
+
+
+def _status_until(app, rid, state, cap=8):
+    """Poll the page's status call (it keeps its last click id) until one state shows, capped."""
+    deadline, ans = time.monotonic() + cap, None
+    while time.monotonic() < deadline:
+        ans = app.c.get(STATUS + "?id=" + rid, headers=H).get_json()
+        if ans["state"] == state:
+            return ans
+        time.sleep(.01)
+    raise AssertionError("status never showed " + state + ": " + repr(ans))
+
+
+def test_int1_renew_after_click_shows_with_the_click_id(warm_app, monkeypatch):
+    """Review int r1 P2-2: click, Renew; the page's status call with the old click id shows renewing, then ready."""
+    import threading
+    app, rig = warm_app
+    rid = _warm_click(app)
+    rig.broker.lease = dict(rig.broker.lease, instance_id="instance-b")
+    hold, real = threading.Event(), rig.p.renew
+
+    def held(**kw):
+        """Show renewing and hold there until the verdict saw it (no wall-clock settle)."""
+        kw["notify"]("renewing")
+        assert hold.wait(8)
+        return real(**kw)
+    monkeypatch.setattr(rig.p, "renew", held)
+    assert app.c.post("/api/nodesim/renew", json={}, headers=H).get_json()["ok"]
+    assert _status_until(app, rid, "renewing")["state"] == "renewing"
+    hold.set()
+    _status_until(app, rid, "ready")
+    assert next(iter(rig.p.leases.values()))["instance_id"] == "instance-b"
+
+
+def _env_login(app, monkeypatch, version=None, saved=None):
+    """D-51: fake SAAS_* variables through the real _saas() ladder; optional saved port-test version."""
+    for name, value in (("SAAS_EMAIL", CREDS["email"]), ("SAAS_PASSWORD", PW), ("SAAS_HOST", CREDS["host"])):
+        monkeypatch.setenv(name, value)
+    if version is None:
+        monkeypatch.delenv("SAAS_VERSION", raising=False)
+    else:
+        monkeypatch.setenv("SAAS_VERSION", version)
+    if saved is not None:
+        folder = Path(app.m.instance, "port_test")
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "settings.json").write_text(json.dumps({"saas": {"version": saved}}), encoding="utf-8")
+    monkeypatch.setattr(_routes_module, "_saas", REAL_SAAS)
+
+
+def test_int1_env_login_without_version_refused_before_spawn(warm_app, monkeypatch):
+    """D-51: env login, no SAAS_VERSION, nothing saved: click and Renew refuse at the entry, naming SAAS_VERSION."""
+    app, rig = warm_app
+    _env_login(app, monkeypatch)
+    request = {"node": "11_rabi_demo.py", "targets": ["q1"], "window_us": 20}
+    ans = app.c.post(START, json=request, headers=H).get_json()
+    assert ans["state"] == "spawn_failed", ans
+    assert "Set SAAS_VERSION" in ans["line"] and "Settings" not in ans["line"]
+    ans = app.c.post("/api/nodesim/renew", json={}, headers=H).get_json()
+    assert ans["state"] == "spawn_failed" and "Set SAAS_VERSION" in ans["line"], ans
+    ans = app.c.post("/api/nodesim/intent", json={"explicit": True}, headers=H).get_json()
+    assert ans["state"] == "spawn_failed", ans
+    assert rig.workers == [] and rig.procs == [] and not app.m.warm_jobs
+    assert not [c for c in rig.broker.calls if c["op"] == "acquire"]
+    assert PW not in json.dumps(ans)
+
+
+def test_int1_env_login_version_sources(warm_app, monkeypatch):
+    """D-51: SAAS_VERSION wins for an env login, else the saved version; the saved login keeps its own."""
+    app, rig = warm_app
+    _env_login(app, monkeypatch, version="v3_6_0", saved="v2_4_0")
+    with app.app.app_context():
+        creds = _routes_module._saas()
+    assert (creds["version"], creds["version_source"]) == ("v3_6_0", "env")
+    monkeypatch.delenv("SAAS_VERSION")
+    with app.app.app_context():
+        creds = _routes_module._saas()
+    assert (creds["version"], creds["version_source"]) == ("v2_4_0", "env_saved")
+    saved = click.login_version(dict(CREDS, version=None), {"SAAS_VERSION": "v3_6_0"}, None)
+    assert saved["version"] is None and saved["version_source"] == "saved"
+
+
+def test_int1_new_instance_drops_the_workers_lease(warm_app):
+    """Review S P2-6: New instance goes through pool.drop_instance: the worker drops its lease under its job."""
+    app, rig = warm_app
+    _warm_click(app)
+    worker = next(iter(rig.p.workers.values()))
+    assert worker.lease is not None
+    assert app.c.post("/api/nodesim/new-instance", json={}, headers=H).get_json()["ok"]
+    assert "drop_lease" in rig.ops()
+    assert [c["why"] for c in rig.broker.calls if c["op"] == "release"][:1] == ["hash_changed"]

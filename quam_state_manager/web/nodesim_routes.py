@@ -117,9 +117,16 @@ def _window(data: dict | None = None) -> str:
 
 
 def _saas():
-    """The cloud simulator login ladder of the port test (env first, else saved)."""
+    """The cloud simulator login ladder of the port test (env first, else saved), with its QOP version (D-51)."""
+    import os
+
+    from quam_state_manager.core import port_test_runs as ptr
     from quam_state_manager.web.port_test_routes import _saas_credentials
-    return _saas_credentials()
+    creds = _saas_credentials()
+    if not creds or "version" in creds:
+        return click.login_version(creds, os.environ, None)
+    saved = (ptr.load_settings(current_app.instance_path).get("saas") or {}).get("version")
+    return click.login_version(creds, os.environ, saved)
 
 
 def _env():

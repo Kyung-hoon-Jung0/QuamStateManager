@@ -140,7 +140,8 @@ class Worker:
         self.click_id = request["click_id"]
         self.stopped = False
         self.phases, self.phase_at = [], None
-        result = {key: request[key] for key in proto.SNAPSHOT}
+        # D-50 (review int r1 P3-3): the ids stay the UNREAD mark until the copy's _snapshot.json is read.
+        result = dict(proto.UNREAD)
         result.update(ok=False, kind="failed", message="", report=None, script="", script_ok=False,
                       program_chars=0, qop_version="", window_ns=request["window_ns"], last_adc_end_ns=None,
                       lease_seq=self.lease["lease_seq"] if self.lease else None, cluster_hash="",

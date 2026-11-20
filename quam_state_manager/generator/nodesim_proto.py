@@ -44,6 +44,8 @@ HEADERS = {"simulation-id": str, "simulation-auth": str}
 LEASE = dict(instance_id=str, host=str, port=int, headers=HEADERS, expires_at=str,
              version=str, cluster_hash=str)
 SNAPSHOT = dict(seq=int, store_id=str, click_id=str)
+#: D-50 (review int r1 P3-3): the ids a result carries until W has read the copy's _snapshot.json
+UNREAD = dict(seq=-1, store_id="", click_id="")
 WORKER_HELLO = dict(proto=int, key=str, scratch=str, chip_dir=str, library=str, idle_s=NUMBER, saas_host=str)
 BROKER_HELLO = dict(proto=int, sm_pid=int, sm_created=NUMBER,
                     creds=dict(email=str, host=str, port=int, password=str))
@@ -179,6 +181,11 @@ def check_snapshot(request, snapshot):
         if request[key] != snapshot[key]:
             raise ValueError("snapshot mismatch: " + key)
     return True
+
+
+def snapshot_unread(result):
+    """True when every snapshot id of a result is still the UNREAD mark: W never read the copy (D-50)."""
+    return all(result.get(key) == value and type(result.get(key)) is type(value) for key, value in UNREAD.items())
 
 
 def cluster_hash(spec):

@@ -52,6 +52,28 @@ def remaining(lease):
             datetime.now(timezone.utc)).total_seconds()
 
 
+#: D-51: the remedy per login source, named in D-47's refusal
+VERSION_ENV_LINE = ("No QOP version: the cloud login comes from SM's SAAS_* environment variables. Set SAAS_VERSION "
+                    "(for example v3_7_3) in the environment SM was started from, then start SM again.")
+VERSION_SAVED_LINE = "The saved Simulator login has no QOP version. Add one under Settings, Simulator login."
+
+
+def version_refusal(credentials):
+    """D-47 / D-51: the refusal line when the login carries no QOP version, else None.
+
+    ``version_source`` names where the login came from ("env", "env_saved" or "saved"); a login without it is an
+    environment login when it has no ``version`` key at all (the port-test ladder adds the key only when saved).
+    """
+    credentials = credentials or {}
+    version = credentials.get("version")
+    if isinstance(version, str) and version.strip():
+        return None
+    source = credentials.get("version_source")
+    if source is None:
+        source = "saved" if "version" in credentials else "env"
+    return VERSION_SAVED_LINE if source == "saved" else VERSION_ENV_LINE
+
+
 class PoolError(RuntimeError):
     """A server verdict, with separate state and scrubbed detail (spec 1)."""
 
@@ -87,7 +109,7 @@ class WorkerClient:
                  lock=None, ready_s=60, lock_s=30, build_s=30, idle_s=1200, pid=None):
         """Spawn through the owned process path, without worker registry records (spec 2.1)."""
         self.key = worker_key(python, library, live)
-        parent = Path(root or Path(tempfile.gettempdir()) / "sm_nodesim_warm").resolve()
+        parent = nodesim_spawn.resolved(root or Path(tempfile.gettempdir()) / "sm_nodesim_warm")
         self.scratch = parent / f"{self.key}-{pid or os.getpid()}"
         self.chip = self.scratch / "chip"
         self.library = Path(library)
@@ -266,8 +288,15 @@ class WorkerClient:
                         box["error"] = PoolError("failed", message=CLUSTER_FAILED + event["message"])
                         break
                     if ev == "result":
-                        proto.check_snapshot(command, event)
-                        box["result"] = event
+                        try:
+                            proto.check_snapshot(command, event)
+                            box["result"] = event
+                        except ValueError:
+                            if proto.snapshot_unread(event) and event.get("kind") != "ok":
+                                box["result"] = event  # W failed before reading the copy: its own line shows
+                            else:
+                                # Review int r1 P3-3: a different copy was loaded; the worker stays up.
+                                box["error"] = PoolError("chip_changed")
                     if ev == "idle":
                         if parked:
                             box.pop("result", None)
@@ -556,9 +585,14 @@ class WarmPool:
 
     def flush_pending(self):
         """Deliver occupancy/release messages kept while the manager was away (D-17, spec 3.3)."""
-        while self.pending:
-            self.broker.send(self.pending[0])
-            self.pending.pop(0)
+        # Review int r1 P3-6: through broker_send, so a client that died right after connecting keeps the
+        # message pending and is marked disconnected instead of raising a bare OSError.
+        pending, self.pending = self.pending, []
+        for index, message in enumerate(pending):
+            self.broker_send(message)
+            if self.broker.disconnected.is_set():
+                self.pending.extend(pending[index + 1:])
+                return
         self.broker_error = None
 
     def start_reaper(self, credentials):
@@ -601,27 +635,38 @@ class WarmPool:
         with self.lock:
             self.waiting[key] = ticket
         deadline = time.monotonic() + 300
+        gone = []
         while time.monotonic() < deadline:
             with self.lock:
                 if self.waiting[key] != ticket:
                     raise PoolError(self.stop_state(key))
                 existing = self.workers.get(key)
-                capacity = (len(self.workers) + len(self.spawning) < 2 or
-                            any(not w.busy for w in self.workers.values()))
-                available = not existing.busy if existing else capacity and key not in self.spawning
-                if available:
-                    # Review S P3-3: the reservation is taken in the same locked step as the check.
-                    if existing:
-                        existing.busy = True
-                    else:
+                if existing:
+                    if not existing.busy:
+                        existing.busy = True  # review S P3-3: reserved in the same locked step as the check
+                        break
+                elif key not in self.spawning:
+                    # Review int r1 P2-1: spawning keys count against the cap of two, and the idle worker this
+                    # key retires is taken out in the same locked step, so two new keys never retire one worker.
+                    idle = [w for w in self.workers.values() if not w.busy]
+                    if len(self.workers) + len(self.spawning) < 2 or idle:
+                        if len(self.workers) + len(self.spawning) >= 2:
+                            same = [w for w in idle if w.live == Path(live).resolve() and
+                                    w.library.resolve() == Path(library).resolve()]
+                            retired = (same or [min(idle, key=lambda w: w.used)])[0]
+                            retired.busy = True
+                            self.workers.pop(retired.key)
+                            if same and retired.key in self.leases:
+                                self.leases[key] = self.leases.pop(retired.key)  # an env switch keeps the lease
+                            gone.append(retired)
                         self.spawning.add(key)
-                    break
+                        break
             notify("busy_chip", name=Path(live).name)
             if self.closed.wait(.05) or (stop is not None and stop.is_set()):
                 raise PoolError(self.stop_state(key))
         else:
             raise PoolError("busy_chip", name=Path(live).name)
-        old = retired = worker = None
+        old = worker = None
         try:
             with self.lock:
                 worker = self.workers.get(key)
@@ -642,16 +687,19 @@ class WarmPool:
                         self.spawning.add(key)
                         if changed:
                             notify("worker_restart", file=changed)
-                if worker is None and len(self.workers) >= 2:
+                if worker is None and len(self.workers) + len(self.spawning - {key}) >= 2:
                     idle = [w for w in self.workers.values() if not w.busy]
                     if not idle:
                         raise PoolError("busy_chip", name=Path(live).name)
                     retired = min(idle, key=lambda w: w.used)
+                    retired.busy = True
                     self.workers.pop(retired.key)
+                    gone.append(retired)
+                if old:
+                    gone.append(old)
             # Review S P3-2: closing and spawning (up to 60 s) run outside the pool lock.
-            for gone in (retired, old):
-                if gone:
-                    gone.close()
+            while gone:
+                gone.pop().close()
             if worker is None:
                 notify("warming", env=Path(python).parent.name)
                 worker = self.worker_factory(python, library, live, credentials["host"], root=self.root)
@@ -666,22 +714,19 @@ class WarmPool:
                 worker.busy = False
             raise
         finally:
+            while gone:  # a worker taken out for retirement is closed on every path
+                gone.pop().close()
             with self.lock:
                 self.spawning.discard(key)
         return worker
 
     def acquire(self, worker, python, credentials, event, stop, notify, reason="click"):
         """Request by hash and relay only a validated lease (D-13, spec 3.5)."""
-        version = credentials.get("version")
-        version = version.strip() if isinstance(version, str) else ""
-        if not version:
-            # D-47: never let the broker guess a version; refuse before any acquire, naming the source.
-            if "version" not in credentials:
-                line = ("No QOP version: the cloud login comes from SM's SAAS_* environment variables, which carry "
-                        "none. Save the login with a QOP version under Settings, Simulator login.")
-            else:
-                line = "The saved Simulator login has no QOP version. Add one under Settings, Simulator login."
-            raise PoolError("spawn_failed", message=line)
+        refused = version_refusal(credentials)
+        if refused:
+            # D-47 / D-51: never let the broker guess a version; refuse before any acquire, naming the source.
+            raise PoolError("spawn_failed", message=refused)
+        version = (credentials.get("version") or "").strip()
         broker = self.ensure_broker(python, credentials)
         old = self.leases.get(worker.key)
         if old and old["cluster_hash"] != event["hash"]:

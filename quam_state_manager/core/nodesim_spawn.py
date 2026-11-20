@@ -33,10 +33,26 @@ def pinned_env(scratch, library_root, chip_copy, base=None):
     return env
 
 
+#: the Windows extended-length path prefix (four characters: backslash, backslash, '?', backslash)
+EXTENDED = "\\\\?\\"
+
+
+def resolved(path):
+    """Path.resolve() without the extended-length prefix it can return while another process creates a parent.
+
+    Two SM owners creating the shared scratch parent at once made one owner's root resolve to a
+    extended-length path and its chip copy not, so the guard below refused a copy that was inside scratch.
+    """
+    text = os.path.realpath(Path(path))
+    if text.startswith(EXTENDED) and not text.upper().startswith(EXTENDED + "UNC\\"):
+        text = text[len(EXTENDED):]
+    return Path(text)
+
+
 def prepare_scratch(scratch, chip_copy):
     """Write a standalone config, with no inherited project or database overlay."""
-    root = Path(scratch).resolve()
-    state = Path(chip_copy).resolve()
+    root = resolved(scratch)
+    state = resolved(chip_copy)
     if not state.is_relative_to(root):
         raise ValueError("chip copy must be under scratch")
     for path in (root, state, root / "tmp", root / "mpl", root / "logs", root / "storage",

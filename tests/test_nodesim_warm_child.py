@@ -66,6 +66,8 @@ MUTATIONS.update({
     "F3": ("nodesim_warm.py", 'self.emit("cluster_failed", seq=message["seq"], message=text)', 'raise'),
     "F5": ("nodesim_warm.py", 'connect_s=None)', 'connect_s=0)'),
     "D-50": ("nodesim_warm.py", 'if type(snapshot.get(key)) is kind})', 'if False})'),
+    "INT1-W-unread": ("nodesim_warm.py", "result = dict(proto.UNREAD)",
+                      "result = {key: request[key] for key in proto.SNAPSHOT}"),
 })
 
 
@@ -350,6 +352,18 @@ def test_w4_snapshot(session, field):
     assert result[field] == snapshot[field]
     with pytest.raises(ValueError):
         proto.check_snapshot(request, {k: result[k] for k in proto.SNAPSHOT})
+
+
+def test_int1_w_ids_unread_until_snapshot_read(session):
+    """Review int r1 P3-3 (D-50 residue): with no _snapshot.json the result carries the UNREAD ids, never the
+    request's, so SM cannot mistake an unread copy for the click's own."""
+    ready(session)
+    (session.chip / "_snapshot.json").unlink(missing_ok=True)
+    session.send(dict(op="click", seq=1, store_id="store", click_id="1", node="calibrations/node.py",
+                      targets=["q2"], overrides={}, window_ns=20000, wait_cap_s=1))
+    result = session.event("result")
+    assert result["kind"] == "failed"
+    assert proto.snapshot_unread(result), {k: result[k] for k in proto.SNAPSHOT}
 
 
 def test_f5_lease_ok_has_no_connect_time(session):

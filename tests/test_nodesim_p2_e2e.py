@@ -87,25 +87,30 @@ def sm_main(tmp):
             (w.proc.pid, created(w.proc.pid)) for w in rig.workers]
         publish(tmp / "sm.json", info)
 
-    result = rig.run(warm, rig.chip("live-a"))
-    info.update(kind=result["kind"], a=next(iter(warm.leases.values()))["instance_id"])
-    save()
-    deadline = time.monotonic() + 60
-    while not (tmp / "go").exists() and time.monotonic() < deadline:
-        time.sleep(0.02)
-
-    def spawn_b():
-        """The second click needs a new instance; the fake SaaS holds it before the POST."""
-        try:
-            rig.run(warm, rig.chip("live-b"))
-        except Exception as exc:
-            info["b_error"] = type(exc).__name__
-
-    threading.Thread(target=spawn_b, daemon=True).start()
-    deadline = time.monotonic() + 120
-    while time.monotonic() < deadline:
+    try:
+        result = rig.run(warm, rig.chip("live-a"))
+        info.update(kind=result["kind"], a=next(iter(warm.leases.values()))["instance_id"])
         save()
-        time.sleep(0.1)
+        deadline = time.monotonic() + 60
+        while not (tmp / "go").exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+
+        def spawn_b():
+            """The second click needs a new instance; the fake SaaS holds it before the POST."""
+            try:
+                rig.run(warm, rig.chip("live-b"))
+            except Exception as exc:
+                info["b_error"] = type(exc).__name__
+
+        threading.Thread(target=spawn_b, daemon=True).start()
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            save()
+            time.sleep(0.1)
+    finally:
+        # Review int r1 P2-4: an early failure in this SM reaps its own broker and workers before it exits.
+        save()
+        rig.finish()
 
 
 def restarted_seam(tmp, first):
@@ -203,6 +208,14 @@ def test_e1_killed_sm_and_broker_leave_nothing_live(tmp_path):
             if rig is not None:
                 rig.finish()
         finally:
+            # Review int r1 P2-4: on a red verdict before the children were recorded, take the first SM's
+            # process tree and its own report before it is killed, so its broker and workers are reaped too.
+            if sm.poll() is None:
+                try:
+                    started.extend((c.pid, c.create_time()) for c in psutil.Process(sm.pid).children(recursive=True))
+                except psutil.Error:
+                    pass
+            started.extend(tuple(c) for c in (read_json(first / "sm.json") or {}).get("children", []) if c[1])
             for pid, when in started:
                 if when and alive(pid, when):
                     psutil.Process(pid).kill()

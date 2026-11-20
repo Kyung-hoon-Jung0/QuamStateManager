@@ -77,6 +77,24 @@ MUTATIONS = {
              '                        break', 'raise PoolError("worker_crashed", code=None)'),
     "S-16": ('self.sources.update(ready["sources"])',
               'self.sources.update(ready["sources"]); lab_worker.register(self)'),
+    # Integration fix round 1 (review int r1); a list applies every pair to the copy.
+    "INT1-P2-1": [("                        if len(self.workers) + len(self.spawning) >= 2:",
+                   "                        if False:"),
+                  ("if worker is None and len(self.workers) + len(self.spawning - {key}) >= 2:",
+                   "if worker is None and len(self.workers) >= 2:")],
+    "INT1-bye": ("if changed or worker.proc.poll() is not None or worker.bye:",
+                 "if changed or worker.proc.poll() is not None:"),
+    "INT1-reserve": ("existing.busy = True  # review S P3-3", "pass  # review S P3-3"),
+    "INT1-outside-lock": ('worker = self.worker_factory(python, library, live, credentials["host"], root=self.root)',
+                          'with self.lock:\n                    worker = self.worker_factory('
+                          'python, library, live, credentials["host"], root=self.root)'),
+    "INT1-expired": ('self.release(worker.key, "expired")', 'self.release(worker.key, "idle")'),
+    "INT1-cold": ('self.release(key, "cold_fallback")', 'self.release(key, "idle")'),
+    "INT1-parked": ("parked = exc\n                            continue", "raise"),
+    "INT1-protocol": ('if event["why"] == "protocol_error":', "if False:"),
+    "INT1-stale": ('box["error"] = PoolError("chip_changed")', 'raise'),
+    "INT1-flush": ("            self.broker_send(message)\n            if self.broker.disconnected.is_set():",
+                   "            self.broker.send(message)\n            if self.broker.disconnected.is_set():"),
 }
 
 
@@ -109,7 +127,11 @@ def module(tmp_path, monkeypatch):
     if not row:
         return pool
     source = Path(pool.__file__).read_text(encoding="utf-8")
-    old, new = MUTATIONS[row]
+    pairs = MUTATIONS[row] if isinstance(MUTATIONS[row], list) else [MUTATIONS[row]]
+    old, new = pairs[0]
+    for extra_old, extra_new in pairs[1:]:
+        assert extra_old in source, row
+        source = source.replace(extra_old, extra_new)
     if row == "S-11":
         old, new = 'value = value.replace(str(secret), "***")', 'value = value'
     if row == "S-7":
@@ -699,3 +721,209 @@ def test_f3_cluster_failure_keeps_worker(rig):
     rig.lock.release()
     assert len(rig.procs) == 1 and rig.procs[0].poll() is None
     assert not [c for c in rig.broker.calls if c["op"] == "acquire"]
+
+
+# -- integration fix round 1 (review int r1) -------------------------------------------------------------------
+
+
+def _chip(rig, name):
+    """Another live folder the pool keys on; never written (contract 18)."""
+    path = rig.tmp / name
+    path.mkdir(exist_ok=True)
+    return path
+
+
+def test_int1_p2_1_two_new_keys_never_three_workers(rig):
+    """Review int r1 P2-1: one idle worker, two new keys at once, a slow factory: never more than 2 alive."""
+    first = rig.p.worker(sys.executable, rig.lib, rig.live, CREDS, rig.notify)
+    first.busy = False
+    alive, peak, guard = set(), [], threading.Lock()
+    real_factory = rig.worker_factory
+
+    def slow_factory(*args, **kw):
+        """Spawn slowly so both new keys are past the gate together; count what is alive at each spawn."""
+        time.sleep(.4)
+        worker = real_factory(*args, **kw)
+        close = worker.close
+
+        def tracked_close():
+            """Count a closed worker as gone."""
+            with guard:
+                alive.discard(id(worker))
+            close()
+        worker.close = tracked_close
+        with guard:
+            alive.add(id(worker))
+            peak.append(len(alive) + (first.proc.poll() is None))
+        return worker
+    rig.p.worker_factory = slow_factory
+    errors = []
+
+    def open_key(name):
+        """One window opening a new key."""
+        try:
+            rig.p.worker(sys.executable, rig.lib, _chip(rig, name), CREDS, lambda *a, **k: None).busy = False
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+    threads = [threading.Thread(target=open_key, args=(name,)) for name in ("live-b", "live-c")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+    assert not errors, errors
+    assert max(peak) <= 2, peak
+    assert len(rig.p.workers) == 2 and first.proc.poll() is not None
+
+
+def test_int1_spawn_runs_outside_the_pool_lock(rig):
+    """Review S P3-2: the worker factory (up to 60 s) runs while another thread can take the pool lock."""
+    real_factory, taken = rig.worker_factory, []
+
+    def try_lock():
+        """Take and give back the pool lock from a second thread."""
+        got = rig.p.lock.acquire(timeout=1)
+        if got:
+            rig.p.lock.release()
+        taken.append(got)
+
+    def factory(*args, **kw):
+        """Probe the pool lock during the spawn."""
+        probe = threading.Thread(target=try_lock)
+        probe.start()
+        probe.join(timeout=5)
+        return real_factory(*args, **kw)
+    rig.p.worker_factory = factory
+    rig.p.worker(sys.executable, rig.lib, rig.live, CREDS, rig.notify).busy = False
+    assert taken == [True]
+
+
+def test_int1_reserved_worker_is_busy(rig):
+    """Review S P3-3: an idle worker is reserved in the gate's locked step, so a second caller waits for it."""
+    first = rig.p.worker(sys.executable, rig.lib, rig.live, CREDS, rig.notify)
+    first.busy = False
+    again = rig.p.worker(sys.executable, rig.lib, rig.live, CREDS, rig.notify)
+    assert again is first and again.busy is True
+    stop = threading.Event()
+    stop.set()
+    with pytest.raises(rig.module.PoolError):
+        rig.p.worker(sys.executable, rig.lib, rig.live, CREDS, lambda *a, **k: None, stop=stop)
+
+
+def test_int1_bye_worker_is_never_reused(rig):
+    """Review S P2-2: an idle worker that said bye is replaced by a fresh process on the next click."""
+    assert rig.run()["ok"]
+    worker = next(iter(rig.p.workers.values()))
+    worker.bye = "idle"
+    assert rig.run()["ok"]
+    assert len(rig.procs) == 2 and next(iter(rig.p.workers.values())) is not worker
+
+
+def test_int1_expired_retry_releases_with_its_why(rig):
+    """Review S P2-7: the expired retry closes the old instance with why "expired"."""
+    from datetime import datetime, timedelta, timezone
+    rig.plan["kind"] = "failed"
+    original, changed = rig.notify, []
+
+    def notify(state, **fields):
+        """Move the lease clock past expiry during the first job only."""
+        original(state, **fields)
+        if fields.get("phase") == "wait" and not changed:
+            next(iter(rig.p.leases.values()))["expires_at"] = (
+                datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+            rig.plan["kind"] = "ok"
+            changed.append(True)
+    rig.notify = notify
+    assert rig.run()["ok"]
+    assert "expired" in [c["why"] for c in rig.broker.calls if c["op"] == "release"]
+
+
+def test_int1_cold_fallback_releases_with_its_why(rig):
+    """Review S P2-7: a cold fallback closes the key's instance with why "cold_fallback"."""
+    assert rig.run()["ok"]
+    key = next(iter(rig.p.leases))
+    assert rig.p.allow_cold("worker_unready", key) is True
+    assert [c["why"] for c in rig.broker.calls if c["op"] == "release"] == ["cold_fallback"]
+
+
+def test_int1_parked_stop_keeps_the_worker(rig):
+    """Review S P3-1: Stop while the instance starts parks the verdict; the worker answers and is not killed."""
+    rig.broker.gate = threading.Event()
+    stop = threading.Event()
+    original = rig.notify
+
+    def notify(state, **fields):
+        """Stop at the broker's spawning event."""
+        original(state, **fields)
+        if state == "starting":
+            stop.set()
+    rig.notify = notify
+    verdict(rig, "stopped_spawning", lambda: rig.run(stop))
+    assert rig.procs[0].poll() is None
+
+
+def test_int1_protocol_error_line(rig):
+    """Review S P3-8: a worker bye with why protocol_error shows its own line, not a crash."""
+    rig.plan["mode"] = "bye_protocol"
+    a = verdict(rig, "failed", rig.run)
+    assert rig.module.PROTOCOL_ERROR in a["line"]
+
+
+def test_int1_stale_copy_is_chip_changed_without_kill(rig):
+    """Review int r1 P3-3: a result naming another copy maps to chip_changed; the worker stays up."""
+    rig.plan["mode"] = "stale"
+    verdict(rig, "chip_changed", rig.run)
+    assert rig.procs[0].poll() is None
+
+
+def test_int1_flush_pending_survives_a_dead_client(rig):
+    """Review int r1 P3-6: flush_pending goes through broker_send; a send error keeps the messages pending."""
+    messages = [dict(op="release", instance_id="instance-x", why="idle"), dict(op="occupancy", n=1)]
+    rig.p.pending = list(messages)
+
+    def refuse(message):
+        """A client that died right after connecting."""
+        raise OSError("pipe closed")
+    rig.broker.send = refuse
+    rig.p.flush_pending()
+    assert rig.p.pending == messages and rig.broker.disconnected.is_set()
+
+
+def test_int1_warm_job_done_when_the_fallback_raises(rig, monkeypatch):
+    """Review S P2-3: an error escaping the cold-fallback branch still finalises the warm job (run()'s finally)."""
+    from tests.test_nodesim_click import Rig as ColdRig
+    cold = ColdRig(rig.tmp / "cold")
+    cold.m.pool = rig.p
+
+    def unready(**kw):
+        """The warm worker never became ready."""
+        raise rig.module.PoolError("worker_unready")
+
+    def boom(*args):
+        """An error inside the fallback branch itself."""
+        raise RuntimeError("fallback-sentinel")
+    monkeypatch.setattr(rig.p, "run", unready)
+    monkeypatch.setattr(rig.p, "allow_cold", boom)
+    first = cold.start()
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline and not cold.m.warm_jobs[first["id"]]["done"]:
+        time.sleep(.01)
+    assert cold.m.warm_jobs[first["id"]]["done"]
+    answer = cold.m.status("w1", first["id"])
+    assert answer["state"] == "failed" and "fallback-sentinel" in json.dumps(answer)
+
+
+def test_int1_scratch_guard_survives_an_extended_length_root(tmp_path, monkeypatch):
+    """S-14 flake: while another owner creates the shared scratch parent, realpath may return the root with the
+    Windows extended-length prefix and the chip copy without it; the guard must still see the copy inside."""
+    from quam_state_manager.core import nodesim_spawn
+    real, calls = os.path.realpath, []
+
+    def racy(path, *args, **kw):
+        """The first resolve (the scratch root) comes back extended-length, as in the observed race."""
+        calls.append(path)
+        text = real(path, *args, **kw)
+        return nodesim_spawn.EXTENDED + text if len(calls) == 1 else text
+    monkeypatch.setattr(os.path, "realpath", racy)
+    nodesim_spawn.prepare_scratch(tmp_path / "scratch", tmp_path / "scratch" / "chip")
+    monkeypatch.undo()
+    assert (tmp_path / "scratch" / "config.toml").exists() and (tmp_path / "scratch" / "chip").is_dir()

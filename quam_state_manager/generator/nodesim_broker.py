@@ -76,15 +76,15 @@ def process_created(pid):
 
 
 def alive(pid, created):
-    """Reject PID reuse as well as process exit (D-17(b))."""
+    """Reject PID reuse as well as process exit (D-17(b)); the one D-46 check (review int r1 P3-2)."""
     current = process_created(pid)
-    return current is not None and abs(current - created) <= 0.01
+    return current is not None and proto.same_created(current, created)
 
 
 def same_owner(row, owner):
-    """Match a row's SM owner by pid and creation time within 0.01 s (D-46)."""
+    """Match a row's SM owner by pid and OS creation time, through the one D-46 check (review int r1 P3-2)."""
     return (owner is not None and row["owner_pid"] == owner[0]
-            and abs(row["owner_created"] - owner[1]) <= 0.01)
+            and proto.same_created(row["owner_created"], owner[1]))
 
 
 def user_identity():

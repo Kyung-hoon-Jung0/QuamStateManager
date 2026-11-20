@@ -588,6 +588,30 @@ class ClickRuns(ptr.Runs):
             return rid
 
 
+def login_version(credentials: Optional[dict], environ: Any, saved_version: Any) -> Optional[dict]:
+    """D-51: attach the QOP version and its source to the login the port-test ladder chose.
+
+    The saved login keeps its saved version ("saved"). An environment login (SAAS_EMAIL / SAAS_PASSWORD / SAAS_HOST
+    all set; they win over the saved login) uses SAAS_VERSION ("env"), else the saved login's version
+    ("env_saved"), else none ("env", so the refusal names SAAS_VERSION).
+    """
+    if not credentials:
+        return credentials
+    out = dict(credentials)
+    if "version" in credentials:
+        out["version_source"] = "saved"
+        return out
+    env_version = str(environ.get("SAAS_VERSION") or "").strip()
+    saved = saved_version.strip() if isinstance(saved_version, str) else ""
+    if env_version:
+        out.update(version=env_version, version_source="env")
+    elif saved:
+        out.update(version=saved, version_source="env_saved")
+    else:
+        out.update(version=None, version_source="env")
+    return out
+
+
 class Manager:
     """Every window's :class:`ClickRuns`, the jobs in flight, the finished
     answers and the cache. ``popen`` starts the child, ``probe`` reads the
@@ -630,6 +654,12 @@ class Manager:
 
     # -- start -------------------------------------------------------------
 
+    def _version_refused(self, saas: Optional[dict]) -> Optional[dict]:
+        """D-51: a warm login without a QOP version is refused at the entry, before any copy or spawn."""
+        from quam_state_manager.core.nodesim_pool import version_refusal
+        line = version_refusal(saas)
+        return answer("spawn_failed", message=line) if line else None
+
     def start(self, window: Any, *, python: Optional[str], env_name: str, library: Optional[Path],
               info: Any, targets: Any, choices: list, window_us: Any, saas: Optional[dict],
               store: Any, live_folder: Any) -> dict:
@@ -640,6 +670,10 @@ class Manager:
             return answer("no_library")
         if not saas or not all(str(saas.get(k) or "").strip() for k in ("email", "host", "password")):
             return answer("not_configured")
+        if self.pool is not None:
+            refused = self._version_refused(saas)
+            if refused:
+                return refused
         secret = saas["password"]
         runs = self.runs(window)
         if runs.busy():
@@ -864,6 +898,12 @@ class Manager:
         if not saas:
             return answer("not_configured")
         key = window_key(window)
+        if renew or explicit or self.pool.keep_warm:
+            # D-51: an intent that acquires checks the version first; a panel-open import warm needs none.
+            refused = self._version_refused(saas)
+            if refused:
+                self._set_intent(key, refused)
+                return refused
         self._set_intent(key, answer("warming", env=env_name))
 
         def run():
@@ -1048,8 +1088,10 @@ class Manager:
                store_id: Any = None) -> dict:
         """Return warm or cold progress and mark stale snapshots (D-14, D-26)."""
         key = window_key(window)
-        if not rid and key in self.intent_answers and self.intent_at.get(key, 0) > self.latest_at.get(key, -1):
-            # Review S P2-5: renew / new-instance progress after a click is the newest answer, so it shows.
+        newest = not rid or rid == self.latest.get(key)
+        if newest and key in self.intent_answers and self.intent_at.get(key, 0) > self.latest_at.get(key, -1):
+            # Review S P2-5 / int r1 P2-2: renew / new-instance progress after a click is the newest answer, so it
+            # shows; the page keeps polling with its last click id, which counts as asking for the newest answer.
             return copy.deepcopy(self.intent_answers[key])
         warm = self.warm_jobs.get(rid or self.latest.get(key))
         if warm:
