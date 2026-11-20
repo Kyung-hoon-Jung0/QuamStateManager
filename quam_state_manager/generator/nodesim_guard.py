@@ -15,6 +15,28 @@ KEY_READ = 0x20019
 LOOPBACK = ("127.0.0.1", "::1")
 
 
+def library_fingerprint(library):
+    """Sorted source stats shared by the cache and child, without importing lab packages."""
+    sources = []
+    pending = [(os.fspath(library), "")]
+    while pending:
+        directory, prefix = pending.pop()
+        with os.scandir(directory) as scan:
+            entries = list(scan)
+        if any(entry.name == "pyvenv.cfg" for entry in entries):
+            continue
+        for entry in entries:
+            name = entry.name
+            relpath = prefix + name
+            if entry.is_dir(follow_symlinks=False):
+                if not name.startswith(".") and name not in {"__pycache__", "node_modules", "site-packages"}:
+                    pending.append((entry.path, relpath + "/"))
+            elif entry.is_file() and name.endswith(".py"):
+                stat = entry.stat()
+                sources.append((relpath, stat.st_mtime_ns, stat.st_size))
+    return sorted(sources)
+
+
 class GuardViolation(RuntimeError):
     """A refused operation, with a stable machine-readable verdict."""
 

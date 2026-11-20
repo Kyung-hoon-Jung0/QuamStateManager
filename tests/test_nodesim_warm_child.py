@@ -828,14 +828,15 @@ def test_cold_build_order(monkeypatch, tmp_path):
     source = tmp_path / "calibration_utils" / "first.py"
     source.parent.mkdir()
     source.write_text("VALUE = 1\n")
-    original_stat = Path.stat
+    original_fingerprint = build.library_fingerprint
     original_sanitize = build.sanitize
 
-    def stat(path, *args, **kwargs):
-        """Record the source snapshot without changing stat behaviour (F8)."""
-        if path == source:
-            trace.append("snapshot")
-        return original_stat(path, *args, **kwargs)
+    def fingerprint(library):
+        """Record the shared source snapshot without changing its behaviour (F8)."""
+        sources = original_fingerprint(library)
+        assert any(path == "calibration_utils/first.py" for path, _, _ in sources)
+        trace.append("snapshot")
+        return sources
 
     def sanitize(*args):
         """Record sanitization after the source snapshot (F8)."""
@@ -854,7 +855,7 @@ def test_cold_build_order(monkeypatch, tmp_path):
 
     monkeypatch.setattr(build, "verify_env", lambda *a: trace.append("env"))
     monkeypatch.setattr(build, "verify_config", lambda *a: trace.append("config"))
-    monkeypatch.setattr(Path, "stat", stat)
+    monkeypatch.setattr(build, "library_fingerprint", fingerprint)
     monkeypatch.setattr(build, "sanitize", sanitize)
     monkeypatch.setattr(build, "install_once", install)
     guard = SimpleNamespace(install_classes=lambda: trace.append("classes"))

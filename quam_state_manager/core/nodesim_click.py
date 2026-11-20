@@ -37,6 +37,7 @@ from typing import Any, Callable, Optional
 from quam_state_manager.core import nodesim_spawn
 from quam_state_manager.core import port_test_runs as ptr
 from quam_state_manager.core.cz_gate_simulate import window_key
+from quam_state_manager.generator.nodesim_guard import library_fingerprint
 
 CHILD = Path(__file__).resolve().parent.parent / "generator" / "nodesim_click.py"
 
@@ -469,10 +470,8 @@ def input_key(chip_dir: Path, node_file: Path, library: Path, overrides: dict,
     for name in ("state.json", "wiring.json"):
         h.update(Path(chip_dir, name).read_bytes())
     h.update(Path(node_file).read_bytes())
-    for folder in ("calibration_utils", "quam_config"):
-        for path in sorted((Path(library) / folder).rglob("*.py")):
-            st = path.stat()
-            h.update(f"{path.relative_to(library).as_posix()}:{st.st_mtime_ns}:{st.st_size};".encode())
+    for relpath, mtime_ns, size in library_fingerprint(library):
+        h.update(f"{relpath}:{mtime_ns}:{size};".encode())
     h.update(json.dumps([overrides, int(window_ns), str(qop or ""), str(python)],
                         sort_keys=True).encode("utf-8"))
     return h.hexdigest()
