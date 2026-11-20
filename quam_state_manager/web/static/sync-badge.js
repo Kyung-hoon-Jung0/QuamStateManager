@@ -68,6 +68,9 @@
     // the Datasets "new runs" bar: its row is on screen in the Datasets table,
     // or its sidebar row intersects the viewport with every ancestor group open.
     function listedInTree(uid) {
+        // A refresh can expose rows before its scroll anchor is restored, before paint.
+        var scroll = window.SidebarScroll;
+        if (scroll && scroll.isRestoring && scroll.isRestoring()) return false;
         var tree = document.getElementById('sidebar-tree');
         if (!tree || uid == null) return false;
         var q = (window.CSS && window.CSS.escape) ? window.CSS.escape(String(uid)) : String(uid).split('"').join('');
