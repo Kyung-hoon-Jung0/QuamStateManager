@@ -1,0 +1,9 @@
+{% if not ns_partial %}{% extends "base.html" %}{% endif %}
+{% block table_content %}
+{%- from '_ui.html' import ui_head -%}
+{% set ns_gist = 'Builds the picked node on a copy of the chip and simulates it on the cloud simulator. '
+                 ~ 'Report only, no samples; nothing is written to the chip.' %}
+{{ ui_head('Simulate a node', page=True, gist=ns_gist) }}
+<div id="nodesim-page" data-nodesim data-node="{{ ns_node }}"
+     data-qubit="{{ ns.selected_qubit or ns.default_qubit or '' }}"></div>
+{% endblock %}

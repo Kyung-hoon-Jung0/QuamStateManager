@@ -1397,6 +1397,9 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # New CZ gate dialog: simulate the previewed gate (port test's connection)
     from quam_state_manager.web.cz_gate_sim_routes import cz_gate_sim_bp
     app.register_blueprint(cz_gate_sim_bp)
+    # Simulate a node page: one calibration node on a chip copy, cloud simulator only
+    from quam_state_manager.web.nodesim_routes import nodesim_bp
+    app.register_blueprint(nodesim_bp)
     # Standalone Port play page (rack + popup over the open chip)
     from quam_state_manager.web.port_play_page import port_play_page_bp
     app.register_blueprint(port_play_page_bp)
