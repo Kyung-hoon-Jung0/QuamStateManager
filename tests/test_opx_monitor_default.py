@@ -260,6 +260,7 @@ def test_a_monitor_that_never_read_counts_nothing_and_dates_nothing(rig, chip):
         assert "at not reported" not in html and "read at not" not in html, tab
         assert "(not reported)" not in html and ", not reported" not in html, tab
     live = html_unescape(_body(app, "live"))
+    assert "QOP not reported" not in live, "the Server tile says what its zone says: not read yet"
     if not chip:  # with a target set but no answer yet, the zones say "not available" instead
         assert "Open QMs</h3><span class=\"ui-zone-sum\">not read yet" in live
         assert "Temperatures</h3><span class=\"ui-zone-sum\">not read yet" in live
@@ -303,3 +304,20 @@ def test_the_unconfigured_line_names_every_remedy(rig):
     assert "Open a chip" not in st["sentence"]
     bare = om.Monitor(app.instance_path)
     assert bare.status()["sentence"] == "No OPX connection is set up. Choose one under Monitor settings."
+
+
+def test_the_server_tile_before_any_read_says_not_read_yet():
+    server = lambda ans, state: om.live_tiles(ans, {}, None, None, state, 0)[-1]["value"]
+    assert server(None, "starting") == "not read yet"
+    assert server({"open_qms": []}, "ok") == "QOP not reported"
+    assert server({"version": {"QOP": "3.5"}}, "ok") == "QOP 3.5"
+
+
+def test_an_unreadable_open_chip_is_not_told_to_open_a_chip(tmp_path):
+    def boom():
+        raise OSError("wiring unreadable")
+    st = om.Monitor(str(tmp_path), default_source=boom).status()
+    assert st["state"] == "unconfigured"
+    assert "Open a chip" not in st["sentence"]
+    assert "the open chip's wiring could not be read" in st["sentence"]
+    assert "Choose a connection under Monitor settings" in st["sentence"]

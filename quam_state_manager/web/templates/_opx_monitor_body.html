@@ -54,8 +54,9 @@
   {%- if not cap.live %}
     <p class="ui-state ui-state--empty"><span class="ui-state-key">{{ unavailable_key }}</span> {{ plain_error(cap.live_reason) }}</p>
   {%- elif qms is none %}
-    <p class="ui-zone-empty">{% if read_time(st.section_times.get('open_qms')) %}Open QM list unavailable; last good read at
-    {{ read_time(st.section_times.get('open_qms')) }}.{% else %}Open QM list: no successful read yet.{% endif %}</p>
+    <p class="ui-zone-empty">{% if read_time(st.section_times.get('open_qms')) %}Open QM list unavailable;
+    last good read at {{ read_time(st.section_times.get('open_qms')) }}.{% else %}
+    Open QM list: no successful read yet.{% endif %}</p>
   {%- elif not qms %}
     <p class="ui-zone-empty">{% if owners_stale %}No QM was open at the last good read{% if owners_age %} ({{ owners_age }}){% endif %}; whether one is open now is unknown.{% else %}No QM is open: the hardware is free.{% endif %}</p>
   {%- else %}

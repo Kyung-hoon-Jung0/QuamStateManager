@@ -1589,7 +1589,9 @@ def failed_target_writes(outcomes, patches) -> dict | None:
     """
     if not isinstance(outcomes, dict) or not outcomes:
         return None
-    failed = [str(t) for t, o in outcomes.items() if o != "successful"]
+    from quam_state_manager.core.dataset import marks_success
+    # Not marked a success: a failed target AND a skipped or unknown one (its writes are not trusted).
+    failed = [str(t) for t, o in outcomes.items() if not marks_success(o)]
     if not failed:
         return None
     fset = set(failed)
@@ -1612,7 +1614,7 @@ def failed_target_writes(outcomes, patches) -> dict | None:
                        # False only when the run did not record the replaced value
                        "has_old": bool(p.get("has_old", True))})
     return {"failed": failed, "n_targets": len(outcomes), "writes": writes,
-            "untied": untied}
+            "untied": untied, "outcomes": {t: outcomes.get(t) for t in failed}}
 
 
 def value_text(v) -> str:
@@ -1625,8 +1627,13 @@ def value_text(v) -> str:
 
 
 def failed_targets_note(info: dict) -> str:
-    """One sentence naming every failed target and what was written for it."""
+    """One sentence naming every target not marked a success and what was written for it.
+    The head says "failed" only when each of them names a failure; a skipped or unknown
+    target is "not successful", with its own outcome beside its name."""
+    from quam_state_manager.core.dataset import marks_failure
     k, n = len(info["failed"]), info["n_targets"]
+    ocs = info.get("outcomes") or {}
+    soft = {t for t in info["failed"] if t in ocs and not marks_failure(ocs[t])}
     by_t: dict[str, list[str]] = {}
     no_old: list[str] = []
     for w in info["writes"]:
@@ -1638,9 +1645,11 @@ def failed_targets_note(info: dict) -> str:
     parts = []
     for t in info["failed"]:
         ws = by_t.get(t)
-        parts.append(f"{t}: still wrote {', '.join(ws)} to the chip" if ws
-                     else f"{t}: wrote nothing")
-    note = f"{k} of {n} targets failed — " + "; ".join(parts)
+        who = f"{t} ({ocs[t]})" if t in soft else t
+        parts.append(f"{who}: still wrote {', '.join(ws)} to the chip" if ws
+                     else f"{who}: wrote nothing")
+    head = "failed" if not soft else "not successful"
+    note = f"{k} of {n} targets {head} — " + "; ".join(parts)
     if no_old:
         note += (f"; the run did not record the old value of {', '.join(no_old)}, "
                  "so the revert cannot put it back")

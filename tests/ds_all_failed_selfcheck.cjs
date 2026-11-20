@@ -17,6 +17,9 @@ const rows = [
     Object.assign({id: 5, q: ['q1', 'q2'], oc: {q1: 'successful', q2: 'failed'}, mq: 'q1'}, base),
     // every target successful: the plain row
     Object.assign({id: 6, q: ['q1', 'q2'], oc: {q1: 'successful', q2: 'successful'}}, base),
+    // review r1 P3-6: a skipped target is neutral, an aborted one is a failure
+    Object.assign({id: 7, q: ['q1'], oc: {q1: 'skipped'}}, base),
+    Object.assign({id: 8, q: ['q1'], oc: {q1: 'aborted'}}, base),
 ];
 const dom = new JSDOM('<body><input id="dataset-search" value="">' +
     '<script id="ds-rows-data" data-now="1">' + JSON.stringify(rows) + '</script>' +
@@ -47,6 +50,13 @@ setTimeout(() => {
     assert.ok(!r6.querySelector('[data-failed]') && !r6.querySelector('.ds-metric-failed')
               && !r6.querySelector('.ds-all-failed'), 'an all-successful run is unmarked'); checks++;
     assert.ok(!r1.querySelector('[data-failed]'), 'a run without outcomes has no failure count'); checks++;
+    const r7 = tr(7), r8 = tr(8);
+    assert.ok(r7 && r8, 'skipped / aborted rows rendered'); checks++;
+    assert.ok(!r7.querySelector('.ds-all-failed') && !r7.querySelector('[data-failed]')
+              && !r7.querySelector('.ds-metric-failed'),
+              'a skipped target is not "all failed" nor "k of n failed"'); checks++;
+    assert.ok(r8.querySelector('.ds-all-failed') && r8.querySelector('.ds-metric-failed'),
+              'an aborted-only run is "all failed" and its metric is from a failed fit'); checks++;
     console.log(checks + ' checks passed');
     w.close();
 }, 300);

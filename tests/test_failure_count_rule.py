@@ -35,6 +35,33 @@ def test_the_client_twin_uses_the_same_pattern_once():
     assert "oc[q] === 'successful') return false" not in JS
 
 
+def test_one_ok_fail_neutral_rule_on_server_and_client():
+    from quam_state_manager.core.dataset import SUCCESS_WORDS, outcome_class
+    assert [outcome_class(v) for v in ("successful", "Successful", "OK", "aborted", "error",
+                                       "skipped", "pending", None, "")] == \
+        ["ok", "ok", "ok", "fail", "fail", "neutral", "neutral", "neutral", "neutral"]
+    assert "var SUCCESS_RE = /" + SUCCESS_WORDS + "/;" in JS
+    assert "var cls = outcomeClass(row.oc[q])" in JS
+    assert "=== 'successful'" not in JS
+    assert story._outcome({"q1": "Successful"}) == "ok"
+
+
+def test_the_run_detail_outcomes_use_the_one_classifier():
+    from flask import Flask, render_template_string
+    from quam_state_manager.core.dataset import outcome_class
+    html = (ROOT / "quam_state_manager/web/templates/_dataset_detail.html").read_text(encoding="utf-8")
+    start = html.index("{% for qname, outcome in run.outcomes.items() %}")
+    block = html[start:html.index("{% endfor %}", start) + len("{% endfor %}")]
+    app = Flask(__name__)
+    app.jinja_env.globals["outcome_class"] = outcome_class
+    with app.app_context():
+        out = render_template_string(block, run={"outcomes": {
+            "q1": "skipped", "q2": "aborted", "q3": "Successful"}})
+    spans = re.findall(r'class="(outcome-badge-lg[^"]*)">\s*(q\d)', out)
+    assert spans == [("outcome-badge-lg", "q1"), ("outcome-badge-lg outcome-fail", "q2"),
+                     ("outcome-badge-lg outcome-ok", "q3")]
+
+
 def test_the_server_row_names_its_failed_target_by_the_same_rule():
     src = (ROOT / "quam_state_manager/core/dataset.py").read_text(encoding="utf-8")
     assert "any(marks_failure(o) for o in oc.values())" in src

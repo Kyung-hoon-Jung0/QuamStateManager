@@ -261,7 +261,20 @@ def _view(tab: str, st=None) -> dict:
         if observed is not None and observed >= st['interval_s']:
             busy_text = f' for at least {om._span_words(observed)} (observed by SM)'
     owner_ctx['busy_since'] = busy_text
-    return {**owner_ctx, 'temperature_failed': 'controllers' in st['section_errors'] or any(k.endswith('.temperatures') for k in (st.get('answer') or {}).get('refused', {})), 'unreadable_temps': om.unreadable_temperatures(st.get('answer')), 'last_job': last_job, 'hottest': hottest, 'local_time': om.local_time, 'read_time': om.read_time, 'plain_error': plain_error, 'call_failure': om.call_failure, 'raw_error': raw_error(st), 'stale_time': stale_time, 'opx_time': om.opx_time, 'pc_zone': om.zone_text(), 'words': om.words, 'job_activity': om.job_activity, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': verdict, 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason, skew=skew) if not run_reason else {}, 'clock_skew': skew, 'skew_text': om.skew_text(skew, m.clock()), 'metric_known': om.metric_known, 'job_list_cap': om.JOB_LIST_CAP, 'value_vs_limit': om.value_vs_limit,
+    return {**owner_ctx,
+            'temperature_failed': ('controllers' in st['section_errors']
+                                   or any(k.endswith('.temperatures')
+                                          for k in (st.get('answer') or {}).get('refused', {}))),
+            'unreadable_temps': om.unreadable_temperatures(st.get('answer')), 'last_job': last_job, 'hottest': hottest,
+            'local_time': om.local_time, 'read_time': om.read_time, 'plain_error': plain_error,
+            'call_failure': om.call_failure, 'raw_error': raw_error(st), 'stale_time': stale_time,
+            'opx_time': om.opx_time, 'pc_zone': om.zone_text(), 'words': om.words, 'job_activity': om.job_activity,
+            'firmware_summary': om.firmware_summary,
+            'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': verdict,
+            'run_reason': run_reason,
+            'run_match': lambda j: run_match(j, runs, run_reason, skew=skew) if not run_reason else {},
+            'clock_skew': skew, 'skew_text': om.skew_text(skew, m.clock()), 'metric_known': om.metric_known,
+            'job_list_cap': om.JOB_LIST_CAP, 'value_vs_limit': om.value_vs_limit,
             "trends": m.trends().series(m.clock()) if m.trends() and tab == "live" else {}, "idle_states": idle_states, "idle_ids": [k for k, v in idle_states.items() if v['idle'] and st['state'] == 'ok'], "tab": tab, "tabs": TABS, "tab_labels": TAB_LABELS, "st": st, "settings": s,
             "target": t, "has_headers": has_headers,
             "saved": m.saved_settings() if tab == "settings" else {},

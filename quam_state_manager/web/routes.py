@@ -54454,11 +54454,13 @@ def _failed_target_info(run) -> dict | None:
     outcomes and the writes the run recorded, read through the one reader
     ``fit_targets.run_writes`` (node.json ``patches``, else
     ``state_changes.changes``, else ``state_updates.json``). None when the run
-    recorded no outcomes or no target failed."""
+    recorded no outcomes or every target is marked a success (``marks_success``,
+    the predicate ``failed_target_writes`` uses)."""
     from quam_state_manager.core import fit_targets
+    from quam_state_manager.core.dataset import marks_success
     outcomes = getattr(run, "outcomes", None)
-    if not isinstance(outcomes, dict) or not any(
-            o != "successful" for o in outcomes.values()):
+    if not isinstance(outcomes, dict) or all(
+            marks_success(o) for o in outcomes.values()):
         return None
     writes, source = [], None
     try:

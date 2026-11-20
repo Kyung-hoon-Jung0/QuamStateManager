@@ -609,6 +609,13 @@
     function marksFailure(v) {
         return v != null && FAILURE_RE.test(String(v).toLowerCase());
     }
+    // core/dataset.py marks_success / outcome_class are the twins: one
+    // ok / fail / neutral rule for a target outcome (row badge, run detail).
+    var SUCCESS_RE = /success|^ok$/;
+    function outcomeClass(v) {
+        if (marksFailure(v)) return 'fail';
+        return v != null && SUCCESS_RE.test(String(v).trim().toLowerCase()) ? 'ok' : 'neutral';
+    }
     function allTargetsFailed(row) {
         var oc = row && row.oc, n = 0;
         if (!oc) return false;
@@ -645,9 +652,9 @@
         if (!row.oc || Object.keys(row.oc).length === 0) return '-';
         var h = '';
         for (var q in row.oc) {
-            // The failed mark follows marksFailure, the rule every count uses;
-            // an outcome that is neither successful nor a failure gets a "?".
-            var ok = row.oc[q] === 'successful', bad = marksFailure(row.oc[q]);
+            // outcomeClass, the rule every count and the run detail use; an
+            // outcome that is neither a success nor a failure gets a "?".
+            var cls = outcomeClass(row.oc[q]), ok = cls === 'ok', bad = cls === 'fail';
             h += '<span class="outcome-badge' + (ok ? ' outcome-ok' : (bad ? ' outcome-fail' : '')) +
                  '" title="' + escapeHtml(q) + ': ' + escapeHtml(row.oc[q]) + '">'
                  + (ok ? '✓' : (bad ? '✗' : '?')) + '</span>';
@@ -2462,8 +2469,11 @@
         if (r && r.height > 0) {
             var cs = window.getComputedStyle ? window.getComputedStyle(el) : null;
             var inset = (el.clientTop || 0) + (cs ? parseFloat(cs.paddingTop) || 0 : 0);
+            // barTop lands the bar a padding below the edge (whole); barBottom is in
+            // border coordinates, so scrolling to it puts the bar's bottom at the
+            // border itself and no strip is left in the padding (gone).
             var barTop = el.scrollTop + (r.top - paneTop) - inset;
-            var barBottom = el.scrollTop + (r.bottom - paneTop) - inset;
+            var barBottom = el.scrollTop + (r.bottom - paneTop) - (el.clientTop || 0);
             if (target > barTop && target < barBottom) {
                 var shown = Math.max(0, Math.floor(barTop));
                 target = (listOff + (pos + 1) * ROW_HEIGHT - shown <= el.clientHeight) ? shown : Math.ceil(barBottom);

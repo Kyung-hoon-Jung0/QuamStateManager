@@ -47,6 +47,27 @@ def marks_failure(value) -> bool:
     """True when a run status or a node's per-target outcome names a failure."""
     return value is not None and bool(_FAILURE_RE.search(str(value).lower()))
 
+
+# The one success rule for a per-target outcome ("successful", "Success", "ok"); dataset-virtual.js
+# marksSuccess is the client twin (same pattern, pinned by a test).
+SUCCESS_WORDS = r"success|^ok$"
+_SUCCESS_RE = re.compile(SUCCESS_WORDS)
+
+
+def marks_success(value) -> bool:
+    """True when a node's per-target outcome names a success (and no failure)."""
+    return (value is not None and not marks_failure(value)
+            and bool(_SUCCESS_RE.search(str(value).strip().lower())))
+
+
+def outcome_class(value) -> str:
+    """``"ok"`` / ``"fail"`` / ``"neutral"`` for one per-target outcome: the run detail's Outcomes,
+    the row badge (client twin ``outcomeClass``) and the Calibration log all read it this way.
+    A "skipped" or "pending" target is neutral: neither a success nor a failure."""
+    if marks_failure(value):
+        return "fail"
+    return "ok" if marks_success(value) else "neutral"
+
 # Max parsed data.json files to keep in memory per DatasetStore. Each
 # data.json can be MB-sized (fit arrays); without a bound, a 2 000-run
 # workspace pins multi-GB of JSON in memory (red-team Phase 2 finding §3.2).

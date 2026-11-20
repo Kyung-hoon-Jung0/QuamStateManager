@@ -212,12 +212,12 @@ def with_instants(rows: list[dict], ds: Any) -> list[dict]:
 def _outcome(outcomes: dict | None) -> str | None:
     if not outcomes:
         return None
-    from quam_state_manager.core.dataset import marks_failure
-    vals = [str(v).lower() for v in outcomes.values()]
-    # the Datasets digest's own failure rule, so both screens count one thing the same way
-    if any(marks_failure(v) for v in vals):
+    from quam_state_manager.core.dataset import outcome_class
+    classes = [outcome_class(v) for v in outcomes.values()]
+    # the Datasets rows' own ok / fail / neutral rule, so both screens count one thing the same way
+    if "fail" in classes:
         return "failed"
-    if all("success" in v or v == "ok" for v in vals):
+    if all(c == "ok" for c in classes):
         return "ok"
     return "mixed"
 
