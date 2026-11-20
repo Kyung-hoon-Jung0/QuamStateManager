@@ -6,6 +6,13 @@ sanitized copy remain mandatory even when the audit tests pass.
 import os
 from pathlib import Path
 import sys
+import weakref
+
+#: the one registry key a post-build HTTP client may read (its proxy settings)
+PROXY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+#: winreg access mask KEY_READ; any other mask is a write or a wider read
+KEY_READ = 0x20019
+LOOPBACK = ("127.0.0.1", "::1")
 
 
 class GuardViolation(RuntimeError):
@@ -25,11 +32,91 @@ def inside(path, root):
 
 
 class Guard:
+    """Audit-hook and class barriers for one child (D-8).
+
+    The build runs with the allow-list fixed at construction (empty for a node
+    build). After the build, SM-owned code may widen it exactly once with
+    ``allow`` (the cloud login endpoint and the run folder) and then set the
+    cloud instance lease exactly once with ``set_lease``. Nothing ever widens
+    ``open_qm``, ``execute`` or ``qm_session``.
+    """
+
     def __init__(self, scratch, allowed_endpoints=()):
         self.scratch = Path(scratch).resolve()
         self.allowed_endpoints = frozenset((str(h), int(p)) for h, p in allowed_endpoints)
+        self.write_roots = (self.scratch,)
         self.verdict = None
         self.writes = []
+        self.build_ended = False
+        self.allowed = False
+        self.lease_params = None
+        self._loopback = []
+        self._proxy_keys = set()
+
+    def end_build(self):
+        """Mark the node build as finished; ``allow`` is refused before this."""
+        self.build_ended = True
+
+    def allow(self, endpoints, write_roots=()):
+        """Widen the allow-list once, after the build: resolved ``(ip, port)``
+        pairs and extra write roots. A second call, or one before
+        ``end_build``, is a guard failure."""
+        if not self.build_ended:
+            self.fail("allow", "before build end")
+        if self.allowed:
+            self.fail("allow", "called twice")
+        self.allowed = True
+        self.allowed_endpoints = frozenset(self.allowed_endpoints
+                                           | {(str(h), int(p)) for h, p in endpoints})
+        self.write_roots = self.write_roots + tuple(Path(root).resolve() for root in write_roots)
+
+    def set_lease(self, params, endpoints):
+        """Set the one QuantumMachinesManager lease (the spawned instance's
+        connection parameters) and allow that instance's resolved endpoints.
+        Only after ``allow`` and only once."""
+        if not self.allowed:
+            self.fail("lease", "before allow")
+        if self.lease_params is not None:
+            self.fail("lease", "set twice")
+        self.lease_params = params
+        self.allowed_endpoints = frozenset(self.allowed_endpoints
+                                           | {(str(h), int(p)) for h, p in endpoints})
+
+    def lease(self):
+        return self.lease_params
+
+    def _own_loopback(self, address):
+        """True when *address* is a loopback socket this process bound after
+        ``allow`` (the event loop's self-pipe on Windows); it reaches no host."""
+        if not self.allowed or address[0] not in LOOPBACK:
+            return False
+        live = []
+        found = False
+        for ref in self._loopback:
+            sock = ref()
+            if sock is None:
+                continue
+            live.append(ref)
+            try:
+                if tuple(sock.getsockname()[:2]) == tuple(address[:2]):
+                    found = True
+            except OSError:
+                pass
+        self._loopback = live
+        return found
+
+    def _registry_read(self, event, args):
+        """Post-build: the HTTP client's read-only proxy lookup is allowed."""
+        if not self.allowed:
+            return False
+        if event == "winreg.OpenKey":
+            return len(args) >= 3 and str(args[1]) == PROXY_KEY and args[2] == KEY_READ
+        if event == "winreg.OpenKey/result":
+            self._proxy_keys.add(args[0])
+            return True
+        if event == "winreg.QueryValue":
+            return bool(args) and args[0] in self._proxy_keys
+        return False
 
     def fail(self, channel, detail):
         exc = GuardViolation(channel, detail)
@@ -46,14 +133,22 @@ class Guard:
         if os.path.normcase(raw) == os.path.normcase(os.devnull):
             return
         path = str(Path(raw).resolve())
-        if not inside(path, self.scratch):
+        if not any(inside(path, root) for root in self.write_roots):
             self.fail("write", path)
         self.writes.append(path)
 
     def audit(self, event, args):
-        if event == "socket.connect":
+        if event == "socket.bind":
+            address = args[1] if len(args) > 1 else None
+            if self.allowed and isinstance(address, tuple) and address[0] in LOOPBACK:
+                try:
+                    self._loopback.append(weakref.ref(args[0]))
+                except TypeError:
+                    pass
+        elif event == "socket.connect":
             address = args[1]
-            if not isinstance(address, tuple) or tuple(address[:2]) not in self.allowed_endpoints:
+            if not isinstance(address, tuple) or (tuple(address[:2]) not in self.allowed_endpoints
+                                                  and not self._own_loopback(address)):
                 detail = f"{address[0]}:{address[1]}" if isinstance(address, tuple) else str(address)
                 self.fail("socket.connect", detail)
         elif event == "open":
@@ -75,6 +170,8 @@ class Guard:
             paths = args[1:2] if event == "shutil.copyfile" else args[:count]
             for path in paths:
                 self.write(path)
+        elif event.startswith("winreg.") and self._registry_read(event, args):
+            return
         elif (event.startswith(("subprocess.", "ctypes.", "winreg.", "os.exec", "os.spawn", "os.startfile"))
               or event in {"os.system", "os.kill", "os.killpg", "os.posix_spawn", "os.fork", "os.forkpty"}):
             self.fail(event, str(args[0]) if args else "refused")
@@ -90,13 +187,17 @@ class Guard:
     def install_classes(self, lease=None):
         """Patch real classes, including aliases imported before this call.
 
-        P0a has no lease; therefore every QMM construction is refused.
+        *lease* is a dict or a callable read at construction time. None means
+        the guard's own late lease (``set_lease``), which stays unset in a plain
+        build, so every QMM construction is refused there.
         """
         from qm import QuantumMachinesManager
         original = QuantumMachinesManager.__init__
+        source = self.lease if lease is None else lease
 
         def init(instance, *args, **kwargs):
-            if lease is None or args or kwargs != lease:
+            current = source() if callable(source) else source
+            if current is None or args or kwargs != current:
                 self.fail("QuantumMachinesManager", "unleased")
             original(instance, **kwargs)
 
