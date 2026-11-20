@@ -331,6 +331,38 @@ def _read_json(path: Path) -> Any:
         return None
 
 
+#: tries of one status read; the child replaces ``_status.json`` atomically, but on Windows a reader can still
+#: meet a sharing violation or a half-visible file for a moment (piece B hand-back)
+STATUS_TRIES = 3
+STATUS_RETRY_S = 0.05
+
+
+def _status_bytes(path: Path) -> bytes:
+    """One share-delete read of the status file. On Windows the child's replace of the file can still fail
+    while any reader holds it open (share-delete or not, measured), so the child retries its replace."""
+    from quam_state_manager.core import safe_io
+    with safe_io.open_shared(path) as f:
+        return f.read()
+
+
+def _read_status(path: Path, tries: int = STATUS_TRIES) -> Optional[dict]:
+    """The child's ``_status.json``, retried on OSError and on bad JSON; None when no try gave a dict."""
+    for i in range(max(1, tries)):
+        try:
+            got = json.loads(_status_bytes(Path(path)).decode("utf-8"))
+        except OSError:
+            if not Path(path).exists():
+                return None
+            got = None
+        except ValueError:
+            got = None
+        if isinstance(got, dict):
+            return got
+        if i + 1 < tries:
+            time.sleep(STATUS_RETRY_S)
+    return None
+
+
 def _read_text(path: Path) -> str:
     try:
         return Path(path).read_text(encoding="utf-8", errors="replace")
@@ -427,6 +459,17 @@ class ClickRuns(ptr.Runs):
     def busy(self) -> bool:
         cur = self.current
         return bool(cur and cur["proc"].poll() is None)
+
+    def status(self, rid: Optional[str] = None) -> dict:
+        """The heartbeat touch and the run clock only. The port test's status also opens ``_status.json``;
+        every open of it can make the child's replace of that file fail on Windows, so the click reads it
+        once per poll, itself (``_read_status``)."""
+        run = self.current
+        if not run or (rid and run["id"] != rid):
+            return {"state": "none"}
+        run["seen"] = time.time()
+        return {"id": run["id"], "state": "running" if run["proc"].poll() is None else "done",
+                "elapsed_s": round(time.time() - run["started"], 1), "stopping": run["stop_at"] is not None}
 
     def launch(self, python: str, connection: dict, request: dict, meta: dict, *,
                popen: Callable, cwd: str, env: dict) -> str:
@@ -593,7 +636,7 @@ class Manager:
             before = self.digest(live_folder) if live_folder else None
             request = {"scratch": str(scratch), "chip_copy": str(chip), "library": str(library),
                        "node": str(node_file), "targets": list(targets), "window_ns": window_ns,
-                       "overrides": overrides}
+                       "overrides": overrides, "saas_host": saas.get("host") or ""}
             env = nodesim_spawn.pinned_env(scratch, library, chip)
             try:
                 rid = runs.launch(python, {"saas": dict(saas)}, request, meta,
@@ -663,8 +706,12 @@ class Manager:
     def _final(self, job: dict, run: dict) -> dict:
         work, meta, secret = run["work"], job["meta"], job["secret"]
         elapsed = round(time.monotonic() - job["t0"], 1)
-        status = _read_json(work / "_status.json") or {}
-        phases = [job["copy_phase"]] + _clean_phases(status.get("phases"))
+        status = _read_status(work / "_status.json") or job.get("last_status") or {}
+        result = _read_json(work / "_result.json")
+        # the result carries the child's full phase list (a node error ends without a last status write)
+        has = isinstance(result, dict) and isinstance(result.get("phases"), list)
+        ran = result["phases"] if has else status.get("phases")
+        phases = [job["copy_phase"]] + _clean_phases(ran)
         base = {"id": job["rid"], "elapsed_s": elapsed, "limit_s": self.limit_s, "phases": phases,
                 "estimate_s": job["estimate_s"], "secret": secret}
         if job["live"]:
@@ -674,7 +721,6 @@ class Manager:
                 after = None
             if after != job["before"]:
                 return answer("chip_changed", **base)
-        result = _read_json(work / "_result.json")
         stopped = run.get("stop_at") is not None
         if result is None:
             if stopped and run.get("stop_why") == "time limit":
@@ -773,7 +819,11 @@ class Manager:
                 return copy.deepcopy(saved) if isinstance(saved, dict) else answer("none")
             st = runs.status(rid)  # touches the heartbeat
             job = self.jobs.get(rid) or {}
-            raw = _read_json(run["work"] / "_status.json") or {}
+            raw = _read_status(run["work"] / "_status.json")
+            if raw is None:  # a bad read keeps the last good one; it never ends the run
+                raw = job.get("last_status") or {}
+            else:
+                job["last_status"] = raw
             phases = [job.get("copy_phase") or {"name": "copy", "s": 0.0}] + _clean_phases(raw.get("phases"))
             phase = "stopping" if st.get("stopping") else (raw.get("phase") or "build")
             state = "starting" if phase == "spawn" else "running"

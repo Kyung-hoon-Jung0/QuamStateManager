@@ -51,8 +51,43 @@ def _env():
     return python, env_name(python)
 
 
-def _context() -> dict:
-    """The page's facts: chip, env, library, QOP, the scanned nodes and targets."""
+def node_key(folder, value) -> str | None:
+    """The calibrations-relative posix path of a node file, or None when it is not inside the folder.
+
+    Accepts what a link carries: a bare name, a relative path (a node in a subfolder, as the
+    Scheduler library lists it) or an absolute path under the folder. ``..`` never leaves it.
+    """
+    if not folder or not isinstance(value, str) or not value.strip() or not value.endswith(".py"):
+        return None
+    root = Path(folder).resolve()
+    raw = Path(value.strip().replace("\\", "/"))
+    try:
+        rel = (raw if raw.is_absolute() else root / raw).resolve().relative_to(root)
+    except (ValueError, OSError):
+        return None
+    return rel.as_posix() if rel.parts else None
+
+
+def _row(info, folder) -> dict:
+    reason = click.refusal(info)
+    row = info.to_dict()
+    estimates = {str(w): click.estimate(info.file, w) for w in click.WINDOWS_US}
+    # ``file`` is the calibrations-relative name the start body sends back (never a library path)
+    key = node_key(folder, str(info.file)) or Path(info.file).name
+    row.update({"file": key, "file_name": Path(info.file).name,
+                "refused": bool(reason), "reason": reason,
+                "refused_line": click.REFUSED_LIST_LINE if reason else None,
+                "estimates": estimates,
+                "estimate_lines": {k: v["line"] for k, v in estimates.items()}})
+    return row
+
+
+def _context(want: str | None = None) -> dict:
+    """The page's facts: chip, env, library, QOP, the scanned nodes and targets.
+
+    ``want`` (a ``?node=`` value) adds that node when it sits in a subfolder of the library, which
+    the folder scan does not list.
+    """
     r = _r()
     ctx = r._active_ctx() or {}
     store = r._store() if ctx.get("type", "quam") == "quam" else None
@@ -65,16 +100,12 @@ def _context() -> dict:
     for info in items:
         if info.kind == "other":
             continue
-        reason = click.refusal(info)
-        row = info.to_dict()
-        estimates = {str(w): click.estimate(info.file, w) for w in click.WINDOWS_US}
-        # ``file`` is the name the start body sends back (the page never sees a library path)
-        row.update({"file": Path(info.file).name, "file_name": Path(info.file).name,
-                    "refused": bool(reason), "reason": reason,
-                    "refused_line": click.REFUSED_LIST_LINE if reason else None,
-                    "estimates": estimates,
-                    "estimate_lines": {k: v["line"] for k, v in estimates.items()}})
-        nodes.append(row)
+        nodes.append(_row(info, folder))
+    key = node_key(folder, want)
+    if key and not any(n["file"] == key for n in nodes) and (Path(folder) / key).is_file():
+        info = node_scan.scan_file(Path(folder) / key)
+        if info.kind != "other":
+            nodes.append(_row(info, folder))
     merged = getattr(store, "merged", None) or {}
     qubits = store.qubit_names if store else []
     pairs = store.qubit_pair_names if store else []
@@ -103,15 +134,17 @@ def _selected_qubit(qubits: list):
 @nodesim_bp.route("/nodesim")
 def nodesim_page():
     r = _r()
-    facts = _context()
+    want = request.args.get("node") or ""
+    facts = _context(want)
+    key = node_key(facts.get("calibrations"), want)
     return render_template("nodesim.html", **r._ctx(page="nodesim", ns=facts,
-                                                     ns_node=request.args.get("node") or "",
+                                                     ns_node=key or want,
                                                      ns_partial=r._is_htmx()))
 
 
 @nodesim_bp.route("/api/nodesim/nodes")
 def nodesim_nodes():
-    return jsonify(ok=True, **_context())
+    return jsonify(ok=True, **_context(request.args.get("node")))
 
 
 @nodesim_bp.route("/api/nodesim/start", methods=["POST"])
@@ -130,8 +163,9 @@ def nodesim_start():
     python, env = _env()
     node = data.get("node") if isinstance(data.get("node"), str) else ""
     info = None
-    if folder and node and Path(node).name == node and node.endswith(".py"):
-        path = Path(folder) / node
+    key = node_key(folder, node)
+    if key:
+        path = Path(folder) / key
         info = node_scan.scan_file(path) if path.is_file() else None
     targets = data.get("targets")
     choices = list(store.qubit_names) + list(store.qubit_pair_names)

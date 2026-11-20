@@ -49,6 +49,9 @@ LIMIT_S = 600.0
 CLOSE_TIMEOUT_S = 30.0
 SAAS_PORT = 443
 SERIALIZATION = "QUA serialization validation failed: "
+#: tries of one ``_status.json`` replace, and the pause between them (a reader holds the file for milliseconds)
+STATUS_REPLACE_TRIES = 20
+STATUS_REPLACE_WAIT_S = 0.01
 #: qm's answer when the cloud simulator refuses a window (P0b item 4, D-41, Q-4)
 TOO_LONG_MARKS = ("Internal Server Error", "StatusCode.UNKNOWN")
 
@@ -96,10 +99,18 @@ class Status:
             self.phase = None
 
     def _write(self):
+        """Replace the status file. On Windows the replace fails while SM (or any other reader) holds the
+        file open; it is retried a few times and then skipped: a status write never ends the run."""
         tmp = self.path.with_name("_status.tmp")
         tmp.write_text(json.dumps({"phase": self.phase, "phases": self.phases, "at": time.time()}),
                        encoding="utf-8")
-        os.replace(tmp, self.path)
+        for i in range(STATUS_REPLACE_TRIES):
+            try:
+                os.replace(tmp, self.path)
+                return
+            except PermissionError:
+                if i + 1 < STATUS_REPLACE_TRIES:
+                    time.sleep(STATUS_REPLACE_WAIT_S)
 
 
 class ResultFile:

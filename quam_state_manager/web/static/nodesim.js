@@ -31,6 +31,7 @@
     var DEFAULT_US = 20;
     var PHASES = ["copy", "build", "login", "spawn", "connect", "submit", "wait", "report", "close"];
     var LIVE = { starting: 1, running: 1 };
+    var NOT_IN_LIBRARY = "The node asked for is not in the calibration library of this chip.";
     var STALE = "chip changed since - re-simulate";
     var NO_ANSWER = "No answer from SM; the run stops if this page stops asking.";
     var REFUSED_PICK = "This node is not simulated here (it writes or sweeps outside one program).";
@@ -193,7 +194,9 @@
         ol.setAttribute("data-nodesim-phases", "");
         var done = {};
         (Array.isArray(j.phases) ? j.phases : []).forEach(function (p) { if (p && p.name) done[p.name] = p.s; });
-        var names = PHASES.slice();
+        // a live run lists every phase still to come; a finished one only the phases that ran (a cache hit
+        // ran copy and cache, nothing else)
+        var names = LIVE[str(j.state)] ? PHASES.slice() : [];
         Object.keys(done).forEach(function (n) { if (names.indexOf(n) < 0) names.push(n); });
         names.forEach(function (n) {
             var cur = j.phase === n;
@@ -540,20 +543,24 @@
         stopBtn.addEventListener("click", stop);
 
         function load() {
-            return call("/api/nodesim/nodes").then(function (n) {
+            var want = root.getAttribute("data-node");
+            if (!want) {
+                try { want = new URL(window.location.href).searchParams.get("node"); } catch (e) { want = null; }
+            }
+            // the wanted node is named to the server: a node in a subfolder is not in the folder scan
+            var url = "/api/nodesim/nodes" + (want ? "?node=" + encodeURIComponent(want) : "");
+            return call(url).then(function (n) {
                 if (n === null) { showLost(true); return; }
                 S.nodes = n;
                 if (n.context) drawContext(n.context); else ctxRow.hidden = true;
                 if (typeof n.line === "string" && n.line && n.state) clear(status).appendChild(renderAnswer(n));
-                var want = root.getAttribute("data-node");
-                if (!want) {
-                    try { want = new URL(window.location.href).searchParams.get("node"); } catch (e) { want = null; }
-                }
                 var items = nodeItems(n);
                 var first = items.filter(function (x) { return !x.refused; })[0] || items[0];
-                S.node = items.some(function (x) { return x.file === want; }) ? want : (first ? first.file : null);
+                var found = items.some(function (x) { return x.file === want; });
+                S.node = found ? want : (first ? first.file : null);
                 drawPickers();
                 pickNode(S.node);
+                if (want && !found) { pickNote.textContent = NOT_IN_LIBRARY; pickNote.hidden = false; }
                 // a run of this window that is still going (a reload, a page switch) is shown again
                 return poll(S.gen).then(function () { schedule(S.gen); });
             });

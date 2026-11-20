@@ -571,6 +571,14 @@
                    hx-sync="#table-pane:replace" hx-push-url="true"
                    class="sidebar-tool sidebar-tool-btn" title="Help — the working-copy model, the feature tour, shortcuts">
                     {{ icon_help() }}<span class="sidebar-tool-label">Help</span></a>
+                <a href="/nodesim" hx-get="/nodesim" hx-target="#table-pane"
+                   hx-sync="#table-pane:replace" hx-push-url="true" data-nodesim-tool
+                   class="sidebar-tool sidebar-tool-btn"
+                   title="Simulate a node once on the cloud simulator, on a copy of the chip">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none"
+                         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                         aria-hidden="true"><path d="M3 12h3l2-6 4 12 2-6h7"/></svg><span
+                        class="sidebar-tool-label">Simulate a node</span></a>
                 <button type="button" class="sidebar-tool settings-btn"
                         onclick="toggleSettings(this)"
                         title="Settings — font size, UI scale, theme, layout">
