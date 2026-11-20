@@ -25209,7 +25209,8 @@ document.addEventListener('htmx:afterSwap', function(evt) {
             var t = e.target || (e.detail && e.detail.target);
             if (!t || t.id !== 'sidebar-tree') return;
             _anchor = capture();
-            _restoring = true;
+            // An aborted swap fires no afterSwap: only a real swap holds the gate.
+            _restoring = !(e.detail && e.detail.shouldSwap === false);
         });
         document.addEventListener('htmx:afterSwap', function (e) {
             var t = e.target || (e.detail && e.detail.target);
