@@ -3,7 +3,9 @@
 {%- from "_opx_owner.html" import owner_cell, owner_head, owner_text -%}
 {%- from "_opx_qm_ports.html" import ports_disclosure, rack_block with context -%}
 {%- macro qm_table(qms, label, stale=False, age=None, actions=False, ports=False) -%}
-<table class="ui-table ui-opxmon-table{% if stale %} ui-opxmon-table--stale{% endif %}" aria-label="{{ label }}{% if stale %} (last good read{% if age %}, {{ age }}{% endif %}){% endif %}"{% if stale %} data-stale="1"{% endif %}>
+<table class="ui-table ui-opxmon-table{% if stale %} ui-opxmon-table--stale{% endif %}" aria-label="{{ label }}
+  {%- if stale %} (last good read{% if age %}, {{ age }}{% endif %}){% endif %}"{% if
+  stale %} data-stale="1"{% endif %}>
   {% set owner_header = owner_head(any_marker) %}
   {% set headings %}
   <th class="ui-table-head" scope="col">QM</th><th class="ui-table-head" scope="col">State</th>
