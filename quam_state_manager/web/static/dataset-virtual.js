@@ -796,7 +796,7 @@
         var cls = 'clickable-row' + (_flashActive(row.uid) ? ' ds-row-new' : '');
         // datasets-r2-24: the j/k cursor survives every virtual re-render
         // (a scroll, the Split relayout on close) -- innerHTML used to wipe it.
-        if (shown ? shown.dataset.uid === row.uid
+        if (shown ? shown.dataset.uid === String(row.uid != null ? row.uid : row.id)
             : (_kbIdx >= 0 && String(row.uid != null ? row.uid : row.id) === _kbUid()))
             cls += ' ds-row-active';
         var html = '<tr class="' + cls + '" data-id="' + row.uid + '" data-folder-key="' + (row.f || '') + '" data-exp="' + escapeHtml(row.exp || '') + '">';
@@ -2425,6 +2425,29 @@
         _scrollToListPos(pos);             // where the new runs ACTUALLY sort
     }
 
+    // docs/126 item 6.5: Esc or a click anywhere else DISMISSES the announcement
+    // (customer request). Dismissal only acknowledges; the held rows still
+    // land on the next idle flush. A sidebar refresh does not dismiss it: the
+    // table bar counts what the TABLE has not shown.
+    function _dismissNewPill() {
+        var el = document.getElementById('ds-new-pill');
+        if (!el || el.hidden) return false;
+        if (state.arrivalUids) state.arrivalUids.clear();
+        _updateNewPill();
+        return true;
+    }
+    if (!window._dsPillDismissBound) {
+        window._dsPillDismissBound = true;
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') _dismissNewPill();
+        });
+        document.addEventListener('click', function (e) {
+            var el = document.getElementById('ds-new-pill');
+            if (!el || el.hidden) return;
+            if (e.target === el || (el.contains && el.contains(e.target))) return;
+            _dismissNewPill();
+        });
+    }
 
     function startPolling() {
         if (state.pollTimer) clearInterval(state.pollTimer);
