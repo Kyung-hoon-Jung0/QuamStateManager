@@ -17152,10 +17152,11 @@ var _INSTR_MIN_LABEL_PX = 9;
    is never hidden: it is drawn at >= 9 px on screen instead, whatever the
    scale, because without it the rack is a field of anonymous dots. */
 function _iwKeep(t) { t.setAttribute('data-iw-keep', '1'); return t; }
-function _instrHideTinyLabels(svg, natW) {
+function _instrHideTinyLabels(svg, natW, knownScale) {
+    // knownScale: a fixed-size (mini) rack knows its scale before layout
     var shown = svg.getBoundingClientRect().width;
-    if (!natW || !shown) return;
-    var s = shown / natW;
+    if (!natW || (!shown && !knownScale)) return;
+    var s = knownScale || shown / natW;
     Array.prototype.forEach.call(svg.querySelectorAll('text'), function(t) {
         if (t.classList.contains('iw-port-caption')) {
             // a port caption keeps ~11 px on screen at every scale: its drawn
@@ -17203,6 +17204,9 @@ function _applyInstrumentFit(container) {
         container.querySelectorAll('svg.instrument-svg').forEach(function(svg) {
             svg.setAttribute('width', Number(svg.dataset.natW) * miniScale);
             svg.setAttribute('height', Number(svg.dataset.natH) * miniScale);
+            // the same 9 px label floor as a fitted rack: a name too long for its
+            // circle is hidden there, and the caption under the grid names it
+            _instrHideTinyLabels(svg, Number(svg.dataset.natW), miniScale);
         });
         return;
     }
@@ -17466,7 +17470,7 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
         var capLines = 0;
         femIds.forEach(function(fid) {
             var lines = [];
-            _iwCaptionLines(fems[fid]).forEach(function(full) {
+            _iwCaptionLines(fems[fid], options && options.captionLongNames).forEach(function(full) {
                 _iwWrapCaption(full, capMax).forEach(function(l) { lines.push({text: l, full: full}); });
             });
             capByFem[fid] = lines;
@@ -17716,8 +17720,11 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
    digital port, as "<io> <port>
    <names>", the names compacted by _iwCompactNames. */
 var _IW_CAPTION_IO = {output: 'out', input: 'in', digital: 'dig'};
-function _iwCaptionLines(femData) {
+function _iwCaptionLines(femData, longNames) {
+    // longNames: also caption a one-element port whose name its circle cuts
+    // (the circle shows 7 characters on an output, 6 on an input)
     var lines = [], pumps = [];
+    var circleChars = {output: 7, input: 6};
     var groups = [['output', femData.output_ports || femData.ports || {}],
                   ['input', femData.input_ports || {}],
                   ['digital', femData.digital_ports || {}]];
@@ -17727,7 +17734,9 @@ function _iwCaptionLines(femData) {
             var list = ports[pn] || [];
             var twpa = list.some(function(a) { return /^twpa/.test(a.role || ''); });
             // a digital port's circle is too small for a name once Fit scales it
-            if (list.length < 2 && !twpa && gp[0] !== 'digital') return;
+            var cut = longNames && list.length === 1 && list[0].element != null &&
+                String(list[0].element).length > (circleChars[gp[0]] || 99);
+            if (list.length < 2 && !twpa && gp[0] !== 'digital' && !cut) return;
             var names = [];
             list.forEach(function(a) {
                 var n = a.element != null ? String(a.element) : String(a.label || '').replace(/\.[^.]+$/, '');
@@ -17993,7 +18002,9 @@ function _appendWiringLegend(container, roleColors, compactKey) {
         item.setAttribute('role', 'listitem');
         var sw = document.createElement('span');
         sw.className = 'iw-legend-swatch';
-        sw.style.background = r === 'other' ? (roleColors.fallback || '#999') :
+        // the compact key's host themes "Other" from kit tokens, as its circles
+        if (r === 'other' && compactKey) sw.classList.add('iw-key-other-swatch');
+        else sw.style.background = r === 'other' ? (roleColors.fallback || '#999') :
             (_IW_THEMED_FILL[r] ? 'var(' + _IW_THEMED_FILL[r] + ', ' + roleColors[r] + ')' : roleColors[r]);
         item.appendChild(sw);
         item.appendChild(document.createTextNode(r === 'other' ? 'Other' : _WIRING_ROLE_WORDS[r]));
@@ -18060,6 +18071,9 @@ function _appendPortCircle(svg, cx, cy, r, roleColors, assignment, rawWiring, ed
     // one keeps the darker fill). The attribute stays as the fallback.
     var themed = _IW_THEMED_FILL[qdacShared ? '' : assignment.role];
     if (themed) circle.style.fill = 'var(' + themed + ', ' + color + ')';
+    // a role this palette does not know: a host may theme it by this class
+    // (the OPX monitor's rack does, from kit tokens); elsewhere the fill stays
+    if (!qdacShared && assignment.role && !roleColors[assignment.role]) g.classList.add('iw-port-plain');
     g.appendChild(circle);
     if (qdacShared) g.setAttribute('data-qdac-shared', '1');
 

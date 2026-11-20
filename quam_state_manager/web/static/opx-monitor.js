@@ -194,7 +194,7 @@
             if (previous && window.releaseInstrumentWiring) window.releaseInstrumentWiring(previous.host);
             var spec = JSON.parse(payload);
             window.renderInstrumentWiring(host.id, spec.data, {}, {
-                readOnly: true, highlight: spec.highlight, scale: 0.55, compactKey: true,
+                readOnly: true, highlight: spec.highlight, scale: 0.8, compactKey: true, captionLongNames: true,
                 unplaceableText: function(stats) {
                     return "This QM's configuration uses a layout this diagram does not render yet " +
                         "(for example OPX+ or an Octave RF setup); " + (stats.refs_seen || 0) +

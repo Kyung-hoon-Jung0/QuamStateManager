@@ -2835,3 +2835,48 @@ def test_live_tab_band_does_not_poll_twice(env):
     html = page(app, 'live')
     assert 'hx-get' not in _band_tag(html)
     assert 'hx-get="/opx-monitor/body?tab=live' in html
+
+
+def test_live_polls_each_second_until_its_first_read(env):
+    """Live and the Settings band read the same poller: before its first read both re-poll in 1 s,
+    so Live shows the first read as soon as Settings does; afterwards the set interval applies."""
+    app, m, w, clock, _ = env
+    m.want()
+    html = page(app, 'live')
+    assert m.status()['state'] == 'starting' and 'every 1s' in html and 'every 5s' not in html
+    m.poll_once()
+    html = page(app, 'live')
+    assert m.status()['state'] == 'ok' and 'every 5s' in html and 'every 1s' not in html
+
+
+def _busy_ahead(m, w, clock):
+    """A running job that started 30 s ago on an OPX whose clock is 60 s ahead of this PC."""
+    a = answer()
+    a['open_qms'][0]['jobs'][0].update(created_at=_iso(clock.t + 30), updated_at=_iso(clock.t + 60))
+    a['jobs'] = a['open_qms'][0]['jobs']
+    w.script[:] = [a]
+    m.poll_once()
+
+
+def _clock_text(t):
+    from datetime import datetime
+    return datetime.fromtimestamp(t).astimezone().strftime('%H:%M:%S')
+
+
+def test_busy_with_an_unknown_offset_shows_elapsed_never_a_clock_time(env):
+    app, m, w, clock, _ = env
+    _busy_ahead(m, w, clock)
+    html = page(app, 'live')
+    assert '<strong class="ui-verdict-key">BUSY</strong>' in html
+    assert 'for at least 30 s (OPX clock' in html and 'offset from this PC unknown' in html
+    assert _clock_text(clock.t + 30) not in html  # the old line: an OPX time in this PC's future
+
+
+def test_busy_with_a_known_offset_shows_this_pc_clock(env):
+    app, m, w, clock, _ = env
+    _busy_ahead(m, w, clock)
+    _measured(m, clock, -60.0)
+    assert m.clock_skew() is not None
+    html = page(app, 'live')
+    assert f" since {_clock_text(clock.t - 30)} (this PC&#39;s clock;" in html
+    assert _clock_text(clock.t + 30) not in html

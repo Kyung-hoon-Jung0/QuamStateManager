@@ -87,7 +87,26 @@ try {
     check(!a.querySelector('button, .iw-port-grip, [data-play], .iw-fitbar, .iw-sizebar'),
         'mini rack offers no editing, playback or size controls');
     const svg = a.querySelector('svg');
-    check(Number(svg.getAttribute('width')) === Number(svg.dataset.natW) * 0.55, 'mini scale is 0.55');
+    check(Number(svg.getAttribute('width')) === Number(svg.dataset.natW) * 0.8, 'mini scale is 0.8');
+    const longHost = d.createElement('div'); longHost.id = 'long-names'; longHost.className = 'ui-opxmon-rack';
+    d.body.append(longHost);
+    renderer(longHost.id, {controllers: {con1: {max_output_port: 8, fems: {1: {type: 'lf-fem', output_ports: {
+        4: [{element: 'coupler_long_name', label: 'coupler_long_name', role: 'configured'}],
+        5: [{element: 'q1', label: 'q1', role: 'configured'}]}}}}}}, {},
+        {readOnly: true, highlight: [['con1', '1', '4', 'output'], ['con1', '1', '5', 'output']], scale: 0.8,
+            compactKey: true, captionLongNames: true});
+    const shownNames = Array.from(longHost.querySelectorAll('.iw-port-circle text'))
+        .filter(t => t.style.display !== 'none');
+    check(shownNames.every(t => !/\u2026|-$/.test(t.textContent) && Number(t.getAttribute('font-size')) * 0.8 >= 8.95),
+        'every in-circle name shown at the mini scale is whole and at least 9 px on screen');
+    check(shownNames.some(t => t.textContent === 'q1'), 'a short name stays readable inside its circle');
+    check(Array.from(longHost.querySelectorAll('text.iw-port-caption')).some(t =>
+        (t.getAttribute('data-full') || t.textContent).includes('coupler_long_name')),
+        'a name its circle would cut is named in full by the caption under the grid');
+    check(longHost.querySelector('[data-element="q1"]').classList.contains('iw-port-plain') &&
+        longHost.querySelector('.ui-iw-key-compact .iw-key-other-swatch:not([style*="background"])'),
+        'a port with no known role and its key swatch carry the class the kit themes');
+    w.releaseInstrumentWiring(longHost); longHost.remove();
     const circle = a.querySelector('[data-element="switch"]');
     circle.dispatchEvent(new w.MouseEvent('mouseenter', {bubbles: true}));
     check(d.getElementById('popup-label').textContent === 'switch' && !popup.classList.contains('hidden'),
@@ -165,6 +184,10 @@ try {
         'instrument default keeps the full key');
     w.releaseInstrumentWiring(locked);
     const css = fs.readFileSync(path.join(staticDir, 'ui-kit.css'), 'utf8');
+    check(/\.ui-opxmon-rack \.iw-port-plain circle\s*\{\s*fill: var\(--ui-/.test(css) &&
+        /\.ui-iw-key-compact \.iw-key-other-swatch\s*\{\s*background: var\(--ui-/.test(css) &&
+        /\.ui-opxmon-rack \.iw-port-plain text\s*\{\s*fill: var\(--ui-/.test(css),
+        'the monitor rack themes role-less ports from kit tokens');
     check(/\.ui-opxmon-rack svg\.instrument-svg\s*\{[^}]*max-width:\s*none;[^}]*height:\s*auto/.test(css),
         'mini SVG preserves the readable scale instead of shrinking to its container');
     check(/\.ui-opxmon-rack-block\s*\{[^}]*contain:\s*inline-size;[^}]*overflow-x:\s*auto/.test(css),
