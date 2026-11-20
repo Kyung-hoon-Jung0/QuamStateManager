@@ -904,13 +904,37 @@ def call_subject(name):
     return CALL_SUBJECTS.get(text, 'a status request')
 
 
+def read_kind(error):
+    """The SDK puts every exception in refused; distinguish only causes evidenced by its text."""
+    text = str(error).lower()
+    if call_timed_out(error) or 'deadline_exceeded' in text:
+        return 'timeout'
+    if any(w in text for w in ('permission', 'unauthorized', 'unauthenticated', 'access denied')):
+        return 'permission'
+    if any(w in text for w in ('already acquired', 'held by another', 'resource busy', 'in use by another')):
+        return 'busy'
+    if any(w in text for w in ('connectionerror', 'connection refused', 'unreachable', 'failed to connect',
+                                'statuscode.unavailable')):
+        return 'unreachable'
+    if call_unreadable(error):
+        return 'unreadable'
+    return 'error'
+
+
 def call_failure(name, error):
     subject = call_subject(name)
+    if read_kind(error) == 'timeout':
+        return f'The server did not answer in time while reading {subject}: {error}'
     if any(word in str(error).lower() for word in ('connectionerror', 'connectionrefused', 'connection refused', 'unreachable', 'failed to connect', 'timeout', 'statuscode.unavailable')):
         return f'Server unreachable while reading {subject}: {error}'
     if call_unreadable(error):
         return f'Unreadable reply for {subject}: {error}'
-    return f'The OPX server did not answer the request for {subject}: {error}'
+    kind = read_kind(error)
+    if kind == 'permission':
+        return f'The server denied permission to read {subject}: {error}'
+    if kind == 'busy':
+        return f'The server is busy; {subject} was not read this time: {error}'
+    return f'The request for {subject} failed: {error}'
 
 
 def call_timed_out(error):
@@ -936,8 +960,10 @@ def failure_advice(errors, host):
         return connection_hint(host)
     if texts and all(call_unreadable(e) for e in texts):
         return 'The server answered, but some values could not be read; the affected sections are marked below.'
+    if any(read_kind(e) == 'permission' for e in texts):
+        return 'Check the account permissions for this request.'
     if texts:
-        return 'The server answered but declined some requests; check the account permissions or the QOP version.'
+        return 'See Technical details for the failed request; try reading again.'
     return connection_hint(host)
 
 
@@ -1179,6 +1205,8 @@ def verdict(answer, health_state, idle_states, state=None, age_s=None):
         return {'label': 'Health not assessed', 'reason': 'Set up a connection in Monitor settings'}
     if state == 'starting':
         return {'label': 'Checking...', 'reason': 'Waiting for the first server answer'}
+    if state == 'stale' and (answer or {}).get('open_qms') is None and not health_state.get('problem'):
+        return {'label': 'UNKNOWN', 'reason': 'Not read this time; no successful open QM read yet'}
     result = _occupancy_verdict(answer, health_state, idle_states)
     if state == 'stale' and age_s is not None:
         result['label'] += f' — as of {age_s:.0f} s ago'
@@ -1346,7 +1374,7 @@ class Monitor:
         self._watch: dict = {}
         self.worker_factory = worker_factory or (lambda py, t: EnvWorker(py, t))
         self.clock = clock
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._worker = None
         self._worker_sig = None
         self.section_times = {}
@@ -1367,6 +1395,7 @@ class Monitor:
         self.alarms: list[dict] = []
         self._toasted: set = set()
         self._fails = 0
+        self._misses = 0
         self._retry_at = 0.0
         self.admin = {'known': False, 'reason': 'Admin input unknown; no fresh admin poll.'}
         self._trends = {}
@@ -1454,6 +1483,7 @@ class Monitor:
             self.last_try_at = None
             self.alarms = []
             self._fails = 0
+            self._misses = 0
             self._retry_at = 0.0
 
     # -- polling
@@ -1513,6 +1543,7 @@ class Monitor:
                 return  # the target changed since this poll read it
             if self._worker is None and self.clock() < self._retry_at:
                 return  # backing off after a failure
+            self._misses += 1
             self.last_try_at = self.clock()
             self.last_poll_interval = self.poll_interval()
             try:
@@ -1526,10 +1557,17 @@ class Monitor:
                 return
             self._fails = 0
             if not r.get("ok"):
-                self.last_error = f"The OPX server did not answer the status request: {r.get('error')}"
+                self.last_error = str(r.get("error") or "Status request failed")
                 self._sections_failed(self.last_error)
                 return
             ans = r.get("result") or {}
+            errors = ans.get('refused') or {}
+            if self._transient_busy(errors):
+                self.last_error = next(iter(errors.values()))
+                self._sections_failed(self.last_error)
+                return
+            if not errors:
+                self._misses = 0
             selected_cluster = (s.get('target') or {}).get('cluster_name') or ans.get('cluster_name')
             self.admin = read_admin(s.get('admin_url'), selected_cluster, clock=self.clock)
             if isinstance(self.admin.get('clock'), dict):
@@ -1767,8 +1805,21 @@ class Monitor:
     def status_state_unfresh(self):
         return self.viewer_check_pending or self.last_ok_at is None or bool(self.last_error) or self.clock() - self.last_ok_at > STALE_INTERVALS * self.poll_interval()
 
+    def _transient_busy(self, errors):
+        if errors and all(read_kind(e) == 'busy' for e in errors.values()):
+            return True
+        active = any(job_activity(j.get('status')) == 'active'
+                     for q in (self.last_answer or {}).get('open_qms') or [] for j in q.get('jobs') or [])
+        return (active and bool(errors) and self._misses <= 2 and self.last_ok_at is not None
+                and all(read_kind(e) in ('timeout', 'busy') for e in errors.values()))
+
     def status(self) -> dict:
         self.sync_target()
+        with self._lock:
+            from copy import deepcopy
+            return {**deepcopy(self._status()), 'snapshot_id': str(time.monotonic_ns())}
+
+    def _status(self) -> dict:
         s = self.settings()
         now = self.clock()
         age = (now - self.last_ok_at) if self.last_ok_at else None
@@ -1780,6 +1831,11 @@ class Monitor:
         elif not s.get("python"):
             state = "unconfigured"
             sentence = "No Python environment with the QM SDK is chosen. Choose one under Monitor settings."
+        elif self._transient_busy({'call': self.last_error} if self.last_error else self.section_errors):
+            state = 'stale'
+            sentence = f'Not read this time: {failure_headline(call_failure("poll", self.last_error))}. '
+            sentence += (f'The last good read was {age:.0f} s ago.' if age is not None
+                         else 'No successful read yet.')
         elif self.last_error:
             state = "error"
             sentence = self.last_error.rstrip('.') + '.'
@@ -1802,9 +1858,13 @@ class Monitor:
         answer = known_answer(self.last_answer, self.section_times, age)
         health_state = health(answer, self.admin, s['thresholds'], state)
         sentence_shown = None
-        if self.last_error or self.section_errors or (self.last_answer or {}).get('refused'):
-            errors = (self.last_answer or {}).get('refused') or self.section_errors
-            cause = self.last_error or failure_summary(errors)
+        transient = self._transient_busy({'call': self.last_error} if self.last_error else self.section_errors)
+        if not transient and (self.last_error or self.section_errors or (self.last_answer or {}).get('refused')):
+            errors = ({'poll': self.last_error} if self.last_error else
+                      (self.last_answer or {}).get('refused') or self.section_errors)
+            errors = dict(list(errors.items())[:1])
+            cause = (self.last_error if self.last_error and self.last_error.startswith(('The ', 'Server '))
+                     else failure_summary(errors))
             health_state = {**health_state, 'color': 'red', 'problem': True, 'reason': failure_headline(cause), 'details': failure_advice(errors if not self.last_error or errors else {'call': self.last_error}, (s.get('target') or {}).get('host'))}
             if state == 'ok':
                 sentence = f'Last reply {age:.0f} s ago; some data unavailable. {cause}'
@@ -1812,9 +1872,18 @@ class Monitor:
             sentence_shown = (f'Last reply {age:.0f} s ago; some data unavailable.' if state == 'ok'
                               else f'The last good read was {age:.0f} s ago.' if age is not None
                               else 'No good read yet.')
-        return {"section_times": self.section_times, "section_errors": self.section_errors, "state": state, "sentence": sentence, "sentence_shown": sentence_shown or sentence, "age_s": age,
+        return {"watched": self.watch_info(), "clock_skew": self.clock_skew(),
+                "busy_observed_s": max((v['watched_s'] for v in self.watch_info().values()
+                                         if v['continuous'] and v['sig']
+                                         and any(job_activity(s) == 'active' for _, s in v['sig'])), default=None),
+                "section_times": self.section_times, "section_errors": self.section_errors, "state": state,
+                "sentence": sentence, "sentence_shown": sentence_shown or sentence, "age_s": age,
                 'health': health_state, 'admin': self.admin,
-                'badge_label': badge_label(answer, health_state, state),
+                'badge_label': (_occupancy_verdict(answer, health_state, {})['label'].lower() + ' (last read)'
+                                if state == 'stale' and answer and answer.get('open_qms') is not None
+                                and (transient or (age is not None
+                                     and age <= STALE_INTERVALS * self.poll_interval()))
+                                else badge_label(answer, health_state, state)),
                 "answer": answer, "target_label": target_label(s.get("target") or {}),
                 "target_kind": (s.get("target") or {}).get("kind"),
                 "target_source": s.get("target_source"),

@@ -15,7 +15,7 @@ w.eval(fs.readFileSync(path.join(staticDir, 'app.js'), 'utf8'));
 const spec = {
     data: {controllers: {con1: {max_output_port: 8, fems: {
         1: {type: 'lf-fem', output_ports: {
-            1: [{element: 'flux_a', label: 'flux_a', role: 'z'}],
+            1: [{element: 'flux_a', label: 'q3', role: 'z'}],
             2: [{element: 'foreign', label: 'foreign', role: 'xy'}]
         }, input_ports: {1: [{element: 'read', label: 'read', role: 'rr_in'}]},
         digital_ports: {3: [{element: 'switch', label: 'switch', role: 'digital'}]},
@@ -83,6 +83,12 @@ try {
         'a highlighted assignment retains its role color');
     check(a.querySelector('[data-slot="7"][data-port="2"][data-io="output"] .iw-port-circle'),
         'a declared port with no elements is filled');
+    const shortLabel = a.querySelector('.iw-port-short text');
+    check(shortLabel && shortLabel.textContent === 'q3', 'short labels opt into readable mini rack typography');
+    const kit = fs.readFileSync(path.join(staticDir, 'ui-kit.css'), 'utf8');
+    check(/\.ui-opxmon-rack \.iw-port-short text\s*\{ font-size: var\(--ui-fs-lg\)/.test(kit) &&
+        /font-weight: var\(--ui-fw-normal\)/.test(kit.split('.ui-opxmon-rack .iw-port-circle text')[1]?.split('}')[0]),
+        'mini labels use larger kit type and normal weight for distinct digits at 0.8x');
     check(a.textContent.includes('type unknown'), 'unknown type stays honest');
     check(!a.querySelector('button, .iw-port-grip, [data-play], .iw-fitbar, .iw-sizebar'),
         'mini rack offers no editing, playback or size controls');
@@ -95,6 +101,9 @@ try {
         5: [{element: 'q1', label: 'q1', role: 'configured'}]}}}}}}, {},
         {readOnly: true, highlight: [['con1', '1', '4', 'output'], ['con1', '1', '5', 'output']], scale: 0.8,
             compactKey: true, captionLongNames: true});
+    const couplerTitle = longHost.querySelector('[data-element="coupler_long_name"] title');
+    check(couplerTitle && couplerTitle.textContent.includes('coupler_long_name'),
+        'coupler circles expose the full assignment as a hover title');
     const shownNames = Array.from(longHost.querySelectorAll('.iw-port-circle text'))
         .filter(t => t.style.display !== 'none');
     check(shownNames.every(t => !/\u2026|-$/.test(t.textContent) && Number(t.getAttribute('font-size')) * 0.8 >= 8.95),

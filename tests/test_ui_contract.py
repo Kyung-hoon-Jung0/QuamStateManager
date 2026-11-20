@@ -1186,6 +1186,7 @@ _STAGE6_SELECTORS = {
     '.ui-opxmon-rack-block', '.ui-opxmon-rack', '.ui-opxmon-rack svg.instrument-svg',
     '.ui-opxmon-rack .iw-port-plain circle', '.ui-iw-key-compact .iw-key-other-swatch',
     '.ui-opxmon-rack .iw-port-plain text',
+    '.ui-opxmon-rack .iw-port-circle text', '.ui-opxmon-rack .iw-port-short text',
     '.ui-opxmon-rack-row', '.ui-iw-key-compact', '.ui-iw-key-compact > .iw-legend-item',
     '.ui-opxmon-port-dim', '.ui-opxmon-port-active', '.ui-opxmon-port-popup',
     '.ui-opxmon-port-popup.hidden',

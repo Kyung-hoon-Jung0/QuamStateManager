@@ -331,7 +331,9 @@
             </ul>
             <ul class="topbar-right">
                 <li class="ui-opxmon-alarm-slot" id="ui-opxmon-alarm-slot" hx-get="/opx-monitor/alarm-badge"
-                    hx-trigger="load, every 10s" hx-request='{"timeout":5000}' hx-swap="innerHTML"></li>
+                    hx-trigger="load, every 10s" hx-request='{"timeout":5000}' hx-swap="innerHTML">
+                    {% if page == 'opx_monitor' and st is defined %}
+                    {% include '_opx_alarm_badge.html' %}{% endif %}</li>
                 {# v1.5.3 (design A): the bar keeps the chip name, the Sync status control and
                    Review (the tray); every other control lives in this one overflow menu.
                    The items are the same nodes (ids, classes, handlers) moved here, not

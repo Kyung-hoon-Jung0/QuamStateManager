@@ -1973,6 +1973,10 @@ table.ui-pair-props { table-layout: fixed; width: 100%; }
 }
 .ui-iw-key-compact > .iw-legend-item { display: inline-flex; align-items: center; gap: var(--ui-gap-1); }
 .ui-opxmon-rack { min-width: 0; }
+.ui-opxmon-rack .iw-port-circle text {
+    font-family: var(--ui-font-mono); font-weight: var(--ui-fw-normal);
+}
+.ui-opxmon-rack .iw-port-short text { font-size: var(--ui-fs-lg); }
 /* A QM configuration names no role: those ports and their key swatch use kit tokens in both themes. */
 .ui-opxmon-rack .iw-port-plain circle { fill: var(--ui-text-2); }
 .ui-iw-key-compact .iw-key-other-swatch { background: var(--ui-text-2); }

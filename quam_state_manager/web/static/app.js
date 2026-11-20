@@ -18110,6 +18110,10 @@ function _appendPortCircle(svg, cx, cy, r, roleColors, assignment, rawWiring, ed
         UI_CONFIG.instrumentWiring.portLabelColor, 'middle');
     txt.setAttribute('font-family', 'monospace');
     g.appendChild(txt);
+    if (r >= 16 && displayLabel.length <= 3) g.classList.add('iw-port-short');
+    var fullTitle = _svgEl('title');
+    fullTitle.textContent = label + (assignment.role ? ' (' + assignment.role + ')' : '');
+    g.appendChild(fullTitle);
 
     // Single click → open inspector; double-click → JSON panel (timer
     // distinguishes them). Skipped in any wizard context (editable, or a

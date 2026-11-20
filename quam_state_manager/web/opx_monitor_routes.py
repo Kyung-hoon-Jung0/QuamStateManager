@@ -173,7 +173,7 @@ def stale_time(value):
 
 def _idle_states(m, st, s) -> dict:
     """Idle state per open QM, as the page shows it (stale data never reads as idle)."""
-    watched = m.watch_info()
+    watched = st.get('watched', {})
     idle_states = {q['id']: om.idle_state(q, watched.get(str(q['id'])), s['idle_minutes'])
                    for q in (st.get('answer') or {}).get('open_qms') or []}
     if st['state'] != 'ok':
@@ -207,15 +207,15 @@ def _chip_rack_wiring():
         return None
 
 
-def _view(tab: str) -> dict:
+def _view(tab: str, st=None) -> dict:
     m = monitor()
-    st = m.status()
+    st = m.status() if st is None else st
     s = m.settings()
     h = m.history()
     t = dict(s.get("target") or {})
     key = om.target_key(t)
     has_headers = bool(om.load_secret_headers(m.instance, key)) if key else False
-    skew = m.clock_skew()
+    skew = st.get('clock_skew')
     idle_states = _idle_states(m, st, s)
     hottest = max((dict(r, controller=c['name']) for c in (st.get('answer') or {}).get('controllers') or [] for r in om.temperature_rows(c) if r['value'] is not None), key=lambda r: (om.temperature_limit(r['key'], s['thresholds']) is not None and r['value'] > om.temperature_limit(r['key'], s['thresholds']), r['value']), default=None)
     try:
@@ -253,7 +253,12 @@ def _view(tab: str) -> dict:
             at = st['section_times'].get(section)
             if at:
                 tile['note'] = (tile['note'] + '; ' if tile['note'] else '') + 'as of ' + stale_time(at)
-    owner_ctx['busy_since'] = om.busy_since_text(verdict.get('since'), skew, st.get('answer'), m.clock())
+    busy_text = om.busy_since_text(verdict.get('since'), skew, st.get('answer'), m.clock())
+    if verdict['label'].startswith('BUSY') and (not busy_text or 'busy time unknown' in busy_text):
+        observed = st.get('busy_observed_s')
+        if observed is not None:
+            busy_text = f' for at least {om._span_words(observed)} (observed by SM)'
+    owner_ctx['busy_since'] = busy_text
     return {**owner_ctx, 'temperature_failed': 'controllers' in st['section_errors'] or any(k.endswith('.temperatures') for k in (st.get('answer') or {}).get('refused', {})), 'unreadable_temps': om.unreadable_temperatures(st.get('answer')), 'last_job': last_job, 'hottest': hottest, 'local_time': om.local_time, 'plain_error': plain_error, 'call_failure': om.call_failure, 'raw_error': raw_error(st), 'stale_time': stale_time, 'opx_time': om.opx_time, 'pc_zone': om.zone_text(), 'words': om.words, 'job_activity': om.job_activity, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': verdict, 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason, skew=skew) if not run_reason else {}, 'clock_skew': skew, 'skew_text': om.skew_text(skew, m.clock()), 'metric_known': om.metric_known, 'job_list_cap': om.JOB_LIST_CAP, 'value_vs_limit': om.value_vs_limit,
             "trends": m.trends().series(m.clock()) if m.trends() and tab == "live" else {}, "idle_states": idle_states, "idle_ids": [k for k, v in idle_states.items() if v['idle'] and st['state'] == 'ok'], "tab": tab, "tabs": TABS, "tab_labels": TAB_LABELS, "st": st, "settings": s,
             "target": t, "has_headers": has_headers,
@@ -275,7 +280,14 @@ def opx_monitor_page(tab="live"):
     monitor().want(tab, request.args.get("limit", 100, type=int))
     r = _r()
     tpl = "_opx_monitor.html" if r._is_htmx() else "opx_monitor.html"
-    return render_template(tpl, **r._ctx(page="opx_monitor", **_view(tab)))
+    view = _view(tab)
+    html = render_template(tpl, **r._ctx(page="opx_monitor", **view))
+    return html + _snapshot_badge(view) if r._is_htmx() else html
+
+
+def _snapshot_badge(view):
+    return ('<div id="ui-opxmon-alarm-slot" hx-swap-oob="innerHTML">'
+            + render_template('_opx_alarm_badge.html', st=view['st'], value_vs_limit=om.value_vs_limit) + '</div>')
 
 
 @opxmon_bp.route("/opx-monitor/body")
@@ -284,12 +296,15 @@ def opx_monitor_body():
     if tab not in TABS:
         tab = "live"
     monitor().want(tab, request.args.get("limit", 100, type=int))
-    html = render_template("_opx_monitor_body.html", **_view(tab))
+    view = _view(tab)
+    html = render_template("_opx_monitor_body.html", **view)
     if request.headers.get("HX-Request"):
         # keep the top-bar health pill in step with the body it sits above
-        html += ('<div id="ui-opxmon-alarm-slot" hx-swap-oob="innerHTML">'
-                 + render_template("_opx_alarm_badge.html", st=monitor().status(),
-                                   value_vs_limit=om.value_vs_limit) + '</div>')
+        html += _snapshot_badge(view)
+        if tab == 'settings':
+            # Other open monitor tabs receive the same read without replacing a Settings form.
+            live = render_template('_opx_monitor_body.html', **_view('live', st=view['st']))
+            html += '<template data-opxmon-live>' + live + '</template>'
     return html
 
 
