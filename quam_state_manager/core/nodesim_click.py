@@ -642,7 +642,7 @@ class Manager:
         self.pool = pool
         self.warm_jobs: dict = {}
         self.intent_answers: dict = {}
-        self.intent_at: dict = {}
+        self.intent_started: dict = {}
         self.latest_at: dict = {}
 
     def runs(self, window: Any) -> ClickRuns:
@@ -898,12 +898,13 @@ class Manager:
         if not saas:
             return answer("not_configured")
         key = window_key(window)
-        if renew or explicit or self.pool.keep_warm:
-            # D-51: an intent that acquires checks the version first; a panel-open import warm needs none.
-            refused = self._version_refused(saas)
-            if refused:
-                self._set_intent(key, refused)
-                return refused
+        # Int r2 N-1: the start time, stamped once; status compares it with the window's newest click.
+        self.intent_started[key] = time.monotonic()
+        # D-51 / int r2 N-2: every intent kind, a panel-open import warm included, checks the version before any spawn.
+        refused = self._version_refused(saas)
+        if refused:
+            self._set_intent(key, refused)
+            return refused
         self._set_intent(key, answer("warming", env=env_name))
 
         def run():
@@ -930,8 +931,7 @@ class Manager:
         return self.intent_answers[key]
 
     def _set_intent(self, key, value):
-        """Record an intent answer with its time, for status's newest-answer rule (review S P2-5)."""
-        self.intent_at[key] = time.monotonic()
+        """Record an intent answer; its notifies never move the intent's start time (int r2 N-1)."""
         self.intent_answers[key] = value
 
     def _mark_latest(self, key, rid):
@@ -1089,9 +1089,11 @@ class Manager:
         """Return warm or cold progress and mark stale snapshots (D-14, D-26)."""
         key = window_key(window)
         newest = not rid or rid == self.latest.get(key)
-        if newest and key in self.intent_answers and self.intent_at.get(key, 0) > self.latest_at.get(key, -1):
+        started = self.intent_started.get(key, 0)
+        if newest and key in self.intent_answers and started > self.latest_at.get(key, -1):
             # Review S P2-5 / int r1 P2-2: renew / new-instance progress after a click is the newest answer, so it
             # shows; the page keeps polling with its last click id, which counts as asking for the newest answer.
+            # Int r2 N-1: the intent's START time counts, so a click started after the intent began always wins.
             return copy.deepcopy(self.intent_answers[key])
         warm = self.warm_jobs.get(rid or self.latest.get(key))
         if warm:

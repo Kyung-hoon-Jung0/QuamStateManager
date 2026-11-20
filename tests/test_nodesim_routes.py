@@ -308,6 +308,45 @@ def test_int1_renew_after_click_shows_with_the_click_id(warm_app, monkeypatch):
     assert next(iter(rig.p.leases.values()))["instance_id"] == "instance-b"
 
 
+def test_int2_click_started_during_an_intent_keeps_its_own_answer(warm_app, monkeypatch):
+    """Review int r2 N-1: an intent that began before a click but ends after it never hides that click's answer."""
+    import threading
+    app, rig = warm_app
+    _warm_click(app)
+    renewing, hold, real = threading.Event(), threading.Event(), rig.p.renew
+
+    def held(**kw):
+        """Show renewing, then hold until the second click is done (no wall-clock settle)."""
+        kw["notify"]("renewing")
+        renewing.set()
+        assert hold.wait(8)
+        return real(**kw)
+    monkeypatch.setattr(rig.p, "renew", held)
+    assert app.c.post("/api/nodesim/renew", json={}, headers=H).get_json()["ok"]
+    assert renewing.wait(8)
+    request = {"node": "11_rabi_demo.py", "targets": ["q1"], "window_us": 50}
+    second = app.c.post(START, json=request, headers=H).get_json()
+    assert second["id"], second
+    rid2 = second["id"]
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline and not app.m.warm_jobs[rid2]["done"]:
+        time.sleep(.01)
+    assert app.m.warm_jobs[rid2]["done"]
+    hold.set()
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline and app.m.intent_answers.get(window_key_h())["state"] != "ready":
+        time.sleep(.01)
+    assert app.m.intent_answers[window_key_h()]["state"] == "ready"
+    assert app.m.warm_jobs[rid2]["answer"]["state"] == "done"
+    ans = app.c.get(STATUS + "?id=" + rid2, headers=H).get_json()
+    assert ans["state"] == "done", ans
+
+
+def window_key_h():
+    """The window key the routes derive from the X-SM-Window-ID header used here."""
+    return click.window_key(H["X-SM-Window-ID"])
+
+
 def _env_login(app, monkeypatch, version=None, saved=None):
     """D-51: fake SAAS_* variables through the real _saas() ladder; optional saved port-test version."""
     for name, value in (("SAAS_EMAIL", CREDS["email"]), ("SAAS_PASSWORD", PW), ("SAAS_HOST", CREDS["host"])):
@@ -337,6 +376,18 @@ def test_int1_env_login_without_version_refused_before_spawn(warm_app, monkeypat
     assert ans["state"] == "spawn_failed", ans
     assert rig.workers == [] and rig.procs == [] and not app.m.warm_jobs
     assert not [c for c in rig.broker.calls if c["op"] == "acquire"]
+    assert PW not in json.dumps(ans)
+
+
+def test_int2_panel_open_without_version_spawns_nothing(warm_app, monkeypatch):
+    """Review int r2 N-2 / D-51: version-less env login, panel open, keep-warm off: refused, no worker spawned."""
+    app, rig = warm_app
+    _env_login(app, monkeypatch)
+    assert rig.p.keep_warm is False
+    ans = app.c.post("/api/nodesim/intent", json={}, headers=H).get_json()
+    assert ans["state"] == "spawn_failed" and "Set SAAS_VERSION" in ans["line"], ans
+    assert app.c.get(STATUS, headers=H).get_json()["state"] == "spawn_failed"
+    assert rig.workers == [] and rig.procs == [] and not rig.p.workers
     assert PW not in json.dumps(ans)
 
 
