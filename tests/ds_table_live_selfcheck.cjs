@@ -145,23 +145,28 @@ async function search(w, q) {
   }
   {
     // the same delta HELD while the user is busy (docs/104 #3): the pill must
-    // not announce the untagged run the view will never show
+    // not announce the untagged run the view will never show. The first poll is
+    // the load's quiet catch-up (baseline), so the delta arrives on the second.
     const delta = { now: 2000, updated: [row(800, 'rabi', [], { date: '2026-09-02' }),
                                          row(801, 'rabi', ['qa-coll'], { date: '2026-09-02' })], vanished: [] };
+    const baseline = { now: 1500, updated: [], vanished: [] };
     let served = 0;
     const fetchImpl = (url) => {
-      if (String(url).indexOf('/datasets/changes-since') >= 0 && !served++) {
-        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(delta) });
+      if (String(url).indexOf('/datasets/changes-since') >= 0 && served < 2) {
+        const body = served++ === 0 ? baseline : delta;
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
       }
       return new Promise(() => {});
     };
     const w = boot('collections', [row(701, 'rabi', ['qa-coll'])], fetchImpl);
     await tick();
+    w.document.dispatchEvent(new w.Event('visibilitychange'));
+    await tick(80);
     await search(w, 'rabi');                    // an interaction: the delta is held
     w.document.dispatchEvent(new w.Event('visibilitychange'));
     await tick(80);
     const pill = w.document.getElementById('ds-new-pill');
-    ok(served === 1 && pill && !pill.hidden && /^1 new run /.test(pill.textContent),
+    ok(served === 2 && pill && !pill.hidden && /^1 new run /.test(pill.textContent),
        'collections: a HELD delta announces only the tagged arrival (' + (pill && pill.textContent) + ')');
   }
 
