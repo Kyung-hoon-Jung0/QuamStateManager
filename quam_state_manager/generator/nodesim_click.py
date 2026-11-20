@@ -181,20 +181,9 @@ def resolve(host, port):
 
 def cluster_of(config):
     """The cloud instance's cluster: the config's FEM slots by type (as P0b and the gate sim)."""
-    from qm_saas import ClusterConfig
-    cluster = ClusterConfig()
-    controller = cluster.controller()
-    slots = {}
-    for con in (config.get("controllers") or {}).values():
-        for slot, fem in (con.get("fems") or {}).items():
-            slots.setdefault(int(slot), fem.get("type"))
-    mw = sorted(slot for slot, kind in slots.items() if kind == "MW")
-    lf = sorted(slot for slot, kind in slots.items() if kind != "MW")
-    if mw:
-        controller.mw_fems(*mw)
-    if lf:
-        controller.lf_fems(*lf)
-    return cluster
+    import qm_saas
+    from nodesim_proto import cluster_config, cluster_spec
+    return cluster_config(cluster_spec(config), qm_saas)
 
 
 def target_key(fields, targets):
@@ -247,6 +236,11 @@ def build_program(req, guard, result, notes):
            "scratch": req["scratch"], "overrides": {}}
     nb.stub_class = click_stub(STUB_CLASS, req.get("overrides") or {}, req.get("targets") or [], notes)
     out = nb.build(job, guard, result)
+    return post_build(out, notes)
+
+
+def post_build(out, notes):
+    """Share the cold config refusal and best-effort full serialization (D-24, contract 10)."""
     node = notes["stub"].instances[0]
     program = node.namespace["qua_program"]
     if node.machine is None:

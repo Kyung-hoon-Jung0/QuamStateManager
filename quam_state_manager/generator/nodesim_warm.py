@@ -33,6 +33,7 @@ class Worker:
         self.phases = []
         self.phase_at = None
         self.phase_name = None
+        self.native_threads = []
 
     def emit(self, ev, **fields):
         """Scrub every protocol field, including scripts and guard lines (D-11)."""
@@ -46,10 +47,14 @@ class Worker:
 
     def collect_sources(self):
         """Retain the first observed stat of each imported library module (D-5)."""
-        for module in list(sys.modules.values()):
+        for module_name, module in list(sys.modules.items()):
+            if module_name == "_nodesim_node":
+                continue
             name = getattr(module, "__file__", None)
             if name and nb.inside(name, self.job["library_root"]) and Path(name).suffix == ".py":
                 path = str(Path(name).resolve())
+                if path == self.holder["job"].get("node_file"):
+                    continue
                 if path not in self.sources:
                     stat = Path(path).stat()
                     self.sources[path] = [stat.st_mtime_ns, stat.st_size]
@@ -107,12 +112,13 @@ class Worker:
                 break
             if message is None or message.get("op") == "exit":
                 self.gone = self.stopped = True
-            elif message["op"] == "stop" and message["click_id"] == self.click_id:
-                self.stopped = True
+            elif message["op"] == "stop":
+                if message["click_id"] == self.click_id:
+                    self.stopped = True
             elif message["op"] in ("lease", "drop_lease"):
                 self.emit("lease_failed", lease_seq=message["lease_seq"], message="not between clicks")
             else:
-                raise ValueError("operation while click is active")
+                self.gone = self.stopped = True
         return self.stopped
 
     def phase(self, name):
@@ -124,7 +130,7 @@ class Worker:
         self.emit("phase", click_id=self.click_id, phase=name, phases=list(self.phases))
 
     def truncate_capture(self):
-        """Discard captured output between clicks; no secrets are copied to disk (D-11)."""
+        """Discard raw captured output between clicks before worker reuse (D-11)."""
         sys.stdout.flush()
         sys.stderr.flush()
         os.truncate(self.capture, 0)
@@ -147,9 +153,14 @@ class Worker:
             self.emit("build_started", click_id=self.click_id)
             self.guard.enter_build()
             snapshot = json.loads((Path(self.job["chip_copy"]) / "_snapshot.json").read_text(encoding="utf-8"))
-            for field in proto.SNAPSHOT:
-                if snapshot.get(field) != request[field]:
-                    raise ValueError(f"chip copy {field} {snapshot.get(field)} is not the click's {request[field]}")
+            try:
+                proto.check_snapshot(request, snapshot)
+            except ValueError:
+                field = next((k for k in proto.SNAPSHOT if snapshot.get(k) != request[k]), None)
+                if field is None:
+                    raise
+                result["message"] = f"chip copy {field} {snapshot.get(field)} is not the click's {request[field]}"
+                raise ValueError(result["message"])
             if not 0 < request["window_ns"] <= cold.MAX_WINDOW_NS:
                 result["kind"] = "too_long"
                 raise ValueError("The window is above the 100 us cap.")
@@ -162,17 +173,16 @@ class Worker:
             node_started = True
             out = nb.build_one(job, self.guard, result, self.holder)
             node = notes["stub"].instances[0]
-            config = node.machine.generate_config()
-            from qm import generate_qua_script, QuantumMachinesManager, SimulationConfig
-            script = generate_qua_script(node.namespace["qua_program"], config)
-            if "SERIALIZATION VALIDATION ERROR" in script:
-                detail = script.split("SERIALIZATION VALIDATION ERROR", 1)[1].strip().replace("\n", " ")[:300]
-                raise RuntimeError(cold.SERIALIZATION + detail)
+            built = cold.post_build(out, notes)
+            config, script = built["config"], built["script"]
+            from qm import QuantumMachinesManager, SimulationConfig
             spec = proto.cluster_spec(config)
             hash_value = proto.cluster_hash(spec)
-            result.update(script=script, script_ok="SERIALIZATION WAS NOT COMPLETE" not in script,
-                          program_chars=len(out["program_script"]), cluster_hash=hash_value,
+            result.update(script=script, script_ok=built["script_ok"],
+                          program_chars=built["program_chars"], cluster_hash=hash_value,
                           dropped_overrides=notes.get("dropped_overrides", []))
+            if notes.get("script_error"):
+                result["script_error"] = notes["script_error"]
             self.guard.exit_build()
             build_finished = True
             self.emit("build_done", click_id=self.click_id, s=time.monotonic() - self.phase_at,
@@ -192,6 +202,8 @@ class Worker:
                         message = self.inbox.get(timeout=0.2)
                     except queue.Empty:
                         continue
+                    if message and message["op"] == "stop" and message["click_id"] != self.click_id:
+                        continue
                     if message is None or message["op"] in ("exit", "stop"):
                         self.gone = message is None or message["op"] == "exit"
                         raise cold.Stopped()
@@ -200,26 +212,27 @@ class Worker:
                         self.set_lease(message)
                         self.click_id = active
                     else:
-                        raise ValueError("expected lease or stop")
+                        self.gone = True
+                        raise cold.Stopped()
             if self.pump():
                 raise cold.Stopped()
             result.update(lease_seq=self.lease["lease_seq"], qop_version=self.lease["version"])
             self.guard.enter_sim()
             if self.qmm is None:
                 self.phase("connect")
-                self.qmm = cold.bounded(lambda: QuantumMachinesManager(**self.guard.lease_params),
+                self.qmm = self.bounded(lambda: QuantumMachinesManager(**self.guard.lease_params),
                                         30, self.pump, "connect")
             if self.pump():
                 raise cold.Stopped()
             self.phase("submit")
-            job = cold.bounded(lambda: self.qmm.simulate(config, node.namespace["qua_program"],
+            job = self.bounded(lambda: self.qmm.simulate(config, node.namespace["qua_program"],
                                                        SimulationConfig(duration=request["window_ns"] // 4)),
                                request["wait_cap_s"], self.pump, "submit")
             self.phase("wait")
-            cold.bounded(lambda: job.wait_until("Done", timeout=request["wait_cap_s"]),
+            self.bounded(lambda: job.wait_until("Done", timeout=request["wait_cap_s"]),
                          request["wait_cap_s"], self.pump, "wait_until Done")
             self.phase("report")
-            report = cold.bounded(lambda: job.get_simulated_waveform_report().to_dict(),
+            report = self.bounded(lambda: job.get_simulated_waveform_report().to_dict(),
                                   30, self.pump, "report")
             ends = [a.get("end_time", 0) for a in report.get("adc_acquisitions", [])]
             if self.pump():
@@ -230,16 +243,20 @@ class Worker:
                 raise
             if isinstance(exc, cold.Stopped):
                 result.update(kind="failed", message="Stopped.")
-                self.gone = True
+                self.gone = self.gone or any(t.is_alive() for t in self.native_threads)
             elif isinstance(exc, cold.WaitCapHit):
                 result.update(kind="timeout", message=str(exc))
                 self.gone = True
             else:
-                text = str(exc)
-                kind = result["kind"]
-                if kind == "failed" and not build_finished and node_started:
+                kind, message = cold.classify(exc, self.guard, "")
+                if not build_finished and node_started:
+                    text = str(exc)
                     kind = "serializer" if text.startswith(cold.SERIALIZATION) else "node_error"
-                result.update(kind=kind, message=text.removeprefix(cold.SERIALIZATION))
+                    message = text.removeprefix(cold.SERIALIZATION) or type(exc).__name__
+                elif result["kind"] != "failed":
+                    kind, message = result["kind"], str(exc)
+                result.update(kind=kind, message=result["message"] or message)
+
         finally:
             if not self.guard.verdict:
                 if self.guard.phase == "build":
@@ -257,6 +274,17 @@ class Worker:
         self.emit("idle")
         if self.gone:
             self.emit("bye", why="exit")
+
+    def bounded(self, fn, cap_s, stopping, what):
+        """Track native call threads so Stop retires only a still-running call (P2 spec 2.5)."""
+        self.native_threads = [t for t in self.native_threads if t.is_alive()]
+
+        def tracked():
+            """Record the actual cold bounded-call thread (P2 spec 2.5)."""
+            self.native_threads.append(threading.current_thread())
+            return fn()
+
+        return cold.bounded(tracked, cap_s, stopping, what)
 
     def cluster(self, request):
         """Generate the current copy's FEM spec without running a node (P2 spec 2.6)."""

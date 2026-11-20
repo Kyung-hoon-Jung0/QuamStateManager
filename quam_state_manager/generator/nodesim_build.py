@@ -168,7 +168,8 @@ def stub_class(guard, overrides):
 def install_once(job, guard, holder):
     """Install class and library barriers once per worker (P2 spec 2.3, D-15)."""
     holder["job"] = job
-    guard.install_classes()
+    if not holder.get("classes_installed"):
+        guard.install_classes()
     library = guard.install_library(job["library_root"])
     # Pathless loads are bound to this request's freshly sanitized copy.
     original_load = library.Quam.load.__func__
@@ -186,17 +187,13 @@ def install_once(job, guard, holder):
     holder["sources"] = {}
     if hasattr(guard, "remember"):
         guard.remember("Quam.load", library.Quam, "load")
+        guard.remember("Quam.connect", library.Quam, "connect")
+        guard.remember("Quam.save", library.Quam, "save")
 
 
 def build(job, guard, result):
     """Keep the cold build entry point using the shared split (P2 spec 2.3)."""
-    if Path(job["node_file"]).stem.startswith("15p"):
-        guard.fail("node", "unsupported execute path")
-    verify_env(job, guard)
-    verify_config(job, guard)
-    holder = {}
-    install_once(job, guard, holder)
-    return build_one(job, guard, result, holder)
+    return build_one(job, guard, result, {})
 
 
 def build_one(job, guard, result, holder):
@@ -207,6 +204,9 @@ def build_one(job, guard, result, holder):
         guard.fail("node", "unsupported execute path")
     verify_env(job, guard)
     verify_config(job, guard)
+    if "library" not in holder:
+        guard.install_classes()
+        holder["classes_installed"] = True
     source_stats = {}
     for folder in ("calibration_utils", "quam_config"):
         for path in (Path(job["library_root"]) / folder).rglob("*.py"):
@@ -218,6 +218,8 @@ def build_one(job, guard, result, holder):
         clean, paths = sanitize(json.loads(path.read_text(encoding="utf-8")), filename)
         path.write_text(json.dumps(clean), encoding="utf-8")
         replaced.extend(paths)
+    if "library" not in holder:
+        install_once(job, guard, holder)
     library = holder["library"]
     import qualibrate
     stub = stub_class(guard, job.get("overrides", {}))

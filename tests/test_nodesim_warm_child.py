@@ -12,7 +12,7 @@ import time
 import psutil
 import pytest
 
-from tests.test_nodesim_child import FAKE, NODE, write_tree
+from tests.test_nodesim_child import FAKE, NODE, write_tree, SOURCES, run
 from quam_state_manager.core.nodesim_spawn import pinned_env, prepare_scratch
 from quam_state_manager.generator import nodesim_proto as proto
 
@@ -23,7 +23,7 @@ MUTATIONS = {
     "W-2": ("nodesim_warm_guard.py", 'return self.lease_params if self.phase == "sim" else None',
             'return self.lease_params'),
     "W-3": ("nodesim_warm.py", 'if path not in self.sources:', 'if True:'),
-    "W-4": ("nodesim_warm.py", 'if snapshot.get(field) != request[field]:', 'if False:'),
+    "W-4": ("nodesim_warm.py", 'proto.check_snapshot(request, snapshot)', 'None'),
     "W-5": ("nodesim_warm.py", 'os.dup2(capture_fd, fd)', 'pass'),
     "W-6": ("nodesim_warm.py",
             'self.emit("lease_failed", lease_seq=message["lease_seq"], message="not between clicks")', 'pass'),
@@ -37,6 +37,33 @@ MUTATIONS = {
     "W-14": ("nodesim_warm_guard.py", 'self.allowed = after == "sim"', 'self.allowed = True'),
     "W-15": ("nodesim_warm.py", 'if hello.get("proto") != proto.PROTO:', 'if False:'),
 }
+
+
+MUTATIONS.update({
+    "F1": ("nodesim_warm.py",
+           'if module_name == "_nodesim_node":', 'if False:'),
+    "F2-none": ("nodesim_click.py", 'if node.machine is None:', 'if False:'),
+    "F2-script": ("nodesim_click.py", 'notes["script_error"] = f"{type(exc).__name__}: {exc}"', 'raise'),
+    "F4": ("nodesim_warm.py",
+           'self.gone = self.gone or any(t.is_alive() for t in self.native_threads)', 'self.gone = True'),
+    "F4-native": ("nodesim_warm.py",
+                  'any(t.is_alive() for t in self.native_threads)', 'False'),
+    "F6-stale": ("nodesim_warm.py", 'if message["click_id"] == self.click_id:', 'if True:'),
+    "F6-op": ("nodesim_warm.py", 'self.gone = self.stopped = True',
+              'raise ValueError("operation while click is active")'),
+    "F7": ("nodesim_warm_guard.py", 'self.remember(name, owner, attribute)', 'pass'),
+    "F7-connect": ("nodesim_build.py", 'guard.remember("Quam.connect", library.Quam, "connect")', 'pass'),
+    "F7-library": ("nodesim_build.py", 'guard.remember("Quam.save", library.Quam, "save")', 'pass'),
+    "F8-checks": ("nodesim_build.py", 'return build_one(job, guard, result, {})',
+                  'verify_env(job, guard); verify_config(job, guard); return build_one(job, guard, result, {})'),
+    "F8-order": ("nodesim_build.py", '    source_stats = {}',
+                 '    if "library" not in holder:\n        install_once(job, guard, holder)\n    source_stats = {}'),
+    "W-10-late": ("nodesim_warm.py", 'if any(key.startswith("SAAS_") for key in os.environ):',
+                  'self.start(hello)\n            if any(key.startswith("SAAS_") for key in os.environ):'),
+    "W-15-late": ("nodesim_warm.py", 'if hello.get("proto") != proto.PROTO:',
+                  'self.start(hello)\n            if hello.get("proto") != proto.PROTO:'),
+    "F9-classify": ("nodesim_warm.py", 'cold.classify(exc, self.guard, "")', '("failed", str(exc))'),
+})
 
 
 def overlay():
@@ -56,6 +83,8 @@ def overlay():
                 log("construct")'''
     assert old in qm
     qm = qm.replace(old, new)
+    qm = qm.replace('if control().get("wait_forever"):\n                    while True:',
+                    'while control().get("wait_forever"):')
     qm += '''
         import sys
         _resolve = socket.getaddrinfo
@@ -83,7 +112,11 @@ def overlay():
                 return len(seen)
             return depth(Quam.load.__func__) - 1, depth(QuantumMachinesManager.__init__)
     '''
-    return {"qm/__init__.py": qm}
+    import textwrap
+    sentinel = ('import os\nfrom pathlib import Path\n'
+                'Path(os.environ["QUAM_STATE_PATH"]).joinpath("library_imported").write_text("yes")\n')
+    library = sentinel + textwrap.dedent(FAKE["quam_config/__init__.py"]).lstrip("\n")
+    return {"qm/__init__.py": qm, "quam_config/__init__.py": library}
 
 
 class Session:
@@ -105,7 +138,10 @@ class Session:
             path = self.generator / name
             source = path.read_text(encoding="utf-8")
             assert old in source
-            path.write_text(source.replace(old, new), encoding="utf-8")
+            source = source.replace(old, new)
+            if row == "F1":
+                source = source.replace('if path == self.holder["job"].get("node_file"):', 'if False:')
+            path.write_text(source, encoding="utf-8")
         write_tree(self.library, {**FAKE, **overlay()})
         (self.library / "fake_control.json").write_text("{}")
         prepare_scratch(self.scratch, self.chip)
@@ -331,6 +367,8 @@ def test_w6_lease_during_sim(session):
     assert result["message"] == "not between clicks" and result["lease_seq"] == 2
     session.send(dict(op="stop", click_id="1"))
     assert session.event("result")["message"] == "Stopped."
+    assert session.event("bye")["why"] == "exit"
+    session.proc.wait(timeout=5)
 
 
 def test_w7_hash(session):
@@ -369,7 +407,7 @@ def test_w9_token(session):
     (session.library / "fake_control.json").write_text(json.dumps({"simulate_raises": "refused " + token}))
     session.click()
     result = session.event("result")
-    assert result["message"] == "refused ***"
+    assert result["message"] == "QMConnectionError: refused ***"
     assert token not in "".join(session.lines)
     assert token not in (session.scratch / "_capture.txt").read_text()
     session.send(dict(op="exit"))
@@ -382,7 +420,9 @@ def test_w9_token(session):
 def test_w10_env_refused(session, name):
     """W-10: reject any inherited SAAS variable before importing the library (D-11)."""
     session.node()
-    session.start(env={name: "password-sentinel"})
+    session.start(idle_s=0.05, env={name: "password-sentinel"})
+    session.proc.wait(timeout=20)
+    assert not (session.chip / "library_imported").exists()
     assert session.event("bye")["why"] == "saas_env"
     assert session.log() == ""
 
@@ -452,7 +492,9 @@ def test_w15_proto(session):
     """W-15: wrong proto exits before importing the selected library (spec 4.2)."""
     session.node()
     # Send a deliberately invalid hello without going through proto.encode.
-    session.start(proto=9)
+    session.start(proto=9, idle_s=0.05)
+    session.proc.wait(timeout=20)
+    assert not (session.chip / "library_imported").exists()
     assert session.event("bye")["why"] == "proto_mismatch"
     assert session.log() == ""
 
@@ -599,3 +641,182 @@ def test_serializer_keeps_worker(session):
     assert result["message"] == "Undeclared stream r1 in the stream processing block"
     session.event("idle")
     ok_click(session)
+
+
+def test_node_edit_excluded_from_sources(session):
+    """F1 / gl-nwda: D-5 edits reuse the worker; only lab modules are restart inputs."""
+    session.node()
+    session.start()
+    sources = session.event("ready")["sources"]
+    session.lease()
+    session.event("lease_ok")
+    node = str((session.library / "calibrations/node.py").resolve())
+    for value in (1, 2):
+        session.node(f'import qm\nassert getattr(qm, "edit", 0) == {value - 1}\nqm.edit = {value}')
+        session.click()
+        sources.update(session.event("build_done")["sources_new"])
+        assert node not in sources
+        # Mirror the owner's source-stat restart decision (spec 2.2.2).
+        assert all([Path(p).stat().st_mtime_ns, Path(p).stat().st_size] == stat
+                   for p, stat in sources.items())
+        assert session.event("result")["kind"] == "ok"
+        session.event("idle")
+    assert session.log().count("construct") == 1
+    assert session.log().count("simulate") == 2
+
+
+@pytest.mark.parametrize("case", ["machine_none", "script_error"])
+def test_post_build_cold_parity(session, tmp_path, case):
+    """F2 / gl-rhv0: identical nodes give the cold kind, message and script_error (contract 10)."""
+    body = 'node.machine = None' if case == "machine_none" else (
+        'import qm\noriginal = qm.generate_qua_script\n'
+        'def broken(program, config=None):\n'
+        '    if config is not None:\n        raise ValueError("full script refused")\n'
+        '    return original(program)\nqm.generate_qua_script = broken')
+    cold_root = tmp_path / "cold"
+    cold_root.mkdir()
+    cold_generator = cold_root / "generator"
+    cold_generator.mkdir()
+    for name in SOURCES:
+        shutil.copyfile(GENERATOR / name, cold_generator / name)
+    cold_click, expected = run(cold_root, cold_generator, body=body)
+    assert cold_click.proc.poll() is not None
+    ready(session)
+    session.node(body)
+    session.click()
+    actual = session.event("result")
+    assert (actual["kind"], actual["message"]) == (expected["kind"], expected["message"])
+    assert actual.get("script_error") == expected.get("script_error")
+    if case == "script_error":
+        assert actual["ok"] and actual["report"] == expected["report"]
+        assert actual["script_error"] == "ValueError: full script refused"
+        assert not actual["script_ok"]
+        assert session.log().count("simulate") == 1
+    session.event("idle")
+
+
+def test_stop_before_submit_keeps_worker(session):
+    """F4: Stop before submit keeps imports and the worker for the next click (spec 2.5)."""
+    session.node()
+    session.start()
+    sources = session.event("ready")["sources"]
+    session.click()
+    session.event("need_lease")
+    session.send(dict(op="stop", click_id="1"))
+    assert session.event("result")["message"] == "Stopped."
+    session.event("idle")
+    assert session.proc.poll() is None
+    session.lease()
+    session.event("lease_ok")
+    ok_click(session)
+    assert all([Path(p).stat().st_mtime_ns, Path(p).stat().st_size] == stat for p, stat in sources.items())
+    assert session.log().count("construct") == 1
+
+
+@pytest.mark.parametrize("op", ["stop", "cluster"])
+def test_active_operations(session, op):
+    """F6: stale Stops finish normally; unexpected ops retire a live native call (spec 2.5)."""
+    ready(session)
+    control = session.library / "fake_control.json"
+    control.write_text('{"wait_forever": true}')
+    session.click()
+    deadline = time.monotonic() + 10
+    while session.event("phase")["phase"] != "wait":
+        assert time.monotonic() < deadline
+    session.send(dict(op="stop", click_id="stale") if op == "stop" else dict(op="cluster", seq=2))
+    if op == "stop":
+        # A barrier reply proves the pump consumed the stale Stop before the job is released.
+        session.lease(lease_seq=2)
+        session.event("lease_failed")
+        control.write_text('{}')
+        assert session.event("result")["kind"] == "ok"
+        session.event("idle")
+        ok_click(session)
+    else:
+        assert session.event("result")["message"] == "Stopped."
+        assert session.event("bye")["why"] == "exit"
+        session.proc.wait(timeout=5)
+
+
+@pytest.mark.parametrize("name,body", [
+    ("QuantumMachine.execute", 'from qm.quantum_machine import QuantumMachine\nQuantumMachine.execute = None'),
+    ("QmApi.execute", 'from qm.api.v2.qm_api import QmApi\nQmApi.execute = None'),
+    ("QmmApi.open_qm", 'from qm.api.v2.qmm_api import QmmApi\nQmmApi.open_qm = None'),
+    ("qm_session", 'import qualang_tools.multi_user as m\nm.qm_session = None'),
+    ("qm_session.definition", 'import qualang_tools.multi_user.session as m\nm.qm_session = None'),
+    ("BasicQuam.connect", 'from quam.components import BasicQuam\nBasicQuam.connect = None'),
+    ("QuamRoot.save", 'from quam.core.quam_classes import QuamRoot\nQuamRoot.save = None'),
+    ("LocalStorageManager.save", 'from qualibrate.core.storage.local_storage_manager import LocalStorageManager\n'
+     'LocalStorageManager.save = None'),
+    ("Quam.connect", 'from quam_config import Quam\nQuam.connect = None'),
+    ("Quam.save", 'from quam_config import Quam\nQuam.save = None'),
+])
+def test_remaining_barriers(session, name, body):
+    """F7: every remaining installed barrier is checked by identity (spec 2.3)."""
+    ready(session)
+    session.node(body)
+    guard(session, "GUARD FAIL barrier " + name + " replaced")
+    assert "simulate" not in session.log()
+
+
+def test_cold_build_order(monkeypatch, tmp_path):
+    """F8: cold checks run once; source snapshot and sanitize precede library installation (spec 2.3)."""
+    import importlib.util
+    from types import SimpleNamespace
+    path_before = list(sys.path)
+    try:
+        sys.path.insert(0, str(GENERATOR))
+        source_path = tmp_path / "order_build.py"
+        source_text = (GENERATOR / "nodesim_build.py").read_text()
+        row = os.getenv("SM_NODESIM_MUTATION_W")
+        if row in ("F8-checks", "F8-order"):
+            _, old, new = MUTATIONS[row]
+            assert old in source_text
+            source_text = source_text.replace(old, new)
+        source_path.write_text(source_text)
+        spec = importlib.util.spec_from_file_location("order_build", source_path)
+        build = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(build)
+    finally:
+        sys.path[:] = path_before
+    trace = []
+    chip = tmp_path / "chip_order"
+    chip.mkdir()
+    for name in ("state.json", "wiring.json"):
+        (chip / name).write_text('{"network": {"host": "192.0.2.4", "port": 443}}')
+    source = tmp_path / "calibration_utils" / "first.py"
+    source.parent.mkdir()
+    source.write_text("VALUE = 1\n")
+    original_stat = Path.stat
+    original_sanitize = build.sanitize
+
+    def stat(path, *args, **kwargs):
+        """Record the source snapshot without changing stat behaviour (F8)."""
+        if path == source:
+            trace.append("snapshot")
+        return original_stat(path, *args, **kwargs)
+
+    def sanitize(*args):
+        """Record sanitization after the source snapshot (F8)."""
+        assert "snapshot" in trace
+        trace.append("sanitize")
+        return original_sanitize(*args)
+
+    def install(job, guard, holder):
+        """Stop before any library import, checking the observable ordering (F8)."""
+        assert trace[:2] == ["env", "config"]
+        assert trace.count("env") == trace.count("config") == trace.count("classes") == 1
+        assert trace.index("classes") < trace.index("snapshot")
+        for name in ("state.json", "wiring.json"):
+            assert json.loads((chip / name).read_text())["network"] == {"host": "127.0.0.1", "port": 1}
+        raise RuntimeError("order checked")
+
+    monkeypatch.setattr(build, "verify_env", lambda *a: trace.append("env"))
+    monkeypatch.setattr(build, "verify_config", lambda *a: trace.append("config"))
+    monkeypatch.setattr(Path, "stat", stat)
+    monkeypatch.setattr(build, "sanitize", sanitize)
+    monkeypatch.setattr(build, "install_once", install)
+    guard = SimpleNamespace(install_classes=lambda: trace.append("classes"))
+    job = dict(node_file=str(tmp_path / "node.py"), library_root=str(tmp_path), chip_copy=str(chip))
+    with pytest.raises(RuntimeError, match="order checked"):
+        build.build(job, guard, {"replaced_hosts": []})

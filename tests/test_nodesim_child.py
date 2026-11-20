@@ -26,7 +26,7 @@ import pytest
 from quam_state_manager.core.nodesim_spawn import pinned_env, prepare_scratch
 
 GENERATOR = Path(__file__).resolve().parents[1] / "quam_state_manager" / "generator"
-SOURCES = ("nodesim_click.py", "nodesim_guard.py", "nodesim_build.py")
+SOURCES = ("nodesim_click.py", "nodesim_guard.py", "nodesim_build.py", "nodesim_proto.py")
 PASSWORD = "fake-password-7d1c"
 CHILD_TIMEOUT_S = 90
 
