@@ -75,6 +75,7 @@ function makeDom(page) {
         ? `<div id="table-pane"><div class="datasets-page">
              <div class="ds-digest-band">${page.band}</div>
              <script id="ds-rows-data" data-now="1000">${JSON.stringify(page.rows)}</script>
+             ${page.sortBar ? '<div class="sort-filter-sections" id="sort-filter-grid"></div>' : ''}
              <div id="datasets-scroll"><table><thead id="datasets-thead"></thead>
                <tbody id="datasets-tbody"></tbody></table></div>
            </div></div>`
@@ -609,6 +610,63 @@ async function bootLive(fetchImpl, uiConfig, page) {
             w.document.getElementById('ds-new-pill').click();
             ok(g.writes[g.writes.length - 1] === 0,
                `a row that shows from the top lands at scrollTop 0 (got ${g.writes[g.writes.length - 1]})`);
+        }
+
+        // (e) calibration recheck 4, item 4: the pill must not park the Sort /
+        //     date-tab bar half under the pane's top edge. The list starts
+        //     500 px down, the bar spans 440..480 above it; an arrival at pos 0
+        //     used to land at 500 - 32 = 468, inside the bar. It now lands at
+        //     the bar's top (440) because the row still fits below it.
+        {
+            const deep = (f, id) => mk(f, id, '2026-08-01', '01:00:00');
+            const rows2 = [];
+            for (let i = 30; i >= 10; i--) rows2.push(deep('lab-I', i));
+            const TOP_ROW = mk('lab-I', 40, '2026-08-20', '08:00:00');   // pos 0
+            const { w } = await bootLive(() => jsonResponse({ updated: [TOP_ROW], vanished: [], now: 8000 }),
+                               undefined, { rows: rows2, band: BAND, sortBar: true });
+            const g = geometry(w);
+            g.tb.getBoundingClientRect = () => ({ top: 500 - g.S, bottom: 500 - g.S + 736, left: 0, right: 900,
+                                                  width: 900, height: 736 });
+            const bar = w.document.getElementById('sort-filter-grid');
+            bar.getBoundingClientRect = () => ({ top: 440 - g.S, bottom: 480 - g.S, left: 0, right: 900,
+                                                 width: 900, height: 40 });
+            g.S = 900;
+            g.pane.dispatchEvent(new w.Event('scroll'));   // active -> held
+            pump(w);
+            await wait(40);
+            w.document.getElementById('ds-new-pill').click();
+            const got = g.writes[g.writes.length - 1];
+            ok(got === 440,
+               `the pill lands with the Sort bar whole at the top (scrollTop ${got}, want 440; 468 cut it)`);
+        }
+
+        // (f) review r1 P3-2: a padded pane (paddingTop 10) too short for the row
+        //     below the bar. The bar must be gone: its bottom (480, border
+        //     coordinates) lands on the border, not 10 px down in the padding (470).
+        {
+            const deep = (f, id) => mk(f, id, '2026-08-01', '01:00:00');
+            const rows2 = [];
+            for (let i = 30; i >= 10; i--) rows2.push(deep('lab-I', i));
+            const TOP_ROW = mk('lab-I', 40, '2026-08-20', '08:00:00');   // pos 0
+            const { w } = await bootLive(() => jsonResponse({ updated: [TOP_ROW], vanished: [], now: 8000 }),
+                               undefined, { rows: rows2, band: BAND, sortBar: true });
+            const g = geometry(w);
+            Object.defineProperty(g.pane, 'clientHeight', { configurable: true, get: () => 60 });
+            const realCs = w.getComputedStyle.bind(w);
+            w.getComputedStyle = (e) => (e === g.pane ? { paddingTop: '10px' } : realCs(e));
+            g.tb.getBoundingClientRect = () => ({ top: 500 - g.S, bottom: 500 - g.S + 736, left: 0, right: 900,
+                                                  width: 900, height: 736 });
+            const bar = w.document.getElementById('sort-filter-grid');
+            bar.getBoundingClientRect = () => ({ top: 440 - g.S, bottom: 480 - g.S, left: 0, right: 900,
+                                                 width: 900, height: 40 });
+            g.S = 900;
+            g.pane.dispatchEvent(new w.Event('scroll'));   // active -> held
+            pump(w);
+            await wait(40);
+            w.document.getElementById('ds-new-pill').click();
+            const got = g.writes[g.writes.length - 1];
+            ok(got === 480,
+               `a padded short pane scrolls the bar fully away (scrollTop ${got}, want 480; 470 left a strip)`);
         }
 
         // (c) a filter still gets the FILTERED band (and its suffix)

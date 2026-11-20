@@ -340,7 +340,9 @@
         <summary class="section-header">Outcomes</summary>
         <div class="ds-outcomes">
             {% for qname, outcome in run.outcomes.items() %}
-            <span class="outcome-badge-lg {% if outcome == 'successful' %}outcome-ok{% else %}outcome-fail{% endif %}">
+            {% set oc_cls = outcome_class(outcome) %}
+            <span class="outcome-badge-lg
+                {%- if oc_cls == 'ok' %} outcome-ok{% elif oc_cls == 'fail' %} outcome-fail{% endif %}">
                 {{ qname }}: {{ outcome }}
             </span>
             {% endfor %}

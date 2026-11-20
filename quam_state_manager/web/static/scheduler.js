@@ -59,7 +59,7 @@
     });
   }
 
-  // How many targets a finished node marked failed (0 when none recorded).
+  // How many targets a finished node marked not successful (0 when none recorded).
   function failedCount(it) {
     return (it && it.failed_targets && it.failed_targets.length) || 0;
   }
@@ -67,7 +67,7 @@
   function statusText(it) {
     var s = it.status || "queued";
     var k = failedCount(it);
-    if (s === "done" && k) return "done — " + k + " of " + (it.n_targets || k) + " targets failed";
+    if (s === "done" && k) return "done — " + k + " of " + (it.n_targets || k) + " targets not successful";
     return s;
   }
 
@@ -610,7 +610,7 @@
       warning.textContent = "done -- " + it.error;
       row.querySelector(".sched-item-name").appendChild(warning);
     }
-    // A finished node that marked targets failed: its values for them are
+    // A finished node that marked targets not successful: its values for them are
     // already on the chip. Say so in the row and offer to put exactly those
     // values back (a successful target's writes are never in the list).
     var nFailed = failedCount(it);
@@ -620,7 +620,7 @@
       fw.className = "sched-item-warning";
       fw.setAttribute("role", "status");
       fw.setAttribute("data-failed-targets", String(nFailed));
-      fw.textContent = it.outcome_note || (nFailed + " of " + (it.n_targets || nFailed) + " targets failed");
+      fw.textContent = it.outcome_note || (nFailed + " of " + (it.n_targets || nFailed) + " targets not successful");
       var nameCell = row.querySelector(".sched-item-name");
       nameCell.appendChild(fw);
       var nWrites = (it.failed_writes || []).length;

@@ -53,6 +53,16 @@ class TestFailedTargetWrites:
         assert "ports.p4.offset" in note and "ports.p5.offset" not in note
         assert "and 2 more" in note
 
+    def test_a_skipped_target_is_listed_but_never_called_failed(self):
+        info = scheduler.failed_target_writes({"q1": "skipped", "q2": "Successful"},
+                                              [_patch("q1", "f_01", 1, 2), _patch("q2", "f_01", 3, 4)])
+        assert info["failed"] == ["q1"], "a capitalised Successful is a success"
+        note = scheduler.failed_targets_note(info)
+        assert note.startswith("1 of 2 targets not successful")
+        assert "q1 (skipped): still wrote qubits.q1.f_01" in note and "failed" not in note
+        info = scheduler.failed_target_writes({"q1": "aborted", "q2": "successful"}, [])
+        assert scheduler.failed_targets_note(info).startswith("1 of 2 targets failed")
+
     def test_a_failed_target_that_wrote_nothing_says_so(self):
         info = scheduler.failed_target_writes({"q1": "failed", "q2": "successful"},
                                               [_patch("q2", "f_01", 3, 4)])

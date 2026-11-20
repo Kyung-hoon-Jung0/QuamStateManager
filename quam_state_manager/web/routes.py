@@ -46370,10 +46370,8 @@ def _datasets_payload_compute(active: list[dict], is_collections: bool,
     if rows and not is_collections:
         latest_day = rows[0].get("date") or ""
         day_rows = [r for r in rows if r.get("date") == latest_day]
-        import re as _re
-        _bad = _re.compile(r"error|fail|abort|crash")
-        failed_rows = [r for r in day_rows
-                       if _bad.search(str(r.get("status") or "").lower())]
+        from quam_state_manager.core.dataset import marks_failure
+        failed_rows = [r for r in day_rows if marks_failure(r.get("status"))]
         qubit_fail: dict[str, int] = {}
         for r in day_rows:
             for q, oc in (r.get("oc") or {}).items():
@@ -46382,7 +46380,7 @@ def _datasets_payload_compute(active: list[dict], is_collections: bool,
                 # matchScope) -- so the number on the chip is the number of
                 # rows its click shows, and an "error"/"aborted" outcome is
                 # never read as "all OK".
-                if _bad.search(str(oc).lower()):
+                if marks_failure(oc):
                     qubit_fail[q] = qubit_fail.get(q, 0) + 1
         digest = {
             "date": latest_day,
@@ -54456,11 +54454,13 @@ def _failed_target_info(run) -> dict | None:
     outcomes and the writes the run recorded, read through the one reader
     ``fit_targets.run_writes`` (node.json ``patches``, else
     ``state_changes.changes``, else ``state_updates.json``). None when the run
-    recorded no outcomes or no target failed."""
+    recorded no outcomes or every target is marked a success (``marks_success``,
+    the predicate ``failed_target_writes`` uses)."""
     from quam_state_manager.core import fit_targets
+    from quam_state_manager.core.dataset import marks_success
     outcomes = getattr(run, "outcomes", None)
-    if not isinstance(outcomes, dict) or not any(
-            o != "successful" for o in outcomes.values()):
+    if not isinstance(outcomes, dict) or all(
+            marks_success(o) for o in outcomes.values()):
         return None
     writes, source = [], None
     try:

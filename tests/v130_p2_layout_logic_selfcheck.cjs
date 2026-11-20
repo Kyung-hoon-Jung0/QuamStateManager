@@ -43,10 +43,15 @@ if (mode === 'gutter') {
   // customers read the set-high / set-low presets as moves (split_arrows_selfcheck)
   assert.doesNotMatch(match[0], /localStorage|loadPreset|loadUserChoice|userSizes/, 'no stored value moves it');
 } else if (mode === 'status') {
-  const match = read('static/dataset-virtual.js').match(/function statusChip\(status\) \{[\s\S]*?\n    \}/);
+  const dsv = read('static/dataset-virtual.js');
+  const match = dsv.match(/function statusChip\(status\) \{[\s\S]*?\n    \}/);
   assert.ok(match);
+  // statusChip calls marksFailure (FAILURE_RE): both come from the same shipped source, never a retyped copy
+  const failRe = dsv.match(/var FAILURE_RE = [^\n]*;/);
+  const marks = dsv.match(/function marksFailure\(v\) \{[\s\S]*?\n    \}/);
+  assert.ok(failRe && marks, 'FAILURE_RE and marksFailure are found in dataset-virtual.js');
   win.escapeHtml = value => { const e = win.document.createElement('span'); e.textContent = value; return e.innerHTML; };
-  win.eval(match[0]);
+  win.eval(failRe[0] + '\n' + marks[0] + '\n' + match[0]);
   for (const status of ['finished', 'done', 'completed']) {
     const e = win.document.createElement('div'); e.innerHTML = win.statusChip(status);
     assert.ok(e.firstElementChild.classList.contains('ds-status-done'), 'lifecycle completion is neutral');

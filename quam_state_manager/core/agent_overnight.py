@@ -15,8 +15,9 @@ has, never a new judgement:
   hardware_contention, timeout, node_error, interrupted. A person's Stop
   (``cancelled``) and ``skipped`` are not the run's failure;
 * the run finished but the node's OWN outcome for that target says it failed
-  (``node.json`` ``outcomes``, what ``_attribute`` reads -- the same reading
-  ``story._outcome`` uses: the word "fail");
+  (``node.json`` ``outcomes``, what ``_attribute`` reads -- the one failure rule
+  ``core.dataset.marks_failure`` that ``story._outcome`` and the Datasets counts use:
+  error, fail, abort, crash or unsuccess);
 * the run's writes were HELD by the envelope in mode auto: ``max_delta``,
   ``max_writes_per_plan``, a write that touches a target whose fit failed,
   a list resized / too many leaves, or the door refusing the apply. A hold
@@ -41,6 +42,7 @@ from quam_state_manager.core import agent_plans, approvals
 from quam_state_manager.core import journal as journal_mod
 from quam_state_manager.core import limits as limits_mod
 from quam_state_manager.core import safe_io
+from quam_state_manager.core.dataset import marks_failure
 
 logger = logging.getLogger(__name__)
 
@@ -64,8 +66,8 @@ def touches(path: str | None, target: str) -> bool:
     return bool(target) and target in str(path or "").split(".")
 
 
-def _failed_outcome(v) -> bool:
-    return "fail" in str(v).lower()
+# The one failure rule (error|fail|abort|crash|unsuccess): an "aborted" or "error" target holds its writes too.
+_failed_outcome = marks_failure
 
 
 def fit_hold(run: dict | None, writes: list[dict]) -> str | None:
