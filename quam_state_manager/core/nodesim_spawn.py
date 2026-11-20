@@ -74,7 +74,8 @@ def parse_output(stdout):
             value = json.loads(line)
         except ValueError:
             continue
-        if isinstance(value, dict) and {"node", "ok", "program_script", "replaced_hosts", "verdict", "errors"} <= value.keys():
+        if isinstance(value, dict) and {"node", "ok", "program_script", "replaced_hosts", "verdict",
+                                        "errors"} <= value.keys():
             answers.append(value)
     if len(answers) != 1:
         raise ValueError("child did not return exactly one result JSON")

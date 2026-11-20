@@ -201,7 +201,8 @@ def child(tmp_path, lab, source, row, *, env_changes=None, config_change=None, t
     guard_source = (GENERATOR / "nodesim_guard.py").read_text(encoding="utf-8")
     if os.getenv("SM_NODESIM_MUTATION") == row:
         if row in {"FI-1a", "FI-1f"}:
-            build_source = build_source.replace('clean, paths = sanitize(json.loads(path.read_text(encoding="utf-8")), filename)',
+            build_source = build_source.replace('clean, paths = sanitize(json.loads(path.read_text('
+                                                'encoding="utf-8")), filename)',
                                                 'clean, paths = json.loads(path.read_text(encoding="utf-8")), []')
         elif row.startswith("FI-10") or row == "FI-3-config":
             if row == "FI-10-ambient":
@@ -259,7 +260,8 @@ def child(tmp_path, lab, source, row, *, env_changes=None, config_change=None, t
             event = {"FI-11-popen": "subprocess.Popen", "FI-11-system": "os.system", "FI-11-ctypes": "ctypes.dlopen",
                      "FI-12-ctypes": "ctypes.dlopen"}[row]
             guard_source = guard_source.replace('self.fail(event, str(args[0]) if args else "refused")',
-                                                f'\n            if event != {event!r}:\n                self.fail(event, str(args[0]) if args else "refused")')
+                                                f'\n            if event != {event!r}:\n'
+                                                '                self.fail(event, str(args[0]) if args else "refused")')
         else:
             raise AssertionError("missing mutation for " + row)
     (scratch / "nodesim_guard.py").write_text(guard_source, encoding="utf-8")
@@ -303,7 +305,8 @@ Guard.install_classes = install
 ROWS = [
     ("FI-1a", "import socket\nsocket.create_connection(('127.0.0.1', 1))", "socket.connect 127.0.0.1:1"),
     ("FI-1b", "from quam_config import Quam\nQuam.connect(object.__new__(Quam))", "Quam.connect refused"),
-    ("FI-1c", "from qm import QuantumMachinesManager\nQuantumMachinesManager(host='192.0.2.1', port=1)", "QuantumMachinesManager unleased"),
+    ("FI-1c", "from qm import QuantumMachinesManager\nQuantumMachinesManager(host='192.0.2.1', port=1)",
+     "QuantumMachinesManager unleased"),
     ("FI-1e", "from qm.quantum_machine import QuantumMachine\nQuantumMachine.execute(None, None)", "execute refused"),
     ("FI-1f", "import socket\nsocket.create_connection(('192.0.2.1', 1))", "socket.connect 192.0.2.1:1"),
     ("FI-2", "from quam_config import Quam\nQuam.save(object.__new__(Quam))", "machine.save refused"),
@@ -328,8 +331,10 @@ def test_guard_rows(tmp_path, lab, row, action, expected):
 
 def test_real_transport(tmp_path, lab):
     with decoy_listener() as (port, counts):
-        action = f"from qm import QuantumMachinesManager\nQuantumMachinesManager(host='127.0.0.1', port={port}, timeout=0.3, async_trust_env=False)"
-        result = child(tmp_path, lab, HEADER + "\n".join("    " + line for line in action.splitlines()), "FI-1d", transport=True)
+        action = (f"from qm import QuantumMachinesManager\nQuantumMachinesManager(host='127.0.0.1', port={port}, "
+                  "timeout=0.3, async_trust_env=False)")
+        result = child(tmp_path, lab, HEADER + "\n".join("    " + line for line in action.splitlines()), "FI-1d",
+                       transport=True)
         assert result["verdict"] == f"GUARD FAIL socket.connect 127.0.0.1:{port}", result
     assert counts == {"connections": 0, "bytes": 0}, "D-8(c): native transport bypass; class barrier mandatory"
     (tmp_path / "decoy.json").write_text(json.dumps(counts))
@@ -348,7 +353,8 @@ def test_config_rows(tmp_path, lab, row):
             path.write_text(path.read_text().replace((path.parent / "storage").as_posix(), tmp_path.as_posix()))
     elif row == "FI-10-log":
         def change(path):
-            path.write_text("\n".join(line for line in path.read_text().splitlines() if not line.startswith("log_folder")))
+            path.write_text("\n".join(line for line in path.read_text().splitlines()
+                                      if not line.startswith("log_folder")))
         expected = "config log_folder"
     elif row == "FI-10-ambient":
         env_changes = {"QUAM_CONFIG_FILE": str(tmp_path / "decoy.toml")}
@@ -370,9 +376,11 @@ def test_config_rows(tmp_path, lab, row):
 
 
 @pytest.mark.parametrize("row,source,expected", [
-    ("FI-11-popen", "import subprocess\nsubprocess.Popen(['nodesim_nonexistent_command'], executable='nodesim_nonexistent_command')", "subprocess.Popen nodesim_nonexistent_command"),
+    ("FI-11-popen", "import subprocess\nsubprocess.Popen(['nodesim_nonexistent_command'], "
+                    "executable='nodesim_nonexistent_command')", "subprocess.Popen nodesim_nonexistent_command"),
     ("FI-11-system", "import os\nos.system('exit 0')", "os.system exit 0"),
-    ("FI-11-ctypes", "import ctypes\nctypes.CDLL('nodesim_nonexistent_library')", "ctypes.dlopen nodesim_nonexistent_library"),
+    ("FI-11-ctypes", "import ctypes\nctypes.CDLL('nodesim_nonexistent_library')",
+     "ctypes.dlopen nodesim_nonexistent_library"),
 ], ids=["FI-11-popen", "FI-11-system", "FI-11-ctypes"])
 def test_module_level_process_rows(tmp_path, lab, row, source, expected):
     result = child(tmp_path, lab, source, row)
@@ -494,7 +502,8 @@ def test_devnull_and_trusted_imports_build(tmp_path, lab):
 
 def test_no_program_is_reported(tmp_path, lab):
     """A node whose own preflight leaves no program gets a named error and keeps its log."""
-    source = HEADER + "    node.log('every target refused: missing prerequisite')\n    node.namespace['qua_program'] = None\n"
+    source = (HEADER + "    node.log('every target refused: missing prerequisite')\n"
+              "    node.namespace['qua_program'] = None\n")
     interpreter, library = lab
     scratch = tmp_path / "scratch"
     state = scratch / "state"
