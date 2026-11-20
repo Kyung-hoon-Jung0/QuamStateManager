@@ -8,6 +8,9 @@ from nodesim_proto import is_allowed_saas_host
 class WarmGuard(Guard):
     """Keep the cold guard's audit rules with a replaceable sim-only lease (P2 spec 2.3)."""
 
+    # The warm worker never imports a SaaS client (D-11, D-13); the broker owns it.
+    SAAS_NAMES = ()
+
     def __init__(self, scratch):
         """Start without a lease or network permissions (D-8)."""
         super().__init__(scratch)
@@ -98,9 +101,9 @@ class WarmGuard(Guard):
         QMM.simulate = simulate
         for name in ("__init__", "simulate", "open_qm"):
             self.remember(name, QMM, name)
-        import qm
-        # FI4-1: pin the module binding too, so a node-made subclass is never the sim-time class.
-        self.remember("qm.QuantumMachinesManager", qm, "QuantumMachinesManager")
+        # FI4-1, R3-1: pin every captured module binding, so a node-made subclass is never a sim-time class.
+        for key, (module, attribute) in self.sim_owners.items():
+            self.remember(key, module, attribute)
 
         from qm.quantum_machine import QuantumMachine
         from qm.api.v2.qm_api import QmApi
