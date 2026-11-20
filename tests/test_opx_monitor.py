@@ -3155,3 +3155,23 @@ def test_second_inflight_read_is_not_a_second_failed_poll(env):
         release.set()
         thread.join(5)
     assert m.status()['state'] == 'ok'
+
+
+@pytest.mark.parametrize('first_read', [True, False])
+def test_deferred_call_errors_never_become_section_names(env, first_read):
+    app, m, w, clock, _ = env
+    if not first_read:
+        m.poll_once()
+    errors, times = dict(m.section_errors), dict(m.section_times)
+    w.script[:] = [transition_reply()]
+    clock.t += 5
+    m.poll_once()
+    assert set(m.section_errors) <= {'controllers', 'open_qms', 'jobs'}
+    if not first_read:
+        assert m.section_errors == errors
+        assert m.section_times == times
+    html = page(app, 'live')
+    assert 'Qm.get jobs' not in html
+    if not first_read:
+        assert 'no successful read yet' not in html.lower()
+        assert 'last good read was 5 s ago' in html

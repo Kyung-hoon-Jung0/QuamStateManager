@@ -155,7 +155,8 @@
         if (el.textContent !== txt) el.textContent = txt;
         document.dispatchEvent(new CustomEvent('sm:runs-seen'));
         el.title = kind === 'new' && typeof shownPayload.count === 'number'
-            ? shownPayload.count + ' runs landed since you last looked' : spec.title;
+            ? shownPayload.count + (shownPayload.count === 1 ? ' run' : ' runs')
+                + ' landed since you last looked' : spec.title;
     }
 
     function note(kind, payload) {
@@ -180,7 +181,8 @@
         if (data) latestRun = data.uid ? data : null;
         var r = latestRun;
         var text = r ? ['last:', '#' + r.run_id, r.experiment_name,
-            (r.qubits || []).join(','), (r.time || '').slice(0, 5)].filter(Boolean).join(' ') : '';
+            (r.qubits || []).join(','), (r.time || '').slice(0, 5),
+            r.indexing ? '(indexing)' : ''].filter(Boolean).join(' ') : '';
         document.querySelectorAll('[data-last-run]').forEach(function (el) {
             el.textContent = text.trim(); el.title = text.trim(); el.hidden = !r;
         });

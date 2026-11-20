@@ -94,6 +94,23 @@ async function run() {
         await page.close();
         console.log('seen pin passed');
     }
+    if (pin === 'all' || pin === 'inspector') {
+        const page = await mount();
+        await page.addStyleTag({ content: '.ds-new-pill {height:auto;display:inline-block;line-height:32px}' });
+        await deliver(page, []);
+        await scrolled(page);
+        const height = () => document.getElementById('ds-arrivals').getBoundingClientRect().height;
+        const before = await page.evaluate(height);
+        const rowY = () => document.querySelector('tr[data-id="folder:240"]').getBoundingClientRect().top;
+        const y = await page.evaluate(rowY);
+        await deliver(page, [row(321)]);
+        assert.ok(Math.abs(await page.evaluate(rowY) - y) <= 1, 'open inspector row stays still on arrival');
+        assert.ok(Math.abs(await page.evaluate(height) - before) < 0.5, 'arrival slot reserves control height');
+        await page.click('#ds-arrivals-close');
+        assert.ok(Math.abs(await page.evaluate(height) - before) < 0.5, 'dismissal keeps the reserved height');
+        await page.close();
+        console.log('inspector pin passed');
+    }
     if (pin === 'all' || pin === 'scroll') {
         const page = await mount();
         await deliver(page, []); // initial catch-up is complete
