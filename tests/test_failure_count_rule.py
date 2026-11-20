@@ -40,6 +40,9 @@ def test_one_ok_fail_neutral_rule_on_server_and_client():
     assert [outcome_class(v) for v in ("successful", "Successful", "OK", "aborted", "error",
                                        "skipped", "pending", None, "")] == \
         ["ok", "ok", "ok", "fail", "fail", "neutral", "neutral", "neutral", "neutral"]
+    # Anchored: a negated success is never a success (and "unsuccessful" is a failure).
+    assert [outcome_class(v) for v in ("unsuccessful", "not successful", "no success", " succeeded ")] == [
+        "fail", "neutral", "neutral", "ok"]
     assert "var SUCCESS_RE = /" + SUCCESS_WORDS + "/;" in JS
     assert "var cls = outcomeClass(row.oc[q])" in JS
     assert "=== 'successful'" not in JS
@@ -86,3 +89,12 @@ def test_each_failed_label_says_what_it_counts():
     assert "}} failed</button>" not in DS_HTML
     assert "failed + ' failed'" not in JS
     assert "' run error' + (failed === 1 ? '' : 's')" in JS
+
+
+def test_a_negated_success_keeps_its_writes_on_the_untrusted_list():
+    from quam_state_manager.core.scheduler import failed_target_writes
+    patches = [{"op": "replace", "path": "/qubits/q1/f_01", "value": 2, "old": 1}]
+    for word in ("unsuccessful", "not successful", "no success"):
+        got = failed_target_writes({"q1": word}, patches)
+        assert got is not None and got["failed"] == ["q1"], word
+    assert failed_target_writes({"q1": "Successful"}, patches) is None

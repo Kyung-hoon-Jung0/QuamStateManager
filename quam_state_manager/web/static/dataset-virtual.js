@@ -605,13 +605,13 @@
     // One failure rule for a run status and a target outcome: the server's
     // core/dataset.py marks_failure (FAILURE_WORDS) is the twin, so a row, the
     // digest and the Calibration log never count one run differently.
-    var FAILURE_RE = /error|fail|abort|crash/;
+    var FAILURE_RE = /error|fail|abort|crash|unsuccess/;
     function marksFailure(v) {
         return v != null && FAILURE_RE.test(String(v).toLowerCase());
     }
     // core/dataset.py marks_success / outcome_class are the twins: one
     // ok / fail / neutral rule for a target outcome (row badge, run detail).
-    var SUCCESS_RE = /success|^ok$/;
+    var SUCCESS_RE = /^(success|successful|succeeded|ok)$/;
     function outcomeClass(v) {
         if (marksFailure(v)) return 'fail';
         return v != null && SUCCESS_RE.test(String(v).trim().toLowerCase()) ? 'ok' : 'neutral';

@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 # One rule for "this run status / this target outcome names a failure". The Datasets digest,
 # its outcome chips, the row's failed-fit marks and the Calibration log's day totals all use it;
 # dataset-virtual.js marksFailure is the client twin (same pattern, pinned by a test).
-FAILURE_WORDS = r"error|fail|abort|crash"
+FAILURE_WORDS = r"error|fail|abort|crash|unsuccess"
 _FAILURE_RE = re.compile(FAILURE_WORDS)
 
 
@@ -48,9 +48,10 @@ def marks_failure(value) -> bool:
     return value is not None and bool(_FAILURE_RE.search(str(value).lower()))
 
 
-# The one success rule for a per-target outcome ("successful", "Success", "ok"); dataset-virtual.js
-# marksSuccess is the client twin (same pattern, pinned by a test).
-SUCCESS_WORDS = r"success|^ok$"
+# The one success rule for a per-target outcome: the whole word "success", "successful", "succeeded"
+# or "ok" (any case). Anchored, so "not successful" or "no success" is never a success.
+# dataset-virtual.js outcomeClass is the client twin (same pattern, pinned by a test).
+SUCCESS_WORDS = r"^(success|successful|succeeded|ok)$"
 _SUCCESS_RE = re.compile(SUCCESS_WORDS)
 
 

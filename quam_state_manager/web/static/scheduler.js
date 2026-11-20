@@ -67,7 +67,7 @@
   function statusText(it) {
     var s = it.status || "queued";
     var k = failedCount(it);
-    if (s === "done" && k) return "done — " + k + " of " + (it.n_targets || k) + " targets failed";
+    if (s === "done" && k) return "done — " + k + " of " + (it.n_targets || k) + " targets not successful";
     return s;
   }
 
@@ -620,7 +620,7 @@
       fw.className = "sched-item-warning";
       fw.setAttribute("role", "status");
       fw.setAttribute("data-failed-targets", String(nFailed));
-      fw.textContent = it.outcome_note || (nFailed + " of " + (it.n_targets || nFailed) + " targets failed");
+      fw.textContent = it.outcome_note || (nFailed + " of " + (it.n_targets || nFailed) + " targets not successful");
       var nameCell = row.querySelector(".sched-item-name");
       nameCell.appendChild(fw);
       var nWrites = (it.failed_writes || []).length;
