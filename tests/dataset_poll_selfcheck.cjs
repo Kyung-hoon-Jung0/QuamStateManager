@@ -121,6 +121,7 @@ function boot(fetchImpl, uiConfig, page) {
     global.cancelAnimationFrame = w.cancelAnimationFrame;
     global.localStorage = w.localStorage;
     if (uiConfig !== undefined) w.UI_CONFIG = uiConfig;   // before eval — init reads it
+    if (page && typeof page.renderT === 'number') w.__pageRenderT = page.renderT;   // base.html, before eval
     // Record every setInterval delay so the poll-interval default is pinnable.
     // The module's bare `setInterval` resolves through NODE's global scope
     // (same reason the other globals above are re-pointed), so the recorder
@@ -717,6 +718,35 @@ async function bootLive(fetchImpl, uiConfig, page) {
             await wait(40);
             const pill = w.document.getElementById('ds-new-pill');
             ok(pill && pill.hidden === true, 'a run landing while the initial load catches up is baseline');
+        }
+        // (c) with the page's render time (base.html window.__pageRenderT) the bar counts by the
+        //     chip's rule: a run is new when its own instant is after the render, whenever the
+        //     index reaches it.
+        {
+            const RPAGE = Object.assign({ renderT: 1000 * 1000 }, PAGE);
+            let n = 0;
+            const late = { updated: [mk(30, 950 * 1000)], vanished: [], now: 9000 };   // on disk before the render
+            const { w } = boot(() => (++n === 1 ? jsonResponse({ updated: [], vanished: [], now: 1001 })
+                                                 : jsonResponse(late)), undefined, RPAGE);
+            pump(w);
+            await wait(40);
+            busy(w);
+            pump(w);
+            await wait(40);
+            const pill = w.document.getElementById('ds-new-pill');
+            ok(n >= 2 && (!pill || pill.hidden === true),
+               'a run the index reaches after the catch-up, taken before the render, is not new');
+        }
+        {
+            const RPAGE = Object.assign({ renderT: 1000 * 1000 }, PAGE);
+            const delta = { updated: [mk(31, 1000 * 1000 + 800)], vanished: [], now: 9000 };
+            const { w } = boot(() => jsonResponse(delta), undefined, RPAGE);
+            busy(w);
+            pump(w);
+            await wait(40);
+            const pill = w.document.getElementById('ds-new-pill');
+            ok(pill && pill.hidden === false && /1 new run/.test(pill.textContent),
+               'a run landing after the render, during the initial catch-up, is announced');
         }
     }
 

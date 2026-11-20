@@ -2106,7 +2106,7 @@
                 if (_inHead(row)) headDelta++;
                 state.rows.push(row);
                 state.rowsById.set(row.uid, state.rows.length - 1);
-                if (_stampOf(row) > newestBefore && !state.baselineUids.has(row.uid)
+                if (_isArrival(row, row.uid, newestBefore)
                     && !(state.collections && !(row.tags && row.tags.length)))   // QA datasets-r2-14
                     newUids.push(row.uid);
             } else {
@@ -2240,11 +2240,21 @@
         for (var i = 0; i < updated.length; i++) {
             var uid = (updated[i].f || '') + ':' + updated[i].id;
             if ((!state.rowsById || !state.rowsById.has(uid)) &&
-                _stampOf(updated[i]) > newest && !state.baselineUids.has(uid) && !state.dismissedUids.has(uid) &&
+                _isArrival(updated[i], uid, newest) && !state.dismissedUids.has(uid) &&
                 !(state.collections && !(updated[i].tags && updated[i].tags.length)))   // QA datasets-r2-14
                 state.arrivalUids.add(uid);   // docs/170
         }
         _ackShownArrivals();
+    }
+
+    /* A run is an arrival when its own instant is after the moment the server rendered this page
+       (base.html window.__pageRenderT), the rule the top-bar chip counts by (app.js _seedFromRender):
+       a run the index reaches late is not new, and one landing during the first catch-up is.
+       Without an instant on both sides: newer than the newest row held, outside the first catch-up. */
+    function _isArrival(row, uid, newest) {
+        var rt = window.__pageRenderT;
+        if (typeof rt === 'number' && typeof row.t === 'number') return row.t > rt;
+        return _stampOf(row) > newest && !state.baselineUids.has(uid);
     }
 
     // The first completed catch-up is the baseline, independent of acquisition clock or metadata.
