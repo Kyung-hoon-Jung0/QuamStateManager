@@ -18,6 +18,10 @@ class QOPVersion:
         self.name = name
         self.major, self.minor, self.patch = map(int, match.groups())
 
+    def __str__(self):
+        """Return the version name, as SDK 1.2.0 (D-47)."""
+        return self.name
+
 
 class ControllerConfig:
     """Record the shared spec mapping's controller (P2 spec 4.4)."""
@@ -106,6 +110,10 @@ class QmSaas:
         if protocol not in ("http", "https"):
             raise ValueError("Invalid protocol")
         self._client = Client(protocol, host, port, email, password, log)
+
+    def versions(self):
+        """Return the offered versions as version objects, as SDK 1.2.0 (D-47)."""
+        return [QOPVersion(name) for name in self._client.versions()]
 
     def simulator(self, version=None, cluster_config=None):
         """Return an unspawned instance (D-17(a))."""

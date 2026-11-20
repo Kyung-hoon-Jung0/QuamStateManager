@@ -82,6 +82,11 @@ class Client:
             raise Exception("Unknown or closed simulator")
         record("close", id=instance_id)
 
+    def versions(self):
+        """List the offered QOP version names, as GET /versions of qm-saas 1.2.0 (D-47)."""
+        record("versions")
+        return list(plan().get("versions", ["v2_4_0", "v3_6_0", "v3_7_3"]))
+
     def launch_simulator(self, version, cluster_config):
         """Expose both sides of the POST crash window without networking (P2 spec 5)."""
         gate("hold_before_post")

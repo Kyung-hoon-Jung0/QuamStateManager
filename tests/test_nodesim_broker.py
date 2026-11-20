@@ -148,10 +148,11 @@ class Wire:
         assert Path(answer["qm_saas_file"]).is_relative_to(FAKE)
         return self
 
-    def acquire(self, req="request", hash_value="cluster-a", reason="click", wait=True):
+    def acquire(self, req="request", hash_value="cluster-a", reason="click", wait=True, worker=None,
+                version="v3_7_3"):
         """Request a lease using the shared contract fields (P2 spec 4.5)."""
-        self.send("acquire", req=req, owner=dict(sm_pid=self.owner.pid, worker_pid=os.getpid()),
-                  version="v3_7_3", spec=SPEC, hash=hash_value, reason=reason)
+        self.send("acquire", req=req, owner=dict(sm_pid=self.owner.pid, worker_pid=worker or os.getpid()),
+                  version=version, spec=SPEC, hash=hash_value, reason=reason)
         if wait:
             self.event("spawning")
             return self.event("lease")
@@ -443,8 +444,9 @@ def test_fi(row, make_harness):
             assert len(adopted.ledger("launch")) == 1
             wire.acquire(req="explicit-renew", reason="renew", wait=False)
             wire.event("spawning")
-            replacement = wire.event("replaced")
-            assert replacement["old"] == lease["instance_id"]
+            # D-48: an SM-sent renew is answered by its req-matched lease, never by a replaced push.
+            replacement = dict(old=lease["instance_id"], lease=wire.event("lease"))
+            assert replacement["lease"]["req"] == "explicit-renew" and replacement["lease"]["spawned"] is True
             assert adopted.ledger("close") == []
             wire.send("swapped", old=lease["instance_id"], new=replacement["lease"]["instance_id"])
             assert wire.event("closed")["instance_id"] == lease["instance_id"]
@@ -656,8 +658,8 @@ def test_fi(row, make_harness):
                 # An explicit renew request uses the same two-phase swap handshake.
                 w.acquire(req="manual-renew", reason="renew", wait=False)
                 w.event("spawning")
-                manual = w.event("replaced")
-                assert manual["old"] == new
+                manual = dict(old=new, lease=w.event("lease"))
+                assert manual["lease"]["req"] == "manual-renew"
                 w.send("swapped", old=new, new=manual["lease"]["instance_id"])
                 assert w.event("closed")["instance_id"] == new
             else:
@@ -867,6 +869,90 @@ def test_review_rows(row, make_harness):
             h.advance(31)
         assert w.event("closed")["instance_id"] == lease["instance_id"]
         assert len(h.ledger("close")) == 1
+
+DECISION_MUTATIONS = {
+    "K-26": ('raise LookupError("The cloud simulator version name is unknown.")',
+             'return self.module.QOPVersion(name)'),
+    "K-26b": ('self.module.QOPVersion(message["version"])\n            except', 'pass\n            except'),
+    "K-27": ('and row["worker_pid"] == worker and row["cluster_hash"]', 'and row["cluster_hash"]'),
+    "K-28": ('return "no_slot", dict(req=req, in_use_here', 'return "no_slot", dict(in_use_here'),
+    "K-28b": ('peer.send("spawn_failed", req=req, line=self.scrub(exc)',
+              'peer.send("spawn_failed", line=self.scrub(exc)'),
+    "K-28c": ('if old and auto:', 'if old:'),
+    "K-29": ('and abs(row["owner_created"] - owner[1]) <= 0.01)', 'and row["owner_created"] == owner[1])'),
+}
+MUTATIONS.update(DECISION_MUTATIONS)
+
+
+@pytest.mark.parametrize("row", list(DECISION_MUTATIONS))
+def test_decision_rows(row, make_harness):
+    """Pin the broker side of D-46, D-47, D-48 and D-49 with removable guards (P2 spec 5)."""
+    h = make_harness(row)
+    if row == "K-26":
+        w = h.boot()
+        w.acquire(req="unoffered", version="v9_9_9", wait=False)
+        assert w.event("spawning")["req"] == "unoffered"
+        answer = w.event("spawn_failed")
+        assert answer.get("req") == "unoffered" and "version" in answer["line"]
+        until(lambda: not h.rows())
+        assert h.ledger("launch") == [] and len(h.ledger("versions")) == 1
+        lease = w.acquire(req="offered")
+        assert h.ledger("launch")[0]["version"] == "v3_7_3" == lease["version"]
+        h.expected_live = [lease["instance_id"]]
+    elif row == "K-26b":
+        w = h.boot()
+        w.acquire(req="malformed", version="v3.7.3", wait=False)
+        answer = w.event("spawn_failed")
+        assert answer.get("req") == "malformed" and "version" in answer["line"]
+        assert [item["ev"] for item in h.answers] == ["hello_ok", "spawn_failed"]
+        assert h.ledger("versions") == [] and h.ledger("launch") == [] and not h.rows()
+    elif row == "K-27":
+        w = h.boot()
+        first = w.acquire(req="first", worker=111)
+        second = w.acquire(req="second", worker=222)
+        assert second["spawned"] is True and second["instance_id"] != first["instance_id"]
+        w.acquire(req="again", worker=111, wait=False)
+        again = w.event("lease")
+        assert again["req"] == "again" and again["spawned"] is False
+        assert again["instance_id"] == first["instance_id"] and len(h.ledger("launch")) == 2
+        h.expected_live = [first["instance_id"], second["instance_id"]]
+    elif row == "K-28":
+        h.seed(["live"] * 3)
+        w = h.boot()
+        w.acquire(req="full", wait=False)
+        assert w.event("no_slot").get("req") == "full"
+        assert len(h.ledger("launch")) == 3
+        h.expected_live = ["seed-0", "seed-1", "seed-2"]
+    elif row == "K-28b":
+        h.plan(spawn_error="server refusal")
+        w = h.boot()
+        w.acquire(req="refused", wait=False)
+        assert w.event("spawning")["req"] == "refused"
+        answer = w.event("spawn_failed")
+        assert answer.get("req") == "refused" and answer["line"] == "server refusal"
+    elif row == "K-28c":
+        w = h.boot()
+        old = w.acquire(req="first")
+        w.acquire(req="renew-now", reason="renew", wait=False)
+        assert w.event("spawning")["req"] == "renew-now"
+        answer = w.event("lease")
+        assert answer["req"] == "renew-now" and answer["instance_id"] != old["instance_id"]
+        assert not [item for item in h.answers if item["ev"] == "replaced"]
+        w.send("swapped", old=old["instance_id"], new=answer["instance_id"])
+        assert w.event("closed")["instance_id"] == old["instance_id"]
+        h.expected_live = [answer["instance_id"]]
+    elif row == "K-29":
+        rows = h.seed(["live"])
+        rows[0]["owner_created"] += 0.005
+        (h.directory / "leases.json").write_text(json.dumps(dict(format=1, rows=rows)), encoding="ascii")
+        w = h.boot()
+        assert w.status()["in_use_here"] == 1 and h.ledger("close") == []
+        w.send("release", instance_id="seed-0", why="sm_exit")
+        assert w.event("closed")["instance_id"] == "seed-0"
+        assert len(h.ledger("close")) == 1
+    else:
+        raise AssertionError("unhandled decision row " + row)
+
 
 def test_source_contract():
     """Pin the production argv, no pickle receive, scoped imports and source hygiene (P2 spec 7)."""
