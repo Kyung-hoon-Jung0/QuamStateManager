@@ -9687,6 +9687,7 @@ window.Bundles = (function () {
         [/^\/zline(\/|$|\?)/, ["zline"]],
         [/^\/cz-plan(\/|$|\?)/, ["czplan", "components"]],
         [/^\/port-play(\/|$|\?)/, ["portplay"]],
+        [/^\/nodesim(\/|$|\?)/, ["nodesim"]],
         [/^\/explorer(\/|$|\?)/, ["cm6"]],
         [/^\/(generate|regenerate)(\/|$|\?)/, ["generate"]],
         [/^\/instrument(\/|$|\?)/, ["wiring"]],
