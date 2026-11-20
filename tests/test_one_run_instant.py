@@ -643,6 +643,16 @@ class TestDatasetsReadTheInstant:
         ek = _entries([krun])[0]
         assert max([ea, ek], key=_entry_recency_key) is ea
 
+    def test_same_second_runs_order_by_run_id(self):
+        from quam_state_manager.web.routes import _run_recency
+        lo = SimpleNamespace(instant_us=5_000_000, date="2026-11-20",
+                             time="22:29:00", run_id=282)
+        hi = SimpleNamespace(instant_us=5_000_000, date="2026-11-20",
+                             time="22:29:00", run_id=283)
+        # the latest run is the higher id in either list order
+        assert max([lo, hi], key=_run_recency) is hi
+        assert max([hi, lo], key=_run_recency) is hi
+
 
 class TestThePollReadsTheInstant:
 
