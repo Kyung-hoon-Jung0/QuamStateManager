@@ -1122,6 +1122,13 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
         from quam_state_manager import __version__ as _v
         return {"sm_version": _v}
 
+    # The new-run poll's baseline: a run counts as new when its own instant is
+    # after the moment the page was rendered (base.html window.__pageRenderT),
+    # never because the Datasets index reached it late.
+    @app.context_processor
+    def _page_render_t_ctx():
+        return {"page_render_t": int(time.time() * 1000)}
+
     # docs/178 — the one sentence every "stage only / live is untouched"
     # surface owes the user while Auto-Sync push is armed. A Jinja global so a
     # label and the route's own result message cannot drift apart.
