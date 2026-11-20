@@ -74,6 +74,9 @@ class Guard:
         self.lease_params = None
         self._loopback = []
         self._proxy_keys = set()
+        self.barriers = {}
+        self.barrier_assignments = []
+        self.library_patches = []
 
     def end_build(self):
         """Mark the node build as finished; ``allow`` is refused before this."""
@@ -245,29 +248,53 @@ class Guard:
                 self.fail("QuantumMachinesManager", "unleased")
             original(instance, **kwargs)
 
-        QuantumMachinesManager.__init__ = init
-        QuantumMachinesManager.open_qm = self.block("open_qm", "refused")
         from qm.quantum_machine import QuantumMachine
-        QuantumMachine.execute = self.block("execute", "refused")
         from qm.api.v2.qm_api import QmApi
-        QmApi.execute = self.block("execute", "refused")
         from qm.api.v2.qmm_api import QmmApi
-        QmmApi.open_qm = self.block("open_qm", "refused")
         import qualang_tools.multi_user as multi_user
         import importlib
         module = importlib.import_module(multi_user.qm_session.__module__)
-        multi_user.qm_session = self.block("qm_session", "refused")
-        # Also replace the defining module, not only the package export.
-        module.qm_session = multi_user.qm_session
         from quam.components import BasicQuam
-        BasicQuam.connect = self.block("Quam.connect", "refused")
         from quam.core.quam_classes import QuamRoot
-        QuamRoot.save = self.block("machine.save", "refused")
         from qualibrate.core.storage.local_storage_manager import LocalStorageManager
-        LocalStorageManager.save = self.block("storage.save", "refused")
+        session = self.block("qm_session", "refused")
+        self.barrier_assignments = [
+            ("__init__", QuantumMachinesManager, "__init__", init),
+            ("open_qm", QuantumMachinesManager, "open_qm", self.block("open_qm", "refused")),
+            ("QuantumMachine.execute", QuantumMachine, "execute", self.block("execute", "refused")),
+            ("QmApi.execute", QmApi, "execute", self.block("execute", "refused")),
+            ("QmmApi.open_qm", QmmApi, "open_qm", self.block("open_qm", "refused")),
+            ("qm_session", multi_user, "qm_session", session),
+            ("qm_session.definition", module, "qm_session", session),
+            ("BasicQuam.connect", BasicQuam, "connect", self.block("Quam.connect", "refused")),
+            ("QuamRoot.save", QuamRoot, "save", self.block("machine.save", "refused")),
+            ("LocalStorageManager.save", LocalStorageManager, "save", self.block("storage.save", "refused")),
+        ]
+        self.reassert_barriers()
+
+    def remember(self, name, owner, attribute):
+        """Pin the installed descriptor for checks after node construction."""
+        self.barriers[name] = (owner, attribute, vars(owner)[attribute])
+
+    def check_barriers(self):
+        """Refuse a node that changed a barrier after library installation."""
+        for name, (owner, attribute, expected) in self.barriers.items():
+            if vars(owner).get(attribute) is not expected:
+                self.fail("barrier", name + " replaced")
+
+    def reassert_barriers(self):
+        """Restore all barrier bindings and pin them before node code runs."""
+        changed = []
+        for name, owner, attribute, barrier in self.barrier_assignments:
+            if name not in {"Quam.connect", "Quam.save"} and vars(owner).get(attribute) is not barrier:
+                changed.append(name)
+            setattr(owner, attribute, barrier)
+            self.remember(name, owner, attribute)
+        return changed
 
     def check_sim_bindings(self):
         """Refuse a node that rebound any captured sim-step name (FI4-1, R3-1); return the captured dict."""
+        self.check_barriers()
         for key, (module, attribute) in self.sim_owners.items():
             if vars(module).get(attribute) is not self.sim_classes[key]:
                 self.fail("barrier", key + " replaced")
@@ -277,6 +304,11 @@ class Guard:
         import quam_config
         if not inside(quam_config.__file__, library_root):
             self.fail("library", str(Path(quam_config.__file__).resolve()))
-        quam_config.Quam.connect = self.block("Quam.connect", "refused")
-        quam_config.Quam.save = self.block("machine.save", "refused")
+        self.barrier_assignments.extend([
+            ("Quam.connect", quam_config.Quam, "connect", self.block("Quam.connect", "refused")),
+            ("Quam.save", quam_config.Quam, "save", self.block("machine.save", "refused")),
+        ])
+        self.library_patches = self.reassert_barriers()
+        if self.library_patches:
+            print("library patched at import, barrier restored: " + ", ".join(self.library_patches), flush=True)
         return quam_config

@@ -139,7 +139,7 @@ def test_build_rejects_changed_imported_helper(tmp_path, monkeypatch, warm):
     monkeypatch.setitem(sys.modules, "qualibrate", ModuleType("qualibrate"))
     monkeypatch.setitem(sys.modules, "qm", SimpleNamespace(generate_qua_script=serialize))
     monkeypatch.setitem(sys.modules, "_nodesim_node", None)
-    guard = SimpleNamespace(install_classes=lambda: None, fail=fail)
+    guard = SimpleNamespace(install_classes=lambda: None, fail=fail, library_patches=[], check_barriers=lambda: None)
     holder = {"library": fake_library, "sources": {}} if warm else {}
     job = dict(node_file=str(node), library_root=str(library), chip_copy=str(chip))
     with pytest.raises(RuntimeError, match="source.changed") as caught:

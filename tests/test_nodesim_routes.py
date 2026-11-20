@@ -108,7 +108,7 @@ def test_nodes_answer(app):
     rows = {x["file_name"]: x for x in j["items"]}
     assert rows["11_rabi_demo.py"]["refused"] is False
     assert rows["15p_outside.py"]["refused"] is True
-    assert rows["15p_outside.py"]["refused_line"] == click.REFUSED_LIST_LINE
+    assert rows["15p_outside.py"]["refused_line"] == click.line("refused", reason=rows["15p_outside.py"]["reason"])
     assert rows["11_rabi_demo.py"]["estimates"]["20"]["family"] == "rabi"
     assert j["qubits"] == ["q1", "q2"] and j["pairs"] == ["q1-2"]
     assert j["default_qubit"] == "q2" and j["default_pair"] == "q1-2"
@@ -415,3 +415,27 @@ def test_int1_new_instance_drops_the_workers_lease(warm_app):
     assert app.c.post("/api/nodesim/new-instance", json={}, headers=H).get_json()["ok"]
     assert "drop_lease" in rig.ops()
     assert [c["why"] for c in rig.broker.calls if c["op"] == "release"][:1] == ["hash_changed"]
+
+
+@pytest.mark.parametrize("state", ["running", "busy_chip"])
+def test_p3_display_chip_and_shared_busy(app, monkeypatch, state):
+    from quam_state_manager.web import routes
+    monkeypatch.setattr(routes, "_active_chip_label", lambda: "Demo display")
+    facts = app.c.get("/api/nodesim/nodes").get_json()
+    assert facts["chip"] == facts["context"]["chip"] == "Demo display"
+    app.m.warm_jobs["a"] = dict(store_id="different-window-store", live=app.chip.resolve(), window="w1", done=False,
+                               answer=click.answer(state, phase="build", name="internal"))
+    app.m.intent_answers["w2"] = click.answer("ready")
+    app.m.intent_started["w2"] = time.monotonic()
+    out = app.c.get(STATUS, headers={"X-SM-Window-ID": "w2"}).get_json()
+    assert out["state"] == "busy"
+    expected = (click.line("busy_chip", name="Demo display") if state == "busy_chip"
+                else app.m.warm_jobs["a"]["answer"]["line"])
+    assert out["line"] == expected
+    assert out["id"] is None
+    app.m.warm_jobs.clear()
+    app.m._set_intent("w2", click.answer("busy_chip", name="internal"))
+    assert app.m.intent_answers["w2"]["state"] == "ready"
+    monkeypatch.setattr(app.m, "status", lambda *a, **k: click.answer("busy_chip", name="internal"))
+    out = app.c.get(STATUS, headers=H).get_json()
+    assert out["line"] == click.line("busy_chip", name="Demo display")
