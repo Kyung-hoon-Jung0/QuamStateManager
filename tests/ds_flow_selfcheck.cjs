@@ -242,6 +242,9 @@ function tick(ms) { return new Promise(r => setTimeout(r, ms || 30)); }
        'r2-18: failed outcomes on the day => the band never says "all OK"');
     ok(band.textContent.indexOf('no run errors') >= 0,
        'r2-18: no failed run STATUS on the day => "no run errors", beside the chips');
+    const label = band.querySelector('.ds-digest-oclabel');
+    ok(label && label.textContent === 'fit not accepted:' && label.classList.contains('ui-text-quiet'),
+       'fit summary uses neutral wording and the quiet kit text class');
     const chips = Array.prototype.map.call(
       doc.querySelectorAll('.ds-digest-band .ds-digest-qchip'),
       b => ({ ex: b.getAttribute('data-example'),

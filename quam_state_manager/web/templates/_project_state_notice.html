@@ -5,21 +5,22 @@
     run wrote itself (core/run_state_origin). One notice either way. -#}
 {%- set _psm = project_state_mismatch() if project_state_mismatch is defined else None -%}
 {%- if _psm -%}
-{%- import '_ui.html' as _psm_ui -%}
 <div data-project-state-mismatch="1" data-state-rule="{{ _psm.kind }}">
 {%- if _psm.kind == 'content' -%}
 {%- set _ex = [] -%}
 {%- for e in _psm.examples -%}{%- set _ = _ex.append(e.path ~ ': run ' ~ e.run ~ ', chip ' ~ e.chip) -%}{%- endfor -%}
-{{ _psm_ui.ui_notice('warn', 'Runs come from another state.',
-    'The newest run (#' ~ _psm.run_id ~ ') was made from a state that differs from the open chip in '
+{%- set _why = 'The newest run (#' ~ _psm.run_id ~ ') was made from a state that differs from the open chip in '
     ~ _psm.count ~ (' value' if _psm.count == 1 else ' values')
     ~ ', not counting the values that run wrote itself (for example ' ~ _ex | join('; ') ~ ').'
-    ~ ' Values in these runs may not match this chip.') }}
+    ~ ' Values in these runs may not match this chip.' -%}
 {%- else -%}
-{{ _psm_ui.ui_notice('warn', 'Runs come from another state.',
-    'Project ' ~ _psm.project ~ ' keeps its quam state in ' ~ _psm.project_state
+{%- set _why = 'Project ' ~ _psm.project ~ ' keeps its quam state in ' ~ _psm.project_state
     ~ '; the chip open in SM is ' ~ _psm.chip_folder ~ '. Runs this project saves are made from'
-    ~ ' that state, so their values can differ from the open chip.') }}
+    ~ ' that state, so their values can differ from the open chip.' -%}
 {%- endif -%}
+<details class="ui-disclosure ui-notice ui-notice--warn">
+<summary class="ui-disclosure-summary">Runs come from another state.</summary>
+<div class="ui-disclosure-body">{{ _why }}</div>
+</details>
 </div>
 {%- endif -%}
