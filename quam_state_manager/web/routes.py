@@ -9134,13 +9134,14 @@ def _project_state_mismatch() -> dict | None:
     when that folder is not the chip open in SM, returns ``{"kind", "project",
     "project_state", "chip_folder"}``. CONTENT rule (``kind`` "content"), asked
     only when the folder rule is quiet: a node can run from an in-memory state
-    that evolves run to run while the chip file stays put, so the NEWEST run's
-    saved ``quam_state`` is compared with the open chip's working copy
+    that evolves run to run while the chip file stays put, so the NEWEST run in
+    this chip's own run storage (the project's data folder, ``_scope_storage_path``;
+    none -> nothing to say) has its saved ``quam_state`` compared with the open chip's working copy
     (``core/run_state_origin``; the run's own recorded writes ignored); returns
     ``{"kind", "run_id", "count", "examples"}`` when they differ. None for no
     chip, an archive view, no runs, a run without a saved state, or no
-    difference. READ-ONLY; the newest run is picked from the already-indexed
-    stores (no rescan, one run folder read, cached); never raises."""
+    difference. READ-ONLY; the newest run is picked from the scoped store as
+    indexed (no rescan, one run folder read, cached); never raises."""
     from quam_state_manager.core import qualibrate_config, run_state_origin, store_revs
 
     ctx = _active_ctx()
@@ -9161,15 +9162,18 @@ def _project_state_mismatch() -> dict | None:
     if store is None or not isinstance(getattr(store, "state", None), dict):
         return None
     try:
+        storage = _scope_storage_path(ctx)     # this chip's own run storage, never the workspace
+        ds = (_get_or_create_store(Path(storage), rescan=False, hold_filling=True)
+              if storage and Path(storage).is_dir() else None)
+        if ds is None:
+            return None
         newest, newest_key = None, None
-        for fol in _active_dataset_stores(fast=True, rescan=False, hold_filling=True):
-            ds = fol["store"]
-            with ds._scan_lock:
-                runs = list(ds.runs.values())
-            for run in runs:
-                key = _run_recency(run)
-                if newest_key is None or key > newest_key:
-                    newest, newest_key = run, key
+        with ds._scan_lock:
+            runs = list(ds.runs.values())
+        for run in runs:
+            key = _run_recency(run)
+            if newest_key is None or key > newest_key:
+                newest, newest_key = run, key
         if newest is None:
             return None
         rev = (store_revs.store_serial(store), getattr(store, "mutation_seq", 0), id(store.state))

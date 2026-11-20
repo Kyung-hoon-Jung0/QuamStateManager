@@ -71,9 +71,11 @@ def rig(tmp_path, monkeypatch):
     chip = _chip(tmp_path / "chips" / "chip_a", _state())
     data = tmp_path / "data"
     data.mkdir()
+    scope = {"storage": str(data)}          # the chip's own run storage (project data folder)
+    monkeypatch.setattr(routes, "_scope_storage_path", lambda ctx: scope["storage"])
     c = app.test_client()
     c.post("/load", data={"folder": str(chip)})
-    return {"app": app, "c": c, "chip": chip, "data": data}
+    return {"app": app, "c": c, "chip": chip, "data": data, "scope": scope, "tmp": tmp_path}
 
 
 def _rescan(rig) -> None:
@@ -182,3 +184,21 @@ class TestNotice:
         _rescan(rig)
         assert _mismatch(rig) is None
         assert MARK not in rig["c"].get("/datasets", headers=HX).get_data(as_text=True)
+
+    def test_newest_workspace_run_of_another_folder_is_not_this_chips(self, rig):
+        """Only the chip's own run storage counts; a newer run elsewhere in the
+        workspace (another chip, another project) says nothing."""
+        _run(rig["data"], 17, _state(), hhmmss="070000")
+        other = rig["tmp"] / "other_data"
+        _run(other, 18, _state(f01=4.0e9, amp=0.1), hhmmss="230000")
+        rig["c"].post("/workspace/add", data={"folder": str(other)})
+        _rescan(rig)
+        assert _mismatch(rig) is None
+        assert MARK not in rig["c"].get("/datasets", headers=HX).get_data(as_text=True)
+
+    def test_no_scoped_storage_says_nothing(self, rig):
+        _run(rig["data"], 19, _state(amp=0.1))
+        _rescan(rig)
+        assert _mismatch(rig) is not None
+        rig["scope"]["storage"] = ""
+        assert _mismatch(rig) is None
