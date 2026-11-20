@@ -230,7 +230,7 @@
        the SVG wiring diagram circles.                                  */
     --role-xy-color:        #9b59b6;   /* XY drive port       — purple   */
     --role-rr-color:        #e3781a;   /* Readout resonator   — orange   */
-    --role-rr-in-color:     #9e4f00;   /* Readout input - burnt orange (v1.5.1 r6 P2-16: was a gold twin of rr) */
+    --role-rr-in-color:     #c026d3;   /* Readout input - fuchsia (the kit's line-2): a hue apart from rr */
     --role-z-color:         #2e86c1;   /* Flux / Z line - blue; dark theme 3.55:1 on the FEM card */
     --role-coupler-color:   #1abc9c;   /* Coupler             — teal     */
     --role-twpa-pump-color: #dc4535;   /* TWPA pump - red; dark theme 3.32:1 on the FEM card */
@@ -1919,10 +1919,10 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 .sidebar-nav li.nav-floatable .nav-float-btn { margin: 0 .2rem 0 0; }
 .sidebar-nav li.nav-floatable:has(> a.active) > a.active,
 .sidebar-nav .nav-sub-row:has(> a.active) > a.active { background: transparent; }
-.sidebar-nav li.nav-floatable:has(> a.active) .nav-float-btn,
+.sidebar-nav .nav-sub-row:has(> a.active) .nav-float-btn,
 .sidebar-nav .nav-sub-row:has(> a.active) .nav-print,
 .sidebar-nav .nav-sub-row:has(> a.active) .nav-sub-toggle {
-    color: var(--pico-primary-inverse); background: transparent;
+    color: var(--ui-on-accent); background: transparent;
 }
 hr.sidebar-section-divider { margin: 0.6rem 0; border-color: var(--pico-muted-border-color); opacity: 0.5; }
 
@@ -15328,7 +15328,7 @@ details.jargon > .jargon-explain {
     --section-header-bg: rgba(255, 255, 255, 0.06);
     --role-xy-color: #9b59b6;
     --role-rr-color: #e67e22;
-    --role-rr-in-color: #9e4f00;
+    --role-rr-in-color: #c026d3;
     --role-z-color: #2471a3;
     --role-coupler-color: #1abc9c;
     --role-twpa-pump-color: #c8392b;

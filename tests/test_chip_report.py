@@ -65,7 +65,11 @@ class TestSidebarAffordance:
         app = create_app(testing=True, instance_path=str(tmp_path / "_i2"))
         r = app.test_client().get("/chip-status/report")
         assert r.status_code == 200
-        assert "No chip is open" in r.get_data(as_text=True)
+        html = r.get_data(as_text=True)
+        # the shared no-chip state inside the app shell: the sidebar is the
+        # way back (a bare "No chip is open" page was a dead end)
+        assert "No chip loaded" in html and "pane-empty" in html
+        assert "sidebar-nav" in html
 
 
 class TestReportContent:

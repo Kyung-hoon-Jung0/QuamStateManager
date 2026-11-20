@@ -5660,12 +5660,17 @@ window.ChipStatus.mount = function (opts) {
         if (scroll !== false && spec.build === 'metrics') _ensureSectionBuilt('2qrb', { lazy: true, wait: true });
         _ensureSectionBuilt(spec.build, scroll === false ? { lazy: true } : { prio: spec.sel, wait: true });
         if (scroll === false) return;
-        requestAnimationFrame(function() {        // let a just-built section lay out
+        var land = function (how) {
             var el = document.querySelector(spec.sel);
             _jumpBaseH = _dashH();                // what the smooth jump measured against
-            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            else { var p = _scrollPane(); if (p) p.scrollTo({ top: 0, behavior: 'smooth' }); }
-        });
+            if (el) el.scrollIntoView({ behavior: how, block: 'start' });
+            else { var p = _scrollPane(); if (p) p.scrollTo({ top: 0, behavior: how }); }
+        };
+        // A page opened in a background tab or a hidden window gets no
+        // animation frames until it is shown: a ?view= deep link stayed on
+        // Overview there. A hidden page lands at once, without animation.
+        if (document.hidden) land('auto');
+        else requestAnimationFrame(function () { land('smooth'); });   // let a just-built section lay out
     };
 
     // Queue item 10: an Overview tile jumps to ITS panel (T1 -> the T1 panel,

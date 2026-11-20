@@ -18420,7 +18420,9 @@ def chip_status_report():
     engine = _engine()
     store = _store()
     if not engine or not store:
-        return render_template("chip_report.html", has_chip=False)
+        # the shared no-chip state inside the app shell: its Re-open offer
+        # (when the last chip's folder is still there) and the sidebar are the way back
+        return _no_chip("the chip report", "topology")
     checked = _cr.parse_sections(request.args.get("sections"))
     rc = _ReportCtx(redact=_cr.parse_redact(request.args.get("redact")),
                     window=_cr.parse_window(request.args.get("window")))
