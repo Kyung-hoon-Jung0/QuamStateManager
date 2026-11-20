@@ -24,21 +24,27 @@ class ControllerConfig:
 
     def __init__(self):
         """Begin an empty controller (P2 spec 4.4)."""
-        self.slots = {"mw": [], "lf": []}
+        self.slots = {}
 
     def mw_fems(self, *slots):
         """Record MW slots (P2 spec 4.4)."""
-        self.slots["mw"] = list(slots)
+        self.add_slots(slots, "MW_FEM")
         return self
 
     def lf_fems(self, *slots):
         """Record LF slots (P2 spec 4.4)."""
-        self.slots["lf"] = list(slots)
+        self.add_slots(slots, "LF_FEM")
         return self
+
+    def add_slots(self, slots, kind):
+        """Validate all slots before applying any, as SDK 1.2.0 (P2 spec 5)."""
+        if len(set(slots)) != len(slots) or any(not 1 <= slot <= 8 or str(slot) in self.slots for slot in slots):
+            raise ValueError("Invalid or repeated FEM slot")
+        self.slots.update({str(slot): kind for slot in slots})
 
     def to_dict(self):
         """Return a stable ledger representation (P2 spec 4.4)."""
-        return self.slots
+        return {"slots": self.slots}
 
 
 class ClusterConfig:
@@ -46,17 +52,17 @@ class ClusterConfig:
 
     def __init__(self):
         """Start an empty cluster (P2 spec 4.4)."""
-        self.controllers = []
+        self.controllers = {}
 
     def controller(self):
         """Add one controller, as in qm-saas 1.2.0 (P2 spec 4.4)."""
         controller = ControllerConfig()
-        self.controllers.append(controller)
+        self.controllers["con" + str(len(self.controllers) + 1)] = controller
         return controller
 
     def to_dict(self):
         """Return the cluster's recorded mapping (P2 spec 4.4)."""
-        return [controller.to_dict() for controller in self.controllers]
+        return {"controllers": {key: value.to_dict() for key, value in self.controllers.items()}}
 
 
 class QmSaasInstance:
@@ -71,7 +77,7 @@ class QmSaasInstance:
         """Map the server response exactly as qm-saas does (P2 spec 3.5)."""
         if self.id:
             return
-        result = self._client.launch_simulator(self._version, self._cluster.to_dict())
+        result = self._client.launch_simulator(self._version, self._cluster.to_dict() if self._cluster else {})
         self.id, self.token, self.host, self.port = (result[key] for key in ("id", "token", "host", "port"))
         self.expires_at = dt.datetime.fromisoformat(result["expires_at"])
 
@@ -97,9 +103,14 @@ class QmSaas:
 
     def __init__(self, host, port, email, password, auto_cleanup=True, log=None, protocol="https"):
         """Create the logged-in API client (D-11)."""
+        if protocol not in ("http", "https"):
+            raise ValueError("Invalid protocol")
         self._client = Client(protocol, host, port, email, password, log)
 
     def simulator(self, version=None, cluster_config=None):
         """Return an unspawned instance (D-17(a))."""
-        name = version.name if isinstance(version, QOPVersion) else version
+        normalized = version if isinstance(version, QOPVersion) else QOPVersion(version)
+        if cluster_config is not None and normalized.major != 3:
+            raise ValueError("Cluster configuration requires QoP v3")
+        name = normalized.name
         return QmSaasInstance(self._client, name, cluster_config)

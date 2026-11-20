@@ -157,8 +157,9 @@ class Peer:
             timer.start()
             try:
                 self.connection.send_bytes((json.dumps(message, ensure_ascii=True) + "\n").encode("utf-8"))
+                return True
             except (OSError, EOFError):
-                pass
+                return False
             finally:
                 timer.cancel()
 
@@ -182,6 +183,8 @@ class Broker:
         self.swaps = {}
         self._specs = {}
         self.closing = set()
+        self.offers = {}
+        self.dirty = False
         self.tasks = threading.BoundedSemaphore(8)
         self.last_home = clock()
         self.created = process_created(os.getpid())
@@ -192,6 +195,8 @@ class Broker:
         self.sdk_log.propagate = False
         table = self.directory / "leases.json"
         self.rows = json.loads(table.read_text(encoding="ascii"))["rows"] if table.exists() else []
+        for row in self.rows:
+            row.pop("spec", None)
         self.key = os.urandom(32)
         digest = hashlib.sha256((user_identity() + os.path.normcase(str(self.directory.resolve())))
                                 .encode("utf-8")).hexdigest()[:24]
@@ -232,8 +237,10 @@ class Broker:
 
     def save(self):
         """Persist token-free rows under the shared file lock (D-17(a))."""
+        self.dirty = True
         with xlock.held(self.directory / "leases.lock", timeout=5):
             atomic(self.directory / "leases.json", dict(format=1, rows=self.rows))
+        self.dirty = False
 
     def task(self, function, *args):
         """Bound SDK activity without blocking the reaper or pipe loop (P2 spec 3.3)."""
@@ -258,6 +265,8 @@ class Broker:
             candidate = dict(credentials or self.credentials or {})
             with self.lock:
                 self.secrets.add(candidate.get("password", ""))
+            if not proto.is_allowed_saas_host(candidate.get("host"), candidate.get("port")):
+                raise ValueError("The cloud login host or port is forbidden.")
             fresh = self.module.QmSaas(**candidate, auto_cleanup=False, log=self.sdk_log)
             if not callable(getattr(fresh._client, "close_simulator", None)):
                 raise RuntimeError("qm-saas close-by-id capability is unavailable")
@@ -266,20 +275,43 @@ class Broker:
                 self.credentials, self.client = candidate, fresh
             return fresh
 
-    def retry(self, operation):
-        """Retry an untyped SDK failure once after fresh login (P2 spec 3.3)."""
+    def retry(self, operation, launch=False):
+        """Retry close, or a provably pre-POST launch failure, after login (D-43, P2 spec 3.3)."""
         try:
             return operation(self.client)
         except Exception as exc:
             self.log(exc)
+            if launch and str(exc) != "api client is unauthenticated":
+                raise
             return operation(self.login())
 
     def push(self, row, event, **fields):
         """Deliver a lease event to every connection of its owner (P2 spec 4.5)."""
         with self.lock:
             peers = [peer for peer in self.peers if peer.owner == (row["owner_pid"], row["owner_created"])]
+        delivered = False
         for peer in peers:
-            peer.send(event, **fields)
+            delivered = peer.send(event, **fields) or delivered
+        return delivered
+
+    def schedule_close(self, row, why):
+        """Persist close intent even when all SDK slots are busy (D-17(c))."""
+        with self.lock:
+            if not row["instance_id"]:
+                row["close_on_ready"] = True
+                self.save()
+                return
+            row["state"] = "closing"
+            self.save()
+        self.task(self.close, row, why)
+
+    def prune(self, row):
+        """Discard memory indexes for a removed durable row (P2 spec 3.2)."""
+        self.requests = {key: value for key, value in self.requests.items() if value is not row}
+        key = (row["owner_pid"], row["cluster_hash"])
+        if not any((other["owner_pid"], other["cluster_hash"]) == key for other in self.rows):
+            self._specs.pop(key, None)
+        self.offers.pop(row["row"], None)
 
     def close(self, row, why):
         """Claim a close once and retain failures for reaping (D-17(c))."""
@@ -288,9 +320,9 @@ class Broker:
                 return
             if self.client is None:
                 return
-            self.closing.add(row["row"])
             row["state"] = "closing"
             self.save()
+            self.closing.add(row["row"])
         try:
             self.retry(lambda client: client._client.close_simulator(row["instance_id"]))
         except Exception as exc:
@@ -299,6 +331,7 @@ class Broker:
             with self.lock:
                 if row in self.rows:
                     self.rows.remove(row)
+                self.prune(row)
                 self.leases.pop(row["instance_id"], None)
                 self.swaps.pop(row["instance_id"], None)
                 self.save()
@@ -307,7 +340,7 @@ class Broker:
             with self.lock:
                 self.closing.discard(row["row"])
 
-    def acquire(self, peer, message, old=None):
+    def reserve(self, peer, message, old=None):
         """Reserve a durable slot before any SDK spawn (D-17(a), P2 spec 3.3)."""
         with self.lock:
             if message["owner"]["sm_pid"] != peer.owner[0]:
@@ -322,24 +355,42 @@ class Broker:
                     if (row["state"] == "live" and row["owner_pid"] == peer.owner[0]
                             and row["owner_created"] == peer.owner[1] and row["cluster_hash"] == message["hash"]
                             and row["version"] == message["version"] and lease):
-                        peer.send("lease", req=message["req"], **lease, spawned=False, spawn_s=0)
-                        return
+                        return "lease", dict(req=message["req"], **lease, spawned=False, spawn_s=0), None, old
+            if not old and any(row["state"] == "live" and row["owner_pid"] == peer.owner[0]
+                               and row["owner_created"] == peer.owner[1] and row["cluster_hash"] == message["hash"]
+                               and row["version"] == message["version"] for row in self.rows):
+                return ("spawn_failed", dict(line="The adopted cloud lease must be relayed or explicitly renewed."),
+                        None, old)
             if len(self.rows) >= 3:
                 expires = [row["expires_at"] for row in self.rows if row["expires_at"]]
-                peer.send("no_slot", in_use_here=len(self.rows), earliest_close=min(expires, default=None))
-                return
+                return "no_slot", dict(in_use_here=len(self.rows), earliest_close=min(expires, default=None)), None, old
             row = dict(row=uuid.uuid4().hex, state="pending", instance_id=None, pending_at=clock(),
                        spawned_at=None, expires_at=None, version=message["version"], cluster_hash=message["hash"],
                        owner_pid=peer.owner[0], owner_created=peer.owner[1], worker_pid=message["owner"]["worker_pid"],
                        broker_pid=os.getpid(), broker_created=self.created, purpose="nodesim", last_click_at=None,
-                       in_job=None, close_on_ready=False, spec=message["spec"])
+                       in_job=None, close_on_ready=False)
             self.rows.append(row)
+            self._specs[(peer.owner[0], message["hash"])] = message
             self.requests[(peer.owner, message["req"])] = row
-            self.save()
-            peer.send("spawning", req=message["req"], in_use_here=len(self.rows), limit=3)
+            try:
+                self.save()
+            except Exception as exc:
+                self.rows.remove(row)
+                self.prune(row)
+                self.log(exc)
+                return "spawn_failed", dict(line="The cloud simulator reservation could not be saved."), None, old
+            return "spawning", dict(req=message["req"], in_use_here=len(self.rows), limit=3), row, old
+
+    def acquire(self, peer, message, old=None):
+        """Send reservation results outside the table lock (D-17(a), P2 spec 3.4)."""
+        event, fields, row, old = self.reserve(peer, message, old)
+        peer.send(event, **fields)
+        if row is None:
+            return
         if not self.task(self.spawn, row, peer, message, old):
             with self.lock:
                 self.rows.remove(row)
+                self.prune(row)
                 self.save()
             peer.send("spawn_failed", line="The cloud simulator is busy.")
 
@@ -354,15 +405,15 @@ class Broker:
             return instance
 
         try:
-            instance = self.retry(launch)
+            instance = self.retry(launch, launch=True)
             with self.lock:
                 late = row["state"] == "ghost" or row not in self.rows or clock() - row["pending_at"] > SPAWN_CAP
                 row.update(instance_id=instance.id, expires_at=instance.expires_at.isoformat(), spawned_at=clock(),
                            state="live")
                 if row not in self.rows:
                     self.rows.append(row)
-                self.save()
                 self.secrets.add(instance.token)
+                self.save()
             if late or row["close_on_ready"]:
                 self.close(row, "release")
                 return
@@ -378,14 +429,25 @@ class Broker:
                 if old:
                     self.swaps[instance.id] = (old["instance_id"], clock())
             if old:
-                self.push(row, "replaced", old=old["instance_id"], lease=lease)
+                delivered = self.push(row, "replaced", old=old["instance_id"], lease=lease)
             else:
-                peer.send("lease", req=message["req"], **lease, spawned=True, spawn_s=time.monotonic() - started)
+                delivered = peer.send("lease", req=message["req"], **lease, spawned=True,
+                                      spawn_s=time.monotonic() - started)
+            if not delivered:
+                raise ConnectionError("The cloud lease could not be delivered.")
         except Exception as exc:
             with self.lock:
                 if row in self.rows and not row["instance_id"]:
-                    self.rows.remove(row)
-                    self.save()
+                    row.update(state="ghost", expires_at=dt.datetime.fromtimestamp(
+                        row["pending_at"] + 960, dt.timezone.utc).isoformat())
+                    try:
+                        self.save()
+                    except Exception as save_exc:
+                        self.log(save_exc)
+                elif row in self.rows:
+                    row["state"] = "closing"
+            if row["instance_id"]:
+                self.schedule_close(row, "release")
             self.log(exc)
             peer.send("spawn_failed", line=self.scrub(exc).splitlines()[0])
 
@@ -397,11 +459,11 @@ class Broker:
         proto.validate(message)
         account = hashlib.sha256(message["creds"]["email"].encode("utf-8")).hexdigest()[:12]
         with self.login_lock:
-            if self.account and account != self.account:
+            if self.account and account != self.account and any(row["state"] != "ghost" for row in self.rows):
                 peer.send("account_mismatch")
                 return False
             if not alive(message["sm_pid"], message["sm_created"]):
-                peer.send("login_failed", line="The owner process is unavailable.")
+                peer.send("login_failed", line="The cloud instance manager owner process is unavailable.")
                 return False
             try:
                 if self.credentials != message["creds"]:
@@ -440,9 +502,10 @@ class Broker:
                 row = self.requests.get((peer.owner, message["req"]))
                 if row in owned:
                     row["close_on_ready"] = True
-                    self.save()
                     if row["instance_id"]:
-                        self.task(self.close, row, "release")
+                        self.schedule_close(row, "release")
+                    else:
+                        self.save()
                 peer.send("cancelled", req=message["req"])
             elif op == "swapped":
                 swap = self.swaps.get(message["new"])
@@ -450,7 +513,7 @@ class Broker:
                     self.swaps.pop(message["new"], None)
                     for row in owned:
                         if row["instance_id"] == message["old"]:
-                            self.task(self.close, row, "release")
+                            self.schedule_close(row, "release")
             else:
                 for row in owned:
                     if row["instance_id"] != message.get("instance_id"):
@@ -460,7 +523,7 @@ class Broker:
                     elif op == "in_job":
                         row["in_job"] = message["click_id"]
                     elif op == "release":
-                        self.task(self.close, row, "release")
+                        self.schedule_close(row, "release")
                 self.save()
 
     def disconnected(self, peer):
@@ -472,7 +535,7 @@ class Broker:
                     if peer.owner == (row["owner_pid"], row["owner_created"])]
         for row in rows:
             if not alive(row["owner_pid"], row["owner_created"]):
-                self.task(self.close, row, "release")
+                self.schedule_close(row, "release")
 
     def reap(self):
         """Handle each durable row independently at startup and every 30 s (D-17(b-c))."""
@@ -489,6 +552,7 @@ class Broker:
                             row["pending_at"] + 960, dt.timezone.utc).isoformat())
                     if row["expires_at"] and now >= epoch(row["expires_at"]):
                         self.rows.remove(row)
+                        self.prune(row)
                         self.leases.pop(row["instance_id"], None)
                         self.save()
                         if row["instance_id"]:
@@ -506,18 +570,19 @@ class Broker:
                     why = "reaper" if not owner_alive else "idle"
                     if row["state"] == "closing" or not owner_alive or (
                             not row["in_job"] and basis is not None and now - basis > 600):
-                        self.task(self.close, row, why)
+                        self.schedule_close(row, why)
             except Exception as exc:
                 self.log(exc)
 
     def renew(self):
         """Offer or prepare a replacement; defer the old close until acknowledgement (D-17(d))."""
+        work, offers = [], []
         with self.lock:
             for new, (old, at) in list(self.swaps.items()):
                 if clock() - at >= 120:
                     for row in self.rows:
                         if row["instance_id"] == new:
-                            self.task(self.close, row, "release")
+                            self.schedule_close(row, "release")
             for row in list(self.rows):
                 if row["state"] != "live" or not 0 < epoch(row["expires_at"]) - clock() < 150:
                     continue
@@ -532,13 +597,18 @@ class Broker:
                 if (len(self.rows) <= 1 and row["last_click_at"] is not None
                         and clock() - row["last_click_at"] <= 120 and peers):
                     request = self._specs.get((row["owner_pid"], row["cluster_hash"]))
-                    if request is None and row.get("spec") is not None:
-                        request = dict(owner=dict(sm_pid=row["owner_pid"], worker_pid=row["worker_pid"] or 0),
-                                       version=row["version"], spec=row["spec"], hash=row["cluster_hash"])
                     if request:
-                        self.acquire(peers[0], dict(request, req=uuid.uuid4().hex, reason="renew"), row)
+                        work.append((peers[0], dict(request, req=uuid.uuid4().hex, reason="renew"), row))
                         continue
-                self.push(row, "renew_offer", instance_id=row["instance_id"], expires_at=row["expires_at"])
+                if self.offers.get(row["row"]) != row["expires_at"]:
+                    offers.append(row)
+
+        for peer, message, row in work:
+            self.acquire(peer, message, row)
+        for row in offers:
+            if self.push(row, "renew_offer", instance_id=row["instance_id"], expires_at=row["expires_at"]):
+                with self.lock:
+                    self.offers[row["row"]] = row["expires_at"]
 
     def serve_peer(self, connection, slots):
         """Authenticate away from accept, with a cap for silent clients (P2 spec 3.1)."""
@@ -563,9 +633,6 @@ class Broker:
                 elif message.get("op") == "bye":
                     break
                 else:
-                    if message.get("op") == "acquire" and peer.owner:
-                        with self.lock:
-                            self._specs[(peer.owner[0], message["hash"])] = message
                     self.dispatch(peer, message)
         except (OSError, EOFError, ValueError, AuthenticationError):
             pass
@@ -578,6 +645,7 @@ class Broker:
     def run(self):
         """Run independent accept, reaper and renewal loops (P2 spec 3.1-3.4)."""
         slots = threading.BoundedSemaphore(8)
+        stopped = threading.Event()
         listener = Listener(self.address, authkey=self.key)
 
         def accept():
@@ -585,8 +653,12 @@ class Broker:
             while True:
                 try:
                     connection = listener._listener.accept()
-                except OSError:
-                    return
+                except OSError as exc:
+                    if stopped.is_set():
+                        return
+                    self.log(exc)
+                    stopped.wait(0.05)
+                    continue
                 if slots.acquire(blocking=False):
                     threading.Thread(target=self.serve_peer, args=(connection, slots), daemon=True).start()
                 else:
@@ -596,21 +668,37 @@ class Broker:
         last_reap = last_renew = float("-inf")
         try:
             while True:
-                now = clock()
-                if now - last_reap >= REAP_S:
-                    self.reap()
-                    last_reap = now
-                if now - last_renew >= RENEW_S:
-                    self.renew()
-                    last_renew = now
-                with self.lock:
-                    if self.peers:
-                        self.last_home = now
-                    if not self.peers and not any(row["state"] != "ghost" for row in self.rows):
-                        if now - self.last_home >= EMPTY_S:
-                            return
+                try:
+                    now = clock()
+                    if now - last_reap >= REAP_S:
+                        try:
+                            self.reap()
+                        except Exception as exc:
+                            self.log(exc)
+                        last_reap = now
+                    if now - last_renew >= RENEW_S:
+                        try:
+                            self.renew()
+                        except Exception as exc:
+                            self.log(exc)
+                        last_renew = now
+                    if self.dirty:
+                        try:
+                            with self.lock:
+                                self.save()
+                        except Exception as exc:
+                            self.log(exc)
+                    with self.lock:
+                        if self.peers:
+                            self.last_home = now
+                        if not self.peers and not any(row["state"] != "ghost" for row in self.rows):
+                            if now - self.last_home >= EMPTY_S:
+                                return
+                except Exception as exc:
+                    self.log(exc)
                 time.sleep(0.05)
         finally:
+            stopped.set()
             listener.close()
 
 

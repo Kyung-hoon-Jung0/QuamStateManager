@@ -13,7 +13,13 @@ LOCK = threading.RLock()
 
 def plan():
     """Read a replaceable plan so tests can release in-flight operations (P2 spec 5)."""
-    return json.loads(Path(os.environ["FAKE_SAAS_PLAN"]).read_text(encoding="ascii"))
+    for attempt in range(100):
+        try:
+            return json.loads(Path(os.environ["FAKE_SAAS_PLAN"]).read_text(encoding="ascii"))
+        except PermissionError:
+            if attempt == 99:
+                raise
+            time.sleep(0.005)
 
 
 def record(kind, **fields):
@@ -48,12 +54,13 @@ class Client:
 
     def __init__(self, protocol, host, port, email, password, log):
         """Record login without persisting credentials (D-11)."""
-        self._jwt = "session-sentinel-68ef"
+        self._jwt = None
         self.log = log
         self._login()
         if password == "bad-password-sentinel" or plan().get("login_error"):
             log.error(password)
             raise Exception("login refused " + password)
+        self._jwt = "session-sentinel-68ef-" + str(self.generation)
 
     def _login(self):
         """Keep a generation for a failure that only re-login can fix (P2 spec 3.3)."""
@@ -69,6 +76,10 @@ class Client:
         if control.get("close_fails_until_relogin") and self.generation == 1:
             record("close_failed", id=instance_id)
             raise Exception("session expired " + self._jwt)
+        entries = json.loads(Path(os.environ["FAKE_SAAS_LEDGER"]).read_text(encoding="ascii"))
+        if not any(entry["event"] == "launch" and entry["id"] == instance_id for entry in entries) or any(
+                entry["event"] == "close" and entry["id"] == instance_id for entry in entries):
+            raise Exception("Unknown or closed simulator")
         record("close", id=instance_id)
 
     def launch_simulator(self, version, cluster_config):
@@ -78,8 +89,11 @@ class Client:
         if control.get("spawn_error"):
             raise Exception(control["spawn_error"])
         identifier = "fake-" + uuid.uuid4().hex[:12]
-        record("launch", id=identifier, ghost=bool(control.get("die_after_post")), version=version,
+        record("launch", id=identifier,
+               ghost=bool(control.get("die_after_post") or control.get("raise_after_post")), version=version,
                cluster=cluster_config)
+        if control.get("raise_after_post"):
+            raise Exception("ambiguous launch failure")
         if control.get("die_after_post"):
             os._exit(71)
         time.sleep(min(float(control.get("spawn_sleep_s", 0)), 20))

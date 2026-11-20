@@ -34,13 +34,13 @@ MUTATIONS = {
             'in_use_here=sum(r["state"] != "ghost" for r in self.rows), limit=3)'),
     "K-3": ('or not owner_alive or (', 'or False or ('),
     "K-4": ('if not alive(row["broker_pid"], row["broker_created"]):', 'if False:'),
-    "K-5": ('self.task(self.close, row, "release")\n\n    def reap', 'pass\n\n    def reap'),
+    "K-5": ('self.schedule_close(row, "release")\n\n    def reap', 'pass\n\n    def reap'),
     "K-5b": ('why = "reaper" if not owner_alive else "idle"',
              'owner_alive = False\n                    why = "reaper"'),
     "K-5c": ('or not owner_alive or (', 'or False or ('),
     "K-6": ('now - basis > 600', 'now - basis > 900'),
     "K-6b": ('else row["spawned_at"]', 'else now'),
-    "K-6c": ('self.task(self.close, row, why)', 'return self.close(row, why)'),
+    "K-6c": ('self.schedule_close(row, why)', 'return self.close(row, why)'),
     "K-7": ('if len(self.rows) >= 3:', 'if len(self.rows) >= 4:'),
     "K-8": ('if late or row["close_on_ready"]:', 'if late:'),
     "K-8b": ('if late or row["close_on_ready"]:', 'if row["close_on_ready"]:'),
@@ -49,7 +49,7 @@ MUTATIONS = {
     "K-10": ('text = text.replace(secret, "***")', 'text = text'),
     "K-11": ('deliver_challenge(connection, self.key)\n            answer_challenge(connection, self.key)',
              'deliver_challenge(connection, b"wrong-key")\n            answer_challenge(connection, b"wrong-key")'),
-    "K-12": ('self.task(self.close, row, "release")\n            else:', 'pass\n            else:'),
+    "K-12": ('self.schedule_close(row, "release")\n            else:', 'pass\n            else:'),
     "K-12b": ('len(self.rows) <= 1 and row["last_click_at"] is not None',
               'len(self.rows) <= 2 and row["last_click_at"] is not None'),
     "K-13": ('if clock() - at >= 120:', 'if clock() - at >= 1200:'),
@@ -125,7 +125,10 @@ class Wire:
         deadline = time.monotonic() + cap
         while time.monotonic() < deadline:
             if self.connection.poll(min(0.1, max(0, deadline - time.monotonic()))):
-                item = json.loads(self.connection.recv_bytes().decode("utf-8"))
+                try:
+                    item = json.loads(self.connection.recv_bytes().decode("utf-8"))
+                except (EOFError, OSError):
+                    raise AssertionError("broker disconnected before VERDICT " + name) from None
                 self.harness.answers.append(item)
                 if item["ev"] == name:
                     return item
@@ -176,6 +179,8 @@ class Harness:
         self.clock_path = path / "clock.json"
         self.processes, self.wires, self.answers = [], [], []
         self.last_rows = []
+        self.expected_live = None
+        self.inject = ""
         self.now = NOW
         self.control = dict(now=NOW)
         self.plan()
@@ -224,6 +229,7 @@ class Harness:
                 f"b.clock=lambda:float(pathlib.Path({str(self.clock_path)!r}).read_text());"
                 "original=b.Broker.disconnected;"
                 f"exec({observer!r});"
+                f"exec({self.inject!r});"
                 "b.Broker.disconnected=observe;"
                 f"raise SystemExit(b.main({str(self.directory)!r}))")
         env = {key: value for key, value in os.environ.items() if not key.startswith("SAAS_")}
@@ -300,19 +306,25 @@ class Harness:
 
     def finish(self):
         """Reap recorded PIDs and assert every launched id's final disposition (P2 spec 5, 7.10)."""
-        self.plan(hold_before_post=False, hold_after_post=False, close_fails=False, bad_close_ids=[],
-                  login_error=False, close_fails_until_relogin=False, die_after_post=False, spawn_error=None)
-        # Release in-flight fake calls before replacing a mutated broker for cleanup.
         try:
-            if (any(process.poll() is None for process in self.processes) and any(
-                    entry["event"] == "launch" and not entry.get("ghost") for entry in self.ledger())):
-                until(lambda: not any(row["state"] == "pending" for row in self.rows()), cap=3)
+            launches = self.ledger("launch")
+            closes = Counter(entry["id"] for entry in self.ledger("close"))
+            leftovers = {entry["id"] for entry in launches if not entry.get("ghost") and not closes[entry["id"]]}
+            assert leftovers == set(self.expected_live or []), ("unexpected leftovers", leftovers, self.expected_live)
+            assert all(count == 1 for count in closes.values()), closes
+            assert set(closes) <= {entry["id"] for entry in launches}
             for wire in self.wires:
                 wire.close()
             for process in self.processes:
                 self.kill(process)
+            self.plan(hold_before_post=False, hold_after_post=False, close_fails=False, bad_close_ids=[],
+                      login_error=False, close_fails_until_relogin=False, die_after_post=False, spawn_error=None)
             if any(row["instance_id"] for row in self.rows()):
                 self.source = BROKER
+                self.inject = ""
+                identity = read_json(self.directory / "broker.json")
+                identity["account"] = ""
+                (self.directory / "broker.json").write_text(json.dumps(identity), encoding="ascii")
                 self.start()
                 wire = self.connect().ready()
                 for row in wire.status()["rows"]:
@@ -349,6 +361,7 @@ def make_harness(tmp_path, request):
         harnesses.append(harness)
         return harness
 
+    make.harnesses = harnesses
     yield make
     errors = []
     for harness in harnesses:
@@ -424,6 +437,12 @@ def test_fi(row, make_harness):
             wire.send("in_job", instance_id=lease["instance_id"], click_id=None)
             wire.status()
             adopted.advance(5)
+            assert wire.event("renew_offer")["instance_id"] == lease["instance_id"]
+            wire.acquire(req="adopted", wait=False)
+            assert "adopted" in wire.event("spawn_failed")["line"]
+            assert len(adopted.ledger("launch")) == 1
+            wire.acquire(req="explicit-renew", reason="renew", wait=False)
+            wire.event("spawning")
             replacement = wire.event("replaced")
             assert replacement["old"] == lease["instance_id"]
             assert adopted.ledger("close") == []
@@ -464,6 +483,13 @@ def test_fi(row, make_harness):
                         part.processes[0].wait(timeout=0.3)
                     assert part.connect().ready().status()["rows"][0]["state"] == state
                     assert part.processes[0].poll() is None
+                    if state == "pending":
+                        wire = part.connect().ready()
+                        wire.send("cancel", req="request")
+                        wire.event("cancelled")
+                        part.plan(hold_before_post=False, close_fails=False)
+                        wire.event("closed")
+                        until(lambda: not part.rows())
     elif row in {"K-5", "K-5b", "K-5c"}:
         owner = h.owner()
         h.start()
@@ -676,6 +702,7 @@ def test_fi(row, make_harness):
         h.plan(close_fails_until_relogin=True)
         w.send("release", instance_id=lease["instance_id"], why="sm_exit")
         assert w.event("closed")["instance_id"] == lease["instance_id"]
+        kept = w.acquire(req="kept")
         w.hello(creds=dict(CREDS, email="other@example.invalid"))
         assert w.event("account_mismatch") == dict(ev="account_mismatch")
     elif row == "K-18":
@@ -687,16 +714,159 @@ def test_fi(row, make_harness):
         finally:
             silent.close()
     elif row == "K-19":
-        alternate = Path("C:/ProgramData/miniconda3/python.exe")
-        assert alternate.is_file(), "the second installed interpreter is required on this machine"
-        assert alternate.resolve() != Path(sys.executable).resolve()
+        alternate = Path(sys.executable).resolve().parents[2] / "python.exe"
+        if not alternate.is_file() or alternate.resolve() == Path(sys.executable).resolve():
+            pytest.skip("a second interpreter is unavailable")
         h.start(alternate)
         w = h.connect().ready()
         assert Path(read_json(h.directory / "broker.json")["env"]).resolve() == alternate.resolve()
         assert w.acquire()["spawned"] is True
     else:
         raise AssertionError("unhandled FI " + row)
+    expected = {
+        "K-4": [["seed-0"], [replacement["lease"]["instance_id"]]] if row == "K-4" else [],
+        "K-7": [["seed-0", "seed-1", "seed-2"], ["seed-0", "seed-1"]],
+        "K-10": [[lease["instance_id"]]] if row == "K-10" else [],
+        "K-12": [[manual["lease"]["instance_id"]]] if row == "K-12" else [],
+        "K-12b": [[old["instance_id"], second["instance_id"]], [first["instance_id"]]] if row == "K-12b" else [],
+        "K-13": [[old["instance_id"]]] if row == "K-13" else [],
+        "K-17": [[kept["instance_id"]]] if row == "K-17" else [],
+        "K-19": [[h.ledger("launch")[0]["id"]]] if row == "K-19" else [],
+    }
+    if row == "K-15":
+        expected[row] = [["seed-0"], [], ["seed-0"], []]
+    for part, identifiers in zip(make_harness.harnesses, expected.get(row, [])):
+        part.expected_live = identifiers
 
+
+
+NEW_MUTATIONS = {
+    "K-20": ('self.retry(launch, launch=True)', 'self.retry(launch)'),
+    "K-21": ('if not proto.is_allowed_saas_host(candidate.get("host"), candidate.get("port")):', 'if False:'),
+    "K-22": ('except Exception as exc:\n                    self.log(exc)\n                time.sleep',
+             'except Exception as exc:\n                    raise\n                time.sleep'),
+    "K-23": ('row["state"] = "closing"\n            self.save()\n        self.task',
+             'self.save()\n        self.task'),
+    "K-24": ('if len(self.rows) >= 3:', 'if sum(r["state"] != "ghost" for r in self.rows) >= 3:'),
+    "K-25": (' and any(row["state"] != "ghost" for row in self.rows):', ':'),
+    "G": ('elif op == "release":', 'elif op == "release" and not row["in_job"]:'),
+    "H": ('if len(self.rows) >= 3:', 'if sum(r["state"] != "ghost" for r in self.rows) >= 3:'),
+}
+NEW_MUTATIONS["K-22-lock"] = NEW_MUTATIONS["K-22"]
+MUTATIONS.update(NEW_MUTATIONS)
+
+
+@pytest.mark.parametrize("row", list(NEW_MUTATIONS))
+def test_review_rows(row, make_harness):
+    """Pin review round 1 counterexamples before cleanup (D-43, D-44, P2 spec 5)."""
+    h = make_harness(row)
+    if row == "K-20":
+        h.plan(raise_after_post=True)
+        w = h.boot()
+        w.acquire(wait=False)
+        w.event("spawn_failed")
+        assert len(h.ledger("launch")) == 1
+        assert h.ledger("launch")[0]["cluster"] == {
+            "controllers": {"con1": {"slots": {"1": "MW_FEM", "2": "LF_FEM"}}}}
+        assert len(h.rows()) == 1 and h.rows()[0]["state"] == "ghost"
+        assert h.rows()[0]["expires_at"] == stamp(NOW + 960)
+    elif row == "K-21":
+        h.start()
+        w = h.connect()
+        for host, port in (("127.0.0.1", 443), ("10.0.0.1", 443), ("192.0.2.10", 9510)):
+            w.hello(creds=dict(CREDS, host=host, port=port))
+            assert "forbidden" in w.event("login_failed")["line"]
+            assert h.ledger("login") == []
+        assert PASSWORD not in (h.directory / "broker.log").read_text()
+    elif row in {"K-24", "H"}:
+        for state in ("ghost", "pending"):
+            part = h if state == "ghost" else make_harness(row)
+            part.seed(["live", "live", state])
+            w = part.boot()
+            w.acquire(wait=False)
+            assert w.event("no_slot")["in_use_here"] == 3
+            assert len(part.ledger("launch")) == 2
+            part.expected_live = ["seed-0", "seed-1"]
+    elif row == "K-25":
+        for state in (None, "ghost", "live"):
+            part = h if state is None else make_harness(row)
+            if state:
+                part.seed([state])
+            (part.directory / "broker.json").write_text(json.dumps(dict(account="old-account")), encoding="ascii")
+            part.start()
+            w = part.connect()
+            w.hello()
+            if state == "live":
+                assert w.event("account_mismatch")["ev"] == "account_mismatch"
+                part.expected_live = ["seed-0"]
+            else:
+                answer = w.event("hello_ok")
+                assert read_json(part.directory / "broker.json")["account"] == answer["account"]
+    elif row in {"K-22", "K-22-lock"}:
+        h.inject = ("original_save=b.Broker.save\n"
+                    "def save(self):\n"
+                    " 'P2 spec 3.3: fail one renewal reservation save.'\n"
+                    " if len(self.rows)==2 and not getattr(self,'failed_save',False):\n"
+                    "  self.failed_save=True;raise PermissionError('injected save failure')\n"
+                    " return original_save(self)\n"
+                    "b.Broker.save=save\n"
+                    "original_renew=b.Broker.renew\n"
+                    "def renew(self):\n"
+                    " 'P2 spec 3.3: exercise per-iteration error containment.'\n"
+                    " original_renew(self)\n"
+                    " if getattr(self,'failed_save',False) and not getattr(self,'failed_tick',False):\n"
+                    "  self.failed_tick=True;b.fail_clock=True;raise PermissionError('injected iteration failure')\n"
+                    "b.Broker.renew=renew\n"
+                    "original_clock=b.clock\n"
+                    "def clock():\n"
+                    " 'P2 spec 3.3: inject an unexpected iteration error.'\n"
+                    " if getattr(b,'fail_clock',False):\n"
+                    "  b.fail_clock=False;raise PermissionError('injected clock failure')\n"
+                    " return original_clock()\n"
+                    "b.clock=clock\n")
+        if row == "K-22-lock":
+            h.inject = h.inject.replace("PermissionError('injected save failure')",
+                                        "b.xlock.LockTimeout('injected save failure')")
+        w = h.boot()
+        lease = w.acquire()
+        w.send("in_job", instance_id=lease["instance_id"], click_id="job")
+        w.status()
+        h.advance(691)
+        w.send("touch", instance_id=lease["instance_id"], click_at=h.now)
+        w.status()
+        h.advance(5)
+        assert "saved" in w.event("spawn_failed")["line"]
+        until(lambda: "injected iteration failure" in (h.directory / "broker.log").read_text())
+        assert h.processes[0].poll() is None
+        assert w.status()["in_use_here"] == 1
+        h.advance(5)
+        new = w.event("replaced")["lease"]["instance_id"]
+        assert len(h.ledger("launch")) == 2
+        h.expected_live = [lease["instance_id"], new]
+    else:
+        if row == "K-23":
+            h.inject = ("original_task=b.Broker.task\n"
+                        "def task(self,function,*args):\n"
+                        " 'P2 spec 3.3: occupy all eight SDK slots until released.'\n"
+                        " if __import__('qm_saas.api',fromlist=['plan']).plan().get('busy_slots'):\n"
+                        "  for _ in range(8):self.tasks.acquire(blocking=False)\n"
+                        "  return original_task(self,function,*args)\n"
+                        " while self.tasks._value<8:self.tasks.release()\n"
+                        " return original_task(self,function,*args)\n"
+                        "b.Broker.task=task\n")
+        w = h.boot()
+        lease = w.acquire()
+        w.send("in_job", instance_id=lease["instance_id"], click_id="job")
+        w.status()
+        h.plan(busy_slots=row == "K-23")
+        w.send("release", instance_id=lease["instance_id"], why="stopped_in_job")
+        if row == "K-23":
+            assert w.status()["rows"][0]["state"] == "closing"
+            assert h.ledger("close") == []
+            h.plan(busy_slots=False)
+            h.advance(31)
+        assert w.event("closed")["instance_id"] == lease["instance_id"]
+        assert len(h.ledger("close")) == 1
 
 def test_source_contract():
     """Pin the production argv, no pickle receive, scoped imports and source hygiene (P2 spec 7)."""
@@ -716,5 +886,88 @@ def test_source_contract():
                 doc = ast.get_docstring(node)
                 assert doc and ("D-" in doc or "P2 spec" in doc or "review_r" in doc), (path, node.name)
             if isinstance(node, ast.Attribute):
-                assert node.attr not in {"recv", "close_all"}, (path, node.attr)
+                assert node.attr not in {"recv", "close_all", "close_all_simulators"}, (path, node.attr)
     assert module.proto.is_allowed_saas_host("192.0.2.20", 443)
+
+
+def test_fake_fidelity(monkeypatch, tmp_path):
+    """Pin SDK validation, cluster shape and per-login token fidelity (P2 spec 5)."""
+    spec = importlib.util.spec_from_file_location("review_fake", FAKE / "qm_saas/__init__.py",
+                                                submodule_search_locations=[str(FAKE / "qm_saas")])
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, "review_fake", module)
+    spec.loader.exec_module(module)
+    h = Harness(tmp_path, "fidelity")
+    monkeypatch.setenv("FAKE_SAAS_PLAN", str(h.plan_path))
+    monkeypatch.setenv("FAKE_SAAS_LEDGER", str(h.ledger_path))
+    first = module.QmSaas(**CREDS)
+    second = module.QmSaas(**CREDS)
+    assert first._client._jwt != second._client._jwt
+    with pytest.raises(ValueError):
+        first.simulator("invalid")
+    with pytest.raises(ValueError):
+        first.simulator("v2_4_0", module.ClusterConfig())
+    with pytest.raises(ValueError):
+        module.QmSaas(**CREDS, protocol="ftp")
+    cluster = module.ClusterConfig()
+    controller = cluster.controller().mw_fems(1)
+    for slots in ((0,), (9,), (2, 2), (1,)):
+        with pytest.raises(ValueError):
+            controller.lf_fems(*slots)
+    controller.lf_fems(2)
+    assert cluster.to_dict() == {"controllers": {"con1": {"slots": {"1": "MW_FEM", "2": "LF_FEM"}}}}
+    with pytest.raises(Exception, match="Unknown"):
+        first._client.close_simulator("unknown")
+
+
+def test_log_cap(tmp_path):
+    """Pin log truncation and restart at the one MiB boundary (P2 spec 3.1)."""
+    spec = importlib.util.spec_from_file_location("broker_log", BROKER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    broker = module.Broker.__new__(module.Broker)
+    broker.lock = threading.RLock()
+    broker.secrets = {PASSWORD}
+    broker.log_path = tmp_path / "broker.log"
+    broker.log_path.write_bytes(b"x" * 1048574)
+    broker.log(PASSWORD)
+    assert broker.log_path.read_text() == "log truncated\n***\n"
+    broker.log("z" * 1100000)
+    assert broker.log_path.stat().st_size <= 1048576
+
+
+def test_spawn_save_failure(make_harness):
+    """Close an undelivered live id and scrub its token after save failure (D-11, P2 spec 3.3)."""
+    h = make_harness("save-after-launch")
+    h.inject = ("original_save=b.Broker.save\n"
+                "def save(self):\n"
+                " 'P2 spec 3.3: fail once after the launch response.'\n"
+                " if any(r['state']=='live' for r in self.rows) and not getattr(self,'failed_save',False):\n"
+                "  self.failed_save=True;raise PermissionError('token-sentinel-391a')\n"
+                " return original_save(self)\n"
+                "b.Broker.save=save\n")
+    w = h.boot()
+    w.acquire(wait=False)
+    assert w.event("spawn_failed")["line"] == "***"
+    assert w.event("closed")["instance_id"] == h.ledger("launch")[0]["id"]
+    assert len(h.ledger("launch")) == len(h.ledger("close")) == 1
+    assert "token-sentinel-391a" not in (h.directory / "broker.log").read_text()
+    assert w.status()["in_use_here"] == 0
+
+
+def test_owner_exit_during_spawn(make_harness):
+    """Keep pending accounting on owner exit, then close the late id (D-17(b-c))."""
+    h = make_harness("owner-exit-pending")
+    h.plan(hold_before_post=True)
+    owner = h.owner()
+    h.start()
+    w = h.connect(owner).ready()
+    w.acquire(wait=False)
+    w.event("spawning")
+    h.kill(owner)
+    w.close()
+    until(lambda: h.rows() and h.rows()[0]["close_on_ready"])
+    assert h.rows()[0]["state"] == "pending"
+    h.plan(hold_before_post=False)
+    until(lambda: len(h.ledger("close")) == 1 and not h.rows())
+    assert len(h.ledger("launch")) == 1
