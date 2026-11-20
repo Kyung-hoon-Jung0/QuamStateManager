@@ -207,7 +207,7 @@ class WorkerClient:
         for name in ("state.json", "wiring.json"):
             shutil.copyfile(Path(copies.after) / name, self.chip / name)
         identity = dict(seq=copies.seq, store_id=str(copies.store_id), click_id=click_id)
-        (self.chip / "_snapshot.json").write_text(json.dumps(identity), encoding="ascii")
+        (self.chip.parent / "_snapshot.json").write_text(json.dumps(identity), encoding="ascii")
         return identity
 
     def submit(self, command, stop, on_event, lease_provider=None):

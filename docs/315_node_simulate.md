@@ -74,8 +74,9 @@ SM process
   importing the library, if any `SAAS_*` variable is in its environment (`bye why saas_env`; D-11). It never logs in and
   never talks to the broker: SM relays the lease to it over stdin (D-11, P2 Q-2). One click at a time (D-18); idle exit
   after 20 min; killed above 2 GiB RSS; a lab-module edit restarts it with the lease kept (D-5).
-- **Per click (P2 s.2.2).** SM rewrites `<scratch>/chip` from `chip_copy.make_chip_copies` and writes `_snapshot.json`
-  `{seq, store_id, click_id}` (D-14); the worker checks all three before building. SM takes `machine_lock` on the
+- **Per click (P2 s.2.2).** SM rewrites `<scratch>/chip` from `chip_copy.make_chip_copies` and writes
+  `<scratch>/_snapshot.json` `{seq, store_id, click_id}` (D-14) beside, never inside, the chip folder (QUAM loads
+  every json in it); the worker checks all three before building. SM takes `machine_lock` on the
   worker's lock thread before sending `click` and releases it on `build_done`, with a 30 s watchdog that kills the
   worker (D-18, nodesim_pool.py:191-205). The lock thread holds no other SM lock while it waits.
 - **Broker (D-17).** One per user account on the PC, started by SM with plain `subprocess.Popen` (not the lab worker

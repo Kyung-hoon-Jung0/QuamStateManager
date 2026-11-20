@@ -234,7 +234,7 @@ class Session:
                        node="calibrations/node.py", targets=["q2"], overrides={"num_shots": 1},
                        window_ns=20000, wait_cap_s=3)
         message.update(extra)
-        (self.chip / "_snapshot.json").write_text(json.dumps({k: message[k] for k in proto.SNAPSHOT}))
+        (self.chip.parent / "_snapshot.json").write_text(json.dumps({k: message[k] for k in proto.SNAPSHOT}))
         self.send(message)
         return message
 
@@ -283,9 +283,10 @@ def ready(session):
 
 def ok_click(session):
     """Assert one real successful result and idle transition (spec 2.2)."""
-    session.click()
+    request = session.click()
     result = session.event("result")
     assert result["kind"] == "ok", result
+    assert {key: result[key] for key in proto.SNAPSHOT} == {key: request[key] for key in proto.SNAPSHOT}
     session.event("idle")
     return result
 
@@ -343,7 +344,7 @@ def test_w4_snapshot(session, field):
                    targets=["q2"], overrides={}, window_ns=20000, wait_cap_s=1)
     snapshot = {k: request[k] for k in proto.SNAPSHOT}
     snapshot[field] = 9 if field == "seq" else "other"
-    (session.chip / "_snapshot.json").write_text(json.dumps(snapshot))
+    (session.chip.parent / "_snapshot.json").write_text(json.dumps(snapshot))
     session.send(request)
     result = session.event("result")
     assert result["kind"] == "failed"
@@ -358,7 +359,7 @@ def test_int1_w_ids_unread_until_snapshot_read(session):
     """Review int r1 P3-3 (D-50 residue): with no _snapshot.json the result carries the UNREAD ids, never the
     request's, so SM cannot mistake an unread copy for the click's own."""
     ready(session)
-    (session.chip / "_snapshot.json").unlink(missing_ok=True)
+    (session.chip.parent / "_snapshot.json").unlink(missing_ok=True)
     session.send(dict(op="click", seq=1, store_id="store", click_id="1", node="calibrations/node.py",
                       targets=["q2"], overrides={}, window_ns=20000, wait_cap_s=1))
     result = session.event("result")
