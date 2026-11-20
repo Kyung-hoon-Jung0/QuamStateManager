@@ -24936,6 +24936,23 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     // growing across polls until they look. It is seeded at the first poll,
     // so runs that existed before this page loaded are never announced.
     var _ackStamp = null;
+    // The baseline is the moment the SERVER rendered this page (UTC ms, base.html
+    // window.__pageRenderT), not the latest run of the first poll: while the
+    // Datasets index is still building, that run is only the newest one indexed
+    // so far, and every older run indexed later read as "new" ("50 new"); and a
+    // run landing between render and the first poll became the baseline and was
+    // never announced. A run counts as new when its own instant is after the
+    // render, whenever the index reaches it. Without a render time (a harness,
+    // an old page) the first poll is the baseline, as before.
+    function _seedFromRender() {
+        var t = window.__pageRenderT;
+        if (typeof t !== 'number' || !isFinite(t)) return false;
+        _lastSeenUid = '';          // not null: the first poll is a detection, not a baseline
+        _lastSeenStamp = t;
+        _ackStamp = t;
+        return true;
+    }
+    _seedFromRender();
     var _newRunHideTimer = null; // auto-dismiss timer for the new-run popup
     var _pendingRun = null;
     var POLL_SECS = (window.UI_CONFIG && UI_CONFIG.autoRefreshInterval) || 60;
@@ -25128,7 +25145,7 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     // visibilitychange, so on a freshly opened page the first WAKE became the
     // baseline and the run that caused it was never shown (real Chrome, 2026-
     // 08-29). Baseline shortly after load instead; a run landing inside this
-    // 1.5 s window is the one case the wake cannot announce.
+    // 1.5 s window is announced too: the baseline is the render time (above).
     // docs/141 4ac: gated on the popup existing. It ships in base.html, so
     // every page that has this poll has it and the app is unchanged -- but an
     // unconditional timer put a background request into every jsdom harness
@@ -25347,7 +25364,7 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     window.__newRunPoll = {
         poll: pollForNewRuns,
         stamps: function () { return { seen: _lastSeenStamp, ack: _ackStamp }; },
-        reset: function () { _lastSeenUid = null; _lastSeenStamp = null; _ackStamp = null; }
+        reset: function () { _lastSeenUid = null; _lastSeenStamp = null; _ackStamp = null; _seedFromRender(); }
     };
 
     // Start polling after page settles. The chain re-schedules itself
