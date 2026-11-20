@@ -58,19 +58,25 @@ const tick = (ms) => new Promise((r) => setTimeout(r, ms || 30));
             const y = lbls[i] ? Number(lbls[i].getAttribute('y')) : NaN;
             const fs = lbls[i] ? Number(lbls[i].getAttribute('font-size')) : NaN;
             // the caption's whole em box (baseline minus font size) stays below the dots
-            ok(y - fs > low, tag + ': in ' + g.getAttribute('data-port') + ' caption clears its dots (' + y + ' vs ' + low + ')');
+            ok(y - fs > low, tag + ': in ' + g.getAttribute('data-port')
+                + ' caption clears its dots (' + y + ' vs ' + low + ')');
         });
         return ports.reduce((m, g) => Math.max(m, g.querySelectorAll('circle').length), 0);
     }
     captionsClear('instrument-diagram', 'page');
     // the same rack with five readout lines on one input: the cluster takes two rows
-    const grab = (name) => { const m = FX.page.match(new RegExp('var ' + name + ' = (\{.*\});')); return m ? JSON.parse(m[1]) : {}; };
+    const grab = (name) => {
+        const m = FX.page.match(new RegExp('var ' + name + ' = (\{.*\});'));
+        return m ? JSON.parse(m[1]) : {};
+    };
     const five = grab('instrumentData');
     let padded = false;
     Object.values(five.controllers || {}).forEach((c) => Object.values(c.fems || {}).forEach((f) => {
         const ins = (f.input_ports || {})['2'];
         if (padded || !ins || !ins.length) return;
-        while (ins.length < 5) ins.push(Object.assign({}, ins[0], { element: 'r' + ins.length, label: 'r' + ins.length + '.rr_in' }));
+        while (ins.length < 5) {
+            ins.push(Object.assign({}, ins[0], { element: 'r' + ins.length, label: 'r' + ins.length + '.rr_in' }));
+        }
         padded = true;
     }));
     ok(padded, 'the fixture has a readout input to load with five lines');

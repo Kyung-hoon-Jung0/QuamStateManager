@@ -1927,6 +1927,8 @@
             })
             .then(function(data) {
                 if (!data || typeof data.now !== 'number') throw new Error('bad payload');
+                // an answer that was in flight when the table left the page acts on nothing
+                if (!_mounted()) return;
                 pollSucceeded();
                 refreshOpenDetail(data);
                 // docs/170: the render's "still indexing" note goes away on
