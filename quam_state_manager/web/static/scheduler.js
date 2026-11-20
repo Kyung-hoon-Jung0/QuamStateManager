@@ -59,7 +59,7 @@
     });
   }
 
-  // How many targets a finished node marked failed (0 when none recorded).
+  // How many targets a finished node marked not successful (0 when none recorded).
   function failedCount(it) {
     return (it && it.failed_targets && it.failed_targets.length) || 0;
   }
@@ -610,7 +610,7 @@
       warning.textContent = "done -- " + it.error;
       row.querySelector(".sched-item-name").appendChild(warning);
     }
-    // A finished node that marked targets failed: its values for them are
+    // A finished node that marked targets not successful: its values for them are
     // already on the chip. Say so in the row and offer to put exactly those
     // values back (a successful target's writes are never in the list).
     var nFailed = failedCount(it);

@@ -17,7 +17,7 @@ has, never a new judgement:
 * the run finished but the node's OWN outcome for that target says it failed
   (``node.json`` ``outcomes``, what ``_attribute`` reads -- the one failure rule
   ``core.dataset.marks_failure`` that ``story._outcome`` and the Datasets counts use:
-  error, fail, abort or crash);
+  error, fail, abort, crash or unsuccess);
 * the run's writes were HELD by the envelope in mode auto: ``max_delta``,
   ``max_writes_per_plan``, a write that touches a target whose fit failed,
   a list resized / too many leaves, or the door refusing the apply. A hold
@@ -66,7 +66,7 @@ def touches(path: str | None, target: str) -> bool:
     return bool(target) and target in str(path or "").split(".")
 
 
-# The one failure rule (error|fail|abort|crash): an "aborted" or "error" target holds its writes too.
+# The one failure rule (error|fail|abort|crash|unsuccess): an "aborted" or "error" target holds its writes too.
 _failed_outcome = marks_failure
 
 
