@@ -1978,6 +1978,10 @@ table.ui-pair-props { table-layout: fixed; width: 100%; }
     font-family: var(--ui-font-mono); font-weight: var(--ui-fw-normal);
 }
 .ui-opxmon-rack .iw-port-short text { font-size: var(--ui-fs-lg); }
+.ui-opxmon-rack .iw-port-caption, .ui-opxmon-rack .iw-port-num {
+    font-family: var(--ui-font-mono); font-size: var(--ui-fs-lg);
+    font-weight: var(--ui-fw-normal); fill: var(--ui-text);
+}
 /* A QM configuration names no role: those ports and their key swatch use kit tokens in both themes. */
 .ui-opxmon-rack .iw-port-plain circle { fill: var(--ui-text-2); }
 .ui-iw-key-compact .iw-key-other-swatch { background: var(--ui-text-2); }

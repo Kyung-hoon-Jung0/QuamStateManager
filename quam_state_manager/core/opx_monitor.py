@@ -901,7 +901,11 @@ def call_subject(name):
             text = text[len(prefix):]
     if text.endswith('.temperatures') or '.temperatures.' in text:
         return 'the temperatures'
-    return CALL_SUBJECTS.get(text, 'a status request')
+    if text.startswith('get_jobs('):
+        return 'the job list'
+    if text.startswith(('get_config(', 'get_configuration(')):
+        return 'the QM configuration'
+    return CALL_SUBJECTS.get(text, 'the status')
 
 
 def read_kind(error):
@@ -934,7 +938,7 @@ def call_failure(name, error):
         return f'The server denied permission to read {subject}: {error}'
     if kind == 'busy':
         return f'The server is busy; {subject} was not read this time: {error}'
-    return f'The request for {subject} failed: {error}'
+    return f'Could not read {subject}: {error}'
 
 
 def call_timed_out(error):
@@ -1546,18 +1550,20 @@ class Monitor:
                 return  # the target changed since this poll read it
             if self._worker is None and self.clock() < self._retry_at:
                 return  # backing off after a failure
-            self._misses += 1
             self.last_try_at = self.clock()
             self.last_poll_interval = self.poll_interval()
             try:
                 w = self._ensure_worker(s)
                 r = w.request("poll", include_jobs=self.clock() < self.jobs_until, job_limit=self.job_limit)
             except WorkerError as exc:
+                self._misses += 1
                 self._drop_worker(str(exc))
                 return
             except Exception as exc:  # noqa: BLE001
+                self._misses += 1
                 self._drop_worker(f"The monitor worker failed: {type(exc).__name__}: {exc}")
                 return
+            self._misses += 1
             self._fails = 0
             if not r.get("ok"):
                 self.last_error = str(r.get("error") or "Status request failed")
@@ -1565,9 +1571,9 @@ class Monitor:
                 return
             ans = r.get("result") or {}
             errors = ans.get('refused') or {}
-            if self._transient_busy(errors):
-                self.last_error = next(iter(errors.values()))
-                self._sections_failed(self.last_error)
+            if self._defer_read(errors):
+                self.last_error = failure_summary(errors)
+                self.section_errors = dict(errors)
                 return
             if not errors:
                 self._misses = 0
@@ -1808,13 +1814,14 @@ class Monitor:
     def status_state_unfresh(self):
         return self.viewer_check_pending or self.last_ok_at is None or bool(self.last_error) or self.clock() - self.last_ok_at > STALE_INTERVALS * self.poll_interval()
 
-    def _transient_busy(self, errors):
+    def _defer_read(self, errors):
+        # Explicit contention is not evidence of a broken server, even before a first read.
         if errors and all(read_kind(e) == 'busy' for e in errors.values()):
             return True
-        active = any(job_activity(j.get('status')) == 'active'
-                     for q in (self.last_answer or {}).get('open_qms') or [] for j in q.get('jobs') or [])
-        return (active and bool(errors) and self._misses <= 2 and self.last_ok_at is not None
-                and all(read_kind(e) in ('timeout', 'busy') for e in errors.values()))
+        recent = (self.last_ok_at is not None
+                  and self.clock() - self.last_ok_at <= STALE_INTERVALS * self.poll_interval())
+        return (bool(errors) and self._misses == 1 and recent
+                and all(read_kind(e) != 'permission' for e in errors.values()))
 
     def status(self) -> dict:
         """One coherent read of the monitor for every surface of a page.
@@ -1843,9 +1850,9 @@ class Monitor:
         elif not s.get("python"):
             state = "unconfigured"
             sentence = "No Python environment with the QM SDK is chosen. Choose one under Monitor settings."
-        elif self._transient_busy({'call': self.last_error} if self.last_error else self.section_errors):
+        elif self.last_error and self._defer_read({'call': self.last_error}):
             state = 'stale'
-            sentence = f'Not read this time: {failure_headline(call_failure("poll", self.last_error))}. '
+            sentence = f'Not read this time: {failure_headline(self.last_error)}. '
             sentence += (f'The last good read was {age:.0f} s ago.' if age is not None
                          else 'No successful read yet.')
         elif self.last_error:
@@ -1870,12 +1877,13 @@ class Monitor:
         answer = known_answer(self.last_answer, self.section_times, age)
         health_state = health(answer, self.admin, s['thresholds'], state)
         sentence_shown = None
-        transient = self._transient_busy({'call': self.last_error} if self.last_error else self.section_errors)
+        transient = (self._defer_read({'call': self.last_error}) if self.last_error else False)
         if not transient and (self.last_error or self.section_errors or (self.last_answer or {}).get('refused')):
             errors = ({'poll': self.last_error} if self.last_error else
                       (self.last_answer or {}).get('refused') or self.section_errors)
             errors = dict(list(errors.items())[:1])
-            cause = (self.last_error if self.last_error and self.last_error.startswith(('The ', 'Server '))
+            cause = (self.last_error if self.last_error
+                     and self.last_error.startswith(('The ', 'Server ', 'Could not '))
                      else failure_summary(errors))
             health_state = {**health_state, 'color': 'red', 'problem': True, 'reason': failure_headline(cause), 'details': failure_advice(errors if not self.last_error or errors else {'call': self.last_error}, (s.get('target') or {}).get('host'))}
             if state == 'ok':
@@ -1891,7 +1899,8 @@ class Monitor:
                 "section_times": self.section_times, "section_errors": self.section_errors, "state": state,
                 "sentence": sentence, "sentence_shown": sentence_shown or sentence, "age_s": age,
                 'health': health_state, 'admin': self.admin,
-                'badge_label': (_occupancy_verdict(answer, health_state, {})['label'].lower() + ' (last read)'
+                'badge_label': (badge_label(answer, health(answer, self.admin, s['thresholds'], 'ok'), 'ok')
+                                + ' (last read)'
                                 if state == 'stale' and answer and answer.get('open_qms') is not None
                                 and (transient or (age is not None
                                      and age <= STALE_INTERVALS * self.poll_interval()))
@@ -1899,7 +1908,8 @@ class Monitor:
                 "answer": answer, "target_label": target_label(s.get("target") or {}),
                 "target_kind": (s.get("target") or {}).get("kind"),
                 "target_source": s.get("target_source"),
-                "valid_for_ms": max(0, int((STALE_INTERVALS * self.poll_interval() - (age or 0)) * 1000)) if state == 'ok' else 0,
+                "valid_for_ms": (max(0, int((STALE_INTERVALS * self.poll_interval() - (age or 0)) * 1000))
+                                 if state == 'ok' or transient else 0),
                 "interval_s": self.poll_interval(), "alarms": alarms,
                 # a read is on its way (none yet, or a viewer just asked for a fresh one):
                 # pages poll every second until it lands, so every page shows it at once

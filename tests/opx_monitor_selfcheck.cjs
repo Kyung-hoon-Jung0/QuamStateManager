@@ -106,6 +106,18 @@ const tick = () => new Promise(r => setTimeout(r, 20));
   healthWorld.setTimeout = (fn, ms) => { timers.push([fn, ms]); };
   healthWorld.eval(fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', 'opx-health.js'), 'utf8'));
   healthWorld.document.dispatchEvent(new healthWorld.CustomEvent('htmx:afterSwap'));
+  const cadence = [];
+  healthWorld.htmx = {process: node => cadence.push(node.id)};
+  const liveBadge = healthWorld.document.querySelector('.ui-opxmon-health');
+  liveBadge.dataset.pollS = '5';
+  healthWorld.OpxHealth.watch();
+  healthWorld.OpxHealth.watch();
+  ok(healthWorld.document.getElementById('ui-opxmon-alarm-slot').getAttribute('hx-trigger') === 'every 5s'
+    && cadence.length === 1, 'a badge-only page uses the monitor cadence with one HTMX poller');
+  liveBadge.dataset.pollS = '2';
+  healthWorld.OpxHealth.watch();
+  ok(healthWorld.document.getElementById('ui-opxmon-alarm-slot').getAttribute('hx-trigger') === 'every 2s'
+    && cadence.length === 2, 'a settings interval change replaces the badge cadence');
   const monitorBody = healthWorld.document.createElement('div'); monitorBody.id = 'ui-opxmon-body';
   healthWorld.document.body.append(monitorBody);
   const badgeRequest = new healthWorld.CustomEvent('htmx:beforeRequest', {cancelable: true,
