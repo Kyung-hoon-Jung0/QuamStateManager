@@ -15,6 +15,10 @@
 <div class="qualibrate-topstrip">
     <table class="ui-table ui-table--kv qualibrate-kv"><tbody>
         <tr><th class="ui-table-head" scope="row">Active project</th><td class="ui-table-cell">{% if listing.active %}<code class="ui-chip">{{ listing.active }}</code>{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
+        {% if listing.active and not chip_is_open() %}<tr data-no-chip="1">
+            <th class="ui-table-head" scope="row">In SM</th>
+            <td class="ui-table-cell muted">not open in SM: no chip is open. Open the project to load it.</td></tr>
+        {% endif %}
         <tr><th class="ui-table-head" scope="row">Config root</th><td class="ui-table-cell">{{ ui_path(listing.config_dir) }} <small class="muted">(resolved via {{ listing.source }})</small></td></tr>
         <tr><th class="ui-table-head" scope="row">Versions</th><td class="ui-table-cell">
         {#- v1.3.0 B2: a version the config does not set reads 'not set', never 'vNone' -#}
@@ -108,6 +112,8 @@
             <td>
                 <strong>{{ '● ' if p.active }}{{ p.name }}</strong>
                 {% if p.loaded_in_sm %}<small class="qualibrate-project-loaded">[SM]</small>{% endif %}
+                {% if p.active and not chip_is_open() %}<small class="muted" data-no-chip="1">not open in SM</small>
+                {%- endif %}
                 {% if p.overlay_empty %}<small class="muted" title="0-byte overlay — inherits everything from the root">empty overlay</small>{% endif %}
             </td>
             <td>{{ pathcell(p.state_path) }}</td>

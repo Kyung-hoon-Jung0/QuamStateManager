@@ -8975,6 +8975,9 @@ def _qualibrate_tray_badge() -> dict | None:
     # card said amber "suggested -- confirm" about the very same env.
     env_project = sm_scope if ctx else st.get("active")
     return {"project": st["active"],
+            # No chip open: the badges say the project and env are not open in
+            # SM, matching every page's "No chip is open".
+            "no_chip": ctx is None,
             # dangling only ever describes the ACTIVE project's state_path —
             # a scope-only badge (no active project) must not read as broken.
             "dangling": bool(st.get("active")) and not st["state_exists"],
@@ -9123,10 +9126,50 @@ def _running_config_mismatches() -> list[dict]:
         ctx.get("live_path") or ctx.get("path"), _running_config_dismissals())
 
 
+def _project_state_mismatch() -> dict | None:
+    """The open chip's project keeps its quam state in another folder.
+
+    Runs a QUAlibrate project saves are made from the project's configured
+    ``[quam] state_path``. When that folder is not the chip open in SM, the
+    runs shown beside the chip were made from another state, so pages say so
+    once. The folder rule is the one source: run contents are never compared
+    (cost), and a run folder records no source state path to prefer. Returns
+    ``{"project", "project_state", "chip_folder"}`` or None (no chip, an
+    archive view, no project scope, a project with no state path, or the
+    same folder). READ-ONLY: the project config is read through the
+    stat-cached reverse index; never raises."""
+    from quam_state_manager.core import qualibrate_config
+
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam" or (ctx.get("origin") or "live") != "live":
+        return None
+    project = ctx.get("qualibrate_project")
+    chip = ctx.get("live_path") or ctx.get("path")
+    if not project or not chip:
+        return None
+    try:
+        index = qualibrate_config.project_state_paths()
+        state = dict(index.get("projects") or []).get(project)
+        if not state or path_match.same_folder(chip, state):
+            return None
+    except Exception:  # noqa: BLE001 -- a notice must never break a render
+        logger.debug("project state compare failed", exc_info=True)
+        return None
+    return {"project": project, "project_state": str(state), "chip_folder": str(chip)}
+
+
+def _chip_is_open() -> bool:
+    """True when SM has a chip open (the pages that say "No chip is open"
+    read the same active context)."""
+    return _active_ctx() is not None
+
+
 @bp.app_context_processor
 def _running_config_context():
     return {"running_config_mismatches": _running_config_mismatches,
-            "running_data_hints": _running_data_hints}
+            "running_data_hints": _running_data_hints,
+            "project_state_mismatch": _project_state_mismatch,
+            "chip_is_open": _chip_is_open}
 
 
 def _running_data_hints() -> list[dict]:

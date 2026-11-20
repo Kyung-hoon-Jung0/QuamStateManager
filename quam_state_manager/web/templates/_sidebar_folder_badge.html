@@ -7,6 +7,13 @@
 <div id="sidebar-folder-badges-slot"{% if oob is defined and oob %} hx-swap-oob="true"{% endif %}>
 {%- if qualibrate_tray is defined and qualibrate_tray -%}
 <div class="sidebar-folder-badges">
+{#- No chip open: say so first, so the project and env badges beside it are not read as an
+    open chip (every page says "No chip is open"). -#}
+{%- if qualibrate_tray.no_chip %}
+{%- from '_ui.html' import ui_pill %}
+<span data-no-chip="1" title="No chip is open in SM. The project is QUAlibrate's active one and the env is
+the one SM would use; open the project from the Projects page.">{{ ui_pill('no chip open') }}</span>
+{%- endif %}
 {%- if qualibrate_tray.standalone %}
 <span class="qualibrate-tray-badge tray-standalone-badge"
       title="This chip is a standalone folder — it is not part of any QUAlibrate project. Everything is editable as usual; only the project association is absent.{% if qualibrate_tray.standalone_path %}&#10;{{ qualibrate_tray.standalone_path }}{% endif %}">

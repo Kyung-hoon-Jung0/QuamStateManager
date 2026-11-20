@@ -70,6 +70,7 @@
     {% endfor %}
 </div>
 {% endif %}
+{% include '_project_state_notice.html' %}
 <div class="table-header-row ui-head ui-head--data">
     <h2 class="ds-head-title ui-head-title">{{ page_title }} <small class="muted ui-count">({{ '{:,}'.format(total or 0) }} runs{% if stats %}, {{ '{:,}'.format(stats.experiment_types or 0) }} types, {{ '{:,}'.format(stats.unique_qubits | length) }} qubits{% endif %})</small>
         {# docs/126 ⑥ — the times' basis, stated where they are read: SM shows

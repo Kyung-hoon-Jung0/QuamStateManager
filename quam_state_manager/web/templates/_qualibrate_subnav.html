@@ -21,6 +21,9 @@
             <span class="qualibrate-project-name">{{ p.name }}</span>
             {% if not p.state_path.exists %}<span class="qualibrate-project-warn" title="state_path missing or empty">&#9888;</span>{% endif %}
             {% if p.loaded_in_sm %}<span class="qualibrate-project-loaded" title="open in SM">[SM]</span>{% endif %}
+            {% if p.active and not chip_is_open() %}<small class="muted" data-no-chip="1"
+                title="QUAlibrate's active project; no chip is open in SM. Click to open it.">not open</small>
+            {%- endif %}
         </button>
     </form>
 </li>

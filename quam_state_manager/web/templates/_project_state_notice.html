@@ -1,0 +1,13 @@
+{#- The open chip's QUAlibrate project keeps its quam state in another folder
+    (routes._project_state_mismatch): runs that project saves are made from that
+    state, not from the chip open in SM. One folder rule, no per-run compare. -#}
+{%- set _psm = project_state_mismatch() if project_state_mismatch is defined else None -%}
+{%- if _psm -%}
+{%- import '_ui.html' as _psm_ui -%}
+<div data-project-state-mismatch="1">
+{{ _psm_ui.ui_notice('warn', 'Runs come from another state.',
+    'Project ' ~ _psm.project ~ ' keeps its quam state in ' ~ _psm.project_state
+    ~ '; the chip open in SM is ' ~ _psm.chip_folder ~ '. Runs this project saves are made from'
+    ~ ' that state, so their values can differ from the open chip.') }}
+</div>
+{%- endif -%}
