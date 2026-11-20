@@ -571,14 +571,7 @@
                    hx-sync="#table-pane:replace" hx-push-url="true"
                    class="sidebar-tool sidebar-tool-btn" title="Help — the working-copy model, the feature tour, shortcuts">
                     {{ icon_help() }}<span class="sidebar-tool-label">Help</span></a>
-                <a href="/nodesim" hx-get="/nodesim" hx-target="#table-pane"
-                   hx-sync="#table-pane:replace" hx-push-url="true" data-nodesim-tool
-                   class="sidebar-tool sidebar-tool-btn"
-                   title="Simulate a node once on the cloud simulator, on a copy of the chip">
-                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none"
-                         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                         aria-hidden="true"><path d="M3 12h3l2-6 4 12 2-6h7"/></svg><span
-                        class="sidebar-tool-label">Simulate a node</span></a>
+
                 <button type="button" class="sidebar-tool settings-btn"
                         onclick="toggleSettings(this)"
                         title="Settings — font size, UI scale, theme, layout">
@@ -601,6 +594,14 @@
                         aria-expanded="false" aria-controls="manual-popover"
                         title="Config Manual — what each state.json key means, what values it takes, which keys a node can carry (F1 on a value)">
                     <svg class="sidebar-tool-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M10 8h6M10 12h4"/></svg><span class="sidebar-tool-label">Config Manual</span></button>
+                <a href="/nodesim" hx-get="/nodesim" hx-target="#table-pane"
+                   hx-sync="#table-pane:replace" hx-push-url="true" data-nodesim-tool
+                   class="sidebar-tool sidebar-tool-btn"
+                   title="Simulate a node once on the cloud simulator, on a copy of the chip">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none"
+                         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                         aria-hidden="true"><path d="M3 12h3l2-6 4 12 2-6h7"/></svg><span
+                        class="sidebar-tool-label">Simulate a node</span></a>
                 {# docs/120 item 10 — the bookmark moved here from the top bar,
                    below Calculator per the user, so its slot could carry the
                    working-state version. It is a tool (tag + note this state),
