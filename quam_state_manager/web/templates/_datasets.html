@@ -72,7 +72,9 @@
 {% endif %}
 {% include '_project_state_notice.html' %}
 <div class="table-header-row ui-head ui-head--data">
-    <h2 class="ds-head-title ui-head-title">{{ page_title }} <small class="muted ui-count">({{ '{:,}'.format(total or 0) }} runs{% if stats %}, {{ '{:,}'.format(stats.experiment_types or 0) }} types, {{ '{:,}'.format(stats.unique_qubits | length) }} qubits{% endif %})</small>
+    <h2 class="ds-head-title ui-head-title">{{ page_title }} <small class="muted ui-count">({{ '{:,}'.format(total or 0) }} runs{% if stats %}, {{ '{:,}'.format(stats.experiment_types or 0) }} types, {{ '{:,}'.format(stats.unique_qubits | length) }} qubits{% endif %})</small>{% if folders and folders | length > 1 %}
+        {# recheck 3: the count spans every loaded folder; the summary and the table follow the folder chips #}
+        <small class="muted ui-count">in all {{ folders | length }} folders</small>{% endif %}
         {# docs/126 ⑥ — the times' basis, stated where they are read: SM shows
            the run folders' own timestamps verbatim (the acquisition PC's
            local clock) and never converts them. #}

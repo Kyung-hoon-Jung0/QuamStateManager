@@ -1475,6 +1475,7 @@
         var cmpHint = _paramCompareHint();     // QA F15
         if (cmpHint) msg += (msg ? ' · ' : '') + cmpHint;
         countEl.textContent = msg;
+        countEl.title = msg;   // the strip is one line; a clipped hint reads in full on hover
         if (state.emptyEl) {
             state.emptyEl.style.display = state.visible.length === 0 ? '' : 'none';
         }

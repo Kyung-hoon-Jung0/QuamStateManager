@@ -17652,12 +17652,16 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
                 var portNumAtRow = inputRowMap[pn];
                 if (portNumAtRow !== undefined) {
                     // Physical input port: show assignment or placeholder circle
-                    _renderPortCell(svg, inCx, ipy, inR, roleColors, inPorts[String(portNumAtRow)] || [], rawWiring,
+                    var inBottom = _renderPortCell(svg, inCx, ipy, inR, roleColors,
+                                    inPorts[String(portNumAtRow)] || [], rawWiring,
                                     {con: ctrlName, slot: femId, port: portNumAtRow, io: 'input'}, editable, onPortHover);
                     // v1.5.1 (U P2-20): the input's OWN number -- drawn where the
                     // front panel has it (MW-FEM input 2 at the last row), it read
                     // as "IN 8" against the output row numbers on the left
-                    var inLbl = _svgText(inCx, ipy + inR + 13, 'in ' + portNumAtRow, 9, '700', iw.subLabelColor, 'middle');
+                    // recheck 3: below the cell's real bottom, so a 2-row readout cluster
+                    // (5 rr_in dots) no longer sits on its own caption
+                    var inLblY = Math.max(ipy + inR, inBottom) + 13;
+                    var inLbl = _svgText(inCx, inLblY, 'in ' + portNumAtRow, 9, '700', iw.subLabelColor, 'middle');
                     inLbl.setAttribute('class', 'iw-in-port-label');
                     svg.appendChild(inLbl);
                 } else {
@@ -17858,6 +17862,7 @@ function _renderPortCell(svg, cx, cy, r, roleColors, assignments, rawWiring, por
     // Port play D-23: a playable output is a keyboard/click target of its own.
     var playable = !!(onPortPlay && portInfo && portInfo.io === 'output' &&
                       (portInfo.femType === 'lf-fem' || portInfo.femType === 'mw-fem'));
+    var bottom = cy + r;   // the drawn cell's lowest y, returned so a caption can sit below it
     if (assignments.length === 0) {
         var emptyC = _svgEl('circle');
         var iw2 = UI_CONFIG.instrumentWiring;
@@ -17866,6 +17871,7 @@ function _renderPortCell(svg, cx, cy, r, roleColors, assignments, rawWiring, por
         _svgAttrs(emptyC, editable
             ? {cx: cx, cy: cy, r: r, fill: iw2.unassignedFill, stroke: iw2.unassignedStroke, 'stroke-width': 1.5}
             : {cx: cx, cy: cy, r: Math.max(4, Math.round(r * 0.4)), fill: iw2.unassignedFill, stroke: iw2.unassignedStroke, 'stroke-width': 1});
+        if (!editable) bottom = cy + Math.max(4, Math.round(r * 0.4));
         cell.appendChild(emptyC);
         if (playable) {
             // D-23: an unused OUT circle shows its number, so a sweep can name it.
@@ -17904,6 +17910,7 @@ function _renderPortCell(svg, cx, cy, r, roleColors, assignments, rawWiring, por
     var sr = Math.max(6, Math.floor(best.sr * 2) / 2);
     var pitch = sr * 2 + gap;
     var topY = cy - (best.rows - 1) * pitch / 2;
+    bottom = topY + (best.rows - 1) * pitch + sr;   // a 2-row cluster reaches below r
     leftEdge = Infinity;
     assignments.forEach(function(a, ai) {
         var row = Math.floor(ai / best.per);
@@ -17944,6 +17951,7 @@ function _renderPortCell(svg, cx, cy, r, roleColors, assignments, rawWiring, por
         cell.appendChild(playAnchor);
     }
     svg.appendChild(cell);
+    return bottom;
 }
 
 /* Port play D-23: a playable port cell holds focus itself. Enter/Space or a click

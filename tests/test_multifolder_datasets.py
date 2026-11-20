@@ -85,6 +85,21 @@ class TestUid:
 # --------------------------------------------------------------------------
 
 class TestMultiFolderAggregation:
+    def test_title_count_names_its_scope(self, tmp_path):
+        """recheck 3: the title counts every loaded folder; it says so beside a folder-scoped summary."""
+        fa = tmp_path / "chipA"
+        fb = tmp_path / "chipB"
+        _seed_run(fa, 250)
+        _seed_run(fb, 251)
+        _app, c = _app_with_folders(tmp_path, [fa, fb])
+        body = c.get("/datasets", headers={"HX-Request": "true"}).get_data(as_text=True)
+        head = body[body.index('ds-head-title'):]
+        head = head[:head.index('</h2>')]
+        assert "(2 runs" in head and "in all 2 folders" in head
+        _app1, c1 = _app_with_folders(tmp_path / "one", [fa])
+        body1 = c1.get("/datasets", headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert "folders</small>" not in body1   # one folder: nothing to scope
+
     def test_table_merges_folders_and_colliding_ids_resolve(self, tmp_path):
         fa = tmp_path / "chipA"
         fb = tmp_path / "chipB"
