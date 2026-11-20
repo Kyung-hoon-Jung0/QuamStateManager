@@ -9781,7 +9781,9 @@ def load():
         return render_template("_status.html", message="No folder specified", level="error"), 400
 
     try:
-        _maybe_auto_arm_on_open(_activate_quam(folder))
+        opened = _activate_quam(folder)
+        if request.form.get("auto_sync") != "0":
+            _maybe_auto_arm_on_open(opened)
     except (FileNotFoundError, ValueError, OSError) as e:
         logger.warning("State load failed for %s (%s): %s", folder, type(e).__name__, e)
         # docs/114 (#15): a wrong folder used to answer with a 6-second corner
@@ -47970,7 +47972,9 @@ def dataset_detail(uid):
         # a run the folder does not contain. The page says the file could not
         # be read and lists the images that are on disk instead.
         run = dict(run, figure_names=[], fit_results={})
-    return render_template(template, **_ctx(page="dataset_detail"), run=run,
+    from quam_state_manager.core import story
+    gate = story.gate_for_run(current_app.instance_path, run, folder_key=uid.split(":")[0])
+    return render_template(template, **_ctx(page="dataset_detail"), run=run, gate=gate,
                            # docs/301 F9: opened from a value whose writer is not proven
                            via_saved=request.args.get("via") == "saved",
                            via_inferred=request.args.get("via") == "inferred",

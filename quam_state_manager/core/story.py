@@ -54,7 +54,7 @@ from quam_state_manager.core import run_time
 
 logger = logging.getLogger(__name__)
 
-GATES_REV = "2026-11-13a"          # bump when gates.py / families.py change what a verdict means
+GATES_REV = "2026-11-21w"          # bump when gates.py / families.py change what a verdict means
 _BEFORE_S = 60.0
 _AFTER_S = 300.0
 _ENTRY = re.compile(r"^- \*\*(\d{2}:\d{2}:\d{2})\*\* `([^`]+)` ?(.*)$")
@@ -401,7 +401,11 @@ def gate_for_run(instance_path, run: dict, *, folder_key: str, compute: Callable
             return c
     except (OSError, ValueError):
         pass
-    result = (compute or _compute_gate)(run)
+    try:
+        result = (compute or _compute_gate)(run)
+    except Exception as exc:  # noqa: BLE001 -- a failed check is not a run verdict
+        result = {"verdict": "unknown", "reason": f"the gate could not be computed ({exc})",
+                  "family": None, "anchor": None}
     result["rev"] = GATES_REV
     try:
         cache.parent.mkdir(parents=True, exist_ok=True)
@@ -425,9 +429,12 @@ def _compute_gate(run: dict) -> dict:
     run_obj["folder_path"] = Path(run["folder_path"])
     targets = gates.node_targets(run, fam)
     verdicts = gates.evaluate_run(run_obj, fam, targets, current_value_of=lambda p: _walk(doc, p))
-    per = {t: {"verdict": v.verdict, "failure_mode": v.failure_mode, "reasons": list(v.reasons)}
+    # The engine keeps unverifiable checks fail-safe. The reader gets no invented verdict.
+    per = {t: {"verdict": "unknown" if (v.failure_mode == "unverifiable"
+                                    and "suspect" not in v.checks.values()) else v.verdict,
+               "failure_mode": v.failure_mode, "reasons": list(v.reasons)}
            for t, v in verdicts.items()}
-    order = {"fail": 3, "suspect": 2, "pass": 1}
+    order = {"fail": 3, "suspect": 2, "unknown": 1, "pass": 0}
     worst = max(per.values(), key=lambda x: order.get(x["verdict"], 0), default=None)
     if worst is None:
         return {"verdict": "unknown", "reason": "no targets", "family": getattr(fam, "key", None), "anchor": "run"}

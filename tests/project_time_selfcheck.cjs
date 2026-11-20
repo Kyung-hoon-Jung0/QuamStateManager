@@ -270,8 +270,9 @@ const btn = (doc, sel) => doc.querySelector(sel);
     const W = await mk({ views: { alpha: { project: 'alpha', zone: null, state: 'none' } } });
     await until(() => W.w.ProjectTime._state().clock);
     await tick(10);
-    ok(W.d.querySelector('[data-tz-current]').textContent === 'UTC+9 (this PC)', 'P10b: an unset zone shows the PC offset, got "' + W.d.querySelector('[data-tz-current]').textContent + '"');
-    ok(W.d.querySelector('[data-tz-state]').textContent === 'not set — pick one', 'P10b: and says it is not set, once');
+    ok(W.d.querySelector('[data-tz-current]').textContent === "not set - using this PC's zone (UTC+9)",
+       'P10b: the unset zone and PC fallback are one statement');
+    ok(W.d.querySelector('[data-tz-state]').textContent === '', 'P10b: no second unset-zone statement');
   }
   // P11 -- the run-clock question, once, with evidence
   const ASK = {
