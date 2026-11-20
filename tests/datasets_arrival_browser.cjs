@@ -94,6 +94,63 @@ async function run() {
         await page.close();
         console.log('seen pin passed');
     }
+    if (pin === 'all' || pin === 'inspector-news') {
+        const page = await mount();
+        const app = fs.readFileSync(path.join(web, 'app.js'), 'utf8');
+        const start = app.indexOf('    window.SidebarScroll = (function () {');
+        const end = app.indexOf('    // Capture before the refresh', start);
+        await page.addScriptTag({ content: app.slice(start, end) });
+        await page.addStyleTag({ content: `#sidebar {position:absolute;top:0;left:0;width:200px;
+            height:300px;overflow:auto} #sidebar-tree {display:block} .tree-entry-click {display:block;height:32px}` });
+        await page.evaluate(() => {
+            const tray = document.createElement('div');
+            tray.id = 'pending-tray';
+            tray.innerHTML = '<button class="state-status-badge">Synced</button>';
+            document.body.prepend(tray);
+            const tree = document.getElementById('sidebar-tree');
+            tree.hidden = false;
+            const sidebar = document.createElement('div');
+            sidebar.id = 'sidebar';
+            tree.before(sidebar);
+            sidebar.append(tree);
+            window.fillTree = ids => {
+                tree.innerHTML = '<details open><summary>day</summary>' + ids.map(id =>
+                    '<span class="tree-entry-click" data-uid="folder:' + id + '">' + id + '</span>').join('')
+                    + '</details>';
+            };
+            window.fillTree(Array.from({ length: 100 }, (_, i) => 320 - i));
+            sidebar.scrollTop = 1800; // revealing the inspector run scrolled its group into view
+        });
+        await deliver(page, []);
+        await scrolled(page);
+        await deliver(page, [row(321), row(322)]);
+        await page.evaluate(() => {
+            window.SyncBadge.note('new', { count: 2, uids: ['folder:321', 'folder:322'] });
+            const tree = document.getElementById('sidebar-tree');
+            window.SidebarScroll.arm();
+            tree.dispatchEvent(new CustomEvent('htmx:beforeSwap', { bubbles: true, detail: { target: tree } }));
+            window.fillTree([322, 321, ...Array.from({ length: 100 }, (_, i) => 320 - i)]);
+            // Replacing/opening a full group clamps its scroller before anchor restoration.
+            document.getElementById('sidebar').scrollTop = 0;
+            tree.querySelector('details').dispatchEvent(new Event('toggle'));
+            tree.dispatchEvent(new CustomEvent('htmx:afterSwap', { bubbles: true, detail: { target: tree } }));
+        });
+        await page.waitForFunction(() => document.getElementById('sidebar').scrollTop > 1800);
+        assert.equal(await page.$eval('.state-status-notice', el => el.textContent), '2 new',
+            'unpainted sidebar rows do not acknowledge inspector arrivals');
+        assert.equal(await page.$eval('#ds-new-pill', el => !el.hidden && parseInt(el.textContent, 10)), 2,
+            'the bar shares the two unseen identities');
+        assert.ok(await page.$eval('tr[data-id="folder:240"]', tr => tr.classList.contains('ds-row-active')),
+            'the open run stays highlighted');
+        await page.evaluate(() => { document.getElementById('table-pane').scrollTop = 0; });
+        await page.waitForFunction(() => document.getElementById('ds-new-pill').hidden
+            && !document.querySelector('.state-status-notice'));
+        assert.ok(await page.evaluate(() => ['folder:321', 'folder:322'].every(uid =>
+            window.DatasetVirtual.isOnScreen(uid) && window.SyncBadge.isSeen(uid))),
+            'actually reaching the table rows acknowledges both counts');
+        await page.close();
+        console.log('inspector news pin passed');
+    }
     if (pin === 'all' || pin === 'inspector') {
         const page = await mount();
         await page.addStyleTag({ content: '.ds-new-pill {height:auto;display:inline-block;line-height:32px}' });

@@ -25158,7 +25158,7 @@ document.addEventListener('htmx:afterSwap', function(evt) {
      * a fresh result list belongs there.
      */
     window.SidebarScroll = (function () {
-        var _armed = false, _anchor = null;
+        var _armed = false, _anchor = null, _restoring = false;
 
         function _scroller() { return document.getElementById('sidebar'); }
 
@@ -25209,6 +25209,8 @@ document.addEventListener('htmx:afterSwap', function(evt) {
             var t = e.target || (e.detail && e.detail.target);
             if (!t || t.id !== 'sidebar-tree') return;
             _anchor = capture();
+            // An aborted swap fires no afterSwap: only a real swap holds the gate.
+            _restoring = !(e.detail && e.detail.shouldSwap === false);
         });
         document.addEventListener('htmx:afterSwap', function (e) {
             var t = e.target || (e.detail && e.detail.target);
@@ -25216,9 +25218,12 @@ document.addEventListener('htmx:afterSwap', function(evt) {
             if (!_armed) return;
             _armed = false;
             var a = _anchor; _anchor = null;
-            if (!a) return;
-            // after the swap settles: the rows are in, the heights are final
-            requestAnimationFrame(function () { restore(a); });
+            // Visibility is meaningful only after the reader's scroll anchor is restored.
+            requestAnimationFrame(function () {
+                restore(a);
+                _restoring = false;
+                if (window.SyncBadge) window.SyncBadge.render();
+            });
         });
         // The refresh button is the same gesture as an automatic refetch: the
         // list you asked to bring up to date, not a new query.
@@ -25229,6 +25234,7 @@ document.addEventListener('htmx:afterSwap', function(evt) {
         }, true);
 
         return { arm: arm, capture: capture, restore: restore,
+                 isRestoring: function () { return _restoring; },
                  _state: function () { return { armed: _armed, anchor: _anchor }; } };
     })();
 
