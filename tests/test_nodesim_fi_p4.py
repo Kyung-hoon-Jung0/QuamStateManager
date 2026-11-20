@@ -494,7 +494,7 @@ def test_int3_cold_sim_step_constructs_only_captured(monkeypatch):
             return Report()
 
     class Inst:
-        qmm_connection_params = {"host": "127.0.0.1", "port": 1}
+        qmm_connection_params = {"host": "192.0.2.10", "port": 1}
 
         def spawn(self):
             made.append("spawn")
@@ -557,6 +557,27 @@ def test_int3_cold_sim_step_constructs_only_captured(monkeypatch):
     assert out["last_adc_end_ns"] == 40
     assert made == ["QmSaas", "QOPVersion", "ClusterConfig", "spawn", "QuantumMachinesManager",
                     "SimulationConfig", "close"]
+
+
+@pytest.mark.parametrize("host", ["10.0.0.1", "127.0.0.1"])
+def test_int3p3_cold_private_lease_host(host, tmp_path, generator_dir):
+    """INT3P3: refuse a private instance host before set_lease or QMM construction."""
+    click = Click(tmp_path / "cold", generator_dir)
+    node = click.node('''
+        from nodesim_guard import Guard
+        def unexpected_lease(*args, **kwargs):
+            raise AssertionError("set_lease reached for a refused host")
+        Guard.set_lease = unexpected_lease
+    ''')
+    with listener() as (login_port, login), listener() as (inst_port, inst):
+        result = click.start(node, login_port, inst_port, control={"instance_host": host}).finish()
+    line = "GUARD FAIL lease Only the cloud simulator is allowed."
+    assert result["kind"] == "guard" and result["ok"] is False, result
+    assert result["message"] == line and result["guard_lines"] == [line], result
+    assert result["instances_opened"] == result["instances_closed"] == 1
+    assert click.saas_log() == ["spawn", "close"]
+    assert login["connections"] == 1 and inst["connections"] == 0
+    assert "set_lease reached" not in click.stderr
 
 
 def test_int3_sim_phase_has_no_fresh_qm_import():

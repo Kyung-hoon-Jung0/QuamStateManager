@@ -32,6 +32,9 @@ CHILD_TIMEOUT_S = 90
 
 #: row -> (file, guard text, text without the guard); each row must turn its pin red
 MUTATIONS = {
+    "INT3P3-M-1": ("nodesim_click.py",
+                   '        if not is_allowed_saas_host(params["host"], params["port"]):\n'
+                   '            guard.fail("lease", ONLY_SAAS)\n', ""),
     "B-1": ("nodesim_guard.py", "self.fail(\"socket.connect\", detail)", "pass"),
     "B-2": ("nodesim_guard.py", "self.fail(\"allow\", \"before build end\")", "pass"),
     "B-2b": ("nodesim_guard.py", "self.fail(\"allow\", \"called twice\")", "pass"),
@@ -73,6 +76,14 @@ FAKE = {
         import asyncio, socket, time
         from fake_control import control, log
         from qm.exceptions import QMConnectionError
+
+        _getaddrinfo = socket.getaddrinfo
+        def getaddrinfo(host, port, *args, **kwargs):
+            # Advertise TEST-NET while the fake transport stays on our loopback listener.
+            if host == "192.0.2.10":
+                host = "127.0.0.1"
+            return _getaddrinfo(host, port, *args, **kwargs)
+        socket.getaddrinfo = getaddrinfo
 
         class SimulationConfig:
             def __init__(self, duration):
@@ -181,7 +192,7 @@ FAKE = {
                 log("spawn")
                 c = control()
                 time.sleep(c.get("spawn_sleep", 0))
-                self._host, self._port = "127.0.0.1", c["instance_port"]
+                self._host, self._port = c.get("instance_host", "192.0.2.10"), c["instance_port"]
 
             @property
             def qmm_connection_params(self):

@@ -34,6 +34,7 @@ import traceback
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import nodesim_build as nb  # noqa: E402
+from nodesim_proto import is_allowed_saas_host  # noqa: E402
 
 KINDS = ("ok", "node_error", "serializer", "guard", "refused", "too_long", "timeout", "failed")
 #: the child's phases in order; SM's own ``copy`` comes before them
@@ -342,6 +343,8 @@ def simulate(saas, built, req, guard, status, stopping, counters, box):
             raise Stopped()
         status.begin("connect")
         params = inst.qmm_connection_params
+        if not is_allowed_saas_host(params["host"], params["port"]):
+            guard.fail("lease", ONLY_SAAS)
         guard.set_lease(params, resolve(params["host"], params["port"]))
         qmm = QuantumMachinesManager(**params)
         status.begin("submit")
