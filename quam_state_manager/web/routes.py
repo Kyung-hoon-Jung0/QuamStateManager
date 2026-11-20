@@ -9781,7 +9781,9 @@ def load():
         return render_template("_status.html", message="No folder specified", level="error"), 400
 
     try:
-        _maybe_auto_arm_on_open(_activate_quam(folder))
+        opened = _activate_quam(folder)
+        if request.form.get("auto_sync") != "0":
+            _maybe_auto_arm_on_open(opened)
     except (FileNotFoundError, ValueError, OSError) as e:
         logger.warning("State load failed for %s (%s): %s", folder, type(e).__name__, e)
         # docs/114 (#15): a wrong folder used to answer with a 6-second corner

@@ -588,3 +588,23 @@ def test_a_long_label_in_the_owner_cell_ends_with_an_ellipsis_and_shows_in_full_
     row = _row(page(app, "jobs"), "QM-one")
     assert ">" + "Q" * 37 + "... (ab12cd34)<" in row, row
     assert 'title="' + long_label + ' (ab12cd34)"' in row
+
+
+@pytest.mark.parametrize("read", ["never", "ok", "failed"])
+def test_pc_names_summary_reports_only_a_read_list(env, marker_home, read):
+    app, monitor, worker, clock, _ = env
+    if read == "ok":
+        worker.script[:] = [five_cases()]
+        monitor.poll_once()
+    elif read == "failed":
+        worker.script[:] = [om.WorkerError("TimeoutError: timed out")]
+        monitor.poll_once()
+    html = page(app, "settings")
+    zone = html.split('aria-label="PC names"', 1)[1].split('</span>', 1)[0]
+    if read == "never":
+        assert "0 named - not read yet" in zone and "seen in open QMs" not in zone
+    elif read == "ok":
+        assert "2 seen in open QMs" in zone and "not read yet" not in zone
+    else:
+        assert "unavailable" in zone and "not read yet" not in zone
+        assert "no successful read yet" in html

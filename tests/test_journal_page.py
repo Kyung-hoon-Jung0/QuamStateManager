@@ -87,7 +87,7 @@ class TestThePage:
         card104 = html[html.index('id="card-104"'):]
         assert 'title="inferred">by_claude</span>' in card104
         card101 = html[html.index('id="card-101"'):html.index('id="card-104"')]
-        assert ">unknown<" in card101
+        assert ">unknown<" not in card101 and 'class="jr-author ' not in card101
 
     def test_filters_swap_only_the_body(self, world):
         c = world["client"]
@@ -103,7 +103,8 @@ class TestThePage:
         # docs/191 N01: the day swap now carries the author list out-of-band too,
         # so split the CARDS from the <select> before counting either.
         body, _, oob = html.partition('<select name="author"')
-        assert body.count(">unknown<") == 2, "both runs' authors"
+        assert ">unknown<" not in body, "unrecorded authors render blank (Fix W)"
+        assert 'class="jr-author jr-author-unknown"' not in body
         assert ">unknown<" in oob, "and the filter offers it as a choice"
         r = c.post("/journal/claim", json={"run_id": 101, "who": "\uac00OO", "note": "mine"}, headers=_H)
         assert r.status_code == 200 and r.get_json()["claim"]["author"] == "human:\uac00OO"

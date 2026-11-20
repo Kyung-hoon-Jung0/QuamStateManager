@@ -1,9 +1,12 @@
-{# v1.3.0: one button that re-opens the chip that was open before SM restarted,
+{# v1.3.0: a form that re-opens the chip that was open before SM restarted,
    and lands back on this page. `_ro` is resume_offer() (routes._resume_offer). #}
 <form class="resume-offer" method="post" action="/load" hx-post="/load" hx-target="#table-pane">
     <input type="hidden" name="folder" value="{{ _ro.path }}">
     <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') if request.full_path else request.path }}">
     <button type="submit" class="btn-sm resume-offer-btn" title="{{ _ro.path }}">Re-open {{ _ro.name }}</button>
+    {% if _ro.arms_auto_sync %}
+    <button type="submit" name="auto_sync" value="0" class="btn-sm outline">Re-open without Auto-Sync</button>
+    {% endif %}
     {#- /load arms Auto-Sync for this chip; said only when the open rule allows it -#}
     {% if _ro.arms_auto_sync %}<p class="ui-text-quiet" data-resume-arms-auto-sync>Opening also turns Auto-Sync
     on for this chip when nothing waits to sync: your edits then go to the chip file. Turn it off in the top bar.</p>

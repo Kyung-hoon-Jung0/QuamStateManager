@@ -20,7 +20,7 @@ def test_a_pending_gate_reads_checking_gate(world, monkeypatch):  # noqa: F811
                         lambda run: {"verdict": "pass", "reason": "checked", "family": None, "anchor": "run"})
     _run_event(world, {"v": 1}, clock="11:00:00", run_id=1)
     html = world["client"].get(f"/journal/day?day={DAY}").get_data(as_text=True)
-    badge = re.search(r'<span class="jr-badge jr-gate-pending" title="([^"]+)">([^<]+)</span>', html)
+    badge = re.search(r'<span class="jr-badge jr-gate-pending"\s+title="([^"]+)">([^<]+)</span>', html)
     assert badge, html[:3000]
     assert badge.group(2) == "checking gate" and "being checked" in badge.group(1), badge.groups()
     assert "gate ...</span>" not in html

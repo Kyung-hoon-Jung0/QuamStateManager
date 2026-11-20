@@ -258,12 +258,12 @@
             var lz = legacyZone();
             var pcOff = isoOffsetMinutes(_clock && _clock.os_zone && _clock.os_zone.utc_offset);
             cur.textContent = lz ? lz + ' · ' + offsetText(offsetMinutes(lz, now)) + ' (this browser)'
-                : (pcOff != null ? offsetText(pcOff) + ' (this PC)' : 'this PC’s zone');
+                : "not set - using this PC's zone" + (pcOff != null ? ' (' + offsetText(pcOff) + ')' : '');
         }
         if (st) {
             var label = { picked: 'saved', default: 'default from the last project',
                           suggested: 'default' + (v.from_project ? ' from ' + v.from_project : '') + ' — used when opened',
-                          none: 'not set — pick one' }[v.state] || '';
+                          none: '' }[v.state] || '';
             st.textContent = label;
             st.setAttribute('data-state', v.state || 'none');
         }
