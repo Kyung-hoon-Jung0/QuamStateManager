@@ -40083,6 +40083,7 @@ def workspace_tree_group():
     entries = node["entries"] if node else []
     return render_template("_sidebar_tree_entries.html", entries=entries,
                            cap=50 if capped else None, root_path=root,
+                           group_total=node["n_total"] if node else 0,
                            tpath=tpath, name_filter=name_filter)
 
 

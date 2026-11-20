@@ -198,6 +198,9 @@ const chip = (win) => win.document.querySelector('.state-status-notice');
     + '</ul></details><details id="old"><summary>older</summary><ul>'
     + '<li><span class="tree-entry-click" data-uid="f:4"></span></li></ul></details>';
   doc.body.appendChild(tree);
+  win.Element.prototype.getBoundingClientRect = function () {
+    return { top: 10, bottom: 30, left: 0, right: 100, width: 100, height: 20 };
+  };
   win.SyncBadge.note('new', { count: 3, uids: ['f:1', 'f:2', 'f:3'] });
   ok(chip(win) === null, 'three runs the open sidebar group lists: no chip');
   win.SyncBadge.note('new', { count: 4, uids: ['f:1', 'f:2', 'f:3', 'f:4'] });

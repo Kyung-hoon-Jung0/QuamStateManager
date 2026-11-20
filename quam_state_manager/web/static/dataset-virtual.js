@@ -2255,14 +2255,15 @@
         }
     }
 
-    // The table acknowledges its own viewport; the sidebar only clears the top-bar chip.
+    // Both counts acknowledge the same identities when a row reaches either viewport.
     function _ackShownArrivals() {
         if (state.arrivalUids && state.arrivalUids.size) {
             var onScreen = _onScreenUids();
             var done = [];
             state.arrivalUids.forEach(function (uid) {
-                if (onScreen.has(uid)) done.push(uid);
+                if (onScreen.has(uid) || (window.SyncBadge && window.SyncBadge.runShown(uid))) done.push(uid);
             });
+            if (window.SyncBadge && done.length) window.SyncBadge.acknowledge(done);
             for (var i = 0; i < done.length; i++) state.arrivalUids.delete(done[i]);
         }
         _updateNewPill();
@@ -2288,11 +2289,11 @@
         return true;
     }
 
-    // The pill lives in the digest band when the page has one, else beside
-    // the page title — both stay on screen while the table scrolls
-    // internally, so the announcement is visible from anywhere in the list.
-    // Created lazily per init (every HTMX swap of #table-pane destroys it).
+    // A reserved header slot outside the table scroller keeps the announcement
+    // reachable without shifting the sticky header or covering any rows.
+    // Rebuilt per init and removed when navigation leaves the table.
     function _ensureNewPill() {
+        if (!state.tbody || !state.tbody.isConnected) return null;
         var el = document.getElementById('ds-new-pill');
         if (el) return el;
         if (!state.scrollEl || !state.scrollEl.parentNode) return null;
@@ -2303,19 +2304,34 @@
         el.hidden = true;
         el.title = 'Show the new runs — applies the held update and scrolls to the first of them';
         el.addEventListener('click', _onNewPillClick);
-        var page = state.scrollEl.closest ? state.scrollEl.closest('.datasets-page') : null;
-        var host = page && (page.querySelector('.ds-digest-band') ||
-                            page.querySelector('.table-header-row h2'));
-        if (host) host.appendChild(el);
-        else state.scrollEl.parentNode.insertBefore(el, state.scrollEl);
+        var host = document.getElementById('ds-arrivals');
+        if (!host) {
+            host = document.createElement('div');
+            host.id = 'ds-arrivals';
+            host.className = 'ui-panel-head';
+            host.setAttribute('aria-label', 'New runs');
+            state.scrollEl.parentNode.insertBefore(host, state.scrollEl);
+        }
+        host.appendChild(el);
+        var close = document.createElement('button');
+        close.type = 'button'; close.className = 'ui-btn-icon';
+        close.textContent = 'x'; close.title = 'Dismiss new runs'; close.hidden = true;
+        close.setAttribute('aria-label', 'Dismiss new runs');
+        close.id = 'ds-arrivals-close'; close.addEventListener('click', _dismissNewPill);
+        host.appendChild(close);
         return el;
     }
 
     function _updateNewPill() {
         var el = _ensureNewPill();
         if (!el) return;
+        if (window.SyncBadge) state.arrivalUids.forEach(function (uid) {
+            if (window.SyncBadge.isSeen(uid)) state.arrivalUids.delete(uid);
+        });
         var n = state.arrivalUids ? state.arrivalUids.size : 0;
-        // The bar sits above the list inside the scroller: showing or hiding it
+        var close = document.getElementById('ds-arrivals-close');
+        if (close) close.hidden = !n;
+        // The reserved slot sits outside the scroller: showing or hiding its controls
         // while the user is scrolled down keeps the rows where they were.
         var sc = state.scrollEl, tb = state.tbody;
         var keep = (sc && tb && sc.scrollTop > 0) ? tb.getBoundingClientRect().top : null;
@@ -2419,6 +2435,7 @@
     function _onNewPillClick() {
         flushPendingNow();                 // held runs land NOW (explicit request)
         var pos = _firstArrivalPos();      // read BEFORE the count clears (QA F2)
+        if (window.SyncBadge) window.SyncBadge.acknowledge(Array.from(state.arrivalUids));
         if (state.arrivalUids) state.arrivalUids.clear();
         _updateNewPill();
         if (!state.scrollEl) return;
@@ -2428,14 +2445,15 @@
 
     // docs/126 item 6.5: Esc or a click anywhere else DISMISSES the announcement
     // (customer request). Dismissal only acknowledges; the held rows still
-    // land on the next idle flush. A sidebar refresh does not dismiss it: the
-    // table bar counts what the TABLE has not shown.
+    // land on the next idle flush. Refreshing a list acknowledges only rows
+    // inside a viewport; shared seen identities keep later polls acknowledged.
     function _dismissNewPill() {
         var el = document.getElementById('ds-new-pill');
         if (!el || el.hidden) return false;
         if (state.arrivalUids) {
             // A later poll still carries the held runs: dismissed stays dismissed.
             state.arrivalUids.forEach(function (uid) { state.dismissedUids.add(uid); });
+            if (window.SyncBadge) window.SyncBadge.acknowledge(Array.from(state.arrivalUids));
             state.arrivalUids.clear();
         }
         _updateNewPill();
@@ -2453,6 +2471,14 @@
             _dismissNewPill();
         });
     }
+
+    document.addEventListener('sm:runs-seen', _updateNewPill);
+    document.addEventListener('htmx:afterSwap', function () {
+        if (!document.getElementById('datasets-tbody')) {
+            var host = document.getElementById('ds-arrivals');
+            if (host) host.remove();
+        }
+    });
 
     function startPolling() {
         if (state.pollTimer) clearInterval(state.pollTimer);
@@ -3094,6 +3120,8 @@
         // _persistedFolder declarations at the top. A different data
         // folder means a different DatasetStore: row ids are unrelated,
         // so we drop the selection entirely.
+        var oldHost = document.getElementById('ds-arrivals');
+        if (oldHost) oldHost.remove();
         state.rows = rows;
         // Compose the folder-aware uid ("<folder_key>:<run_id>") for each row — the
         // stable identity used for selection, the detail URL, tags and the tree
