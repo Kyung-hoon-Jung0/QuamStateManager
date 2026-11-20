@@ -212,8 +212,10 @@ def with_instants(rows: list[dict], ds: Any) -> list[dict]:
 def _outcome(outcomes: dict | None) -> str | None:
     if not outcomes:
         return None
+    from quam_state_manager.core.dataset import marks_failure
     vals = [str(v).lower() for v in outcomes.values()]
-    if any("fail" in v for v in vals):
+    # the Datasets digest's own failure rule, so both screens count one thing the same way
+    if any(marks_failure(v) for v in vals):
         return "failed"
     if all("success" in v or v == "ok" for v in vals):
         return "ok"

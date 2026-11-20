@@ -377,9 +377,9 @@
                         if (String(ok2).toLowerCase() === otgt) {
                             var ocv = String(row.oc[ok2]).toLowerCase();
                             // `=fail` is the digest's failure CLASS -- the same
-                            // /error|fail|abort|crash/ its chip counts with
+                            // marksFailure rule its chip counts with
                             // (routes._datasets_view is the server twin).
-                            return ov === 'fail' ? /error|fail|abort|crash/.test(ocv)
+                            return ov === 'fail' ? marksFailure(ocv)
                                                  : ocv.indexOf(ov) !== -1;
                         }
                     }
@@ -455,7 +455,7 @@
                 if (value === 'bookmarked' || value === 'starred') return !!row.bm;
                 if (value === 'wrote' || value === 'writes') return !!row.ws;
                 if (value === 'failed' || value === 'error')
-                    return /(error|fail|abort|crash)/.test(String(row.status || '').toLowerCase());
+                    return marksFailure(row.status);
                 return false;
         }
         return false;
@@ -596,16 +596,23 @@
         if (/(finish|done|complet)/.test(s)) cls = 'ds-status-done';
         else if (/(success|pass)/.test(s)) cls = 'ds-status-ok';
         else if (/(run|progress|pending|queue)/.test(s)) cls = 'ds-status-run';
-        else if (/(error|fail|abort|crash)/.test(s)) cls = 'ds-status-err';
+        else if (marksFailure(s)) cls = 'ds-status-err';
         return '<span class="ds-status ' + cls + '" title="' + escapeHtml(status) + '">' + escapeHtml(status) + '</span>';
     }
     // F9: a run whose node marked EVERY target failed still reports status
     // "finished" (the process ended normally). Say the fits failed beside it,
     // and mark the key metric as coming from a failed fit.
+    // One failure rule for a run status and a target outcome: the server's
+    // core/dataset.py marks_failure (FAILURE_WORDS) is the twin, so a row, the
+    // digest and the Calibration log never count one run differently.
+    var FAILURE_RE = /error|fail|abort|crash/;
+    function marksFailure(v) {
+        return v != null && FAILURE_RE.test(String(v).toLowerCase());
+    }
     function allTargetsFailed(row) {
         var oc = row && row.oc, n = 0;
         if (!oc) return false;
-        for (var q in oc) { n++; if (oc[q] === 'successful') return false; }
+        for (var q in oc) { n++; if (!marksFailure(oc[q])) return false; }
         return n > 0;
     }
     // A run whose node marked SOME targets failed: {k, n}, or null when none
@@ -613,7 +620,7 @@
     function failedTargets(row) {
         var oc = row && row.oc, n = 0, k = 0;
         if (!oc) return null;
-        for (var q in oc) { n++; if (oc[q] !== 'successful') k++; }
+        for (var q in oc) { n++; if (marksFailure(oc[q])) k++; }
         return k ? {k: k, n: n} : null;
     }
     // The key metric was read off the fit of a target the node marked failed
@@ -621,7 +628,7 @@
     function metricFromFailedTarget(row) {
         if (allTargetsFailed(row)) return true;
         var oc = row && row.oc;
-        return !!(oc && row.mq != null && (row.mq in oc) && oc[row.mq] !== 'successful');
+        return !!(oc && row.mq != null && (row.mq in oc) && marksFailure(oc[row.mq]));
     }
     function tagsCell(row) {
         var h = '';
@@ -638,9 +645,12 @@
         if (!row.oc || Object.keys(row.oc).length === 0) return '-';
         var h = '';
         for (var q in row.oc) {
-            var ok = row.oc[q] === 'successful';
-            h += '<span class="outcome-badge ' + (ok ? 'outcome-ok' : 'outcome-fail') +
-                 '" title="' + escapeHtml(q) + ': ' + escapeHtml(row.oc[q]) + '">' + (ok ? '✓' : '✗') + '</span>';
+            // The failed mark follows marksFailure, the rule every count uses;
+            // an outcome that is neither successful nor a failure gets a "?".
+            var ok = row.oc[q] === 'successful', bad = marksFailure(row.oc[q]);
+            h += '<span class="outcome-badge' + (ok ? ' outcome-ok' : (bad ? ' outcome-fail' : '')) +
+                 '" title="' + escapeHtml(q) + ': ' + escapeHtml(row.oc[q]) + '">'
+                 + (ok ? '✓' : (bad ? '✗' : '?')) + '</span>';
         }
         return h;
     }
@@ -1200,7 +1210,6 @@
             }
             return;
         }
-        var bad = /error|fail|abort|crash/;
         var latest = '';
         for (var i = 0; i < state.visible.length; i++) {
             var d = state.rows[state.visible[i]].date || '';
@@ -1211,12 +1220,12 @@
             var row = state.rows[state.visible[j]];
             if ((row.date || '') !== latest) continue;
             total++;
-            if (bad.test(String(row.status || '').toLowerCase())) failed++;
+            if (marksFailure(row.status)) failed++;
             if (row.oc) {
                 for (var q in row.oc) {
                     // QA datasets-r2-18: the chip filters `outcome:<q>=fail`,
                     // which matchScope reads as this same failure class.
-                    if (bad.test(String(row.oc[q]).toLowerCase())) {
+                    if (marksFailure(row.oc[q])) {
                         qfail[q] = (qfail[q] || 0) + 1;
                     }
                 }
@@ -1248,14 +1257,16 @@
             var fb = document.createElement('button');
             fb.className = 'ds-help-example ds-digest-bad';
             fb.setAttribute('data-example', dscope + 'is:failed');
-            fb.textContent = failed + ' failed';
+            fb.setAttribute('title', "Show this day's runs whose run status names an error");
+            fb.textContent = failed + ' run error' + (failed === 1 ? '' : 's');
             band.appendChild(fb);
         } else if (!qs.length) {
             band.appendChild(span('ds-digest-ok', 'all OK'));
         } else {
             band.appendChild(span('ds-digest-item', 'no run errors'));
         }
-        if (qs.length) band.appendChild(span('ds-digest-oclabel ui-text-quiet', 'fit not accepted:'));
+        if (qs.length) band.appendChild(span('ds-digest-oclabel ui-text-quiet',
+            'fit not accepted, runs per target:'));
         qs.forEach(function (q) {
             var b = document.createElement('button');
             b.className = 'ds-help-example ds-digest-qchip';
@@ -2434,14 +2445,31 @@
     // wrong while the list starts below the fold of the one-scroller pane).
     // A row already on screen from the very top keeps the old scroll-to-top,
     // so a single-folder page lands exactly where it always did.
+    // A target inside the Sort / date-tab bar would leave that bar cut in half
+    // at the pane's top edge: it moves to the bar's top when the row still fits
+    // below it, else past the bar's bottom, so the bar is whole or gone.
     function _scrollToListPos(pos) {
         var el = state.scrollEl, tb = state.tbody;
         if (!el || !tb) return;
-        var listOff = el.scrollTop + (tb.getBoundingClientRect().top - el.getBoundingClientRect().top);
+        var paneTop = el.getBoundingClientRect().top;
+        var listOff = el.scrollTop + (tb.getBoundingClientRect().top - paneTop);
         if (listOff + (pos + 1) * ROW_HEIGHT <= el.clientHeight) { el.scrollTop = 0; return; }
         var thead = tb.parentNode && tb.parentNode.querySelector ? tb.parentNode.querySelector('thead') : null;
         var headH = thead ? thead.getBoundingClientRect().height : 0;
-        el.scrollTop = Math.max(0, Math.round(listOff + pos * ROW_HEIGHT - headH - ROW_HEIGHT));
+        var target = Math.max(0, Math.round(listOff + pos * ROW_HEIGHT - headH - ROW_HEIGHT));
+        var bar = document.getElementById('sort-filter-grid');
+        var r = bar && el.contains(bar) ? bar.getBoundingClientRect() : null;
+        if (r && r.height > 0) {
+            var cs = window.getComputedStyle ? window.getComputedStyle(el) : null;
+            var inset = (el.clientTop || 0) + (cs ? parseFloat(cs.paddingTop) || 0 : 0);
+            var barTop = el.scrollTop + (r.top - paneTop) - inset;
+            var barBottom = el.scrollTop + (r.bottom - paneTop) - inset;
+            if (target > barTop && target < barBottom) {
+                var shown = Math.max(0, Math.floor(barTop));
+                target = (listOff + (pos + 1) * ROW_HEIGHT - shown <= el.clientHeight) ? shown : Math.ceil(barBottom);
+            }
+        }
+        el.scrollTop = target;
         scheduleRender();
     }
 

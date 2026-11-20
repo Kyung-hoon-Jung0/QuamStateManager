@@ -161,8 +161,9 @@ def raw_error(st):
 
 
 def stale_time(value):
-    """A last-good-read time: HH:MM:SS today, the full date and zone otherwise."""
-    full = om.local_time(value)
+    """A last-good-read time: HH:MM:SS today, the full date and zone otherwise; '' when no
+    time is on record, so a caller drops the time instead of printing a placeholder."""
+    full = om.read_time(value)
     t = om.timestamp(value)
     if t is None:
         return full
@@ -251,16 +252,16 @@ def _view(tab: str, st=None) -> dict:
     for tile in owner_ctx['tiles']:
         if st['state'] != 'ok' and tile['label'] != 'Server' and tile['value'] != 'unknown':
             section = 'controllers' if tile['label'] == 'Hottest sensor' else 'open_qms'
-            at = st['section_times'].get(section)
+            at = stale_time(st['section_times'].get(section))
             if at:
-                tile['note'] = (tile['note'] + '; ' if tile['note'] else '') + 'as of ' + stale_time(at)
+                tile['note'] = (tile['note'] + '; ' if tile['note'] else '') + 'as of ' + at
     busy_text = om.busy_since_text(verdict.get('since'), skew, st.get('answer'), m.clock())
     if verdict['label'].startswith('BUSY') and (not busy_text or 'busy time unknown' in busy_text):
         observed = st.get('busy_observed_s')
         if observed is not None and observed >= st['interval_s']:
             busy_text = f' for at least {om._span_words(observed)} (observed by SM)'
     owner_ctx['busy_since'] = busy_text
-    return {**owner_ctx, 'temperature_failed': 'controllers' in st['section_errors'] or any(k.endswith('.temperatures') for k in (st.get('answer') or {}).get('refused', {})), 'unreadable_temps': om.unreadable_temperatures(st.get('answer')), 'last_job': last_job, 'hottest': hottest, 'local_time': om.local_time, 'plain_error': plain_error, 'call_failure': om.call_failure, 'raw_error': raw_error(st), 'stale_time': stale_time, 'opx_time': om.opx_time, 'pc_zone': om.zone_text(), 'words': om.words, 'job_activity': om.job_activity, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': verdict, 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason, skew=skew) if not run_reason else {}, 'clock_skew': skew, 'skew_text': om.skew_text(skew, m.clock()), 'metric_known': om.metric_known, 'job_list_cap': om.JOB_LIST_CAP, 'value_vs_limit': om.value_vs_limit,
+    return {**owner_ctx, 'temperature_failed': 'controllers' in st['section_errors'] or any(k.endswith('.temperatures') for k in (st.get('answer') or {}).get('refused', {})), 'unreadable_temps': om.unreadable_temperatures(st.get('answer')), 'last_job': last_job, 'hottest': hottest, 'local_time': om.local_time, 'read_time': om.read_time, 'plain_error': plain_error, 'call_failure': om.call_failure, 'raw_error': raw_error(st), 'stale_time': stale_time, 'opx_time': om.opx_time, 'pc_zone': om.zone_text(), 'words': om.words, 'job_activity': om.job_activity, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': verdict, 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason, skew=skew) if not run_reason else {}, 'clock_skew': skew, 'skew_text': om.skew_text(skew, m.clock()), 'metric_known': om.metric_known, 'job_list_cap': om.JOB_LIST_CAP, 'value_vs_limit': om.value_vs_limit,
             "trends": m.trends().series(m.clock()) if m.trends() and tab == "live" else {}, "idle_states": idle_states, "idle_ids": [k for k, v in idle_states.items() if v['idle'] and st['state'] == 'ok'], "tab": tab, "tabs": TABS, "tab_labels": TAB_LABELS, "st": st, "settings": s,
             "target": t, "has_headers": has_headers,
             "saved": m.saved_settings() if tab == "settings" else {},

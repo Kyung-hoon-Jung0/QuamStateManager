@@ -57,13 +57,15 @@
     {% set _dscope = ('date:' ~ digest.date ~ ' ') if digest.date else '' %}
     {% if digest.failed %}
     <button class="ds-help-example ds-digest-bad" data-example="{{ _dscope }}is:failed"
-            title="Show this day's failed runs">{{ digest.failed }} failed</button>
+            title="Show this day's runs whose run status names an error">
+        {{- digest.failed }} run error{{ 's' if digest.failed != 1 }}</button>
     {% elif not digest.qubit_fail %}
     <span class="ds-digest-ok">all OK</span>
     {% else %}
     <span class="ds-digest-item">no run errors</span>
     {% endif %}
-    {% if digest.qubit_fail %}<span class="ds-digest-oclabel ui-text-quiet">fit not accepted:</span>{% endif %}
+    {% if digest.qubit_fail -%}
+    <span class="ds-digest-oclabel ui-text-quiet">fit not accepted, runs per target:</span>{% endif %}
     {% for q, n in digest.qubit_fail %}
     <button class="ds-help-example ds-digest-qchip" data-example="{{ _dscope }}outcome:{{ q }}=fail"
             title="Show the {{ n }} run{{ 's' if n != 1 }} where {{ q }}'s outcome failed">{{ q }}&nbsp;×{{ n }}</button>

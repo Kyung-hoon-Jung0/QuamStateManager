@@ -36,6 +36,17 @@ from quam_state_manager.core.scanner import (
 
 logger = logging.getLogger(__name__)
 
+# One rule for "this run status / this target outcome names a failure". The Datasets digest,
+# its outcome chips, the row's failed-fit marks and the Calibration log's day totals all use it;
+# dataset-virtual.js marksFailure is the client twin (same pattern, pinned by a test).
+FAILURE_WORDS = r"error|fail|abort|crash"
+_FAILURE_RE = re.compile(FAILURE_WORDS)
+
+
+def marks_failure(value) -> bool:
+    """True when a run status or a node's per-target outcome names a failure."""
+    return value is not None and bool(_FAILURE_RE.search(str(value).lower()))
+
 # Max parsed data.json files to keep in memory per DatasetStore. Each
 # data.json can be MB-sized (fit arrays); without a bound, a 2 000-run
 # workspace pins multi-GB of JSON in memory (red-team Phase 2 finding §3.2).
@@ -342,7 +353,7 @@ def _compact_row(run: "RunInfo") -> dict:
     # metric came from, so the table can mark a metric read off a failed fit
     # (shipped only then -- a clean run's row is unchanged).
     oc = run.outcomes
-    if isinstance(oc, dict) and any(o != "successful" for o in oc.values()) \
+    if isinstance(oc, dict) and any(marks_failure(o) for o in oc.values()) \
             and run.key_metric:
         mq = _key_metric_target(run)
         if mq is not None:

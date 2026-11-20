@@ -1063,6 +1063,25 @@ def local_time(value):
     return local.strftime('%Y-%m-%d %H:%M:%S') + f' ({zone_text(local)})'
 
 
+def read_time(value) -> str:
+    """A last-good-read time for a sentence, or '' when no time is on record. A caller
+    that gets '' says the sentence without a time; 'not reported' never fills a time slot."""
+    return local_time(value) if timestamp(value) is not None else ''
+
+
+def unconfigured_sentence(follows_chip: bool, chip_default) -> str:
+    """Why no OPX is watched, naming every remedy that applies. A monitor that follows the
+    open chip can be fixed by opening a chip whose wiring names an OPX host (when no chip
+    is open) or only by a saved connection (when the open chip's wiring names none)."""
+    if not follows_chip:
+        return "No OPX connection is set up. Choose one under Monitor settings."
+    if chip_default is None:
+        return ("No OPX connection is set up. Open a chip whose wiring names an OPX host, "
+                "or choose a connection under Monitor settings.")
+    return ("No OPX connection is set up: the open chip's wiring names no OPX host. "
+            "Choose a connection under Monitor settings.")
+
+
 def zone_text(local=None):
     """The PC zone label every monitor time uses, e.g. 'UTC+9'."""
     local = local if local is not None else datetime.now().astimezone()
@@ -1850,7 +1869,7 @@ class Monitor:
             state, sentence = 'error', s['settings_error']
         elif not s.get("target"):
             state = "unconfigured"
-            sentence = "No OPX connection is set up. Choose one under Monitor settings."
+            sentence = unconfigured_sentence(self.default_source is not None, s.get("chip_default"))
         elif not s.get("python"):
             state = "unconfigured"
             sentence = "No Python environment with the QM SDK is chosen. Choose one under Monitor settings."

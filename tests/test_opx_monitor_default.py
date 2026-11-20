@@ -120,7 +120,7 @@ def test_no_chip_and_no_settings_is_unconfigured(rig):
     app, m, started = rig
     st = m.status()
     assert st["state"] == "unconfigured"
-    assert st["sentence"] == "No OPX connection is set up. Choose one under Monitor settings."
+    assert st["sentence"].startswith("No OPX connection is set up. Open a chip whose wiring names")
     m.poll_once()
     assert not started
     assert "No OPX connection is set up" in _body(app, "live")
@@ -239,3 +239,67 @@ def test_chip_target_reads_the_network_block(net, want):
 ])
 def test_admin_origin_ok_accepts_only_an_http_origin(url, ok):
     assert om.admin_origin_ok(url) is ok
+
+
+def _empty_answer():
+    return {"server_version": "1", "cluster_name": "c", "refused": {}, "jobs_requested": True,
+            "controllers": [{"name": "con1", "temperatures": {}, "fems": []}], "open_qms": [], "jobs": []}
+
+
+@pytest.mark.parametrize("chip", [False, True])
+def test_a_monitor_that_never_read_counts_nothing_and_dates_nothing(rig, chip):
+    """Never read (no connection, or a target not polled yet): no "0 open", no "0 of 0
+    jobs", and no 'not reported' standing in a time slot on any tab."""
+    app, m, started = rig
+    if chip:
+        _open(app, "c1", _ctx("10.9.8.7"))
+    assert m.status()["answer"] is None
+    for tab in ("live", "jobs", "cleanup"):
+        html = html_unescape(_body(app, tab))
+        assert "0 open" not in html and "0 of 0 jobs" not in html, tab
+        assert "at not reported" not in html and "read at not" not in html, tab
+        assert "(not reported)" not in html and ", not reported" not in html, tab
+    live = html_unescape(_body(app, "live"))
+    if not chip:  # with a target set but no answer yet, the zones say "not available" instead
+        assert "Open QMs</h3><span class=\"ui-zone-sum\">not read yet" in live
+        assert "Temperatures</h3><span class=\"ui-zone-sum\">not read yet" in live
+        assert "No QM list." in html_unescape(_body(app, "jobs"))
+
+
+def test_a_read_empty_qm_list_still_says_0_open(rig, monkeypatch):
+    app, m, started = rig
+    _open(app, "c1", _ctx("10.9.8.7"))
+    monkeypatch.setattr(FakeWorker, "request", lambda self, op, **kw: {"ok": True, "result": _empty_answer()})
+    m.poll_once()
+    assert m.status()["state"] == "ok"
+    live = html_unescape(_body(app, "live"))
+    assert "Open QMs</h3><span class=\"ui-zone-sum\">0 open" in live
+    assert "No QM is open: the hardware is free." in live
+
+
+def test_a_stale_read_keeps_its_time_and_a_missing_time_drops_the_slot(rig, monkeypatch):
+    app, m, started = rig
+    _open(app, "c1", _ctx("10.9.8.7"))
+    monkeypatch.setattr(FakeWorker, "request", lambda self, op, **kw: {"ok": True, "result": _empty_answer()})
+    m.poll_once()
+    m.section_times["open_qms"] = "2026-01-02T03:04:05+00:00"
+    m.section_errors = {"open_qms": "boom"}
+    html = html_unescape(_body(app, "live"))
+    assert "Open QMs unavailable; last good read at 2026-01-02 " in html
+    m.section_times["open_qms"] = "garbage"
+    html = html_unescape(_body(app, "live"))
+    assert "Open QMs unavailable; no successful read yet" in html and "at not reported" not in html
+    assert omr.stale_time(None) == "" and om.read_time("garbage") == ""
+
+
+def test_the_unconfigured_line_names_every_remedy(rig):
+    app, m, started = rig
+    st = m.status()
+    assert "Open a chip whose wiring names an OPX host" in st["sentence"]
+    assert "choose a connection under Monitor settings" in st["sentence"]
+    _open(app, "c1", _ctx(None))
+    st = m.status()
+    assert st["state"] == "unconfigured" and "the open chip's wiring names no OPX host" in st["sentence"]
+    assert "Open a chip" not in st["sentence"]
+    bare = om.Monitor(app.instance_path)
+    assert bare.status()["sentence"] == "No OPX connection is set up. Choose one under Monitor settings."
