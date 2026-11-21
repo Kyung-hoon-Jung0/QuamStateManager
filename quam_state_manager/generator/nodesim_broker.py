@@ -146,6 +146,21 @@ def unauthenticated(exc):
     return text == "api client is unauthenticated" or text.rstrip().endswith(": unauthenticated")
 
 
+#: qm-saas api.py launch_simulator raises this prefix only after the server answered the POST with a non-201 status
+SPAWN_REFUSED = "Could not spawn simulator of version "
+
+
+def refused(exc):
+    """True when the server answered the spawn with a refusal and returned no instance id (D-43, D-53).
+
+    A non-201 answer with a JSON message creates nothing, so its reservation is released at once. A transport error
+    (timeout, reset, crash mid-call) or a non-JSON body (a proxy page in front of the server) leaves the outcome
+    unknown: an instance may exist on the account, so that reservation stays a counted ghost until it expires.
+    """
+    text = str(exc)
+    return unauthenticated(exc) or (text.startswith(SPAWN_REFUSED) and "non-JSON response body" not in text)
+
+
 def atomic(path, value):
     """Replace one identity or table file (P2 spec 3.1-3.2)."""
     tmp = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
@@ -506,9 +521,10 @@ class Broker:
                 raise ConnectionError("The cloud lease could not be delivered.")
         except Exception as exc:
             with self.lock:
-                if row in self.rows and not row["instance_id"] and unauthenticated(exc):
-                    # The server refused the spawn as unauthenticated, so no instance exists: the reservation is
-                    # released, never kept as a counted ghost (D-53, r3 P2-1). Ambiguous failures stay ghosts (D-43).
+                if row in self.rows and not row["instance_id"] and refused(exc):
+                    # The server refused the spawn and returned no id, so no instance exists: the reservation is
+                    # released, never kept as a counted ghost (D-53, r3 P2-1). Unknown outcomes stay ghosts (D-43):
+                    # without an id the broker cannot close what may exist, so it keeps counting the slot.
                     self.rows.remove(row)
                     self.prune(row)
                     try:
