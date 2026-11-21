@@ -61,10 +61,17 @@ MUTATIONS = {
 # ---------------------------------------------------------------- the fake QM stack
 FAKE = {
     "fake_control.py": '''
-        import json, os
+        import json, os, time
         from pathlib import Path
 
         def control():
+            # gl-j62b: a test rewrites this file while the fake polls it; write_text truncates first, so a
+            # read can see an empty file. Retry a torn read instead of failing the click.
+            for _ in range(200):
+                try:
+                    return json.loads((Path(__file__).parent / "fake_control.json").read_text(encoding="utf-8"))
+                except ValueError:
+                    time.sleep(0.01)
             return json.loads((Path(__file__).parent / "fake_control.json").read_text(encoding="utf-8"))
 
         def log(event):
