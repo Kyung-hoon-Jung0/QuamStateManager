@@ -692,6 +692,12 @@
     // w: default px width (user-resizable). sortKey/type: enables header sort.
     var KEY_METRIC_BLANK = 'No key metric: this run saved no finite fit number (no fit results, or the fit did not '
         + 'converge). Open the run for its fit details.';
+    // Fix Y: an interleaved RB metric reads "epg 18.59% / 61%"; the title names both node fields.
+    function metricTitle(m) {
+        var s = String(m);
+        return /^epg [^ ]+% \/ [^ ]+%$/.test(s)
+            ? s + ' (epg: the node\'s error per gate; after the slash: its systematic_bound)' : s;
+    }
     var COLUMNS = [
         {key: 'select', structural: true, w: 34, cls: 'col-select',
          header: '<input type="checkbox" id="ds-select-all" aria-label="Select every visible row for compare">',
@@ -751,7 +757,9 @@
         // Fix X3: 140 fit to 127 at a 1440 px window clipped it again ("fidelity 0.71..."); 160 and the fit takes
         // Key Metric's width last (FIT_LAST below), so it shows whole wherever Experiment can still give.
         {key: 'metric', label: 'Key Metric', on: true, w: 160, sortKey: 'metric', type: 'num', cls: 'col-metric',
-         title: function (r) { return (r.metric == null || r.metric === '') ? KEY_METRIC_BLANK : String(r.metric); },
+         title: function (r) {
+             return (r.metric == null || r.metric === '') ? KEY_METRIC_BLANK : metricTitle(r.metric);
+         },
          render: function (r) { return (r.metric == null || r.metric === '')
              ? '<span class="muted" title="' + escapeHtml(KEY_METRIC_BLANK) + '">-</span>'
              : (allTargetsFailed(r)
