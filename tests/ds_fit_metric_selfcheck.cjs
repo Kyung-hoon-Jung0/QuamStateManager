@@ -6,12 +6,18 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {JSDOM} = require('jsdom');
 const source = fs.readFileSync(path.join(__dirname, '../quam_state_manager/web/static/dataset-virtual.js'), 'utf8');
-const base = {exp: 'spec', date: '2026-08-01', time: '01:00:00', tags: [], sm: {}, pm: {}, status: 'finished',
+const base = {exp: '37b_two_qubit_interleaved_rb', date: '2026-08-01', time: '01:00:00', tags: [], sm: {}, pm: {},
+              status: 'finished',
               q: ['q1'], oc: {q1: 'successful'}};
 const rows = [Object.assign({}, base, {id: 2, f: 'a', metric: 'fidelity 0.6008'}),
               Object.assign({}, base, {id: 1, f: 'b', metric: 'epg 18.59% / 61%'})];
 const folders = [{key: 'a', label: 'a', full_path: 'a'}, {key: 'b', label: 'b', full_path: 'b'}];
 let checks = 0;
+const waitFor = async (cond, what) => {   // condition-based wait, capped at 5 s
+    for (let i = 0; i < 500 && !cond(); i++) await new Promise(r => setTimeout(r, 10));
+    assert.ok(cond(), 'timed out waiting for ' + what);
+};
+(async () => {
 // 905 / 909 / 917: the 1280 px pane with and without a vertical scrollbar
 for (const pane of [905, 909, 917]) {
     const dom = new JSDOM('<body><input id="dataset-search" value="">' +
@@ -34,6 +40,12 @@ for (const pane of [905, 909, 917]) {
     assert.ok(colW('metric') >= 140, pane + ': Key Metric shows its text whole: ' + colW('metric')); checks++;
     assert.ok(colW('status') >= 204, pane + ': Status keeps 204: ' + colW('status')); checks++;
     assert.ok(colW('when') >= 88, pane + ': When keeps 88 ("11/21 12:34"): ' + colW('when')); checks++;
+    await waitFor(() => w.document.querySelectorAll('#datasets-tbody td').length > 0, 'rows');
+    const expTd = Array.from(w.document.querySelectorAll('#datasets-tbody td'))
+        .find(td => td.textContent.trim() === '37b_two_qubit_interleaved_rb');
+    assert.ok(expTd && expTd.title === '37b_two_qubit_interleaved_rb',
+              pane + ': the Experiment cell carries its whole name as a title'); checks++;
     w.close();
 }
 console.log(checks + ' checks passed');
+})().catch(e => { console.error(e); process.exit(1); });
