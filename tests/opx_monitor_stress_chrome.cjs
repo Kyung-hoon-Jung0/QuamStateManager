@@ -111,7 +111,9 @@ async function shot(p,name){await p.shot(path.join(shots,name+'.png'));}
   await p.send('Page.navigate',{url:base+'/opx-monitor/settings'});await sleep(700);
   await p.ev(`(async()=>{const f=new FormData(document.querySelector('.ui-opxmon-settings'));f.delete('alarms_armed');f.set('host','');await fetch('/opx-monitor/settings',{method:'POST',body:f});})()`);
   await p.send('Page.navigate',{url:base+'/opx-monitor/live'});await sleep(700);await prepare(p,'light');
-  pin(await p.ev("/Health not assessed/.test(document.querySelector('.ui-opxmon-verdict').textContent) && !/PROBLEM/.test(document.querySelector('.ui-opxmon-verdict').textContent)"),'D1 unconfigured monitor says health not assessed');
+  pin(await p.ev("/Health not checked/.test(document.querySelector('.ui-opxmon-verdict').textContent)"
+    + " && !/PROBLEM/.test(document.querySelector('.ui-opxmon-verdict').textContent)"),
+    'D1 unconfigured monitor says health not checked');
   await shot(p,'unconfigured-390-live');
 
  }finally{await p.close();}

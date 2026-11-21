@@ -2591,7 +2591,10 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
 .landing-card-doctor { color: var(--color-warning-text); }
 .landing-card-open { margin: 0; }
 .landing-card-open .btn-sm { width: auto; margin: 0; }
-.landing-card-actions { display: flex; gap: 0.4rem; align-items: center; }
+.landing-card-actions { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
+/* Fix X2: an open that arms Auto-Sync takes the card's width for its quiet button + notice (one line each) */
+.landing-card-open:has([data-open-without-auto-sync]) { flex-basis: 100%; }
+.landing-card-open [data-open-without-auto-sync] { white-space: nowrap; }
 .landing-card-actions .btn-sm { width: auto; margin: 0; }
 /* w9/labwarm: each project's Python environment -- a row on the card, and
    one inline (non-modal) picker under the cards. */
@@ -2646,7 +2649,6 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
 .landing-tz-state { font-size: 0.78em; color: var(--pico-muted-color); font-style: italic; }
 .landing-tz-state[data-state="picked"] { color: #16a34a; font-style: normal; }
 .landing-tz-clock { margin-left: auto; font-size: 0.78em; }
-.landing-tz-note { margin: 0.3rem 0 0; font-size: 0.8em; }
 .landing-tz-search { margin-top: 0.4rem; }
 .landing-tz-search input { margin: 0 0 0.3rem; padding: 0.2rem 0.45rem; height: auto; font-size: 0.85em; }
 .landing-tz-list { display: flex; flex-direction: column; max-height: 14rem; overflow-y: auto; }

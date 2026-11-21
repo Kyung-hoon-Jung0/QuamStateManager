@@ -83,6 +83,10 @@ class GateVerdict:
     failure_mode: str | None = None
     reasons: list[str] = field(default_factory=list)
     checks: dict[str, str] = field(default_factory=dict)   # gate -> ok/... (ledger)
+    # the reason of the check that set ``failure_mode`` (a suspect's first
+    # suspicion, or the pipeline error). ``reasons`` also holds ok checks'
+    # details ahead of it, so ``reasons[0]`` cannot name why a check failed.
+    failure_reason: str | None = None
     # v2 qualitative signals (never numbers): raw-data feature presence under
     # a failed fit, and the window-edge direction hint for a seed-shift rung
     feature_present: bool | None = None
@@ -812,7 +816,7 @@ def evaluate_target(run, fam: Family, target: str, *,
 
     if suspects:
         v.verdict = "suspect"
-        v.failure_mode = suspects[0][0]
+        v.failure_mode, v.failure_reason = suspects[0]
         v.reasons.extend(r for _, r in suspects)
     return v
 
@@ -858,5 +862,6 @@ def evaluate_run(run, fam: Family, targets: list[str], *,
             logger.exception("gate pipeline crashed for %s", t)
             out[t] = GateVerdict(target=t, verdict="suspect",
                                  failure_mode="unverifiable",
-                                 reasons=[f"gate pipeline error: {exc}"])
+                                 reasons=[f"gate pipeline error: {exc}"],
+                                 failure_reason=f"gate pipeline error: {exc}")
     return out

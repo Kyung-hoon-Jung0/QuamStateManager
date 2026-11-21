@@ -240,6 +240,10 @@ def test_a_day_under_a_page_renders_exactly_as_before(world):
     # its "?" explainer (both deliberate UX-round wording); the paging is unchanged
     # kit sweep: old -> new, why: re-written once more -- the claim form's toggle and its two
     # boxes carry the kit disclosure / field / input classes; the cards and the paging are unchanged
+    # Fix W: unrecorded authors render blank and uncomputed gates say "gate not checked".
+    # The golden follows those intended display changes; paging stays byte-pinned.
+    # Fix X: old -> new, why: the author option "unknown" reads "no author recorded" (X-6), one shared
+    # options part for the page and the day swap; the cards and the paging are unchanged
     html = _small_day_fragment(world)
     if os.environ.get("CALIBRATION_LOG_GOLDEN_WRITE") == "1":
         GOLDEN.write_text(html, encoding="utf-8", newline="\n")

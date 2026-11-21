@@ -31,10 +31,12 @@
     <span class="jr-stat jr-stat-day">{{ s.day }}</span>
     <span class="jr-stat"><b class="ui-count">{{ '{:,}'.format(s.counts.runs) }}</b> run{{ 's' if s.counts.runs != 1 }}</span>
     {% if s.counts.failed %}<span class="jr-stat jr-stat-bad" title="Runs where the node marked at least one target{#
-      #} failed"><b class="ui-count">{{ '{:,}'.format(s.counts.failed) }}</b> with a failed target</span>{% endif %}
+      #} failed"><b class="ui-count">{{ '{:,}'.format(s.counts.failed) }}</b> run{#
+      #}{{ 's' if s.counts.failed != 1 }} with a failed target</span>{% endif %}
     {% if s.counts.gate_fail %}{#
       #}<span class="jr-stat jr-stat-bad" title="Runs whose Auto Calibrate gate verdict is fail">gate fail{#
-      #} <b class="ui-count">{{ '{:,}'.format(s.counts.gate_fail) }}</b></span>{% endif %}
+      #} <b class="ui-count">{{ '{:,}'.format(s.counts.gate_fail) }}</b> run{#
+      #}{{ 's' if s.counts.gate_fail != 1 }}</span>{% endif %}
     {% set n_cards = s.counts.write_cards if s.counts.write_cards is defined else s.counts.writes %}
     {#- P1-4 (UX round): this count is SM's own writes (Apply, Undo, Auto-Sync);
         what the runs changed is counted beside it, so a lab day never reads "0 writes" -#}
@@ -65,15 +67,7 @@
 
 {% endif %}
 
-{% if s.unassigned %}
-<div class="jr-unassigned jr-line-group">
-    <b class="jr-line-count" data-suffix="from a session that named no chip.">{{ '{:,}'.format(s.unassigned|length) }} journal line{{ 's' if s.unassigned|length != 1 }} from a session that named no chip.</b>
-    <span class="muted">SM never guesses which chip they belong to.</span>
-    <button type="button" class="btn-sm outline" onclick="JournalPage.adopt('{{ s.day }}')">Move them under {{ s.chip }}</button>
-    <ul class="jr-unassigned-list">{% for e in s.unassigned %}<li class="muted" data-jr-search="{{ e.search_hay }}" data-jr-author="{{ e.kind }}">{{ e.time }} · {{ e.text }}</li>{% endfor %}
-    </ul>
-</div>
-{% endif %}
+
 
 {% if history.state not in ('building', 'unavailable') %}
 {% if s.timeline %}
@@ -96,6 +90,25 @@
 {% endif %}<div class="jr-cards"{% if s.paged %} data-jr-paged="1" data-jr-q="{{ s.filters.q }}" data-jr-who="{{ s.filters.author }}"{% endif %}>{% if s.window and s.window.earlier %}{{ more_row(s, 'earlier') }}{% endif %}{% for c in s.cards_shown %}{{ card(c, s.day, s.lazy, s.paged)|jr_squeeze(s.paged) }}{% endfor %}{% if s.window and s.window.later %}{{ more_row(s, 'later') }}{% endif %}</div>
 {% if not s.paged %}{% set cached_html %}{% for c in s.cards_cached %}{{ card(c, s.day, s.lazy) }}{% endfor %}{% endset %}
 <script type="application/json" class="jr-search-cache">{{ cached_html|string|tojson }}</script>{% endif %}
+{% endif %}
+
+{% if s.unassigned %}
+<details class="ui-disclosure jr-unassigned jr-line-group">
+    <summary class="ui-disclosure-summary">
+        <span class="jr-line-count" data-suffix="from a session that named no chip.">{{
+            '{:,}'.format(s.unassigned|length) }} journal line{{ 's' if s.unassigned|length != 1 }}{#
+            #} from a session that named no chip.</span>
+        <button type="button" class="btn-sm outline" onclick="JournalPage.adopt('{{ s.day }}')">{#
+            #}Move them under {{ s.chip }}</button>
+    </summary>
+    <div class="ui-disclosure-body">
+        <p class="muted">SM never guesses which chip they belong to.</p>
+        <ul class="jr-unassigned-list">{% for e in s.unassigned %}
+            <li class="muted" data-jr-search="{{ e.search_hay }}" data-jr-author="{{ e.kind }}">{#
+                #}{{ e.time }} &middot; {{ e.text }}</li>{% endfor %}
+        </ul>
+    </div>
+</details>
 {% endif %}
 
 {% if s.loose %}

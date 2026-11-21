@@ -36,7 +36,10 @@
 <span class="ui-verdict-meta ui-opxmon-status {{ 'ui-opxmon-status--' ~ st.state }}">
   {%- if st.target_label %}<span class="ui-opxmon-target">{{ st.target_label }}</span> &middot; {% endif -%}
   <span class="ui-opxmon-sentence" title="{{ plain_error(st.sentence) }}" data-state="{{ st.state }}">{{ plain_error(st.sentence_shown or st.sentence) }}</span>
-  {%- if st.health.color == 'grey' and not st.health.problem %} &middot; <span class="ui-opxmon-health-note">{{ st.health.reason }}</span>{% endif -%}
+  {#- an unconfigured band already says "Health not checked": the note is not said twice -#}
+  {%- if st.health.color == 'grey' and not st.health.problem
+        and st.state != 'unconfigured' %} &middot; {#
+    #}<span class="ui-opxmon-health-note">{{ st.health.reason }}</span>{% endif -%}
   {%- if hottest and not temperature_failed and tab != 'live' %} &middot; <span class="ui-opxmon-hottest">{{ 'Above limit:' if hottest_limit is not none and hottest.value > hottest_limit else 'Hottest:' }} {{ hottest.label }} {{ '%.1f'|format(hottest.value) }} °C / {{ 'limit ' ~ ('%g'|format(hottest_limit)) ~ ' °C' if hottest_limit is not none else 'no limit set' }}</span>{% endif -%}
 </span></div>
 {%- if flash and flash_at not in ('settings', 'names') %}{{ flash_line() }}{% endif %}
@@ -360,7 +363,10 @@
     {%- if flash and flash_at == 'settings' %}{{ flash_line() }}{% endif %}
   </form>
   <form class="ui-opxmon-pcnames" hx-post="/opx-monitor/pc-names" hx-target="#ui-opxmon-body" hx-swap="outerHTML">
-    <section class="ui-zone" aria-label="PC names"><div class="ui-zone-head"><h3 class="ui-zone-title">PC names</h3><span class="ui-zone-sum">{{ pc_names|length }} named &middot; {{ seen_tags|length }} seen in open QMs</span></div>
+    <section class="ui-zone" aria-label="PC names"><div class="ui-zone-head">
+    <h3 class="ui-zone-title">PC names</h3><span class="ui-zone-sum">{{ pc_names|length }} named - {% if
+    never_read %}not read yet{% elif ans.open_qms is none %}unavailable{% else %}{{ seen_tags|length }}{#
+    #} seen in open QMs{% endif %}</span></div>
     <div class="ui-zone-body">
       <p class="ui-text-quiet">Names for the tags in owner markers. Kept only on this PC, in this user's app-data folder; applied when a page is drawn, never written to History.</p>
       {% if pc_names_problem %}<p class="ui-note ui-opxmon-pcnames-problem">{{ pc_names_problem }} The next save rewrites the file (the previous file is kept as pc_names.json.bak on each save).</p>{% endif %}

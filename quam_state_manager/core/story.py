@@ -54,7 +54,7 @@ from quam_state_manager.core import run_time
 
 logger = logging.getLogger(__name__)
 
-GATES_REV = "2026-11-13a"          # bump when gates.py / families.py change what a verdict means
+GATES_REV = "2026-11-21x2"          # bump when gates.py / families.py change what a verdict means
 _BEFORE_S = 60.0
 _AFTER_S = 300.0
 _ENTRY = re.compile(r"^- \*\*(\d{2}:\d{2}:\d{2})\*\* `([^`]+)` ?(.*)$")
@@ -401,7 +401,11 @@ def gate_for_run(instance_path, run: dict, *, folder_key: str, compute: Callable
             return c
     except (OSError, ValueError):
         pass
-    result = (compute or _compute_gate)(run)
+    try:
+        result = (compute or _compute_gate)(run)
+    except Exception as exc:  # noqa: BLE001 -- a failed check is not a run verdict
+        result = {"verdict": "unknown", "reason": f"the gate could not be computed ({exc})",
+                  "family": None, "anchor": None}
     result["rev"] = GATES_REV
     try:
         cache.parent.mkdir(parents=True, exist_ok=True)
@@ -425,13 +429,27 @@ def _compute_gate(run: dict) -> dict:
     run_obj["folder_path"] = Path(run["folder_path"])
     targets = gates.node_targets(run, fam)
     verdicts = gates.evaluate_run(run_obj, fam, targets, current_value_of=lambda p: _walk(doc, p))
-    per = {t: {"verdict": v.verdict, "failure_mode": v.failure_mode, "reasons": list(v.reasons)}
+    # The engine keeps unverifiable checks fail-safe. The reader gets no invented verdict.
+    per = {t: {"verdict": "unknown" if (v.failure_mode == "unverifiable"
+                                    and "suspect" not in v.checks.values()) else v.verdict,
+               "failure_mode": v.failure_mode, "reasons": list(v.reasons),
+               "failure_reason": getattr(v, "failure_reason", None)}
            for t, v in verdicts.items()}
-    order = {"fail": 3, "suspect": 2, "pass": 1}
+    order = {"fail": 3, "suspect": 2, "unknown": 1, "pass": 0}
     worst = max(per.values(), key=lambda x: order.get(x["verdict"], 0), default=None)
     if worst is None:
         return {"verdict": "unknown", "reason": "no targets", "family": getattr(fam, "key", None), "anchor": "run"}
-    reason = (worst["reasons"][0] if worst["reasons"] else worst.get("failure_mode")) or ""
+    if worst["verdict"] in ("unknown", "suspect"):
+        # the not-computable check's own reason: an ok check's detail can come
+        # first in ``reasons`` (an extremum + feature family), so never reasons[0]
+        # Fix X (X-2): a suspect leads with what made it suspect, the same field;
+        # a passing G3 "signal present" detail never stands in for it
+        reason = worst.get("failure_reason") or ""
+        if not reason and worst["verdict"] == "suspect" and worst["reasons"]:
+            reason = worst["reasons"][0]    # a verdict that names no failing check keeps its first reason
+        reason = reason or worst.get("failure_mode") or ""
+    else:
+        reason = (worst["reasons"][0] if worst["reasons"] else worst.get("failure_mode")) or ""
     return {"verdict": worst["verdict"], "reason": reason, "family": getattr(fam, "key", None),
             "anchor": "run", "per_target": per}
 
@@ -532,9 +550,11 @@ _SHORT_BY_NODE = [
     ("leakage", "Leakage"), ("jazz", "JAZZ"), ("snz", "SNZ"), ("zz_off", "ZZ off"),
     ("phase_compensation", "CZ phase comp"),
     ("conditional_phase", "CZ phase"),
+    ("cnot", "CNOT fidelity"),
     # -- cross-resonance: these carry "rabi" in their names and were reading
     # as plain Rabi runs, which is a different experiment on a different chip.
     ("cr_hamiltonian", "CR tomography"), ("cr_correction", "CR phase"),
+    ("cr_drive_amp", "CR drive amp"),
     ("cr_pulse_rabi", "CR rabi"), ("cr_time_rabi", "CR rabi"),
     ("crosstalk", "Crosstalk"), ("drag", "DRAG"),
     # -- the generic tail
@@ -627,6 +647,9 @@ def _timeline(cards: list[dict]) -> dict[str, list[dict]]:
 
 @lru_cache(maxsize=4096)
 def _family_label(name: str) -> tuple[str | None, str]:
+    """``(family key, label)`` for a node id. An autofit family names it; a node no
+    family covers (the two-qubit nodes) takes its name from _SHORT_BY_NODE, the one
+    node-name table; a node neither knows keeps its raw id (never an invented name)."""
     try:
         from quam_state_manager.core.autofit import families as fam_mod
         fam = fam_mod.family_for(name or "")
@@ -634,6 +657,10 @@ def _family_label(name: str) -> tuple[str | None, str]:
             return getattr(fam, "key", None), getattr(fam, "label", name)
     except Exception:  # noqa: BLE001
         pass
+    low = str(name or "").lower()
+    for needle, short in _SHORT_BY_NODE:
+        if needle in low:
+            return None, short
     return None, name
 
 

@@ -65,7 +65,9 @@
     <span class="ds-digest-item">no run errors</span>
     {% endif %}
     {% if digest.qubit_fail -%}
-    <span class="ds-digest-oclabel ui-text-quiet">fit not accepted, runs per target:</span>{% endif %}
+    <span class="ds-digest-oclabel ui-text-quiet">{{ digest.fits_failed }} target fit{#
+    #}{{ 's' if digest.fits_failed != 1 }}{#
+    #} not accepted, runs per target:</span>{% endif %}
     {% for q, n in digest.qubit_fail %}
     <button class="ds-help-example ds-digest-qchip" data-example="{{ _dscope }}outcome:{{ q }}=fail"
             title="Show the {{ n }} run{{ 's' if n != 1 }} where {{ q }}'s outcome failed">{{ q }}&nbsp;×{{ n }}</button>

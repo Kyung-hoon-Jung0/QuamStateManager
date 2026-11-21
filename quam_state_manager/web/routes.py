@@ -8045,6 +8045,26 @@ def agent_summary_page():
                                                summary=data))
 
 
+def _qualibrate_project_entry(name: str) -> dict | None:
+    """The QUAlibrate project *name* as /qualibrate/open opens it (its effective state_path and storage), or
+    None when there is no such project. One resolution for the open route and for every button that says
+    beforehand what that open will do (the landing's "Open QUAlibrate's current project")."""
+    if not name:
+        return None
+    listing = _qualibrate_listing()
+    return next((p for p in listing["projects"] if p["name"] == name), None)
+
+
+def _qualibrate_open_state_path(name: str) -> str | None:
+    """The chip folder /qualibrate/open would load for project *name*; None when that open would refuse."""
+    try:
+        proj = _qualibrate_project_entry(name)
+    except Exception:  # noqa: BLE001 -- unknown: the button makes no promise either way
+        return None
+    state = (proj or {}).get("state_path") or {}
+    return state.get("native") if state.get("exists") else None
+
+
 def _landing_current_project() -> dict:
     """v1.5.1 (U P2-21): the landing's "Open QUAlibrate's current project"
     is offered only for a project SM can open by name. A root config whose
@@ -8054,7 +8074,9 @@ def _landing_current_project() -> dict:
     ts = qualibrate_config.tray_status()
     active = ts.get("active")
     if not active or ts.get("project_exists", True):
-        return {"active_project": active, "active_project_orphan": None}
+        return {"active_project": active, "active_project_orphan": None,
+                # Fix X2: the folder that button's open loads, for the arm notice (open_arms_auto_sync)
+                "active_project_state": _qualibrate_open_state_path(active) if active else None}
     native = ts.get("state_native")
     return {"active_project": None,
             "active_project_orphan": {
@@ -8095,6 +8117,8 @@ def _home_landing(config_exists, session):
         resume_name=_chip_display_name(Path(resume_path)) if resume_path else "",
         # v1.5.1 (U P2-31): the edits waiting in it, named on the Resume card
         resume_waiting=_waiting_note(resume_path) if resume_path else "",
+        # the Resume press arms Auto-Sync (/load): the same rule as the Re-open offer
+        resume_arms_auto_sync=_open_arms_auto_sync(resume_path) if resume_path else False,
         recent_paths=recents[:3],
         # True first run (no session history at all) → the landing's
         # "Getting started" manual starts expanded; any history collapses it.
@@ -9532,8 +9556,7 @@ def qualibrate_open_project():
     tier, guarded). Mirrors /load's HX-Redirect contract so the chip-identity
     tray re-renders fresh."""
     name = (request.form.get("project") or "").strip()
-    listing = _qualibrate_listing()
-    proj = next((p for p in listing["projects"] if p["name"] == name), None)
+    proj = _qualibrate_project_entry(name)
     if proj is None:
         return render_template("_status.html",
                                message=f"Unknown qualibrate project: {name!r}",
@@ -9591,7 +9614,12 @@ def qualibrate_open_project():
         logger.warning("project zone default failed for %s", name, exc_info=True)
     try:
         opened = _activate_quam(state["native"])
-        _maybe_auto_arm_on_open(opened)
+        # the landing's "... without Auto-Sync" press (the same field as /load)
+        armed = request.form.get("auto_sync") != "0" and _maybe_auto_arm_on_open(opened)
+        if armed and request.form.get("from") != "landing":
+            # Fix X2: a door with no notice before the press (the sidebar's Projects row) says so after it,
+            # every time it armed, in the top bar's one-shot line (one wording: _AUTO_SYNC_OPEN_TOAST)
+            opened["_auto_sync_open_toast"] = _AUTO_SYNC_OPEN_TOAST
     except (FileNotFoundError, ValueError, OSError) as e:
         return render_template("_status.html", message=str(e), level="error"), 400
     if env_changed:
@@ -9781,7 +9809,9 @@ def load():
         return render_template("_status.html", message="No folder specified", level="error"), 400
 
     try:
-        _maybe_auto_arm_on_open(_activate_quam(folder))
+        opened = _activate_quam(folder)
+        if request.form.get("auto_sync") != "0":
+            _maybe_auto_arm_on_open(opened)
     except (FileNotFoundError, ValueError, OSError) as e:
         logger.warning("State load failed for %s (%s): %s", folder, type(e).__name__, e)
         # docs/114 (#15): a wrong folder used to answer with a 6-second corner
@@ -12002,9 +12032,29 @@ def _resume_offer() -> dict | None:
                 # v1.5.1 (U P2-31): the edits waiting in it are named
                 "waiting": _waiting_note(path),
                 # the press also arms Auto-Sync (/load); said only when it will
-                "arms_auto_sync": _auto_sync_open_allowed(_auto_sync_chip_key({"path": path}))}
+                "arms_auto_sync": _open_arms_auto_sync(path)}
     except (OSError, ValueError, TypeError):
         return None
+
+
+@bp.app_template_global("open_arms_auto_sync")
+def _open_arms_auto_sync(path) -> bool:
+    """Would a person's open of the chip at *path* arm Auto-Sync? The part of
+    the arm-on-open rule known before the chip opens (_auto_sync_open_allowed).
+    One answer for every open button that offers "without Auto-Sync"
+    (_open_auto_sync_choice.html): the Re-open offer, the landing's Resume and
+    a project card's Open / Continue."""
+    if not isinstance(path, str) or not path:
+        return False
+    try:
+        # Fix X3: a chip whose Auto-Sync is already armed (the top bar pill's ON, _auto_sync_state) stays armed
+        # whatever the press; the open arms nothing, so no notice and no "without Auto-Sync" offer
+        ctx = _find_quam_ctx_by_path(path)
+        if ctx is not None and _auto_sync_state(ctx):
+            return False
+        return _auto_sync_open_allowed(_auto_sync_chip_key({"path": path}))
+    except Exception:  # noqa: BLE001 -- unknown: no promise either way
+        return False
 
 
 def _waiting_note(path) -> str:
@@ -33048,8 +33098,10 @@ def _new_auto_session(*, pull: bool, pull_replace: bool, push: bool) -> dict:
 AUTO_SYNC_DEFAULT_MODES = {"pull": True, "pull_replace": False, "push": True}
 _AUTO_SYNC_OPEN_FILE = "auto_sync_on_open.json"
 _AUTO_SYNC_CHIPS_FILE = "auto_sync_chips.json"
-_AUTO_SYNC_OPEN_TOAST = ("Auto-Sync is on: your edits are written to the chip "
-                         "file. Turn it off in the top bar.")
+#: Fix X2: the one wording of what an armed open means, said before the press (_open_auto_sync_choice.html,
+#: via the auto_sync_open_words context) and after it (the top bar's one-shot line below).
+AUTO_SYNC_EDITS_GO_LIVE = "your edits go to the chip file. Turn it off in the top bar."
+_AUTO_SYNC_OPEN_TOAST = "Auto-Sync turned on for this chip: " + AUTO_SYNC_EDITS_GO_LIVE
 
 
 def _auto_sync_open_path() -> Path:
@@ -33222,6 +33274,12 @@ def _maybe_auto_arm_on_open(ctx: dict | None) -> bool:
     except Exception:  # noqa: BLE001 -- arming never blocks opening a chip
         logger.warning("Auto-Sync on open failed", exc_info=True)
         return False
+
+
+@bp.app_context_processor
+def _auto_sync_open_words_context():
+    # Fix X2: the arm notice's wording, one source (AUTO_SYNC_EDITS_GO_LIVE)
+    return {"auto_sync_open_words": AUTO_SYNC_EDITS_GO_LIVE}
 
 
 @bp.app_context_processor
@@ -46386,6 +46444,8 @@ def _datasets_payload_compute(active: list[dict], is_collections: bool,
             "date": latest_day,
             "total": len(day_rows),
             "failed": len(failed_rows),
+            # Fix X-9: the strip names its unit: target fits, not runs.
+            "fits_failed": sum(qubit_fail.values()),
             "qubit_fail": sorted(qubit_fail.items(),
                                  key=lambda kv: (-kv[1], natural_key(kv[0])))[:8],
         }

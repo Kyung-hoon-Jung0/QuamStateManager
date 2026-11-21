@@ -50,9 +50,9 @@ const LANDING =
   '<div class="landing-card"><span class="landing-card-tz" data-tz-card="beta">tz Seoul UTC+9</span>' +
   '<div class="landing-card-env" data-project="beta"></div></div>' +
   '<section id="landing-tz" data-tz-default="alpha"><script type="application/json" data-tz-views>VIEWS</script>' +
-  '<strong>Time zone for <span data-tz-project></span></strong><span data-tz-current></span>' +
-  '<span data-tz-state></span><button type="button" data-tz-change>Change</button><span data-tz-clock></span>' +
-  '<p data-tz-note hidden></p><div data-tz-search hidden><input type="search" data-tz-input>' +
+  '<div data-tz-head><strong>Time zone for <span data-tz-project></span></strong><span data-tz-current></span>' +
+  '<span data-tz-state></span><button type="button" data-tz-change>Change</button><span data-tz-clock></span></div>' +
+  '<div data-tz-search hidden><input type="search" data-tz-input>' +
   '<div data-tz-list></div></div></section>';
 
 const VIEWS_PICKED = {
@@ -151,8 +151,11 @@ const btn = (doc, sel) => doc.querySelector(sel);
     ok(W.d.querySelector('[data-tz-clock]').textContent === '', 'P3: nothing claims a clock status before it answers');
     W.hold.clock();
     await until(() => /This PC: UTC\+9/.test(W.d.querySelector('[data-tz-clock]').textContent));
-    ok(/This PC: UTC\+9 · Time sync: on \(time\.windows\.com\)/.test(W.d.querySelector('[data-tz-clock]').textContent),
-       'P3: then the PC zone and time sync, got "' + W.d.querySelector('[data-tz-clock]').textContent + '"');
+    const clk = W.d.querySelector('[data-tz-clock]');
+    ok(/^This PC: UTC\+9( \([^)]*\))?$/.test(clk.textContent) && !/Time sync/.test(clk.textContent),
+       'P3: then the PC zone on one short line, got "' + clk.textContent + '"');
+    ok(/^Time sync: on \(time\.windows\.com\)/.test(clk.title),
+       'P3: the time-sync detail is the tooltip of that line, got "' + clk.title + '"');
   }
   // P4 -- follows the env picker's project
   {
@@ -270,8 +273,24 @@ const btn = (doc, sel) => doc.querySelector(sel);
     const W = await mk({ views: { alpha: { project: 'alpha', zone: null, state: 'none' } } });
     await until(() => W.w.ProjectTime._state().clock);
     await tick(10);
-    ok(W.d.querySelector('[data-tz-current]').textContent === 'UTC+9 (this PC)', 'P10b: an unset zone shows the PC offset, got "' + W.d.querySelector('[data-tz-current]').textContent + '"');
-    ok(W.d.querySelector('[data-tz-state]').textContent === 'not set — pick one', 'P10b: and says it is not set, once');
+    ok(W.d.querySelector('[data-tz-current]').textContent === "not set - using this PC's zone (UTC+9)",
+       'P10b: the unset zone and PC fallback are one statement');
+    ok(W.d.querySelector('[data-tz-state]').textContent === '', 'P10b: no second unset-zone statement');
+  }
+  // P10c -- Fix X2: the zone note is the row's tooltip, never a paragraph under the row
+  {
+    const NOTE = 'Runs in this project are recorded in UTC+9; SM shows them in UTC.';
+    const W = await mk({ views: { alpha: { project: 'alpha', zone: 'UTC', state: 'picked', offset: '+00:00',
+                                           offset_text: 'UTC', note: NOTE } } });
+    await tick(10);
+    const head = W.d.querySelector('[data-tz-head]');
+    ok(head && head.title === NOTE, 'P10c: the note is the row tooltip, got "' + (head && head.title) + '"');
+    const tw = W.d.createTreeWalker(W.d.body, 4);   // text nodes outside the views' JSON script
+    let shown = false;
+    for (let n = tw.nextNode(); n; n = tw.nextNode()) {
+      if (n.parentNode.nodeName !== 'SCRIPT' && n.nodeValue.indexOf('recorded in UTC+9') >= 0) shown = true;
+    }
+    ok(!shown, 'P10c: no visible note text under the row');
   }
   // P11 -- the run-clock question, once, with evidence
   const ASK = {

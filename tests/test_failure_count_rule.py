@@ -84,8 +84,12 @@ def test_the_calibration_log_counts_an_aborted_target_as_failed():
 
 def test_each_failed_label_says_what_it_counts():
     assert "run error{{ 's' if digest.failed != 1 }}</button>" in DS_HTML
-    assert "fit not accepted, runs per target:" in DS_HTML
-    assert "with a failed target</span>" in JR_HTML
+    # Fix X-9: the strip and the day totals name their units (target fits vs runs).
+    assert "#} not accepted, runs per target:</span>" in DS_HTML
+    assert "#}{{ 's' if digest.fits_failed != 1 }}{#" in DS_HTML and "target fit{#" in DS_HTML
+    assert "' target fit' + (nfits === 1 ? '' : 's') + ' not accepted, runs per target:'" in JS
+    assert "#}{{ 's' if s.counts.failed != 1 }} with a failed target</span>" in JR_HTML
+    assert "#}{{ 's' if s.counts.gate_fail != 1 }}</span>" in JR_HTML
     assert 'title="Runs whose Auto Calibrate gate verdict is fail">gate fail' in JR_HTML
     assert "</b> failed</span>" not in JR_HTML
     assert "}} failed</button>" not in DS_HTML

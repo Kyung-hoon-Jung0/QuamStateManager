@@ -230,6 +230,8 @@ window.JournalPage = (function () {
       searchItems = Array.prototype.map.call(body.querySelectorAll("[data-jr-search]"), function (el) {
         return { el: el, hay: el.getAttribute("data-jr-search").toLowerCase(),
                  author: el.getAttribute("data-jr-author") || "",
+                 // a run card also answers to the authors of the journal lines it holds
+                 lineAuthors: (el.getAttribute("data-jr-line-authors") || "").split(" ").filter(Boolean),
                  attached: !!el.closest(".jr-run .jr-lines") };
       });
     }
@@ -244,7 +246,9 @@ window.JournalPage = (function () {
     if (paged) matches += rowsOf(paged).length;
     var visibleRuns = Object.create(null);
     searchItems.forEach(function (item) {
-      var visible = (!who || item.author.indexOf(who) === 0) && window.SearchQuery.matchesHay(item.hay, grps);
+      var byWho = !who || item.author.indexOf(who) === 0 ||
+        item.lineAuthors.some(function (a) { return a.indexOf(who) === 0; });
+      var visible = byWho && window.SearchQuery.matchesHay(item.hay, grps);
       show(item.el, visible);
       if (visible && !item.attached) matches++;
       if (item.el.classList.contains("jr-run")) {

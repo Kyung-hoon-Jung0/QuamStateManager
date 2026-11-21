@@ -258,27 +258,29 @@
             var lz = legacyZone();
             var pcOff = isoOffsetMinutes(_clock && _clock.os_zone && _clock.os_zone.utc_offset);
             cur.textContent = lz ? lz + ' · ' + offsetText(offsetMinutes(lz, now)) + ' (this browser)'
-                : (pcOff != null ? offsetText(pcOff) + ' (this PC)' : 'this PC’s zone');
+                : "not set - using this PC's zone" + (pcOff != null ? ' (' + offsetText(pcOff) + ')' : '');
         }
         if (st) {
             var label = { picked: 'saved', default: 'default from the last project',
                           suggested: 'default' + (v.from_project ? ' from ' + v.from_project : '') + ' — used when opened',
-                          none: 'not set — pick one' }[v.state] || '';
+                          none: '' }[v.state] || '';
             st.textContent = label;
             st.setAttribute('data-state', v.state || 'none');
         }
-        var note = q('[data-tz-note]');
-        if (note) { note.textContent = v.note || ''; note.hidden = !v.note; }
+        // Fix X2: the zone note is the row's tooltip (the row stays one line)
+        var head = q('[data-tz-head]');
+        if (head) head.title = v.note || '';
     }
     function renderClockLine() {
         var line = q('[data-tz-clock]');
         if (!line) return;
         if (!_clock) { line.textContent = 'This PC’s clock: unknown'; return; }
         var off = isoOffsetMinutes(_clock.os_zone && _clock.os_zone.utc_offset);
+        // Fix X: the row is the header plus one line; the time-sync detail lives in this line's tooltip
         line.textContent = 'This PC: ' + (off == null ? 'zone unknown' : offsetText(off))
-            + (_clock.os_zone && _clock.os_zone.iana ? ' (' + _clock.os_zone.iana + ')' : '')
-            + ' · ' + (_clock.ntp_text || 'Time sync: unknown');
-        line.title = (_clock.ntp && _clock.ntp.detail) || '';
+            + (_clock.os_zone && _clock.os_zone.iana ? ' (' + _clock.os_zone.iana + ')' : '');
+        line.title = (_clock.ntp_text || 'Time sync: unknown')
+            + (_clock.ntp && _clock.ntp.detail ? ' - ' + _clock.ntp.detail : '');
         line.setAttribute('data-ntp', _clock.ntp && _clock.ntp.synced === true ? 'on'
             : _clock.ntp && _clock.ntp.synced === false ? 'off' : 'unknown');
     }

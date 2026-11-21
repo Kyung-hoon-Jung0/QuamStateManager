@@ -229,7 +229,8 @@ class TestTheGate:
         run = world["ds"].get_run(104)
         assert story.run_anchor_state(run) == {"qubits": {"q4": {"f_01": 4.8e9}}}
         g = story._compute_gate(run)
-        assert g["verdict"] in ("pass", "suspect", "fail") and g["anchor"] == "run"
+        assert g["verdict"] == "unknown" and g["anchor"] == "run"
+        assert "ds_raw.h5 missing" in g["reason"], "no raw-data check means no verdict (Fix W)"
         assert "q4" in g["per_target"]
 
     def test_walk_follows_a_pointer(self):

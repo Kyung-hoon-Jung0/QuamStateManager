@@ -6,7 +6,8 @@
     from this PC's zone asks first; every pick ends with the watch check. -#}
 <section id="landing-tz" class="landing-tz" data-tz-default="{{ tz_project }}" aria-label="Time zone picker">
     <script type="application/json" data-tz-views>{{ (tz_views or {}) | tojson }}</script>
-    <div class="landing-tz-head">
+    {# Fix X2: the zone note (recorded vs shown zone) is this row's tooltip, not a paragraph under it -#}
+    <div class="landing-tz-head" data-tz-head>
         <strong>Time zone for <span data-tz-project>{{ tz_project }}</span></strong>
         <span class="landing-tz-current" data-tz-current></span>
         <span class="landing-tz-state" data-tz-state></span>
@@ -14,7 +15,6 @@
                 title="Pick the zone this project's times are shown in">Change&hellip;</button>
         <span class="landing-tz-clock muted" data-tz-clock role="status"></span>
     </div>
-    <p class="muted landing-tz-note" data-tz-note hidden></p>
     <div class="landing-tz-search" data-tz-search hidden>
         <input type="search" id="landing-tz-filter" data-tz-input autocomplete="off" spellcheck="false"
                placeholder="Search a city, region or offset (Seoul, New_York, UTC-7)"

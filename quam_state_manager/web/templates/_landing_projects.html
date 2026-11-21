@@ -80,6 +80,11 @@
                         title="{% if p.state_path.native %}No QUAM state at {{ p.state_path.raw }} yet. Build it first (Generate Config), then Open{% else %}state_path missing or empty: fix it in QUAlibrate first (Manage / doctor){% endif %}"
                         {% else %}title="Load {{ p.state_path.raw }} + its data folders"{% endif %}>
                     {{ 'Continue' if p.name == last_project else 'Open' }}</button>
+                {#- opening the project arms Auto-Sync like /load: the same notice and alternative -#}
+                {%- set _arms = p.state_path.exists and open_arms_auto_sync(p.state_path.native) -%}
+                {#- Fix X2: a short label, so it stays one line in the narrow card -#}
+                {%- set _alt_label = 'Without Auto-Sync' -%}
+                {%- include "_open_auto_sync_choice.html" %}
             </form>
             {# r8 feedback: users want the project's paths + ports at a glance —
                a read-only TOML/effective-config popup, working even when the

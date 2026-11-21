@@ -590,10 +590,22 @@
         if (s < 3600) return Math.floor(s / 60) + 'm' + String(s % 60).padStart(2, '0') + 's';
         return Math.floor(s / 3600) + 'h' + String(Math.floor((s % 3600) / 60)).padStart(2, '0') + 'm';
     }
-    function statusChip(status) {
+    // Fix X: a finished run whose node recorded an empty outcomes map says so -- the same "no outcome" the
+    // Calibration log card's pill reads, never the plain "finished" of a run whose targets succeeded.
+    function emptyOutcomes(row) {
+        var oc = row && row.oc;
+        return !!oc && typeof oc === 'object' && Object.keys(oc).length === 0;
+    }
+    function statusChip(status, noOutcome) {
         if (!status) return '<span class="ds-status ds-status-unknown" title="no status">–</span>';
         var s = String(status).toLowerCase(), cls = 'ds-status-unknown';
-        if (/(finish|done|complet)/.test(s)) cls = 'ds-status-done';
+        if (/(finish|done|complet)/.test(s)) {
+            if (noOutcome) {
+                return '<span class="ds-status ds-status-done" data-no-outcome="1" title="' + escapeHtml(status)
+                    + '; the node recorded no outcome for any target">' + escapeHtml(status) + ', no outcome</span>';
+            }
+            cls = 'ds-status-done';
+        }
         else if (/(success|pass)/.test(s)) cls = 'ds-status-ok';
         else if (/(run|progress|pending|queue)/.test(s)) cls = 'ds-status-run';
         else if (marksFailure(s)) cls = 'ds-status-err';
@@ -678,6 +690,8 @@
     // ── column registry (single source of truth for colgroup + header + rows) ──
     // structural: always shown, not in the Properties menu. on: default-visible.
     // w: default px width (user-resizable). sortKey/type: enables header sort.
+    var KEY_METRIC_BLANK = 'No key metric: this run saved no finite fit number (no fit results, or the fit did not '
+        + 'converge). Open the run for its fit details.';
     var COLUMNS = [
         {key: 'select', structural: true, w: 34, cls: 'col-select',
          header: '<input type="checkbox" id="ds-select-all" aria-label="Select every visible row for compare">',
@@ -712,7 +726,11 @@
              var as = was ? ' <span class="muted ds-recorded-as" title="Saved before the qubits were renamed">(as ' + escapeHtml(was.join(', ')) + ')</span>' : '';
              return (now.length ? escapeHtml(now.join(', ')) : (as ? '' : '-')) + as;
          }},
-        {key: 'status', label: 'Status', on: true, w: 124, sortKey: 'status', type: 'str',   // L9: 96 clipped "finished"; W2-11: 104 fit "all failed" by 2 px at the default size and clipped it at a larger one
+        // L9: 96 clipped "finished"; W2-11: 104 fit "all failed" by 2 px at the default size and clipped it at a
+        // larger one; Fix X: 124 -> 150 for "finished, no outcome" (Tags gave up the width); Fix X2: 150 clipped it
+        // at a 1440 px window (root 20 px: 20 mono glyphs at .72rem + chip and cell padding ~203 px) -> 204, taken
+        // from Tags (122 -> 96) and, on a narrow pane, from Key Metric down to its fit floor (FIT_FLOOR below)
+        {key: 'status', label: 'Status', on: true, w: 204, sortKey: 'status', type: 'str',
          render: function (r) {
              // a failed run status (error, aborted) stays on the cell beside the target count
              var lead = failedRunLead(r);
@@ -726,11 +744,16 @@
                            + f.k + ' of ' + f.n + ' targets of this run as failed">'
                            + escapeHtml(lead) + f.k + ' of ' + f.n + ' failed</span>';
                        })(failedTargets(r))
-                     : statusChip(r.status));
+                     : statusChip(r.status, emptyOutcomes(r)));
          }},
-        {key: 'metric', label: 'Key Metric', on: true, w: 108, sortKey: 'metric', type: 'num', cls: 'col-metric',   // L9: 96 clipped -3.0143e-05
+        // Fix X: 108 clipped "fidelity 0.9876" (15 monospace characters at .82rem, ~118 px plus the cell padding)
+        // to "fidelity 0..."; Tags gave up the 32 px. The cell's title carries the full text at any width.
+        // Fix X3: 140 fit to 127 at a 1440 px window clipped it again ("fidelity 0.71..."); 160 and the fit takes
+        // Key Metric's width last (FIT_LAST below), so it shows whole wherever Experiment can still give.
+        {key: 'metric', label: 'Key Metric', on: true, w: 160, sortKey: 'metric', type: 'num', cls: 'col-metric',
+         title: function (r) { return (r.metric == null || r.metric === '') ? KEY_METRIC_BLANK : String(r.metric); },
          render: function (r) { return (r.metric == null || r.metric === '')
-             ? '<span class="muted" title="No key metric: this run saved no finite fit number (no fit results, or the fit did not converge). Open the run for its fit details.">-</span>'
+             ? '<span class="muted" title="' + escapeHtml(KEY_METRIC_BLANK) + '">-</span>'
              : (allTargetsFailed(r)
                  ? '<span class="muted ds-metric-failed" title="From a fit the node marked failed for every target; not a calibrated value">' + escapeHtml(r.metric) + ' ✗</span>'
                  : (metricFromFailedTarget(r)
@@ -739,7 +762,7 @@
                      : escapeHtml(r.metric))); }},
         {key: 'when', label: 'When', on: true, w: 88, sortKey: 'when', type: 'num',
          render: function (r) { return '<span title="' + escapeHtml(_whenTitle(r)) + '">' + escapeHtml(fmtRelative(r)) + '</span>'; }},
-        {key: 'tags', label: 'Tags', on: true, w: 180, cls: 'col-tags',
+        {key: 'tags', label: 'Tags', on: true, w: 96, cls: 'col-tags',
          render: function (r) { return tagsCell(r); }},
         {key: 'duration', label: 'Duration', on: false, w: 84, sortKey: 'dur', type: 'num',
          render: function (r) { return escapeHtml(fmtDuration(r.dur)); }},
@@ -872,24 +895,38 @@
        the user sizes them, Experiment, Tags and Folder give up width -- in
        proportion to what each has above its floor -- so the table fits its
        pane; a column the user resized keeps the user's width. */
-    var FIT_FLOOR = { exp: 150, tags: 96, folder: 72 };
+    // Fix X2: Status's 204 is paid by Tags (floor 96 -> 87) and Key Metric (floor 100; its cell keeps the ellipsis
+    // and the full text in its title), so a 5-digit ID with its wrote mark still fits the 959 px pane.
+    // Fix X3: at a 1280 px window (917 px pane) every floor together was 928 px. Experiment's floor 150 -> 104 (its
+    // cell is the widest and reads by its prefix), so a 5-digit ID with its wrote mark fits with FIT_SLACK to spare;
+    // Key Metric gives only what Experiment, Tags and Folder cannot (FIT_LAST).
+    var FIT_FLOOR = { exp: 104, tags: 87, folder: 72, metric: 100 };
+    var FIT_LAST = { metric: true };
+    var FIT_SLACK = 4;   // px the fitted table leaves free: sub-pixel borders never add a scrollbar
     function fittedWidths(cols) {
         var w = cols.map(colWidth);
         var scroll = document.getElementById('datasets-scroll');
-        var avail = scroll ? scroll.clientWidth : 0;
+        var avail = scroll ? scroll.clientWidth - FIT_SLACK : 0;
         if (!(avail > 0)) return w;
         var over = w.reduce(function (a, b) { return a + b; }, 0) - avail;
         if (over <= 0) return w;
-        var spare = [], total = 0;
-        cols.forEach(function (c, i) {
-            var s = (FIT_FLOOR[c.key] != null && colState.widths[c.key] == null)
-                ? Math.max(0, w[i] - FIT_FLOOR[c.key]) : 0;
-            spare.push(s);
-            total += s;
+        // two passes: the columns not in FIT_LAST give first, in proportion to what each has above its floor;
+        // the FIT_LAST ones give the rest, the same way
+        [false, true].forEach(function (last) {
+            if (over <= 0) return;
+            var spare = [], total = 0;
+            cols.forEach(function (c, i) {
+                var s = (FIT_FLOOR[c.key] != null && colState.widths[c.key] == null && !!FIT_LAST[c.key] === last)
+                    ? Math.max(0, w[i] - FIT_FLOOR[c.key]) : 0;
+                spare.push(s);
+                total += s;
+            });
+            if (!total) return;
+            var give = Math.min(over, total), before = w.reduce(function (a, b) { return a + b; }, 0);
+            w = w.map(function (x, i) { return spare[i] ? Math.floor(x - give * spare[i] / total) : x; });
+            over -= before - w.reduce(function (a, b) { return a + b; }, 0);
         });
-        if (!total) return w;
-        var give = Math.min(over, total);
-        return w.map(function (x, i) { return spare[i] ? Math.floor(x - give * spare[i] / total) : x; });
+        return w;
     }
     function buildColgroup() {
         var cg = document.getElementById('datasets-colgroup');
@@ -1312,8 +1349,10 @@
         } else {
             band.appendChild(span('ds-digest-item', 'no run errors'));
         }
+        // Fix X-9: name the unit (target fits, summed over every target).
+        var nfits = Object.keys(qfail).reduce(function (a, q) { return a + qfail[q]; }, 0);
         if (qs.length) band.appendChild(span('ds-digest-oclabel ui-text-quiet',
-            'fit not accepted, runs per target:'));
+            nfits + ' target fit' + (nfits === 1 ? '' : 's') + ' not accepted, runs per target:'));
         qs.forEach(function (q) {
             var b = document.createElement('button');
             b.className = 'ds-help-example ds-digest-qchip';

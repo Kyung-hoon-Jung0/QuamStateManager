@@ -127,10 +127,10 @@ def test_settings_link_reaches_a_picker(configuration, tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("last, digest", [
-    (None, "cd75622167f041fea62dd7f7f561ebc1a1b17f5347913dedd98f870e16ba50dc"),
-    ("alpha", "adba41a7f2ac9494d0e98200da114734c9eba0ebd56e94b9b64c7a421730daae"),
-    ("beta", "e99f09851469ffbbe62a0cb258f491eca53358a48a8e1f03dd0520d898c3c8aa"),
-    ("unknown", "cd75622167f041fea62dd7f7f561ebc1a1b17f5347913dedd98f870e16ba50dc"),
+    (None, "00a2cfe41676342b064067e5fe4ab05b9a5a8c7ae45afe9cd244db660405bd5b"),
+    ("alpha", "114c6598323e6924356a171263e6b261725269058451fbd5a1e646e2b20a7760"),
+    ("beta", "c58a163c1e02f648accadb80be90c2c3e7a3570e3e7f8e82a45e6a8102985180"),
+    ("unknown", "00a2cfe41676342b064067e5fe4ab05b9a5a8c7ae45afe9cd244db660405bd5b"),
 ])
 def test_with_projects_fragment_is_byte_identical(last, digest, tmp_path):
     # SHA256 of the rendered fragment. Re-captured after e05a0f2ef (stage 1b),
@@ -138,6 +138,8 @@ def test_with_projects_fragment_is_byte_identical(last, digest, tmp_path):
     # config button; the fragment must otherwise stay byte-identical.
     # Re-captured again for the kit sweep: the only change is class="ui-input" on the time-zone
     # search box and on the custom interpreter box (rendered and diffed against main).
+    # Fix X2: the time-zone row gains data-tz-head and its note paragraph moves into that row's tooltip (the only
+    # two differences, rendered and diffed against the previous commit).
     app = create_app(testing=True, instance_path=str(tmp_path / "instance"))
     def project(name, active):
         return dict(name=name, active=active, state_path=dict(raw="scratch/state", exists=True),

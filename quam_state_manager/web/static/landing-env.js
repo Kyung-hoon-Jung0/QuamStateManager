@@ -22,6 +22,8 @@
     var _project = null;
     var _pendingOpen = null; // customer 2026-09-30: an Open refused for want of
                              // an env; re-submitted once the pick is saved
+    var _lastNoSync = false; // the last project open was its "... without Auto-Sync" press
+    var _pendingNoSync = false; // ... and the pending re-submit presses that one again
 
     function picker() { return document.getElementById('landing-env-picker'); }
     function q(root, sel) { return root ? root.querySelector(sel) : null; }
@@ -38,6 +40,7 @@
        a pending required-open and its note. */
     function close() {
         _pendingOpen = null;
+        _pendingNoSync = false;
         var note = q(picker(), '[data-env-required]');
         if (note) { note.hidden = true; note.textContent = ''; }
     }
@@ -63,9 +66,12 @@
             if (pk) pk.setAttribute('data-env-current', python);
             if (status) status.textContent = '';
             var again = _pendingOpen === project ? openFormFor(project) : null;
+            var quiet = again && _pendingNoSync ? again.querySelector('[data-open-without-auto-sync]') : null;
             close();
             if (again) {
-                if (again.requestSubmit) again.requestSubmit(); else again.submit();
+                // the re-submit keeps the press the person made: never arm what they opened without Auto-Sync
+                if (quiet && again.requestSubmit) again.requestSubmit(quiet);
+                else if (again.requestSubmit) again.requestSubmit(); else again.submit();
             } else {
                 open(project, python, null, { noScroll: true });   // re-mark the row in use
             }
@@ -230,6 +236,7 @@
         chg = chg && chg.querySelector('[data-env-change]');
         open(project, chg ? chg.getAttribute('data-env-current') : '', null, { keepPending: true, noScroll: true });
         _pendingOpen = project;
+        _pendingNoSync = _lastNoSync;
         var note = q(picker(), '[data-env-required]');
         if (note) {
             note.textContent = (message || ('Choose the Python environment for ' + project + ' first.')) +
@@ -306,6 +313,13 @@
         if (t.closest('[data-env-rescan]')) { load(true); return; }
         if (t.closest('[data-env-use]')) { useCustom(); return; }
     });
+    // which button opened a project (htmx submits it after this capture listener)
+    document.addEventListener('submit', function (e) {
+        var f = e.target;
+        if (!f || !f.matches || !f.matches('form[hx-post="/qualibrate/open"]')) return;
+        var by = e.submitter;
+        _lastNoSync = !!(by && by.name === 'auto_sync' && by.value === '0');
+    }, true);
     document.addEventListener('keydown', function (e) {
         var pk = picker();
         if (!pk || pk.hidden) return;
