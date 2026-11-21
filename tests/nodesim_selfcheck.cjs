@@ -570,6 +570,15 @@ function renderMode(file) {
     const ownAnswer = $('[data-nodesim-status]', warmPage).textContent;
     ok(ownAnswer.indexOf('closes at') < 0 && ownAnswer.indexOf('reached its time limit') >= 0,
        'R4C P3-1: a later close replaces the clicking window\'s "closes at" answer');
+    /* Final review P3: another chip's close next to this window's live offer leaves the answer and Renew. */
+    warm.apply({ state: 'renew_offer', line: 'The cloud instance closes at 12:34.' });
+    M.queue['/api/nodesim/instances'] = [{ rows: [], notices: [
+        { state: 'renew_offer', line: 'The cloud instance closes at 12:34.' },
+        { state: 'idle_closed', line: 'The idle cloud instance was closed.' }] }];
+    await warm.instances();
+    ok($('[data-nodesim-status]', warmPage).textContent.indexOf('closes at 12:34') >= 0,
+       "Final P3: another chip's close does not overwrite this window's live offer");
+    ok(!$('[data-nodesim-renew]', warmPage).hidden, 'Final P3: Renew stays while an offer is live');
     const warmBox = window.NodeSim.renderAnswer({ state: 'running', line: 'Building.', warm: true, phases: [] });
     ok($$('[data-phase]', warmBox).map((x) => x.getAttribute('data-phase')).join(',')
        === 'copy,lock,build,lease,connect,submit,wait,report', 'P2: warm phases follow the IPC contract');

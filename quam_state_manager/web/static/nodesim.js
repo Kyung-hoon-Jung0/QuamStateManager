@@ -629,7 +629,9 @@
                 // P3-1: a closed instance takes its renew offer away; nothing is left to renew.
                 var asked = !!(S.answer && S.answer.state === "renew_offer");
                 // P3-1 (r4): a later close replaces this window's own "closes at" answer, not only the strip.
-                if (asked && closed && typeof closed.line === "string") {
+                // Final review P3: notices are not keyed to this window; while any offer is live, a close
+                // seen here may be another chip's, so this window's own answer is left as it is.
+                if (asked && closed && !offer && typeof closed.line === "string") {
                     apply({ state: closed.state, line: closed.line });
                 }
                 renewBtn.hidden = !(offer || (asked && !closed));
