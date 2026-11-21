@@ -29,14 +29,14 @@ let fails = 0, n = 0;
 function ok(c, m) { n++; if (!c) { console.error('FAIL: ' + m); fails++; } else { console.log('ok - ' + m); } }
 const tick = (ms) => new Promise((r) => setTimeout(r, ms || 40));
 
-function boot(storage) {
+function boot(storage, pane) {
     const markup = FX.page.replace(/<script\b(?![^>]*application\/json)[\s\S]*?<\/script>/gi, '');
     const dom = new JSDOM('<!doctype html><html><body><div id="table-pane">' + markup + '</div></body></html>',
         { url: 'http://localhost/datasets', pretendToBeVisual: true, runScripts: 'outside-only' });
     const w = dom.window;
     Object.keys(storage || {}).forEach((k) => w.localStorage.setItem(k, storage[k]));
     const scroll = w.document.getElementById('datasets-scroll');
-    Object.defineProperty(scroll, 'clientWidth', { configurable: true, get: () => PANE });
+    Object.defineProperty(scroll, 'clientWidth', { configurable: true, get: () => pane || PANE });
     w.fetch = (url) => (String(url).indexOf('/datasets/changes-since') === 0
         ? Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(FX.delta) })
         : new Promise(() => {}));
@@ -77,6 +77,30 @@ const get = (cols, k) => (cols.find((c) => c[0] === k) || [])[1];
     // Fix X2: Status is 204 px wide now; Tags and Key Metric pay for it, so the grown ID still fits.
     const sum1 = widths(w).reduce((a, c) => a + c[1], 0);
     ok(sum1 <= PANE, 'the columns still fit the ' + PANE + ' px pane with a 5-digit id: ' + sum1 + ' px');
+
+    // Fix X3: a 1280 px window gives a 917 px pane (real Chrome, GUI round 2); every floor together was 928 px.
+    // With the 5-digit id and its wrote mark the table keeps FIT_SLACK (4 px) free, and Status keeps the width of
+    // "finished, no outcome" (Fix X2's measure at a 20 px root: .72rem mono chip, its padding and border, the cell).
+    const need = Math.ceil(20 * 0.6 * 0.72 * 20 + 2 * 0.35 * 20 + 2 + 2 * 0.35 * 20);
+    for (const pane of [917, 1077]) {
+        const p = boot(undefined, pane);
+        await tick();
+        ok(p.DatasetVirtual.pollNow() === true, pane + ': the delta poll runs');
+        await tick(80);
+        const pc = widths(p), psum = pc.reduce((a, c) => a + c[1], 0);
+        ok(get(pc, 'id') === id1, pane + ': the ID column holds the 5-digit id and its mark: ' + get(pc, 'id'));
+        ok(psum <= pane - 4, pane + ': the columns fit the pane with 4 px to spare: ' + psum + ' px '
+           + JSON.stringify(pc));
+        ok(get(pc, 'status') >= need, pane + ': Status keeps "finished, no outcome" whole: ' + get(pc, 'status')
+           + ' >= ' + need);
+        if (pane === 1077) {
+            // the 1440 px window's pane: Key Metric keeps "fidelity 0.7123" whole (15 mono glyphs at the cell's
+            // .88em of the table's .88em at a 20 px root, ~0.6 em each, plus 2 x .35rem of cell padding)
+            const mneed = Math.ceil(15 * 0.6 * 0.88 * 0.88 * 20 + 2 * 0.35 * 20);
+            ok(get(pc, 'metric') >= mneed, '1077: Key Metric shows "fidelity 0.7123" whole: ' + get(pc, 'metric')
+               + ' >= ' + mneed);
+        }
+    }
 
     // A width the user dragged is kept.
     const u = boot({ quam_ds_col_widths: JSON.stringify({ id: 50 }) });

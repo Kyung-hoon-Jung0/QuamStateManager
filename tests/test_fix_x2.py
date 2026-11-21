@@ -136,3 +136,34 @@ def test_the_arm_wording_has_one_source():
     tpl = (ROOT / "quam_state_manager" / "web" / "templates" / "_open_auto_sync_choice.html").read_text(
         encoding="utf-8")
     assert "{{ auto_sync_open_words }}" in tpl and "Turn it off" not in tpl
+
+
+# ---------------------------------------------------------------- Fix X3: an armed chip gets no offer
+
+def test_an_armed_chip_is_offered_no_quiet_open_anywhere(scoped, arming):  # noqa: F811
+    from tests.test_fix_x import _card_form
+    _restart_landing(scoped)
+    assert scoped["client"].post("/load", data={"folder": str(scoped["chip_a"])}).status_code in (200, 302)
+    assert _armed(scoped["app"]), "the default open armed chip_a"
+    body = scoped["client"].get("/?landing=1").get_data(as_text=True)
+    resume = re.search(r'<form[^>]*class="landing-resume-form">.*?</form>', body, re.S)
+    assert resume, "the landing offers Resume"
+    card = _card_form(scoped["client"].get("/landing/projects").get_data(as_text=True), "alpha")
+    for where, html in (("resume", resume.group()), ("current project", _current_form(body)), ("card", card)):
+        assert _NOTICE not in html and _QUIET not in html, where + ": an armed chip's open arms nothing"
+        assert "without Auto-Sync" not in html.replace("Without", "without"), where
+
+
+def test_the_armed_check_is_the_pills_own(scoped, arming):  # noqa: F811
+    _restart_landing(scoped)
+    scoped["client"].post("/load", data={"folder": str(scoped["chip_a"])})
+    with scoped["app"].test_request_context("/"):
+        ctx = routes_mod._find_quam_ctx_by_path(str(scoped["chip_a"]))
+        assert routes_mod._auto_sync_state(ctx), "armed, as the top bar pill reads it"
+        assert routes_mod._open_arms_auto_sync(str(scoped["chip_a"])) is False
+        sess = ctx.pop("auto_apply")
+        try:
+            # the same chip, not armed and with no OFF choice remembered: the open would arm it again
+            assert routes_mod._open_arms_auto_sync(str(scoped["chip_a"])) is True
+        finally:
+            ctx["auto_apply"] = sess

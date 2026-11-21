@@ -12047,6 +12047,11 @@ def _open_arms_auto_sync(path) -> bool:
     if not isinstance(path, str) or not path:
         return False
     try:
+        # Fix X3: a chip whose Auto-Sync is already armed (the top bar pill's ON, _auto_sync_state) stays armed
+        # whatever the press; the open arms nothing, so no notice and no "without Auto-Sync" offer
+        ctx = _find_quam_ctx_by_path(path)
+        if ctx is not None and _auto_sync_state(ctx):
+            return False
         return _auto_sync_open_allowed(_auto_sync_chip_key({"path": path}))
     except Exception:  # noqa: BLE001 -- unknown: no promise either way
         return False

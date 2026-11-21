@@ -748,7 +748,9 @@
          }},
         // Fix X: 108 clipped "fidelity 0.9876" (15 monospace characters at .82rem, ~118 px plus the cell padding)
         // to "fidelity 0..."; Tags gave up the 32 px. The cell's title carries the full text at any width.
-        {key: 'metric', label: 'Key Metric', on: true, w: 140, sortKey: 'metric', type: 'num', cls: 'col-metric',
+        // Fix X3: 140 fit to 127 at a 1440 px window clipped it again ("fidelity 0.71..."); 160 and the fit takes
+        // Key Metric's width last (FIT_LAST below), so it shows whole wherever Experiment can still give.
+        {key: 'metric', label: 'Key Metric', on: true, w: 160, sortKey: 'metric', type: 'num', cls: 'col-metric',
          title: function (r) { return (r.metric == null || r.metric === '') ? KEY_METRIC_BLANK : String(r.metric); },
          render: function (r) { return (r.metric == null || r.metric === '')
              ? '<span class="muted" title="' + escapeHtml(KEY_METRIC_BLANK) + '">-</span>'
@@ -895,24 +897,36 @@
        pane; a column the user resized keeps the user's width. */
     // Fix X2: Status's 204 is paid by Tags (floor 96 -> 87) and Key Metric (floor 100; its cell keeps the ellipsis
     // and the full text in its title), so a 5-digit ID with its wrote mark still fits the 959 px pane.
-    var FIT_FLOOR = { exp: 150, tags: 87, folder: 72, metric: 100 };
+    // Fix X3: at a 1280 px window (917 px pane) every floor together was 928 px. Experiment's floor 150 -> 104 (its
+    // cell is the widest and reads by its prefix), so a 5-digit ID with its wrote mark fits with FIT_SLACK to spare;
+    // Key Metric gives only what Experiment, Tags and Folder cannot (FIT_LAST).
+    var FIT_FLOOR = { exp: 104, tags: 87, folder: 72, metric: 100 };
+    var FIT_LAST = { metric: true };
+    var FIT_SLACK = 4;   // px the fitted table leaves free: sub-pixel borders never add a scrollbar
     function fittedWidths(cols) {
         var w = cols.map(colWidth);
         var scroll = document.getElementById('datasets-scroll');
-        var avail = scroll ? scroll.clientWidth : 0;
+        var avail = scroll ? scroll.clientWidth - FIT_SLACK : 0;
         if (!(avail > 0)) return w;
         var over = w.reduce(function (a, b) { return a + b; }, 0) - avail;
         if (over <= 0) return w;
-        var spare = [], total = 0;
-        cols.forEach(function (c, i) {
-            var s = (FIT_FLOOR[c.key] != null && colState.widths[c.key] == null)
-                ? Math.max(0, w[i] - FIT_FLOOR[c.key]) : 0;
-            spare.push(s);
-            total += s;
+        // two passes: the columns not in FIT_LAST give first, in proportion to what each has above its floor;
+        // the FIT_LAST ones give the rest, the same way
+        [false, true].forEach(function (last) {
+            if (over <= 0) return;
+            var spare = [], total = 0;
+            cols.forEach(function (c, i) {
+                var s = (FIT_FLOOR[c.key] != null && colState.widths[c.key] == null && !!FIT_LAST[c.key] === last)
+                    ? Math.max(0, w[i] - FIT_FLOOR[c.key]) : 0;
+                spare.push(s);
+                total += s;
+            });
+            if (!total) return;
+            var give = Math.min(over, total), before = w.reduce(function (a, b) { return a + b; }, 0);
+            w = w.map(function (x, i) { return spare[i] ? Math.floor(x - give * spare[i] / total) : x; });
+            over -= before - w.reduce(function (a, b) { return a + b; }, 0);
         });
-        if (!total) return w;
-        var give = Math.min(over, total);
-        return w.map(function (x, i) { return spare[i] ? Math.floor(x - give * spare[i] / total) : x; });
+        return w;
     }
     function buildColgroup() {
         var cg = document.getElementById('datasets-colgroup');
