@@ -3,14 +3,14 @@
    from /journal/card when the card is first opened (search still covers the
    whole card through its data-jr-search text). #}
 {% from '_delta_macros.html' import before_after %}
-{% from '_journal_changes.html' import change_list, run_changes, undo_links %}
+{% from '_journal_changes.html' import change_list, gate_not_checked, run_changes, undo_links %}
 
 {% macro card_body(c, day) %}
     {% if c.kind == 'run' %}
         <div class="jr-body">
 {% if c.gate and c.gate.reason %}
-            <p class="jr-gate-reason muted">{{ 'gate not checked' if c.gate.verdict == 'unknown' else 'gate' }}:{#
-                #} {{ c.gate.reason }}</p>{% endif %}
+            <p class="jr-gate-reason muted">{% if c.gate.verdict == 'unknown' %}{{ gate_not_checked(c.gate) }}{%
+                else %}gate: {{ c.gate.reason }}{% endif %}</p>{% endif %}
             {% for f in c.flags or [] %}<p class="jr-flag-note jr-flag-{{ f.key }} muted"{% if f.title %} title="{{ f.title }}"{% endif %}>{{ f.note }}</p>{% endfor %}
             {%- if c.renamed_here %}<p class="jr-note jr-renamed-here" title="{{ c.renamed_here }}">A Modify config rename came into force in this run's saved state ({{ c.renamed_here_short or c.renamed_here }}). Its changes compare each qubit with itself under its old name.</p>{% endif %}
             {%- if c.targets_as_recorded %}<p class="jr-note muted jr-recorded-targets">Saved under the qubit names from before a Modify config rename: recorded as {{ c.targets_as_recorded|join(' ') }}; shown in today's names.</p>{% endif %}
@@ -72,7 +72,13 @@
 {% macro card(c, day, lazy=False, paged=False) %}
     {% if c.kind == 'run' %}
     {% set dom_id = c.card_id or ('card-' ~ c.run_id) %}
-    <details class="jr-card jr-run jr-by-{{ (c.author or 'unknown').split(':')[0] }}{% if c.other_chip %} jr-other-chip{% endif %}" id="{{ dom_id }}" data-ts="{{ c.ts or 0 }}" data-run="{{ c.run_id }}" data-jr-order="{{ c.search_order }}"{% if not paged %} data-jr-search="{{ c.search_hay }}" data-jr-author="{{ c.author }}"{% endif %}>
+    <details class="jr-card jr-run jr-by-{{ (c.author or 'unknown').split(':')[0] }}{% if c.other_chip %}{#
+        #} jr-other-chip{% endif %}" id="{{ dom_id }}" data-ts="{{ c.ts or 0 }}" data-run="{{ c.run_id }}"{#
+        #} data-jr-order="{{ c.search_order }}"{% if not paged %} data-jr-search="{{ c.search_hay }}"{#
+        data-jr-line-authors: who wrote the journal lines this card holds, so the author filter reaches a
+        line under another author's run, even while the card's body is not loaded yet
+        #} data-jr-author="{{ c.author }}"{% if c.journal %} data-jr-line-authors="{{
+        c.journal|map(attribute='kind')|unique|join(' ') }}"{% endif %}{% endif %}>
         {# The row is a grid: time, node, targets, pills, run, who;
            every cell in its column, so the eye scans down instead of hunting pills left and right #}
         <summary>
@@ -84,7 +90,7 @@
                   == 'ok' %}✓ ok{% elif c.outcome == 'failed' %}✗ failed{% elif c.outcome == 'mixed' %}mixed{% elif
                   c.outcome == 'neutral' %}no verdict{% else %}no outcome{% endif %}</span>
                 {% if c.gate %}<span class="jr-badge jr-gate-{{ c.gate.verdict }}"
-                    title="{% if c.gate.verdict == 'unknown' %}gate not checked: {{ c.gate.reason }}{%
+                    title="{% if c.gate.verdict == 'unknown' %}{{ gate_not_checked(c.gate) }}{%
                     elif c.gate.verdict == 'pending' %}the gate is being checked;{#
                     #} the page refreshes when it is done{% else %}deterministic gate,{#
                     #} anchored on the run's own saved state{% if c.gate.reason %} {{ '\u2014' }} {{ c.gate.reason }}{%

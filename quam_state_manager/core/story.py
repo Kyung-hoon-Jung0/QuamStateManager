@@ -54,7 +54,7 @@ from quam_state_manager.core import run_time
 
 logger = logging.getLogger(__name__)
 
-GATES_REV = "2026-11-21w"          # bump when gates.py / families.py change what a verdict means
+GATES_REV = "2026-11-21x"          # bump when gates.py / families.py change what a verdict means
 _BEFORE_S = 60.0
 _AFTER_S = 300.0
 _ENTRY = re.compile(r"^- \*\*(\d{2}:\d{2}:\d{2})\*\* `([^`]+)` ?(.*)$")
@@ -432,13 +432,19 @@ def _compute_gate(run: dict) -> dict:
     # The engine keeps unverifiable checks fail-safe. The reader gets no invented verdict.
     per = {t: {"verdict": "unknown" if (v.failure_mode == "unverifiable"
                                     and "suspect" not in v.checks.values()) else v.verdict,
-               "failure_mode": v.failure_mode, "reasons": list(v.reasons)}
+               "failure_mode": v.failure_mode, "reasons": list(v.reasons),
+               "failure_reason": getattr(v, "failure_reason", None)}
            for t, v in verdicts.items()}
     order = {"fail": 3, "suspect": 2, "unknown": 1, "pass": 0}
     worst = max(per.values(), key=lambda x: order.get(x["verdict"], 0), default=None)
     if worst is None:
         return {"verdict": "unknown", "reason": "no targets", "family": getattr(fam, "key", None), "anchor": "run"}
-    reason = (worst["reasons"][0] if worst["reasons"] else worst.get("failure_mode")) or ""
+    if worst["verdict"] == "unknown":
+        # the not-computable check's own reason: an ok check's detail can come
+        # first in ``reasons`` (an extremum + feature family), so never reasons[0]
+        reason = worst.get("failure_reason") or worst.get("failure_mode") or ""
+    else:
+        reason = (worst["reasons"][0] if worst["reasons"] else worst.get("failure_mode")) or ""
     return {"verdict": worst["verdict"], "reason": reason, "family": getattr(fam, "key", None),
             "anchor": "run", "per_target": per}
 
