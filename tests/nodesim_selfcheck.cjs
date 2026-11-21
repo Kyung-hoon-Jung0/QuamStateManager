@@ -504,6 +504,18 @@ function renderMode(file) {
     ok($('[data-nodesim-pick-note]', away).textContent
        === 'The node asked for is not in the calibration library of this chip.'
        && !$('[data-nodesim-pick-note]', away).hidden, 'a node not in the library says so, not a silent swap');
+    /* R4C P3-4: a refused entry of any kind (a syntax error reads as kind "other") stays in the picker. */
+    const badLine = 'This node is not simulated here: it could not be read (syntax error at line 3: invalid syntax).';
+    const badPage = doc.createElement('div');
+    doc.body.appendChild(badPage);
+    M.queue['/api/nodesim/nodes'] = [Object.assign({}, NODES, { items: NODES.items.concat([
+        { file: '99_syntax_probe.py', kind: 'other', refused: true, refused_line: badLine }]) })];
+    M.queue['/api/nodesim/status'] = [{ ok: true, state: 'idle', line: '' }];
+    await window.NodeSim.mount(badPage).ready;
+    const badOpt = $$('[data-nodesim-node] option', badPage).filter((o) => o.value === '99_syntax_probe.py')[0];
+    ok(!!badOpt, 'R4C P3-4: a refused syntax-error node is listed in the picker');
+    ok(!!badOpt && badOpt.disabled, 'R4C P3-4: the refused row is disabled');
+    ok(!!badOpt && badOpt.textContent.indexOf(badLine) >= 0, 'R4C P3-4: the refused row carries its reason verbatim');
 
     /* ---- P2: explicit intent, keep-warm, renewal, instance strip --------------- */
     const warmPage = doc.createElement('div');
@@ -554,6 +566,10 @@ function renderMode(file) {
     const strip = $('[data-nodesim-instances]', warmPage).textContent;
     ok(strip.indexOf('closes at') < 0 && strip.indexOf('reached its time limit') >= 0,
        'R4A P3-1: the close line replaces the "closes at" line');
+    /* R4C P3-1: the clicking window's own answer shows the close line, never "closes at". */
+    const ownAnswer = $('[data-nodesim-status]', warmPage).textContent;
+    ok(ownAnswer.indexOf('closes at') < 0 && ownAnswer.indexOf('reached its time limit') >= 0,
+       'R4C P3-1: a later close replaces the clicking window\'s "closes at" answer');
     const warmBox = window.NodeSim.renderAnswer({ state: 'running', line: 'Building.', warm: true, phases: [] });
     ok($$('[data-phase]', warmBox).map((x) => x.getAttribute('data-phase')).join(',')
        === 'copy,lock,build,lease,connect,submit,wait,report', 'P2: warm phases follow the IPC contract');
