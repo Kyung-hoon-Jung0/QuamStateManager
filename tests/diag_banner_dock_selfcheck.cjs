@@ -258,6 +258,11 @@ const mode = (s) => s.getAttribute('data-mode');
     doc.body.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'a', bubbles: true }));
     await sleep(200);
     ok(mode(slot) === 'overlay', 'a key press with no known pointer does not shift the page');
+    // no pointer event ever arrives (touch, keyboard, a rig): after the grace time it takes its own
+    // space in the flow, so it never stays over the page heading
+    await sleep(1500);
+    ok(mode(slot) === 'flow' && !slot.classList.contains('diag-banner-overlay'),
+        'no pointer seen for the grace time: the banner joins the flow, it no longer covers the heading');
 
     // 8. a main-pane swap docks unconditionally, without scrolling the NEW pane's
     //    content out of view (the pointer is in the replaced pane)

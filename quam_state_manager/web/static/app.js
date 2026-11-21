@@ -21756,6 +21756,7 @@ function _closePlotPopupIfDone() {
    The remembered size lives in sessionStorage (per tab, a layout hint only;
    absent or unreadable => overlay, never a shift). */
 var DIAG_BANNER_H_KEY = 'quam_diag_banner_h';
+var DIAG_NO_POINTER_MS = 1500;   // an overlay banner with no pointer ever seen docks after this
 var _diagPtr = null;          // last pointer {x, y, t}; 'out' once it left the window; null = never seen
 var _diagFloating = false;    // a banner is floating, waiting to join the flow
 var _diagTrialPending = false, _diagTrialAt = 0, _diagMissTarget = null;
@@ -21794,6 +21795,13 @@ function _diagBannerSlotSwapped(slot) {
     _diagRemember(b);
     if (!_diagFloating) return;
     _diagMissTarget = null;
+    // no pointer event at all within the grace time (touch, keyboard, a rig): nothing
+    // rests under a pointer, so a banner that still floats takes its own space instead
+    // of covering the page heading
+    setTimeout(function () {
+        var sl = document.getElementById('diagnostics-banner-slot');
+        if (_diagPtr === null && sl && sl.getAttribute('data-mode') === 'overlay') _diagJoinFlow(sl, true);
+    }, DIAG_NO_POINTER_MS);
     // held invisible for the first measurement: what the pointer is on is the
     // page, not a banner that has not been seen yet
     slot.setAttribute('data-held', '1');
