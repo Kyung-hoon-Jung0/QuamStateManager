@@ -1,5 +1,6 @@
 """Isolated account broker (D-11, D-17; P2 spec 3 and 4.5)."""
 
+import base64
 import ctypes
 import datetime as dt
 import hashlib
@@ -36,6 +37,8 @@ EMPTY_S = 60
 #: a row whose worker died is closed when no restarted worker adopts it within the swap grace (P2-R2-1)
 ADOPT_GRACE_S = 120
 HANDSHAKE_S = 5
+#: a held session with less than this many seconds left is renewed by a login first (D-53)
+JWT_MARGIN_S = 60
 
 
 def broker_argv(python, directory):
@@ -122,6 +125,25 @@ def user_identity():
             kernel.LocalFree(text)
     finally:
         kernel.CloseHandle(token)
+
+
+def jwt_left(token):
+    """Seconds until a JWT's exp claim, decoded without verification; None when unreadable (D-53).
+
+    The token itself is never logged or returned.
+    """
+    try:
+        payload = str(token).split()[-1].split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        return float(claims["exp"]) - clock()
+    except Exception:
+        return None
+
+
+def unauthenticated(exc):
+    """True for a refusal that provably created nothing: no local session, or the server's 401 text (D-53)."""
+    text = str(exc)
+    return text == "api client is unauthenticated" or text.rstrip().endswith(": unauthenticated")
 
 
 def atomic(path, value):
@@ -283,14 +305,24 @@ class Broker:
                 self.credentials, self.client = candidate, fresh
             return fresh
 
+    def fresh(self):
+        """Log in first when the held session expires within JWT_MARGIN_S seconds (D-53)."""
+        if self.client is None or getattr(self, "credentials", None) is None:
+            return
+        left = jwt_left(getattr(getattr(self.client, "_client", None), "_jwt", None))
+        if left is not None and left < JWT_MARGIN_S:
+            self.login()
+
     def retry(self, operation, launch=False):
-        """Retry close, or a provably pre-POST launch failure, after login (D-43, P2 spec 3.3)."""
+        """Retry close, or a provably pre-instance launch refusal, once after login (D-43, D-53, P2 spec 3.3)."""
+        self.fresh()
         try:
             return operation(self.client)
         except Exception as exc:
             self.log(exc)
-            if launch and str(exc) != "api client is unauthenticated":
+            if launch and not unauthenticated(exc):
                 raise
+            # A second refusal after this fresh login propagates verbatim; there is no third attempt (D-53).
             return operation(self.login())
 
     def push(self, row, event, **fields):
@@ -474,7 +506,16 @@ class Broker:
                 raise ConnectionError("The cloud lease could not be delivered.")
         except Exception as exc:
             with self.lock:
-                if row in self.rows and not row["instance_id"]:
+                if row in self.rows and not row["instance_id"] and unauthenticated(exc):
+                    # The server refused the spawn as unauthenticated, so no instance exists: the reservation is
+                    # released, never kept as a counted ghost (D-53, r3 P2-1). Ambiguous failures stay ghosts (D-43).
+                    self.rows.remove(row)
+                    self.prune(row)
+                    try:
+                        self.save()
+                    except Exception as save_exc:
+                        self.log(save_exc)
+                elif row in self.rows and not row["instance_id"]:
                     row.update(state="ghost", expires_at=dt.datetime.fromtimestamp(
                         row["pending_at"] + 960, dt.timezone.utc).isoformat())
                     try:

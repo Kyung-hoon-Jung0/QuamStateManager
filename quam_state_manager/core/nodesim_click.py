@@ -759,7 +759,7 @@ class Manager:
                 t1 = time.monotonic()
                 result = hit["result"]
                 phases = [copy_phase, {"name": "cache", "s": round(time.monotonic() - t1, 3)}]
-                final = self._done(result, meta, phases, mw, cached=True)
+                final = self._done(result, meta, phases, mw, cached=True, simulated_at=hit.get("simulated_at"))
                 rid = runs.record(meta, result, final)
                 final["id"] = rid
                 with self._lock:
@@ -851,7 +851,7 @@ class Manager:
                 elif result["kind"] == "ok":
                     final = self._done(result, meta, job["answer"].get("phases", []), mw, cached=False)
                     self.cache.put(ikey, cache_key(result["script"], meta["window_ns"], meta["qop"]),
-                                   {"result": result})
+                                   {"result": result, "simulated_at": final["result"]["provenance"]["time"]})
                 else:
                     state = result["kind"] if result["kind"] in STATES else "failed"
                     final = answer(state, message=result.get("message"), targets_empty=not meta["targets"])
@@ -1081,11 +1081,12 @@ class Manager:
         clean = scrub(result, secret)
         final = self._done(clean, meta, phases, job["mw"], cached=False, base=base)
         key = cache_key(clean.get("script") or "", meta["window_ns"], clean.get("qop_version") or meta["qop"])
-        self.cache.put(job["ikey"], key, {"result": clean})
+        self.cache.put(job["ikey"], key, {"result": clean, "simulated_at": final["result"]["provenance"]["time"]})
         return final
 
     def _done(self, result: dict, meta: dict, phases: list, mw: bool, *, cached: bool,
-              base: Optional[dict] = None) -> dict:
+              base: Optional[dict] = None, simulated_at: Optional[str] = None) -> dict:
+        """The done answer; a cached one keeps its original simulation time and says it is cached (r3 P2-2)."""
         qop = result.get("qop_version") or meta.get("qop") or "unknown"
         banners = ["REDUCED SIMULATION"]
         if result.get("partial_pass") is not False:
@@ -1100,14 +1101,20 @@ class Manager:
         notes = [NUM_SHOTS_NOTE]
         if not report.get("adc_acquisitions"):
             notes.append(NO_READOUT_NOTE)
-        when = time.strftime("%Y-%m-%d %H:%M:%S")
+        when = simulated_at if cached else time.strftime("%Y-%m-%d %H:%M:%S")
         provenance = {"seq": meta.get("seq"), "store_id": meta.get("store_id"), "node": meta["node"],
                       "node_sha": meta["node_sha"], "qop": qop, "time": when, "env": meta.get("env"),
                       "overrides": meta.get("overrides"), "num_shots": NUM_SHOTS_NOTE,
                       "text": (f"Simulated from chip copy seq {meta.get('seq')}, {meta['node']} @ "
-                               f"{meta['node_sha']}, QOP {qop}, {when}"),
-                      "stale": False, "stale_line": None}
-        provenance["line"] = provenance["text"]
+                               f"{meta['node_sha']}, QOP {qop}, {when or 'time not recorded'}"),
+                      "stale": False, "stale_line": None, "cached_line": None}
+        if cached:
+            clock = when.rsplit(" ", 1)[-1] if when else None
+            provenance["cached_line"] = (f"Cached result from {clock} (same node, chip copy and library)." if clock
+                                         else "Cached result; its simulation time was not recorded "
+                                              "(same node, chip copy and library).")
+        provenance["line"] = (provenance["text"] + ". " + provenance["cached_line"] if cached
+                              else provenance["text"])
         out = {"report": report, "lanes": None, "marks": None, "notes": notes, "cannot_draw": [],
                "script_ok": bool(result.get("script_ok")), "provenance": provenance,
                "window_ns": meta["window_ns"], "last_adc_end_ns": result.get("last_adc_end_ns"),

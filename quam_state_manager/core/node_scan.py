@@ -253,7 +253,9 @@ def scan_file(path: Path | str) -> NodeInfo:
     try:
         tree = ast.parse(src)
     except SyntaxError as exc:
-        return NodeInfo(str(path), path.stem, KIND_OTHER, False, "qubits", "", f"parse error: {exc}")
+        where = f" at line {exc.lineno}" if exc.lineno else ""
+        return NodeInfo(str(path), path.stem, KIND_OTHER, False, "qubits", "",
+                        f"syntax error{where}: {exc.msg}")
 
     kind, name = _classify(tree, src)
     name = name or path.stem

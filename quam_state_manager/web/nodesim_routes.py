@@ -207,14 +207,15 @@ def _context(want: str | None = None) -> dict:
     saas = _saas()
     items = node_scan.scan_folder(folder, instance_path=current_app.instance_path) if folder else []
     nodes = []
+    # A file that could not be read or parsed stays listed as a refused entry naming why (r3 P3-4).
     for info in items:
-        if info.kind == "other":
+        if info.kind == "other" and not info.error:
             continue
         nodes.append(_row(info, folder))
     key = node_key(folder, want)
     if key and not any(n["file"] == key for n in nodes) and (Path(folder) / key).is_file():
         info = node_scan.scan_file(Path(folder) / key)
-        if info.kind != "other":
+        if info.kind != "other" or info.error:
             nodes.append(_row(info, folder))
     merged = getattr(store, "merged", None) or {}
     qubits = store.qubit_names if store else []

@@ -302,6 +302,66 @@
         return name.slice(0, head) + "\u2026" + name.slice(name.length - (keep - head));
     }
 
+    /* Segment texts that share a lane row must not overlap (r3 P3-3). Boxes are
+       swept left to right; on a clash the text whose free side faces the other is
+       cut with an ellipsis (a left-anchored earlier text loses its right end, a
+       right-anchored later text its left end), and a text with too little room is
+       dropped. A cut text keeps its full name and numbers in the hover text. */
+    var MIN_CUT = 4;
+    function cutEnd(text, maxChars) {
+        return text.length <= maxChars ? text : text.slice(0, Math.max(1, maxChars - 1)) + "\u2026";
+    }
+    function textBox(a, xr, w) {
+        var px = (a.x - xr[0]) * w / (xr[1] - xr[0]);
+        var width = Math.max(a.meta.name.length, a.meta.shown2.length) * CHAR_PX;
+        var left = a.xanchor === "right" ? px - width : px;
+        return { left: left, right: left + width };
+    }
+    function cutTo(a, chars) {
+        if (chars < MIN_CUT) return false;
+        var name = shorten(a.meta.operation || "", chars), l2 = cutEnd(a.meta.line2, chars);
+        a.meta.name = name;
+        a.meta.shown2 = l2;
+        a.text = esc(name) + "<br>" + esc(l2);
+        a.hovertext = esc(a.meta.operation || "") + "<br>" + esc(a.meta.line2);
+        return true;
+    }
+    function declutter(texts, xr, w) {
+        var gap = CHAR_PX;
+        var rows = {};
+        texts.forEach(function (a) {
+            var key = a.meta.lane + "|" + a.meta.row;
+            (rows[key] || (rows[key] = [])).push(a);
+        });
+        var dropped = [];
+        Object.keys(rows).forEach(function (key) {
+            var row = rows[key].slice().sort(function (a, b) {
+                return textBox(a, xr, w).left - textBox(b, xr, w).left;
+            });
+            var prev = null;
+            row.forEach(function (cur) {
+                if (prev) {
+                    var p = textBox(prev, xr, w), q = textBox(cur, xr, w);
+                    if (p.right + gap > q.left) {
+                        var ok;
+                        if (cur.xanchor === "right") {
+                            ok = cutTo(cur, Math.floor((q.right - p.right - gap) / CHAR_PX));
+                        } else if (prev.xanchor !== "right") {
+                            ok = cutTo(prev, Math.floor((q.left - p.left - gap) / CHAR_PX));
+                            if (!ok) { dropped.push(prev); prev = cur; return; }
+                            ok = true;
+                        } else {
+                            ok = false;
+                        }
+                        if (!ok) { dropped.push(cur); return; }
+                    }
+                }
+                prev = cur;
+            });
+        });
+        return texts.filter(function (a) { return dropped.indexOf(a) < 0; });
+    }
+
     function dataExtent(lane, showSim) {
         var lo = Infinity, hi = -Infinity;
         function take(v) { if (num(v)) { if (v < lo) lo = v; if (v > hi) hi = v; } }
@@ -708,8 +768,13 @@
             });
             return notes;
         }
-        function fitMarks(notes, xr, w) {
+        function fitMarks(notes, xr, w, texts) {
             var used = {}, seen = {};
+            // A mark sits at the bottom of its lane, inside the band of the lane's
+            // bottom-row segment texts: it gives way to them (r3 P3-3).
+            var bottom = (texts || []).filter(function (t) {
+                return t.meta && t.meta.role === "segment-text" && t.meta.row === "bottom";
+            }).map(function (t) { var b = textBox(t, xr, w); b.yref = t.yref; return b; });
             // A wait label carries a number the picture needs, so waits take their place
             // first; an align is already a dashed line, and one label serves marks that
             // share a place. Every mark stays in the Sequence steps list.
@@ -727,6 +792,11 @@
                 var px = (a.x - xr[0]) * w / (xr[1] - xr[0]);
                 a.xanchor = px < width / 2 ? "left" : px > w - width / 2 ? "right" : "center";
                 var left = a.xanchor === "left" ? px : a.xanchor === "right" ? px - width : px - width / 2;
+                if (bottom.some(function (b) {
+                    return b.yref === a.yref && left < b.right && left + width > b.left;
+                })) {
+                    return false;
+                }
                 var rows = used[a.yref] || (used[a.yref] = [[], []]);
                 for (var r = 0; r < rows.length; r++) {
                     if (rows[r].every(function (b) { return left >= b[1] || left + width <= b[0]; })) {
@@ -972,7 +1042,7 @@
                             room = Math.max(room, Math.floor((xa - left) * pxPerNs / CHAR_PX) - 1);
                         }
                         var name = shorten(s.operation || "", room);
-                        var l2 = line2;   // numbers are never cut
+                        var l2 = line2;   // cut only by declutter when a neighbour needs the room
                         out.push({
                             xref: "x", yref: ax + " domain", x: xa, xanchor: anchorRight ? "right" : "left", align: anchorRight ? "right" : "left",
                             y: row === "top" ? 1 : 0, yanchor: row === "top" ? "top" : "bottom",
@@ -984,13 +1054,13 @@
                         });
                     });
                 });
-                return out;
+                return declutter(out, xr, w);
             }
             layout.annotations = fixed.filter(function (a) {
                 return startsAtFits(a, pulseLabels, span, widthPx);
             }).concat(pulseLabels);
             var markNotes = stepMarks(shapes, c, drawn, false);
-            layout.annotations = layout.annotations.concat(fitMarks(markNotes, span, widthPx));
+            layout.annotations = layout.annotations.concat(fitMarks(markNotes, span, widthPx, pulseLabels));
             if (window.PlotTheme && window.PlotTheme.houseLayout) layout = window.PlotTheme.houseLayout(layout);
             return { data: traces, layout: layout, drawn: drawn, fixedAnnotations: fixed, labels: labels, markNotes: markNotes,
                      span: span, widthPx: widthPx, hostPx: hostPx };
@@ -1279,7 +1349,8 @@
             var markNotes = stepMarks(shapes, c, lines, true);
             if (window.PlotTheme && window.PlotTheme.houseLayout) layout = window.PlotTheme.houseLayout(layout);
             function labels(xr, w) { return guideLabels(edges, xr, w, c); }
-            layout.annotations = fixed.concat(labels(span, widthPx)).concat(fitMarks(markNotes, span, widthPx));
+            var guideTexts = labels(span, widthPx);
+            layout.annotations = fixed.concat(guideTexts).concat(fitMarks(markNotes, span, widthPx, guideTexts));
             return { data: traces, layout: layout, drawn: lines, fixedAnnotations: fixed, labels: labels, markNotes: markNotes,
                      span: span, widthPx: widthPx, view: "overlay", timing: pairs };
         }
@@ -1405,7 +1476,7 @@
             var texts = lastFigure.labels(xr, w);
             var anns = lastFigure.fixedAnnotations.filter(function (a) {
                 return startsAtFits(a, texts, xr, w);
-            }).concat(texts).concat(fitMarks(lastFigure.markNotes || [], xr, w));
+            }).concat(texts).concat(fitMarks(lastFigure.markNotes || [], xr, w, texts));
             lastFigure.layout.annotations = anns;
             if (window.Plotly && window.Plotly.relayout) window.Plotly.relayout(plot, { annotations: anns });
         }
