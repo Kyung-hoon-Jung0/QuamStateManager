@@ -237,7 +237,10 @@ _WINDOW_ARGS = ("at", "from", "to")
 
 def _matches(card: dict, f: dict, grps=None, hays=None) -> bool:
     author = str(card.get("author") or card.get("kind") or "")
-    if f["author"] and not author.startswith(f["author"]):
+    # the author filter also reaches a journal line a card holds (a hook's or a
+    # person's line under another author's run)
+    if f["author"] and not author.startswith(f["author"]) and not any(
+            str(e.get("kind") or "").startswith(f["author"]) for e in card.get("journal") or []):
         return False
     grps = groups(f["q"]) if grps is None else grps
     if not grps:
@@ -460,7 +463,7 @@ def _build_base(day: str, *, gate_wait=False, lazy_ok=True) -> dict:
     data["next_day"] = _step(d0, 1)
     data["is_today"] = day == _today()
     data["days"] = journal_mod.list_days(current_app.instance_path, _chip_name())
-    data["authors"] = sorted({c.get("author") for c in data["cards"] if c.get("author")})
+    data["authors"] = _day_authors(data)
     data["loaded"] = bool(active)
     if data["lazy"]:
         # the bodies a lazy day sends later, by their element id; a paged
@@ -474,6 +477,16 @@ def _build_base(day: str, *, gate_wait=False, lazy_ok=True) -> dict:
             while len(days) > 4:
                 days.pop(next(iter(days)))
     return data
+
+
+def _day_authors(data: dict) -> list[str]:
+    """The author filter's options: who ran a card AND who wrote a journal line
+    (a line's author is its ``kind``: hook, human, agent, ...), deduplicated."""
+    lines = list(data.get("loose") or []) + list(data.get("unassigned") or [])
+    for c in data.get("cards") or []:
+        lines += c.get("journal") or []
+    who = {c.get("author") for c in data.get("cards") or []} | {e.get("kind") for e in lines}
+    return sorted(str(a) for a in who if a)
 
 
 def _unreadable_note() -> str:

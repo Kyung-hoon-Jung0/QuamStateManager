@@ -130,10 +130,23 @@ pin('day_totals_are_labelled', p => {
   assert.match(p.d.querySelector('#jr-since').textContent, /Day total:/);
 });
 pin('author_change_filters_all_lines', p => {
-  const author = p.d.querySelector('#jr-author'); author.add(new p.w.Option('agent', 'agent'));
+  const author = p.d.querySelector('#jr-author');
   author.value = 'agent'; author.dispatchEvent(new p.w.Event('change', { bubbles: true }));
-  assert.equal(p.visible('.jr-run,.jr-write'), 0); assert.equal(p.visible('.jr-loose li'), 2);
+  assert.equal(author.value, 'agent');
+  // card-1 holds an agent line under a person's run: the card shows, only that line in it
+  assert.equal(p.visible('.jr-run,.jr-write'), 1); assert.equal(p.visible('#card-1'), 1);
+  assert.equal(p.visible('#card-1 .jr-lines li[data-jr-author="agent"]'), 1);
+  assert.equal(p.visible('#card-1 .jr-lines li[data-jr-author="human"]'), 0);
+  assert.equal(p.visible('.jr-loose li'), 2);
   assert.equal(p.visible('.jr-unassigned'), 0); assert.equal(p.visible('.jr-empty'), 0);
+});
+pin('journal_line_authors_are_offered_and_reach_their_lines', p => {
+  const author = p.d.querySelector('#jr-author');
+  assert.deepEqual([...author.options].map(o => o.value), ['', 'agent', 'hook', 'human', 'human:user-a']);
+  author.value = 'hook'; author.dispatchEvent(new p.w.Event('change', { bubbles: true }));
+  assert.equal(author.value, 'hook');
+  assert.equal(p.visible('.jr-unassigned li[data-jr-author="hook"]'), 8);
+  assert.equal(p.visible('.jr-run,.jr-write'), 0); assert.equal(p.visible('.jr-loose li'), 0);
 });
 pin('day_navigation_still_requests', p => {
   p.w.JournalPage.day('2026-10-03'); assert.equal(p.requests(), 1);

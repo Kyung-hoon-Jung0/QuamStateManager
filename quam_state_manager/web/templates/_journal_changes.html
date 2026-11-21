@@ -5,6 +5,12 @@
    through before_after (_delta_macros.html, docs/76). #}
 {% from '_delta_macros.html' import before_after %}
 
+{# The one wording of a gate SM could not compute (verdict ``unknown``), shared by the
+   run card and the shareable report: "gate not checked: <reason>". #}
+{% macro gate_not_checked(gate) -%}
+gate not checked{% if gate.reason %}: {{ gate.reason }}{% endif %}
+{%- endmacro %}
+
 {# ``author``: the card's own who; an entry names its actor only when it differs. #}
 {% macro change_list(rows, actors=False, author=None) -%}
 <ul class="jr-changes">{% for w in rows %}<li{% if w.taken_back %} class="jr-taken-back"{% endif %}><code class="jr-path" data-path="{{ w.path }}">{{ w.path }}</code>{% if w.recorded_as %} <span class="jr-badge jr-recorded-as" title="Recorded as {{ w.recorded_as }}, before a Modify config rename">as {{ w.recorded_short }}</span>{% endif %}

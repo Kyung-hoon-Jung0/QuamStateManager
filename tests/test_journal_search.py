@@ -72,7 +72,7 @@ def test_journal_search_selfcheck():
     if result.returncode == 2:
         pytest.skip("jsdom not installed")
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "all checks passed (24 pins)" in result.stdout, result.stdout
+    assert "all checks passed (25 pins)" in result.stdout, result.stdout
 
 
 if __name__ == "__main__":
