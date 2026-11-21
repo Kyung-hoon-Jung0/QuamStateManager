@@ -62,7 +62,15 @@
         too_long: ["verdict", "danger"],
         timeout: ["verdict", "danger"],
         stopped: ["verdict", "neutral"],
-        failed: ["verdict", "danger"]
+        failed: ["verdict", "danger"],
+        // P3-5: a failure of the simulator machinery is shown in the error style, like a failed run.
+        spawn_failed: ["verdict", "danger"],
+        broker_failed: ["verdict", "danger"],
+        lease_failed: ["verdict", "danger"],
+        worker_crashed: ["verdict", "danger"],
+        build_watchdog: ["verdict", "danger"],
+        wait_timeout: ["notice", "warn", "Busy"],
+        busy_now: ["notice", "warn", "Busy"]
     };
     var BANNER_TONE = { "script incomplete": "danger", "REDUCED SIMULATION": "neutral" };
 
@@ -609,10 +617,15 @@
                 j.rows.forEach(function (r) {
                     if (typeof r.line === "string") instanceHost.appendChild(UI.badge(r.line, "neutral"));
                 });
+                var offer = false, closed = false;
                 (j.notices || []).forEach(function (n) {
                     if (typeof n.line === "string") instanceHost.appendChild(UI.badge(n.line, "neutral"));
-                    if (n.state === "renew_offer") renewBtn.hidden = false;
+                    if (n.state === "renew_offer") offer = true;
+                    if (n.state === "idle_closed" || n.state === "instance_closed") closed = true;
                 });
+                // P3-1: a closed instance takes its renew offer away; nothing is left to renew.
+                var asked = !!(S.answer && S.answer.state === "renew_offer");
+                renewBtn.hidden = !(offer || (asked && !closed));
             });
         }
         /* D-13, D-17, P2 spec 3.4: replacement requires an explicit action. */
@@ -670,6 +683,7 @@
         S.stop = stop;
         S.poll = function () { return poll(S.gen); };
         S.apply = apply;
+        S.instances = instances;
         return S;
     }
 

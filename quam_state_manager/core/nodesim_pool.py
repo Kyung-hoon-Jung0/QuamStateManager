@@ -105,6 +105,9 @@ def kill(proc):
 #: W F3: the window line when the chip copy's FEM layout cannot be generated
 #: an instance status answer older than this is shown with its age (P1-R2-3)
 STATUS_STALE_S = 5
+BROKER_DOWN_LINE = "The simulation broker is not running; it starts on the next Simulate."
+BROKER_DOWN_STATUS = dict(rows=[], in_use_here=0, limit=3, status_age_s=None, status_line=BROKER_DOWN_LINE)
+WAIT_S = 300  # D-54: the longest a click waits for its key's worker
 CLUSTER_FAILED = "The chip copy's FEM layout could not be read from its config: "
 #: review S P3-8: the line when the worker could not read a message from SM
 PROTOCOL_ERROR = ("The simulator process could not read a message from SM and stopped; "
@@ -370,6 +373,15 @@ def broker_dir():
                 Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / "quam-sm" / "saas-broker")
 
 
+def broker_dir_cause(directory):
+    """Name a known reason the broker folder cannot be used, or None (P3-5)."""
+    path = Path(directory)
+    for part in (path, *path.parents):
+        if part.exists():
+            return None if part.is_dir() else f"the broker folder is a file: {part}"
+    return None
+
+
 def start_broker(python, directory, popen=subprocess.Popen):
     """Start an independent broker with no inherited std handles (spec 3.1, Q-12)."""
     flags = (getattr(subprocess, "CREATE_NO_WINDOW", 0) |
@@ -423,6 +435,9 @@ class BrokerClient:
             except (OSError, ValueError, KeyError, psutil.Error):
                 pass
             if not started:
+                cause = broker_dir_cause(self.directory)
+                if cause:
+                    raise PoolError("broker_failed", message=f"The simulation broker did not start: {cause}.")
                 try:
                     launched = self.starter(self.python, self.directory)
                 except OSError as exc:
@@ -431,7 +446,9 @@ class BrokerClient:
             # Exit code 0 is a broker that lost the election to one already running, not a crash.
             code = launched.poll() if hasattr(launched, "poll") else None
             if code not in (None, 0):
-                raise PoolError("broker_failed", message=f"The simulation broker did not start: exit code {code}.")
+                cause = broker_dir_cause(self.directory)
+                raise PoolError("broker_failed", message=f"The simulation broker did not start: exit code {code}"
+                                                         + (f"; {cause}." if cause else "."))
             self.closed.wait(.05)
         if record is None:
             raise PoolError("broker_unstarted", message="The simulation broker did not start: "
@@ -572,7 +589,9 @@ class WarmPool:
         self.probe = probe or probe_qm_saas
         self.directory = Path(directory or broker_dir())
         self.workers, self.leases, self.secrets = {}, {}, []
-        self.waiting = {}
+        self.waiting = {}  # D-54: key -> ticket ids in arrival order
+        self.wait_s = WAIT_S
+        self.spawn_live = {}  # gl-gxm3: spawning key -> its chip folder name
         self.broker_waits = {}
         self.status_cache, self.status_at = None, None
         self.status_refresh = threading.Lock()
@@ -674,40 +693,26 @@ class WarmPool:
             raise PoolError("no_library")
         key = worker_key(python, library, live)
         ticket = uuid.uuid4().hex
+        # D-54: waiters on one key queue in arrival order; nothing but the owner removes its ticket.
         with self.lock:
-            self.waiting[key] = ticket
-        deadline = time.monotonic() + 300
+            self.waiting.setdefault(key, []).append(ticket)
+        deadline = time.monotonic() + self.wait_s
         gone = []
-        while time.monotonic() < deadline:
-            with self.lock:
-                if self.waiting[key] != ticket:
+        try:
+            while True:
+                with self.lock:
+                    if self.waiting[key][0] == ticket and self._reserve(key, library, live, gone):
+                        self._unqueue(key, ticket)  # D-54: in the same locked step as the reservation
+                        break
+                    holder = self.holder(key, live)
+                notify("busy_chip", name=holder)
+                if time.monotonic() >= deadline:
+                    raise PoolError("wait_timeout")
+                if self.closed.wait(.05) or (stop is not None and stop.is_set()):
                     raise PoolError(self.stop_state(key))
-                existing = self.workers.get(key)
-                if existing:
-                    if not existing.busy:
-                        existing.busy = True  # review S P3-3: reserved in the same locked step as the check
-                        break
-                elif key not in self.spawning:
-                    # Review int r1 P2-1: spawning keys count against the cap of two, and the idle worker this
-                    # key retires is taken out in the same locked step, so two new keys never retire one worker.
-                    idle = [w for w in self.workers.values() if not w.busy]
-                    if len(self.workers) + len(self.spawning) < 2 or idle:
-                        if len(self.workers) + len(self.spawning) >= 2:
-                            same = [w for w in idle if w.live == Path(live).resolve() and
-                                    w.library.resolve() == Path(library).resolve()]
-                            retired = (same or [min(idle, key=lambda w: w.used)])[0]
-                            retired.busy = True
-                            self.workers.pop(retired.key)
-                            if same and retired.key in self.leases:
-                                self.leases[key] = self.leases.pop(retired.key)  # an env switch keeps the lease
-                            gone.append(retired)
-                        self.spawning.add(key)
-                        break
-            notify("busy_chip", name=Path(live).name)
-            if self.closed.wait(.05) or (stop is not None and stop.is_set()):
-                raise PoolError(self.stop_state(key))
-        else:
-            raise PoolError("busy_chip", name=Path(live).name)
+        finally:
+            with self.lock:
+                self._unqueue(key, ticket)  # every raise, a notify exception included (D-54)
         old = worker = None
         try:
             with self.lock:
@@ -727,12 +732,14 @@ class WarmPool:
                         old, worker = worker, None
                         self.workers.pop(key)
                         self.spawning.add(key)
+                        self.spawn_live[key] = Path(live).name
                         if changed:
                             notify("worker_restart", file=changed)
                 if worker is None and len(self.workers) + len(self.spawning - {key}) >= 2:
                     idle = [w for w in self.workers.values() if not w.busy]
                     if not idle:
-                        raise PoolError("busy_chip", name=Path(live).name)
+                        # gl-gxm3: a final answer names the holder and never says "waits".
+                        raise PoolError("busy_now", name=self.holder(key, live))
                     retired = min(idle, key=lambda w: w.used)
                     retired.busy = True
                     self.workers.pop(retired.key)
@@ -762,7 +769,52 @@ class WarmPool:
                 gone.pop().close()
             with self.lock:
                 self.spawning.discard(key)
+                self.spawn_live.pop(key, None)
         return worker
+
+    def _reserve(self, key, library, live, gone):
+        """Reserve this key's worker or a spawn slot; call with the lock held (D-12, D-54)."""
+        existing = self.workers.get(key)
+        if existing:
+            if existing.busy:
+                return False
+            existing.busy = True  # review S P3-3: reserved in the same locked step as the check
+            return True
+        if key in self.spawning:
+            return False
+        # Review int r1 P2-1: spawning keys count against the cap of two, and the idle worker this
+        # key retires is taken out in the same locked step, so two new keys never retire one worker.
+        idle = [w for w in self.workers.values() if not w.busy]
+        if len(self.workers) + len(self.spawning) >= 2 and not idle:
+            return False
+        if len(self.workers) + len(self.spawning) >= 2:
+            same = [w for w in idle if w.live == Path(live).resolve() and
+                    w.library.resolve() == Path(library).resolve()]
+            retired = (same or [min(idle, key=lambda w: w.used)])[0]
+            retired.busy = True
+            self.workers.pop(retired.key)
+            if same and retired.key in self.leases:
+                self.leases[key] = self.leases.pop(retired.key)  # an env switch keeps the lease
+            gone.append(retired)
+        self.spawning.add(key)
+        self.spawn_live[key] = Path(live).name
+        return True
+
+    def _unqueue(self, key, ticket):
+        """Remove the owner's own ticket; call with the lock held (D-54)."""
+        queued = self.waiting.get(key)
+        if queued and ticket in queued:
+            queued.remove(ticket)
+        if key in self.waiting and not self.waiting[key]:
+            del self.waiting[key]
+
+    def holder(self, key, live):
+        """The chip whose job holds what this caller waits for; call with the lock held (gl-gxm3)."""
+        if key in self.workers or key in self.spawning:
+            return Path(live).name  # one key is one chip folder, so the holder is this chip
+        names = [w.live.name for w in self.workers.values() if w.busy]
+        names += [name for other, name in self.spawn_live.items() if other != key]
+        return names[0] if names else Path(live).name
 
     def acquire(self, worker, python, credentials, event, stop, notify, reason="click"):
         """Request by hash and relay only a validated lease (D-13, spec 3.5)."""
@@ -978,12 +1030,18 @@ class WarmPool:
             raise PoolError("broker_failed", message=self.broker_error)
         if not self.broker:
             return dict(rows=[], in_use_here=0, limit=3)
+        if self.broker.disconnected.is_set():
+            return dict(BROKER_DOWN_STATUS, rows=[])
         if self.status_refresh.acquire(blocking=False):
             try:
                 self.status_cache = self.broker.request(dict(op="status"), cap=.75)
                 self.status_at = time.monotonic()
             except PoolError:
                 pass
+            except (OSError, EOFError):
+                # P3-2: a dead broker's pipe is named on the strip, never a 500; the next Simulate restarts it.
+                self.broker.disconnected.set()
+                return dict(BROKER_DOWN_STATUS, rows=[])
             finally:
                 self.status_refresh.release()
         event = dict(self.status_cache or dict(rows=[], in_use_here=0, limit=3))
@@ -1040,9 +1098,11 @@ class WarmPool:
                         for key, lease in list(self.leases.items()):
                             if lease["instance_id"] == event["instance_id"]:
                                 self.leases.pop(key, None)
-                                if event.get("why") == "idle":
-                                    self.notices[key] = dict(state="idle_closed", at=time.time(),
-                                                             cluster_hash=lease["cluster_hash"])
+                                # P3-1: every close reason replaces a renew offer or "closes at" notice.
+                                why = event.get("why")
+                                notice = (dict(state="idle_closed") if why == "idle" else
+                                          dict(state="instance_closed", why=why))
+                                self.notices[key] = dict(notice, at=time.time(), cluster_hash=lease["cluster_hash"])
                     elif event["ev"] == "renew_offer":
                         for key, lease in self.leases.items():
                             if lease["instance_id"] == event["instance_id"]:

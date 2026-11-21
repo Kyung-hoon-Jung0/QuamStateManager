@@ -83,7 +83,8 @@ STATES = ("none", "blocked", "no_env", "no_library", "not_configured", "needs_ta
           "chip_changed", "too_long", "timeout", "stopped", "failed")
 STATES += tuple("warming ready instance no_slot spawn_failed needs_instance renew_offer renewing expired_retry "
                 "lab_busy build_watchdog worker_crashed worker_restart busy_chip stopped_spawning stopped_kept "
-                "idle_closed broker_failed cold_fallback lease_failed stopped_none".split())
+                "idle_closed broker_failed cold_fallback lease_failed stopped_none wait_timeout busy_now "
+                "instance_closed".split())
 
 #: the child's result kinds (child protocol, spec section 4)
 KINDS = ("ok", "node_error", "serializer", "guard", "refused", "too_long", "timeout", "failed")
@@ -112,7 +113,13 @@ LINES = {
     "stopped_kept": "Stopped. The cloud instance stays open for the next click.",
     "stopped_none": "Stopped. No cloud instance was open.",
     "idle_closed": "The cloud instance was closed after 10 min without a click.",
+    "wait_timeout": "The simulator stayed busy for 5 min; nothing was run.",
     "cold_fallback": "Using a one-off simulator process this time.",
+}
+#: P3-1: the line of each broker close reason other than idle (nodesim_broker.py pushes "closed" with why)
+CLOSED_LINES = {
+    "expired": "The cloud instance reached its time limit and was closed.",
+    "reaper": "The cloud instance was closed because the process that used it is gone.",
 }
 EMPTY_TARGETS_LINE = "This usually means no qubit or pair was selected; pick targets and simulate again."
 TOO_LONG_LINE = "The cloud simulator refused a window this long."
@@ -194,6 +201,10 @@ def line(state: str, **kw) -> str:
                 "The cloud instance is kept.")
     if state == "busy_chip":
         return f"The simulator is busy with chip {kw.get('name')}; this click waits."
+    if state == "busy_now":
+        return f"The simulator is busy with chip {kw.get('name')}; nothing was run. Simulate again when it is free."
+    if state == "instance_closed":
+        return CLOSED_LINES.get(kw.get("why"), "The cloud instance was closed.")
     if state == "blocked":
         env, python, found = kw.get("env") or "?", kw.get("python") or "python", kw.get("found")
         head = (f"The simulator library in env {env} is qm-saas {found}" if found
@@ -917,6 +928,9 @@ class Manager:
                 if job["stop"].wait(.2):
                     break
             if not job["done"]:
+                if not job.get("watchdog_cause") and not job["stop"].is_set():
+                    # D-54: the limit names itself; a still-queued click never ends "Stopped".
+                    job["watchdog_cause"] = f"No result within {_g(self.limit_s)} s; the simulation was stopped."
                 job["stop"].set()
         threading.Thread(target=watch, daemon=True).start()
         return dict(job["answer"])
