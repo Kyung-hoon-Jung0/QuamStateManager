@@ -93,9 +93,9 @@
 {% if s.unassigned %}
 <details class="ui-disclosure jr-unassigned jr-line-group">
     <summary class="ui-disclosure-summary">
-        <b class="jr-line-count" data-suffix="from a session that named no chip.">{{
+        <span class="jr-line-count" data-suffix="from a session that named no chip.">{{
             '{:,}'.format(s.unassigned|length) }} journal line{{ 's' if s.unassigned|length != 1 }}{#
-            #} from a session that named no chip.</b>
+            #} from a session that named no chip.</span>
         <button type="button" class="btn-sm outline" onclick="JournalPage.adopt('{{ s.day }}')">{#
             #}Move them under {{ s.chip }}</button>
     </summary>
