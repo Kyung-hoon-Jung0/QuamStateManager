@@ -327,7 +327,7 @@
         return true;
     }
     function declutter(texts, xr, w) {
-        var gap = CHAR_PX;
+        var gap = CHAR_PX * 3;   // two blank characters at least: neighbours never read as one run
         var rows = {};
         texts.forEach(function (a) {
             var key = a.meta.lane + "|" + a.meta.row;

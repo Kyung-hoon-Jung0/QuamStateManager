@@ -1129,7 +1129,7 @@ he.destroy();
     const check = (anns, xr, w, label, mustCut) => {
         const texts = anns.filter((a) => a.meta && a.meta.role === 'segment-text');
         const marks = anns.filter((a) => a.meta && a.meta.role === 'step-mark');
-        let clash = 0;
+        let clash = 0, tight = 0;
         const groups = {};
         texts.forEach((a) => {
             const key = a.meta.lane + '|' + a.meta.row;
@@ -1137,9 +1137,13 @@ he.destroy();
         });
         Object.values(groups).forEach((g) => {
             const b = g.map((a) => boxOf(a, xr, w)).sort((p, q) => p[0] - q[0]);
-            for (let k = 1; k < b.length; k++) if (b[k - 1][1] > b[k][0]) clash++;
+            for (let k = 1; k < b.length; k++) {
+                if (b[k - 1][1] > b[k][0]) clash++;
+                if (b[k - 1][1] + 2 * CHAR > b[k][0]) tight++;
+            }
         });
         ok(clash === 0, label + ': no two segment texts of one lane row overlap (' + clash + ')');
+        ok(tight === 0, label + ': neighbours keep a two-character gap, never run together (' + tight + ')');
         let markClash = 0;
         marks.forEach((m) => {
             const mb = boxOf(m, xr, w);
