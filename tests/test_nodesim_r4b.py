@@ -27,8 +27,11 @@ MUTATIONS = {
     "R4B-retry": ("            if launch and not unauthenticated(exc):",
                   '            if launch and str(exc) != "api client is unauthenticated":'),
     # a spawn the server refused as unauthenticated is kept as a counted ghost again
-    "R4B-ghost": ('if row in self.rows and not row["instance_id"] and unauthenticated(exc):',
+    "R4B-ghost": ('if row in self.rows and not row["instance_id"] and refused(exc):',
                   'if False:'),
+    # FP3-B: only a 401 releases the reservation again, any other server refusal is kept as a counted ghost
+    "FP3B": ('if row in self.rows and not row["instance_id"] and refused(exc):',
+             'if row in self.rows and not row["instance_id"] and unauthenticated(exc):'),
 }
 
 
@@ -190,8 +193,39 @@ def test_other_launch_error_is_not_retried(rig):
     event = _spawn(rig)
     assert event["ev"] == "spawn_failed" and event["line"].endswith("internal error")
     assert len(rig.saas.launches) == 1 and rig.saas.logins == logins
+
+
+def test_server_refused_spawn_releases_its_slot_at_once(rig):
+    """FP3-B: the server answered the spawn with an error and no id -> no ghost row, 0 in use; the next Simulate
+    counts only its own pending row ("1 of 3")."""
+    rig.saas.plan["other"] = "Could not spawn simulator of version v3_7_3: internal error"
+    event = _spawn(rig)
+    assert event["ev"] == "spawn_failed"
+    assert rig.broker.rows == []
+    rig.broker.dispatch(rig.peer, dict(op="status"))
+    status = rig.peer.events[-1]
+    assert status["ev"] == "status" and status["rows"] == [] and status["in_use_here"] == 0
+    rig.saas.plan["other"] = None
+    message = dict(op="acquire", req="r2", version="v3_7_3", hash="cluster-a", reason="click", spec={},
+                   owner=dict(sm_pid=os.getpid(), worker_pid=None))
+    ev, fields, row, old = rig.broker.reserve(rig.peer, message)
+    assert ev == "spawning" and fields["in_use_here"] == 1
+    assert "1 of 3 instances of this account in use on this PC." in click.line("starting", **fields)
+    rig.broker.spawn(row, rig.peer, message, old)
+    assert rig.peer.events[-1]["ev"] == "lease"
+    assert [r["state"] for r in rig.broker.rows] == ["live"]
+
+
+@pytest.mark.parametrize("text", [
+    "HTTPSConnectionPool(host='192.0.2.10', port=443): Read timed out. (read timeout=None)",
+    "Could not spawn simulator of version v3_7_3: non-JSON response body: '<html>504 Gateway Time-out</html>'",
+])
+def test_unknown_spawn_outcome_keeps_a_counted_ghost(rig, text):
+    """D-43 unchanged: a timeout or a proxy page may hide an instance on the account, so the ghost still counts."""
+    rig.saas.plan["other"] = text
+    event = _spawn(rig)
+    assert event["ev"] == "spawn_failed"
     assert [row["state"] for row in rig.broker.rows] == ["ghost"]
-    # an ambiguous failure may have created an instance, so its ghost still counts (D-17(b), D-43)
     rig.broker.dispatch(rig.peer, dict(op="status"))
     assert rig.peer.events[-1]["in_use_here"] == 1
 
