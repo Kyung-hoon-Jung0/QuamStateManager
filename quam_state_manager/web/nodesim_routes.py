@@ -71,7 +71,7 @@ def nodesim_settings():
 
 
 def fresh_notices(notices, rows):
-    """Drop an idle_closed notice older than the newest live row for its config (P3-e)."""
+    """Drop a closed notice older than the newest live row for its config (P3-e, P3-1)."""
     out = []
     for fields in list(notices):
         fields = dict(fields)
@@ -80,7 +80,7 @@ def fresh_notices(notices, rows):
                      default=0)
         at = fields.pop("at", 0)
         fields.pop("cluster_hash", None)
-        if fields.get("state") == "idle_closed" and at <= newest:
+        if fields.get("state") in ("idle_closed", "instance_closed") and at <= newest:
             continue
         out.append(fields)
     return out
@@ -304,8 +304,10 @@ def nodesim_status():
     live = getattr(ctx.get("working_copy"), "live_folder", None) or ctx.get("path")
     ans = manager().status(_window(), request.args.get("id"), seq=seq, store_id=sid, live_folder=live)
     shared = ans.pop("shared_state", None)
-    if ans.get("state") == "busy_chip" or shared == "busy_chip":
-        ans["line"] = click.line("busy_chip", name=_r()._active_chip_label() or "chip")
+    state = shared if shared in ("busy_chip", "busy_now") else ans.get("state")
+    # gl-gxm3: the display label replaces only this chip's own folder name; another chip's holder stays named.
+    if state in ("busy_chip", "busy_now") and live and ans.get("line") == click.line(state, name=Path(live).name):
+        ans["line"] = click.line(state, name=_r()._active_chip_label() or "chip")
     return jsonify(ok=True, chip_seq=seq, **ans)
 
 

@@ -424,7 +424,7 @@ def test_p3_display_chip_and_shared_busy(app, monkeypatch, state):
     facts = app.c.get("/api/nodesim/nodes").get_json()
     assert facts["chip"] == facts["context"]["chip"] == "Demo display"
     app.m.warm_jobs["a"] = dict(store_id="different-window-store", live=app.chip.resolve(), window="w1", done=False,
-                               answer=click.answer(state, phase="build", name="internal"))
+                               answer=click.answer(state, phase="build", name=app.chip.resolve().name))
     app.m.intent_answers["w2"] = click.answer("ready")
     app.m.intent_started["w2"] = time.monotonic()
     out = app.c.get(STATUS, headers={"X-SM-Window-ID": "w2"}).get_json()
@@ -436,6 +436,11 @@ def test_p3_display_chip_and_shared_busy(app, monkeypatch, state):
     app.m.warm_jobs.clear()
     app.m._set_intent("w2", click.answer("busy_chip", name="internal"))
     assert app.m.intent_answers["w2"]["state"] == "ready"
-    monkeypatch.setattr(app.m, "status", lambda *a, **k: click.answer("busy_chip", name="internal"))
+    # gl-gxm3: this chip's own folder name shows as its display label; another chip's holder stays named.
+    own = app.chip.resolve().name
+    monkeypatch.setattr(app.m, "status", lambda *a, **k: click.answer("busy_chip", name=own))
     out = app.c.get(STATUS, headers=H).get_json()
     assert out["line"] == click.line("busy_chip", name="Demo display")
+    monkeypatch.setattr(app.m, "status", lambda *a, **k: click.answer("busy_chip", name="other-chip"))
+    out = app.c.get(STATUS, headers=H).get_json()
+    assert out["line"] == click.line("busy_chip", name="other-chip")

@@ -152,6 +152,14 @@ const SPEC_LINES = {
     timeout: 'No answer from the cloud simulator after 120 s; the instance was closed.',
     stopped: 'Stopped. The cloud instance was closed.',
     failed: 'RuntimeError: login refused',
+    /* R4A P3-5: machinery failures use the error style; the busy finals are warn notices. */
+    spawn_failed: 'The cloud simulator instance could not start: unauthenticated',
+    broker_failed: 'The simulation broker did not start: the broker folder is a file: C:/demo/saas-broker.',
+    lease_failed: 'The instance address was refused.',
+    worker_crashed: 'The simulator process stopped unexpectedly (exit code 1); the next click starts a fresh one.',
+    build_watchdog: "The node's build took over 30 s; the simulator process was stopped and the lab lock released.",
+    wait_timeout: 'The simulator stayed busy for 5 min; nothing was run.',
+    busy_now: 'The simulator is busy with chip other; nothing was run. Simulate again when it is free.',
 };
 const V_DANGER = '.ui-verdict.ui-verdict--danger';
 const PART = {
@@ -162,6 +170,8 @@ const PART = {
     done: '.ui-verdict.ui-verdict--ok', node_error: V_DANGER, serializer: V_DANGER, guard: V_DANGER,
     chip_changed: V_DANGER, too_long: V_DANGER, timeout: V_DANGER,
     stopped: '.ui-verdict.ui-verdict--neutral', failed: V_DANGER,
+    spawn_failed: V_DANGER, broker_failed: V_DANGER, lease_failed: V_DANGER, worker_crashed: V_DANGER,
+    build_watchdog: V_DANGER, wait_timeout: '.ui-notice.ui-notice--warn', busy_now: '.ui-notice.ui-notice--warn',
 };
 /* a report shaped like WaveformReport.to_dict() (keys as the cloud simulator returns them) */
 function wf(element, pulse, ts, len, port, iq, extra) {
@@ -530,6 +540,20 @@ function renderMode(file) {
     $('[data-nodesim-renew]', warmPage).click();
     await tick();
     ok(callsTo('/api/nodesim/renew').length === 1, 'P2: renewal sends its POST');
+    /* R4A P3-1: a hard-expiry close replaces the renew offer and its "closes at" line. */
+    M.queue['/api/nodesim/status'] = [{ state: 'ready', line: 'Node simulator ready.' }];
+    M.queue['/api/nodesim/instances'] = [{ rows: [], notices: [{ state: 'renew_offer',
+        line: 'The cloud instance closes at 12:34.' }] }];
+    warm.apply({ state: 'renew_offer', line: 'The cloud instance closes at 12:34.' });
+    await warm.instances();
+    ok(!$('[data-nodesim-renew]', warmPage).hidden, 'R4A P3-1: a renew notice shows the renew action');
+    M.queue['/api/nodesim/instances'] = [{ rows: [], notices: [{ state: 'instance_closed',
+        line: 'The cloud instance reached its time limit and was closed.' }] }];
+    await warm.instances();
+    ok($('[data-nodesim-renew]', warmPage).hidden, 'R4A P3-1: after a close the renew action is gone');
+    const strip = $('[data-nodesim-instances]', warmPage).textContent;
+    ok(strip.indexOf('closes at') < 0 && strip.indexOf('reached its time limit') >= 0,
+       'R4A P3-1: the close line replaces the "closes at" line');
     const warmBox = window.NodeSim.renderAnswer({ state: 'running', line: 'Building.', warm: true, phases: [] });
     ok($$('[data-phase]', warmBox).map((x) => x.getAttribute('data-phase')).join(',')
        === 'copy,lock,build,lease,connect,submit,wait,report', 'P2: warm phases follow the IPC contract');
