@@ -257,8 +257,10 @@
     }
 
     /* ---- the page ------------------------------------------------------- */
-    function nodeItems(n) {   // nodes only (a graph is not simulated here)
-        return ((n && n.items) || []).filter(function (x) { return x && x.file && (!x.kind || x.kind === "node"); });
+    function nodeItems(n) {   // nodes, plus refused entries shown disabled with their reason (P3-4, r4)
+        return ((n && n.items) || []).filter(function (x) {
+            return x && x.file && (!x.kind || x.kind === "node" || !!x.refused);
+        });
     }
     /* P2 spec 5: page controls use the UI kit and server verdict lines. */
     function mount(root) {
@@ -548,7 +550,8 @@
             var live = (S.answer && LIVE[S.answer.state]) || (S.misses > 0 && S.run);
             var idle = S.answer && S.answer.state === "done" && S.run;
             idle = idle || (root.getAttribute("data-warm-pool") === "true" && S.answer
-                && ["ready", "renew_offer", "needs_instance", "idle_closed"].indexOf(S.answer.state) >= 0);
+                && ["ready", "renew_offer", "needs_instance", "idle_closed", "instance_closed"]
+                    .indexOf(S.answer.state) >= 0);
             if (!live && !idle) return;
             // P3-f: another window's job ("busy") is live; an idle panel on screen sees it within 2 s.
             var visible = !document.hidden && !root.hidden;
@@ -617,14 +620,18 @@
                 j.rows.forEach(function (r) {
                     if (typeof r.line === "string") instanceHost.appendChild(UI.badge(r.line, "neutral"));
                 });
-                var offer = false, closed = false;
+                var offer = false, closed = null;
                 (j.notices || []).forEach(function (n) {
                     if (typeof n.line === "string") instanceHost.appendChild(UI.badge(n.line, "neutral"));
                     if (n.state === "renew_offer") offer = true;
-                    if (n.state === "idle_closed" || n.state === "instance_closed") closed = true;
+                    if (n.state === "idle_closed" || n.state === "instance_closed") closed = n;
                 });
                 // P3-1: a closed instance takes its renew offer away; nothing is left to renew.
                 var asked = !!(S.answer && S.answer.state === "renew_offer");
+                // P3-1 (r4): a later close replaces this window's own "closes at" answer, not only the strip.
+                if (asked && closed && typeof closed.line === "string") {
+                    apply({ state: closed.state, line: closed.line });
+                }
                 renewBtn.hidden = !(offer || (asked && !closed));
             });
         }

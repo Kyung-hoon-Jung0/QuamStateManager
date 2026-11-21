@@ -902,6 +902,9 @@ class Manager:
                             _write_json(detached.parent / "_result.json", result)
                 else:
                     final = answer(exc.state if exc.state in STATES else "broker_failed", **exc.fields)
+                    if exc.state == "renew_offer":
+                        # P3-1 (r4): a later close of this instance replaces this window's "closes at" line.
+                        job["pool_key"], job["offer_at"] = key, time.time()
             except Exception as exc:  # transport errors are scrubbed, never logged
                 final = answer("failed", message=str(exc))
             finally:
@@ -983,6 +986,16 @@ class Manager:
         """Record an intent answer; its notifies never move the intent's start time (int r2 N-1)."""
         if value.get("state") != "busy_chip":
             self.intent_answers[key] = value
+
+    def _closed_over_offer(self, job, out):
+        """A close after this window's renew offer wins over its "closes at" line (P3-1, r4)."""
+        if out.get("state") != "renew_offer" or not job.get("pool_key"):
+            return out
+        note = (getattr(self.pool, "notices", None) or {}).get(job["pool_key"]) or {}
+        if note.get("state") not in ("idle_closed", "instance_closed") or note.get("at", 0) < job["offer_at"]:
+            return out
+        fields = {k: v for k, v in note.items() if k not in ("state", "at", "cluster_hash")}
+        return {**answer(note["state"], **fields), "id": out.get("id")}
 
     def _mark_latest(self, key, rid):
         """Record a window's newest click and its time (review S P2-5)."""
@@ -1174,7 +1187,7 @@ class Manager:
         warm = self.warm_jobs.get(rid or self.latest.get(key))
         if warm:
             warm["seen"] = time.monotonic()
-            out = copy.deepcopy(warm["answer"])
+            out = self._closed_over_offer(warm, copy.deepcopy(warm["answer"]))
             prov = ((out.get("result") or {}).get("provenance") or {})
             if prov and seq is not None and (prov.get("seq") != seq or
                                              (store_id is not None and prov.get("store_id") != store_id)):
