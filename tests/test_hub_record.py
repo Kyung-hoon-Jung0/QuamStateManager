@@ -1107,7 +1107,8 @@ DOOR_SITES = {
     ("generator/nodesim_broker.py", "schedule_close", "save"):
         (2, "non-recording: mark close intent in the broker lease table; no chip files"),
     ("generator/nodesim_broker.py", "spawn", "save"):
-        (3, "non-recording: persist spawn/removal/ghost rows in the broker lease table; no chip files"),
+        (4, "non-recording: persist spawn/removal/ghost rows and the released 401 reservation in the broker lease "
+            "table; no chip files"),
     ("core/chip_copy.py", "write_chip_folder", "named"): (2, "fresh temporary chip copies for checks; never live or tracked working files"),
     ("web/routes.py", "state_load_check", "named"): (1, "temporary state folder used only by the isolated load probe"),
     ("web/routes.py", "state_load_check", "save"): (1, "fresh store saved into the temporary probe folder"),
