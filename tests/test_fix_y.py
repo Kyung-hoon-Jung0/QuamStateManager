@@ -24,8 +24,8 @@ _IRB = {"alpha": 0.3518, "fidelity": 0.8141340651086043, "epg": 0.18586593489139
 
 @pytest.mark.parametrize("exp,fit,want", [
     ("37a_two_qubit_standard_rb_dsp", _STD, "fidelity 0.6120"),
-    ("37b_two_qubit_interleaved_cz_rb_dsp", _IRB, "epg 18.59 % bound 61 %"),
-    ("37b_two_qubit_interleaved_cz_rb_dsp", {"alpha": 0.4, "epg": 0.0481}, "epg 4.81 %"),
+    ("37b_two_qubit_interleaved_cz_rb_dsp", _IRB, "epg 18.59% / 61%"),
+    ("37b_two_qubit_interleaved_cz_rb_dsp", {"alpha": 0.4, "epg": 0.0481}, "epg 4.81%"),
     ("37b_two_qubit_interleaved_cz_rb_dsp", {"alpha": 0.4, "fidelity": 0.95}, "fidelity 0.9500"),
     ("single_qubit_randomized_benchmarking", {"alpha": 0.99, "fidelity": 0.995}, "fidelity 0.9950"),
 ])
@@ -50,3 +50,13 @@ def test_names_that_are_not_rb(exp):
 
 def test_store_cache_bumped():
     assert D._STORE_CACHE_V >= 8
+
+
+def test_interleaved_text_fits_the_cell_and_the_title_names_the_fields():
+    # the GUI check measured ~8.1 px per character in the 160 px cell; 18 characters fit
+    r = _run("37b_two_qubit_interleaved_cz_rb_dsp", {"q4-5": {"epg": 0.1858, "systematic_bound": 0.7979}})
+    text = DatasetStore._extract_key_metric(r)
+    assert text == "epg 18.58% / 80%" and len(text) <= 18
+    js = (Path(__file__).resolve().parent.parent / "quam_state_manager/web/static/dataset-virtual.js").read_text(
+        encoding="utf-8")
+    assert "after the slash: its systematic_bound" in js and "metricTitle(r.metric)" in js

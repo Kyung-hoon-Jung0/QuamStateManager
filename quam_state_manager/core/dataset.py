@@ -99,8 +99,8 @@ _COLD_SCAN_BUDGET_S = 3.0
 # number with no unit names the field it is (a v5 row re-served it bare).
 # v7 (W3-6): a fit file's ns stamp on a seconds value no longer scales a
 # coherence metric to "0.0 ns" (a v6 row re-served it).
-# v8: an RB run headlines its "fidelity" field, not the decay alpha (a v7 row
-# re-served "alpha ...").
+# v8: an RB run headlines its "fidelity" field (interleaved: "epg" and its
+# "systematic_bound"), not the decay alpha (a v7 row re-served "alpha ...").
 _STORE_CACHE_V = 8
 # A scan that changed something writes the cache this long after the LAST
 # such scan -- a burst of landing runs is one write, not one per run.
@@ -3349,10 +3349,12 @@ class DatasetStore:
                 return type(v) is not bool and isinstance(v, (int, float)) and math.isfinite(v)
             epg = first_qubit_results.get("epg")
             if "interleaved" in exp and _fin(epg):
-                text = f"epg {epg * 100:.2f} %"
+                # short enough for the 160 px cell (Fix Y GUI: "... bound NN %" was cut);
+                # the cell's title spells the slash out (dataset-virtual.js metricTitle)
+                text = f"epg {epg * 100:.2f}%"
                 bound = first_qubit_results.get("systematic_bound")
                 if _fin(bound):
-                    text += f" bound {bound * 100:.0f} %"
+                    text += f" / {bound * 100:.0f}%"
                 return text, False
             val = first_qubit_results.get("fidelity")
             if _fin(val):
