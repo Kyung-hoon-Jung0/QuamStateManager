@@ -757,7 +757,9 @@
         // Fix X3: 140 fit to 127 at a 1440 px window clipped it again ("fidelity 0.71..."); 160 and the fit takes
         // Key Metric's width last (FIT_LAST below), so it shows whole wherever Experiment can still give.
         {key: 'metric', label: 'Key Metric', on: true, w: 160, sortKey: 'metric', type: 'num', cls: 'col-metric',
-         title: function (r) { return (r.metric == null || r.metric === '') ? KEY_METRIC_BLANK : metricTitle(r.metric); },
+         title: function (r) {
+             return (r.metric == null || r.metric === '') ? KEY_METRIC_BLANK : metricTitle(r.metric);
+         },
          render: function (r) { return (r.metric == null || r.metric === '')
              ? '<span class="muted" title="' + escapeHtml(KEY_METRIC_BLANK) + '">-</span>'
              : (allTargetsFailed(r)
