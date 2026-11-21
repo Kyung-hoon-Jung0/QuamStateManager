@@ -185,7 +185,7 @@ class TestNodeScan:
     def test_syntax_error_is_captured(self, tmp_path):
         p = _write(tmp_path, "broken.py", "def (:\n")
         info = node_scan.scan_file(p)
-        assert info.error and "parse error" in info.error
+        assert info.error and info.error.startswith("syntax error at line")
 
 
 # ---------------------------------------------------------------------------
