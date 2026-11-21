@@ -908,7 +908,9 @@
     // Fix X3: at a 1280 px window (917 px pane) every floor together was 928 px. Experiment's floor 150 -> 104 (its
     // cell is the widest and reads by its prefix), so a 5-digit ID with its wrote mark fits with FIT_SLACK to spare;
     // Key Metric gives only what Experiment, Tags and Folder cannot (FIT_LAST).
-    var FIT_FLOOR = { exp: 104, tags: 87, folder: 72, metric: 100 };
+    // Final round: with the Folder column shown, a 1280 px window left Key Metric 132 px and cut "fidelity 0.xxxx"
+    // and "epg X.XX% / NN%" (both need ~140 px). Experiment's floor 104 -> 88 so Key Metric keeps >= 140 there.
+    var FIT_FLOOR = { exp: 88, tags: 87, folder: 72, metric: 100 };
     var FIT_LAST = { metric: true };
     var FIT_SLACK = 4;   // px the fitted table leaves free: sub-pixel borders never add a scrollbar
     function fittedWidths(cols) {
