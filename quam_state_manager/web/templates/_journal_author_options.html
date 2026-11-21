@@ -1,0 +1,4 @@
+{#- The Calibration log's "who" options, one list for the page and its day swap. A run with no recorded author is
+    keyed "unknown" (story.py); its option says what that means and still filters the same rows. -#}
+<option value="">everyone</option>
+{% for a in story.authors %}<option value="{{ a }}" {% if story.filters.author == a %}selected{% endif %}>{{ 'no author recorded' if a == 'unknown' else a }}</option>{% endfor %}

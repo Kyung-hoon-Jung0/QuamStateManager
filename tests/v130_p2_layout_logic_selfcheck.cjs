@@ -44,7 +44,7 @@ if (mode === 'gutter') {
   assert.doesNotMatch(match[0], /localStorage|loadPreset|loadUserChoice|userSizes/, 'no stored value moves it');
 } else if (mode === 'status') {
   const dsv = read('static/dataset-virtual.js');
-  const match = dsv.match(/function statusChip\(status\) \{[\s\S]*?\n    \}/);
+  const match = dsv.match(/function statusChip\(status, noOutcome\) \{[\s\S]*?\n    \}/);
   assert.ok(match);
   // statusChip calls marksFailure (FAILURE_RE): both come from the same shipped source, never a retyped copy
   const failRe = dsv.match(/var FAILURE_RE = [^\n]*;/);

@@ -590,10 +590,22 @@
         if (s < 3600) return Math.floor(s / 60) + 'm' + String(s % 60).padStart(2, '0') + 's';
         return Math.floor(s / 3600) + 'h' + String(Math.floor((s % 3600) / 60)).padStart(2, '0') + 'm';
     }
-    function statusChip(status) {
+    // Fix X: a finished run whose node recorded an empty outcomes map says so -- the same "no outcome" the
+    // Calibration log card's pill reads, never the plain "finished" of a run whose targets succeeded.
+    function emptyOutcomes(row) {
+        var oc = row && row.oc;
+        return !!oc && typeof oc === 'object' && Object.keys(oc).length === 0;
+    }
+    function statusChip(status, noOutcome) {
         if (!status) return '<span class="ds-status ds-status-unknown" title="no status">–</span>';
         var s = String(status).toLowerCase(), cls = 'ds-status-unknown';
-        if (/(finish|done|complet)/.test(s)) cls = 'ds-status-done';
+        if (/(finish|done|complet)/.test(s)) {
+            if (noOutcome) {
+                return '<span class="ds-status ds-status-done" data-no-outcome="1" title="' + escapeHtml(status)
+                    + '; the node recorded no outcome for any target">' + escapeHtml(status) + ', no outcome</span>';
+            }
+            cls = 'ds-status-done';
+        }
         else if (/(success|pass)/.test(s)) cls = 'ds-status-ok';
         else if (/(run|progress|pending|queue)/.test(s)) cls = 'ds-status-run';
         else if (marksFailure(s)) cls = 'ds-status-err';
@@ -678,6 +690,8 @@
     // ── column registry (single source of truth for colgroup + header + rows) ──
     // structural: always shown, not in the Properties menu. on: default-visible.
     // w: default px width (user-resizable). sortKey/type: enables header sort.
+    var KEY_METRIC_BLANK = 'No key metric: this run saved no finite fit number (no fit results, or the fit did not '
+        + 'converge). Open the run for its fit details.';
     var COLUMNS = [
         {key: 'select', structural: true, w: 34, cls: 'col-select',
          header: '<input type="checkbox" id="ds-select-all" aria-label="Select every visible row for compare">',
@@ -712,7 +726,9 @@
              var as = was ? ' <span class="muted ds-recorded-as" title="Saved before the qubits were renamed">(as ' + escapeHtml(was.join(', ')) + ')</span>' : '';
              return (now.length ? escapeHtml(now.join(', ')) : (as ? '' : '-')) + as;
          }},
-        {key: 'status', label: 'Status', on: true, w: 124, sortKey: 'status', type: 'str',   // L9: 96 clipped "finished"; W2-11: 104 fit "all failed" by 2 px at the default size and clipped it at a larger one
+        // L9: 96 clipped "finished"; W2-11: 104 fit "all failed" by 2 px at the default size and clipped it at a
+        // larger one; Fix X: 124 -> 150 for "finished, no outcome" (Tags gave up the width)
+        {key: 'status', label: 'Status', on: true, w: 150, sortKey: 'status', type: 'str',
          render: function (r) {
              // a failed run status (error, aborted) stays on the cell beside the target count
              var lead = failedRunLead(r);
@@ -726,11 +742,14 @@
                            + f.k + ' of ' + f.n + ' targets of this run as failed">'
                            + escapeHtml(lead) + f.k + ' of ' + f.n + ' failed</span>';
                        })(failedTargets(r))
-                     : statusChip(r.status));
+                     : statusChip(r.status, emptyOutcomes(r)));
          }},
-        {key: 'metric', label: 'Key Metric', on: true, w: 108, sortKey: 'metric', type: 'num', cls: 'col-metric',   // L9: 96 clipped -3.0143e-05
+        // Fix X: 108 clipped "fidelity 0.9876" (15 monospace characters at .82rem, ~118 px plus the cell padding)
+        // to "fidelity 0..."; Tags gave up the 32 px. The cell's title carries the full text at any width.
+        {key: 'metric', label: 'Key Metric', on: true, w: 140, sortKey: 'metric', type: 'num', cls: 'col-metric',
+         title: function (r) { return (r.metric == null || r.metric === '') ? KEY_METRIC_BLANK : String(r.metric); },
          render: function (r) { return (r.metric == null || r.metric === '')
-             ? '<span class="muted" title="No key metric: this run saved no finite fit number (no fit results, or the fit did not converge). Open the run for its fit details.">-</span>'
+             ? '<span class="muted" title="' + escapeHtml(KEY_METRIC_BLANK) + '">-</span>'
              : (allTargetsFailed(r)
                  ? '<span class="muted ds-metric-failed" title="From a fit the node marked failed for every target; not a calibrated value">' + escapeHtml(r.metric) + ' ✗</span>'
                  : (metricFromFailedTarget(r)
@@ -739,7 +758,7 @@
                      : escapeHtml(r.metric))); }},
         {key: 'when', label: 'When', on: true, w: 88, sortKey: 'when', type: 'num',
          render: function (r) { return '<span title="' + escapeHtml(_whenTitle(r)) + '">' + escapeHtml(fmtRelative(r)) + '</span>'; }},
-        {key: 'tags', label: 'Tags', on: true, w: 180, cls: 'col-tags',
+        {key: 'tags', label: 'Tags', on: true, w: 122, cls: 'col-tags',
          render: function (r) { return tagsCell(r); }},
         {key: 'duration', label: 'Duration', on: false, w: 84, sortKey: 'dur', type: 'num',
          render: function (r) { return escapeHtml(fmtDuration(r.dur)); }},
@@ -1312,8 +1331,10 @@
         } else {
             band.appendChild(span('ds-digest-item', 'no run errors'));
         }
+        // Fix X-9: name the unit (target fits, summed over every target).
+        var nfits = Object.keys(qfail).reduce(function (a, q) { return a + qfail[q]; }, 0);
         if (qs.length) band.appendChild(span('ds-digest-oclabel ui-text-quiet',
-            'fit not accepted, runs per target:'));
+            nfits + ' target fit' + (nfits === 1 ? '' : 's') + ' not accepted, runs per target:'));
         qs.forEach(function (q) {
             var b = document.createElement('button');
             b.className = 'ds-help-example ds-digest-qchip';

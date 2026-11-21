@@ -31,10 +31,12 @@
     <span class="jr-stat jr-stat-day">{{ s.day }}</span>
     <span class="jr-stat"><b class="ui-count">{{ '{:,}'.format(s.counts.runs) }}</b> run{{ 's' if s.counts.runs != 1 }}</span>
     {% if s.counts.failed %}<span class="jr-stat jr-stat-bad" title="Runs where the node marked at least one target{#
-      #} failed"><b class="ui-count">{{ '{:,}'.format(s.counts.failed) }}</b> with a failed target</span>{% endif %}
+      #} failed"><b class="ui-count">{{ '{:,}'.format(s.counts.failed) }}</b> run{#
+      #}{{ 's' if s.counts.failed != 1 }} with a failed target</span>{% endif %}
     {% if s.counts.gate_fail %}{#
       #}<span class="jr-stat jr-stat-bad" title="Runs whose Auto Calibrate gate verdict is fail">gate fail{#
-      #} <b class="ui-count">{{ '{:,}'.format(s.counts.gate_fail) }}</b></span>{% endif %}
+      #} <b class="ui-count">{{ '{:,}'.format(s.counts.gate_fail) }}</b> run{#
+      #}{{ 's' if s.counts.gate_fail != 1 }}</span>{% endif %}
     {% set n_cards = s.counts.write_cards if s.counts.write_cards is defined else s.counts.writes %}
     {#- P1-4 (UX round): this count is SM's own writes (Apply, Undo, Auto-Sync);
         what the runs changed is counted beside it, so a lab day never reads "0 writes" -#}

@@ -105,7 +105,10 @@ class TestThePage:
         body, _, oob = html.partition('<select name="author"')
         assert ">unknown<" not in body, "unrecorded authors render blank (Fix W)"
         assert 'class="jr-author jr-author-unknown"' not in body
-        assert ">unknown<" in oob, "and the filter offers it as a choice"
+        # Fix X (X-6): the choice names what it means, never "unknown", and still selects the same rows
+        assert '<option value="unknown" >no author recorded</option>' in oob, oob
+        assert ">unknown<" not in oob
+        assert 'id="card-101"' in c.get(f"/journal/day?day={DAY}&author=unknown").get_data(as_text=True)
         r = c.post("/journal/claim", json={"run_id": 101, "who": "\uac00OO", "note": "mine"}, headers=_H)
         assert r.status_code == 200 and r.get_json()["claim"]["author"] == "human:\uac00OO"
         html = c.get(f"/journal/day?day={DAY}").get_data(as_text=True)

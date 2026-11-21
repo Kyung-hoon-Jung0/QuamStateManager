@@ -275,10 +275,11 @@
         if (!line) return;
         if (!_clock) { line.textContent = 'This PC’s clock: unknown'; return; }
         var off = isoOffsetMinutes(_clock.os_zone && _clock.os_zone.utc_offset);
+        // Fix X: the row is the header plus one line; the time-sync detail lives in this line's tooltip
         line.textContent = 'This PC: ' + (off == null ? 'zone unknown' : offsetText(off))
-            + (_clock.os_zone && _clock.os_zone.iana ? ' (' + _clock.os_zone.iana + ')' : '')
-            + ' · ' + (_clock.ntp_text || 'Time sync: unknown');
-        line.title = (_clock.ntp && _clock.ntp.detail) || '';
+            + (_clock.os_zone && _clock.os_zone.iana ? ' (' + _clock.os_zone.iana + ')' : '');
+        line.title = (_clock.ntp_text || 'Time sync: unknown')
+            + (_clock.ntp && _clock.ntp.detail ? ' - ' + _clock.ntp.detail : '');
         line.setAttribute('data-ntp', _clock.ntp && _clock.ntp.synced === true ? 'on'
             : _clock.ntp && _clock.ntp.synced === false ? 'off' : 'unknown');
     }

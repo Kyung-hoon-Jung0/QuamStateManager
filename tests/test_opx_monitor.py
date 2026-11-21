@@ -1093,7 +1093,7 @@ def test_round4_unconfigured_health_preserves_occupancy(env, mode, label):
         _watch(m, clock, 7300)
     html = page(app, 'live')
     assert '<strong class="ui-verdict-key">' + label + '</strong>' in html
-    assert 'health not assessed: no admin URL / no limits set' in html
+    assert 'health not checked: no admin URL / no limits set' in html
     assert 'ui-opxmon-health-note' in html
     assert '<strong class="ui-verdict-key">PROBLEM</strong>' not in html
 
@@ -1242,9 +1242,11 @@ def test_round5_display_formatting(env):
 def test_stress_d1_unconfigured(env):
     app, m, *_ = env
     om.save_settings(m.instance, {})
-    assert m.status()['health']['reason'] == 'health not assessed'
+    assert m.status()['health']['reason'] == 'health not checked'
     html = page(app, 'live')
-    assert 'Health not assessed' in html and '<strong class="ui-verdict-key">PROBLEM' not in html
+    # Fix X (X-8): said once, in the top bar's phrase
+    assert 'Health not checked' in html and html.lower().count('health not checked') == 1
+    assert '<strong class="ui-verdict-key">PROBLEM' not in html
 
 
 def test_stress_d2_cleanup_poll_and_close(env):
@@ -2791,7 +2793,7 @@ def test_unconfigured_top_bar_badge_is_short_and_the_tooltip_says_how_to_fix(env
     assert 'Set an admin URL or temperature limits in Monitor settings.' in title
 
 
-GREY_UNSET = {'color': 'grey', 'reason': 'health not assessed: no admin URL / no limits set'}
+GREY_UNSET = {'color': 'grey', 'reason': 'health not checked: no admin URL / no limits set'}
 
 
 @pytest.mark.parametrize('ans, state, word', [
@@ -2809,7 +2811,7 @@ def test_unassessed_badge_says_the_occupancy_of_a_fresh_read(ans, state, word):
 def test_badge_keeps_health_words_when_health_is_assessed():
     assert om.badge_label(answer(), {'color': 'red', 'problem': True, 'reason': 'x'}, 'ok') == 'problem'
     assert om.badge_label(answer(), {'color': 'amber', 'reason': '1 open QM claims resources'}, 'ok')         == '1 open QM claims resources'
-    assert om.badge_label(answer(), {'color': 'grey', 'reason': 'health not assessed'}, 'ok') == 'not checked'
+    assert om.badge_label(answer(), {'color': 'grey', 'reason': 'health not checked'}, 'ok') == 'not checked'
 
 
 def test_stale_monitor_badge_says_not_checked(env):

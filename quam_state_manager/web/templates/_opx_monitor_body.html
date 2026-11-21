@@ -36,7 +36,10 @@
 <span class="ui-verdict-meta ui-opxmon-status {{ 'ui-opxmon-status--' ~ st.state }}">
   {%- if st.target_label %}<span class="ui-opxmon-target">{{ st.target_label }}</span> &middot; {% endif -%}
   <span class="ui-opxmon-sentence" title="{{ plain_error(st.sentence) }}" data-state="{{ st.state }}">{{ plain_error(st.sentence_shown or st.sentence) }}</span>
-  {%- if st.health.color == 'grey' and not st.health.problem %} &middot; <span class="ui-opxmon-health-note">{{ st.health.reason }}</span>{% endif -%}
+  {#- an unconfigured band already says "Health not checked": the note is not said twice -#}
+  {%- if st.health.color == 'grey' and not st.health.problem
+        and st.state != 'unconfigured' %} &middot; {#
+    #}<span class="ui-opxmon-health-note">{{ st.health.reason }}</span>{% endif -%}
   {%- if hottest and not temperature_failed and tab != 'live' %} &middot; <span class="ui-opxmon-hottest">{{ 'Above limit:' if hottest_limit is not none and hottest.value > hottest_limit else 'Hottest:' }} {{ hottest.label }} {{ '%.1f'|format(hottest.value) }} °C / {{ 'limit ' ~ ('%g'|format(hottest_limit)) ~ ' °C' if hottest_limit is not none else 'no limit set' }}</span>{% endif -%}
 </span></div>
 {%- if flash and flash_at not in ('settings', 'names') %}{{ flash_line() }}{% endif %}

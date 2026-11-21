@@ -97,6 +97,9 @@
             <input type="hidden" name="folder" value="{{ resume_path }}">
             <button type="submit" class="btn-sm landing-resume-btn"
                     title="{{ resume_path }}">Resume {{ resume_name }}{% if last_project %} ({{ last_project }}){% endif %}</button>
+            {#- the Resume press arms Auto-Sync (/load): the same notice and alternative as the Re-open offer -#}
+            {% set _arms = resume_arms_auto_sync %}{% set _alt_label = "Re-open without Auto-Sync" %}
+            {% include "_open_auto_sync_choice.html" %}
         </form>
         {% if resume_waiting %}<span class="resume-offer-waiting">{{ resume_waiting }}</span>{% endif %}
     </div>

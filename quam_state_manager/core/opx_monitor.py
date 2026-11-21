@@ -1167,7 +1167,7 @@ def temperature_limit(key, thresholds):
 
 def health(answer, admin, thresholds, state):
     if state == 'unconfigured':
-        return {'color': 'grey', 'reason': 'health not assessed', 'details': ''}
+        return {'color': 'grey', 'reason': 'health not checked', 'details': ''}
     ans = answer or {}
     bad, unknown = [], []
     known = bool(admin.get('known'))
@@ -1208,7 +1208,9 @@ def health(answer, admin, thresholds, state):
         return {'color': 'grey', 'problem': True, 'reason': admin['reason'],
                 'details': 'The SDK itself answers.' if state == 'ok' else ''}
     if unknown or not known:
-        return {'color': 'grey', 'reason': unknown[0] if unknown else 'health not assessed: no admin URL / no limits set', 'details': '; '.join(unknown)}
+        return {'color': 'grey',
+                'reason': unknown[0] if unknown else 'health not checked: no admin URL / no limits set',
+                'details': '; '.join(unknown)}
     count = len(ans.get('open_qms') or [])
     return {'color': 'amber' if count else 'green', 'reason': f"{count} open QM{'' if count == 1 else 's'} claim{'s' if count == 1 else ''} resources" if count else 'admin operational' if admin.get('known') else 'reported temperatures within configured limits'}
 
@@ -1230,7 +1232,7 @@ def known_answer(answer, section_times, age_s):
 
 def verdict(answer, health_state, idle_states, state=None, age_s=None):
     if state == 'unconfigured':
-        return {'label': 'Health not assessed', 'reason': 'Set up a connection in Monitor settings'}
+        return {'label': 'Health not checked', 'reason': 'Set up a connection in Monitor settings'}
     if state == 'starting':
         return {'label': 'Checking...', 'reason': 'Waiting for the first server answer'}
     if state == 'stale' and (answer or {}).get('open_qms') is None and not health_state.get('problem'):
@@ -1274,8 +1276,8 @@ def _occupancy_verdict(answer, health_state, idle_states):
 def badge_label(answer, health_state, state):
     """The top-bar badge word: the health result, or the occupancy when health is merely unassessed.
 
-    Health stays grey ("not assessed") while no admin URL and no limits are set, even though the
-    monitor reads the server fine; then a fresh read says busy / free / N open, from the same
+    Health stays grey ("not checked", the top bar's phrase too) while no admin URL and no limits are set, even
+    though the monitor reads the server fine; then a fresh read says busy / free / N open, from the same
     occupancy rule as the page band. Stale, unconfigured or unknown reads stay "not checked".
     """
     if health_state.get('problem'):

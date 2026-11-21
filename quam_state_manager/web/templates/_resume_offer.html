@@ -4,13 +4,9 @@
     <input type="hidden" name="folder" value="{{ _ro.path }}">
     <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') if request.full_path else request.path }}">
     <button type="submit" class="btn-sm resume-offer-btn" title="{{ _ro.path }}">Re-open {{ _ro.name }}</button>
-    {% if _ro.arms_auto_sync %}
-    <button type="submit" name="auto_sync" value="0" class="btn-sm outline">Re-open without Auto-Sync</button>
-    {% endif %}
     {#- /load arms Auto-Sync for this chip; said only when the open rule allows it -#}
-    {% if _ro.arms_auto_sync %}<p class="ui-text-quiet" data-resume-arms-auto-sync>Opening also turns Auto-Sync
-    on for this chip when nothing waits to sync: your edits then go to the chip file. Turn it off in the top bar.</p>
-    {%- endif %}
+    {% set _arms = _ro.arms_auto_sync %}{% set _alt_label = "Re-open without Auto-Sync" %}
+    {% include "_open_auto_sync_choice.html" %}
     {#- v1.5.1 (U P2-31): the edits waiting in it are named before the press -#}
     {% if _ro.waiting %}<span class="resume-offer-waiting" title="Kept by SM since the last session; re-open the chip to see them in the sync panel">{{ _ro.waiting }}</span>{% endif %}
 </form>

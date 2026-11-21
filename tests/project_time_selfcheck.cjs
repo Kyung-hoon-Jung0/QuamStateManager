@@ -151,8 +151,11 @@ const btn = (doc, sel) => doc.querySelector(sel);
     ok(W.d.querySelector('[data-tz-clock]').textContent === '', 'P3: nothing claims a clock status before it answers');
     W.hold.clock();
     await until(() => /This PC: UTC\+9/.test(W.d.querySelector('[data-tz-clock]').textContent));
-    ok(/This PC: UTC\+9 · Time sync: on \(time\.windows\.com\)/.test(W.d.querySelector('[data-tz-clock]').textContent),
-       'P3: then the PC zone and time sync, got "' + W.d.querySelector('[data-tz-clock]').textContent + '"');
+    const clk = W.d.querySelector('[data-tz-clock]');
+    ok(/^This PC: UTC\+9( \([^)]*\))?$/.test(clk.textContent) && !/Time sync/.test(clk.textContent),
+       'P3: then the PC zone on one short line, got "' + clk.textContent + '"');
+    ok(/^Time sync: on \(time\.windows\.com\)/.test(clk.title),
+       'P3: the time-sync detail is the tooltip of that line, got "' + clk.title + '"');
   }
   // P4 -- follows the env picker's project
   {

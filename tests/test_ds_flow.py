@@ -100,7 +100,8 @@ class TestDigestBandSaysWhatItCounted:
         ])
         assert "all OK" not in band
         assert "no run errors" in band
-        assert '<span class="ds-digest-oclabel ui-text-quiet">fit not accepted, runs per target:</span>' in band
+        assert ('<span class="ds-digest-oclabel ui-text-quiet">3 target fits '
+                'not accepted, runs per target:</span>') in band
         assert "failed outcomes:" not in band
         assert 'data-example="date:2026-09-24 outcome:q3=fail"' in band
         assert "q3&nbsp;×2" in band

@@ -62,7 +62,8 @@ def test_not_checked_line_names_the_not_computable_check_not_an_ok_detail(world,
     assert gate["reason"] == missing
 
 
-def test_suspect_reason_is_unchanged(world, monkeypatch):  # noqa: F811
+def test_suspect_reason_is_the_suspect_checks(world, monkeypatch):  # noqa: F811
+    # Fix X (X-2): "first" -> "second": a suspect leads with failure_reason, the check that made it suspect
     run = world["ds"].get_run(104)
     monkeypatch.setattr(families, "family_for", lambda name: SimpleNamespace(key="sample"))
     monkeypatch.setattr(gates, "node_targets", lambda run, fam: ["q4"])
@@ -70,7 +71,7 @@ def test_suspect_reason_is_unchanged(world, monkeypatch):  # noqa: F811
         target="q4", verdict="suspect", failure_mode="noisy", reasons=["first", "second"],
         checks={"G2_metrics": "suspect"}, failure_reason="second"))
     gate = story.gate_for_run(world["inst"], run, folder_key="p3w-suspect")
-    assert gate["verdict"] == "suspect" and gate["reason"] == "first"
+    assert gate["verdict"] == "suspect" and gate["reason"] == "second"
 
 
 def test_no_chip_fold_count_carries_no_bold_override():

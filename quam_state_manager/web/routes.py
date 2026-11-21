@@ -8095,6 +8095,8 @@ def _home_landing(config_exists, session):
         resume_name=_chip_display_name(Path(resume_path)) if resume_path else "",
         # v1.5.1 (U P2-31): the edits waiting in it, named on the Resume card
         resume_waiting=_waiting_note(resume_path) if resume_path else "",
+        # the Resume press arms Auto-Sync (/load): the same rule as the Re-open offer
+        resume_arms_auto_sync=_open_arms_auto_sync(resume_path) if resume_path else False,
         recent_paths=recents[:3],
         # True first run (no session history at all) → the landing's
         # "Getting started" manual starts expanded; any history collapses it.
@@ -9591,7 +9593,9 @@ def qualibrate_open_project():
         logger.warning("project zone default failed for %s", name, exc_info=True)
     try:
         opened = _activate_quam(state["native"])
-        _maybe_auto_arm_on_open(opened)
+        # the card's "... without Auto-Sync" press (the same field as /load)
+        if request.form.get("auto_sync") != "0":
+            _maybe_auto_arm_on_open(opened)
     except (FileNotFoundError, ValueError, OSError) as e:
         return render_template("_status.html", message=str(e), level="error"), 400
     if env_changed:
@@ -12004,9 +12008,24 @@ def _resume_offer() -> dict | None:
                 # v1.5.1 (U P2-31): the edits waiting in it are named
                 "waiting": _waiting_note(path),
                 # the press also arms Auto-Sync (/load); said only when it will
-                "arms_auto_sync": _auto_sync_open_allowed(_auto_sync_chip_key({"path": path}))}
+                "arms_auto_sync": _open_arms_auto_sync(path)}
     except (OSError, ValueError, TypeError):
         return None
+
+
+@bp.app_template_global("open_arms_auto_sync")
+def _open_arms_auto_sync(path) -> bool:
+    """Would a person's open of the chip at *path* arm Auto-Sync? The part of
+    the arm-on-open rule known before the chip opens (_auto_sync_open_allowed).
+    One answer for every open button that offers "without Auto-Sync"
+    (_open_auto_sync_choice.html): the Re-open offer, the landing's Resume and
+    a project card's Open / Continue."""
+    if not isinstance(path, str) or not path:
+        return False
+    try:
+        return _auto_sync_open_allowed(_auto_sync_chip_key({"path": path}))
+    except Exception:  # noqa: BLE001 -- unknown: no promise either way
+        return False
 
 
 def _waiting_note(path) -> str:
@@ -46388,6 +46407,8 @@ def _datasets_payload_compute(active: list[dict], is_collections: bool,
             "date": latest_day,
             "total": len(day_rows),
             "failed": len(failed_rows),
+            # Fix X-9: the strip names its unit: target fits, not runs.
+            "fits_failed": sum(qubit_fail.values()),
             "qubit_fail": sorted(qubit_fail.items(),
                                  key=lambda kv: (-kv[1], natural_key(kv[0])))[:8],
         }
