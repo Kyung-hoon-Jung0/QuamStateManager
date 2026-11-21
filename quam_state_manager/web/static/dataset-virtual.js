@@ -721,6 +721,8 @@
         {key: 'folder', label: 'Folder', on: true, w: 110, cls: 'col-folder', sortKey: 'f', type: 'str',
          render: function (r) { var f = state.foldersByKey[r.f]; if (!f) return ''; return '<span class="folder-chip" title="' + escapeHtml(f.full_path || '') + '">' + escapeHtml(f.label || '') + '</span>'; }},
         {key: 'exp', label: 'Experiment', on: true, w: 280, sortKey: 'exp', type: 'str',   // L9: 230 clipped names once the table stopped growing to its content
+         // final round: a fitted narrow column shows only the prefix; the title carries the whole name
+         title: function (r) { return r.exp || ''; },
          render: function (r) { return '<code>' + escapeHtml(r.exp || '') + '</code>'; }},
         {key: 'qubits', label: 'Qubits', on: true, w: 96, sortKey: 'qubits', type: 'str',
          // Prefer the intact pair names ("q0-1") for 2Q runs; fall back to single

@@ -166,4 +166,4 @@ def test_key_metric_whole_at_the_1280_pane_with_folders():
     result = subprocess.run(["node", str(Path(__file__).with_name("ds_fit_metric_selfcheck.cjs"))],
                             capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "15 checks passed" in result.stdout
+    assert "18 checks passed" in result.stdout
