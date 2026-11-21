@@ -235,6 +235,7 @@ def _view(tab: str, st=None) -> dict:
     owner_ctx = {'qm_racks': racks, 'owners': owners, 'any_marker': any(o['markers'] for o in owners.values()),
                  'pc_names': pc_names, 'pc_names_problem': pc_names_problem,
                  'this_tag': om.own_pc_tag(), 'seen_tags': seen_tags,
+                 'pc_names_seen': om.pc_names_seen(st.get('answer'), st.get('state'), seen_tags),
                  'pc_name_rows': sorted(t for t in set(pc_names) | set(seen_tags) if _TAG_RE.fullmatch(t)),
                  'pc_name_bad': [(_key_ref(k), k) for k in sorted(pc_names) if not _TAG_RE.fullmatch(k)]}
     temperature_failed = 'controllers' in st['section_errors'] or any(k.endswith('.temperatures') for k in (st.get('answer') or {}).get('refused', {}))

@@ -603,8 +603,17 @@ def test_pc_names_summary_reports_only_a_read_list(env, marker_home, read):
     zone = html.split('aria-label="PC names"', 1)[1].split('</span>', 1)[0]
     if read == "never":
         assert "0 named - not read yet" in zone and "seen in open QMs" not in zone
+        assert "No tags named yet." in html
+        assert "No tags named yet and none seen in an open QM." not in html
     elif read == "ok":
         assert "2 seen in open QMs" in zone and "not read yet" not in zone
     else:
         assert "unavailable" in zone and "not read yet" not in zone
         assert "no successful read yet" in html
+
+
+def test_pc_names_empty_after_read(env, marker_home):
+    app, monitor, worker, clock, _ = env
+    worker.script[:] = [answer(qms=())]
+    monitor.poll_once()
+    assert "No tags named yet and none seen in an open QM." in page(app, "settings")

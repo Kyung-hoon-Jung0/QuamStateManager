@@ -364,9 +364,8 @@
   </form>
   <form class="ui-opxmon-pcnames" hx-post="/opx-monitor/pc-names" hx-target="#ui-opxmon-body" hx-swap="outerHTML">
     <section class="ui-zone" aria-label="PC names"><div class="ui-zone-head">
-    <h3 class="ui-zone-title">PC names</h3><span class="ui-zone-sum">{{ pc_names|length }} named - {% if
-    never_read %}not read yet{% elif ans.open_qms is none %}unavailable{% else %}{{ seen_tags|length }}{#
-    #} seen in open QMs{% endif %}</span></div>
+    <h3 class="ui-zone-title">PC names</h3><span class="ui-zone-sum">{{ pc_names|length }} named - {{
+    pc_names_seen.sum }}</span></div>
     <div class="ui-zone-body">
       <p class="ui-text-quiet">Names for the tags in owner markers. Kept only on this PC, in this user's app-data folder; applied when a page is drawn, never written to History.</p>
       {% if pc_names_problem %}<p class="ui-note ui-opxmon-pcnames-problem">{{ pc_names_problem }} The next save rewrites the file (the previous file is kept as pc_names.json.bak on each save).</p>{% endif %}
@@ -378,7 +377,7 @@
           <td data-label="Name" class="ui-table-cell"><span class="ui-text-quiet" title="{{ pc_names[key]|label_full }}">{{ pc_names[key]|label_shown }}</span> <input class="ui-input" name="rename__{{ ref }}" value="{{ pn.get('rename__' ~ ref, '') if pn is not none else '' }}" maxlength="16" placeholder="new tag" autocomplete="off" aria-label="New tag for the invalid key"></td>
           <td data-label="Remove" class="ui-table-cell"><label class="ui-check"><input type="checkbox" name="removebad__{{ ref }}" value="1"{% if pn is not none and pn.get('removebad__' ~ ref) %} checked{% endif %}>remove</label></td></tr>{% endfor %}
           <tr class="ui-opxmon-pcname-new"><td data-label="Tag" class="ui-table-cell"><input class="ui-input" name="new_tag" value="{{ pn.get('new_tag', '') if pn is not none else '' }}" maxlength="16" placeholder="new tag" autocomplete="off" aria-label="New tag"></td><td data-label="Name" class="ui-table-cell"><input class="ui-input" name="new_label" value="{{ pn.get('new_label', '') if pn is not none else '' }}" maxlength="40" placeholder="name" autocomplete="off" aria-label="Name for the new tag"></td><td class="ui-table-cell"></td></tr></tbody></table>
-      {% if not pc_name_rows and not pc_name_bad %}<p class="ui-note">No tags named yet and none seen in an open QM.</p>{% endif %}
+      {% if not pc_name_rows and not pc_name_bad %}<p class="ui-note">{{ pc_names_seen.empty }}</p>{% endif %}
       <button type="submit" class="btn-sm">Save PC names</button>
       {%- if flash and flash_at == 'names' %}{{ flash_line() }}{% endif %}
     </div></section>

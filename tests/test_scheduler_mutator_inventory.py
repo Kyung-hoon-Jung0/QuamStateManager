@@ -7,6 +7,12 @@ from tests.state_model.repros._rig import Chip
 # history, queues or generated output; none stages an edit into the chip store.
 # A new POST requires classification here or inclusion in the mutator lock.
 _NON_STAGING_POSTS = {
+    'nodesim.nodesim_intent',       # Prepare a scratch chip/worker and optionally acquire a simulator lease.
+    'nodesim.nodesim_settings',     # Write only the instance keep-warm boolean sidecar.
+    'nodesim.nodesim_replace',      # Renew/new-instance replace simulator leases using a scratch chip snapshot.
+    'nodesim.nodesim_start',        # Build/simulate a detached chip copy; results/cache stay separate from state.
+    'nodesim.nodesim_stop',         # Signal simulation cancellation; no store or working-copy edit.
+    'nodesim.nodesim_save_script',  # Export a .py script outside the chip, library and instance folders.
     # CZ gate dialog Simulate: start sends the checked plan's program to the
     # simulator and keeps the run in memory; stop ends it. Neither stages a chip
     # edit, and Stop must stay available during a run.

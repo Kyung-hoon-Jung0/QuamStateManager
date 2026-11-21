@@ -25,7 +25,7 @@ LAZY = {"grid-virt.js", "bulk-edit.js", "pair-edit.js", "all-values.js", "pulses
         "ndview.js", "scheduler.js", "autofit.js", "compare-hub.js", "diff-panes.js", "journal.js", "opx-monitor.js",
         "notes.js", "agent-setup.js", "zline.js", "pulses-vt.js", "gate-status.js",
         "coupler-units.js", "cz-plan.js", "cz-map.js", "ui.js", "cz-gate.js", "gate-timeline.js", "vendor/cm6/cm6.min.js", "tree-json-edit.js", "port-play.js",
-        "vendor/cm6/cm6-python.min.js", "pulse-class-edit.js"}   # cz-plan.js: Chip Status > CZ gate plan (2026-10-15); cz-map.js: its chip map (A14)   # notes.js: docs/167's bundle, never added here (red on main since); journal.js / agent-setup.js: docs/173
+        "vendor/cm6/cm6-python.min.js", "pulse-class-edit.js", "nodesim.js"}
 
 
 def _scripts(html: str):
@@ -75,6 +75,8 @@ def test_every_page_ships_the_core_and_only_its_own_bundles(client):
         ("/topology", {"chip-status.js", "topo-graph.js", "component-map.js"}, {"bulk-edit.js", "generate.js"}),
         ("/generate", {"coupler-units.js", "gen-additions.js", "gen-rules.js", "generate.js", "generate_preview.js", "wiring-grid.js", "pulses.js", "topo-graph.js"}, {"bulk-edit.js", "chip-status.js"}),
         ("/datasets", {"dataset-virtual.js", "ndview.js"}, {"bulk-edit.js", "generate.js"}),
+        ("/nodesim", {"ui.js", "gate-timeline.js", "nodesim.js"}, LAZY - {
+            "ui.js", "gate-timeline.js", "nodesim.js"}),
         # A14: the CZ map draws the chip with TopoGraph.layoutFor -- the page carries it
         ("/cz-plan", {"coupler-units.js", "topo-graph.js", "cz-map.js", "cz-plan.js"}, {"bulk-edit.js", "chip-status.js", "generate.js"}),
     ):
@@ -104,11 +106,13 @@ def test_the_manifest_names_every_lazy_file_once_and_the_page_map_covers_the_rou
         "qubits", "pairs", "qubit_detail", "pair_detail", "resonators", "flux", "couplers", "qdac",
         "datasets", "dataset_detail", "dataset_compare", "collections", "fit-audit",
         "scheduler", "autofit", "compare_hub", "diff", "journal", "opx_monitor", "agent_setup", "zline", "czplan",
-        "ui_kit", "explorer", "port_play", "pulse_class",  # port_play: the standalone Port play page; explorer: the CodeMirror bundle (D-21); docs/308: the UI kit sample page (a full page load from /help)
+        "ui_kit", "explorer", "port_play", "pulse_class", "nodesim",
     }
     assert man["pages"]["topology"] == ["chipstatus", "components"] and man["pages"]["trends"] == ["chipstatus", "datasets"]
     # A14: an htmx navigation to /cz-plan loads the topology helper before the map, the map before the detail
     assert man["bundles"]["czplan"] == ["coupler-units.js", "topo-graph.js", "cz-map.js", "cz-plan.js"]
+    assert man["pages"]["nodesim"] == ["nodesim"]
+    assert man["bundles"]["nodesim"] == ["ui.js", "gate-timeline.js", "nodesim.js"]
     # the JS path map agrees with the page map on the pages that matter
     app_js = (_STATIC / "app.js").read_text(encoding="utf-8")
     assert "window.Bundles = (function () {" in app_js
@@ -168,7 +172,7 @@ def test_an_htmx_navigation_loads_every_bundle_a_full_load_of_that_page_ships(cl
     i = app_js.index("var PATHS = [")
     j = app_js.index("];", i)
     script = (app_js[i:j + 2] + "\nconst out = {};\n"
-              + "for (const p of ['/pulses', '/cz-plan']) { out[p] = [];"
+              + "for (const p of ['/pulses', '/cz-plan', '/nodesim']) { out[p] = [];"
               + " PATHS.forEach(function (pr) { if (pr[0].test(p)) pr[1].forEach(function (n) {"
               + " if (out[p].indexOf(n) < 0) out[p].push(n); }); }); }\n"
               + "console.log(JSON.stringify(out));")
@@ -176,6 +180,7 @@ def test_an_htmx_navigation_loads_every_bundle_a_full_load_of_that_page_ships(cl
                                      check=True, timeout=300).stdout)
     assert set(man["pages"]["pulses"]) <= set(got["/pulses"]), got
     assert set(man["pages"]["czplan"]) <= set(got["/cz-plan"]), got
+    assert set(man["pages"]["nodesim"]) <= set(got["/nodesim"]), got
 
 
 # docs/308 4b: the kit menu's behaviour is CORE (ui-menu.js in base.html), so a

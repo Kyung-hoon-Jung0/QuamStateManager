@@ -1340,6 +1340,28 @@ def qm_state(q, idle_value):
     return {'fact': fact, 'basis': basis, 'jobs': statuses}
 
 
+def never_read(answer, state):
+    """No answer and no failed try: 'error', or 'stale' with no answer, is a read that was tried and failed."""
+    return answer is None and state not in ('error', 'stale')
+
+
+def pc_names_seen(answer, state, seen):
+    """The PC-names zone sum and its empty line, in the words the rest of the page uses for each read state.
+
+    Never read -> "not read yet"; no QM list after a failed read -> "unavailable"; a QM list that is not current
+    -> counted "at the last good read"; only a fresh list may say no tag is seen in an open QM (r3 P3-a)."""
+    if never_read(answer, state):
+        return {'sum': 'not read yet', 'empty': 'No tags named yet.'}
+    if (answer or {}).get('open_qms') is None:
+        return {'sum': 'unavailable', 'empty': 'No tags named yet. Open QM list: no successful read yet, so the '
+                                               'tags in open QMs are unknown.'}
+    if state != 'ok':
+        return {'sum': f'{len(seen)} seen at the last good read',
+                'empty': 'No tags named yet and none seen in an open QM at the last good read; whether one is '
+                         'open now is unknown.'}
+    return {'sum': f'{len(seen)} seen in open QMs', 'empty': 'No tags named yet and none seen in an open QM.'}
+
+
 def live_tiles(answer, idle_states, hottest, limit, state, failures):
     """The four Live tiles. A tile carries a state tone only from a known abnormal value;
     an unknown value is quiet (grey). ``failures`` = number of calls refused or unanswered.
@@ -1349,8 +1371,8 @@ def live_tiles(answer, idle_states, hottest, limit, state, failures):
     stays "unknown"."""
     ans = answer or {}
     fresh = state == 'ok'
-    never_read = answer is None and state not in ('error', 'stale')
-    missing = 'not read yet' if never_read else ('unavailable' if answer is None else 'unknown')
+    unread = never_read(answer, state)
+    missing = 'not read yet' if unread else ('unavailable' if answer is None else 'unknown')
     qms = ans.get('open_qms')
     tiles = []
     if qms is None:

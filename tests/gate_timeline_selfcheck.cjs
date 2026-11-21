@@ -1106,6 +1106,70 @@ he.destroy();
         h.destroy();
     }
 }
+// r3 P3-3 shape: 12 rounds of a 40 ns drive pulse and a 1000 ns readout with a "digital ON" mark,
+// the last two rounds close together. Texts in one lane row never overlap each other, a mark never
+// overlaps a bottom-row text of its lane, and a cut text keeps its full words in the hover text.
+{
+    const PERIOD = 1600, N = 12;
+    const starts = Array.from({ length: N }, (_, k) => (k === N - 1 ? (N - 2) * PERIOD + 400 : k * PERIOD));
+    const R3 = { lanes: [
+        lane('q1.xy', 'gate', starts.map((t) => seg('x180 (I+Q)', [t, t + 40], [0, 0], { t_ns: [], v: [] }))),
+        lane('q1.resonator', 'gate', starts.map((t) => seg('q1.resonator_pulse_amplitude_changed (I+Q)',
+                                                         [t + 40, t + 1040], [0, 0], { t_ns: [], v: [] })))
+    ], notes: [], marks: starts.map((t) => ({ kind: 'wait', element: 'q1.resonator', label: 'digital ON',
+                                                start_ns: t + 40, end_ns: t + 1040 })) };
+    const CHAR = +/var CHAR_PX = ([0-9.]+);/.exec(src)[1];
+    const boxOf = (a, xr, w) => {
+        const px = (a.x - xr[0]) * w / (xr[1] - xr[0]);
+        const width = a.meta.role === 'segment-text' ? Math.max(a.meta.name.length, a.meta.shown2.length) * CHAR
+            : a.text.length * CHAR + 8;
+        const left = a.xanchor === 'right' ? px - width : a.xanchor === 'center' ? px - width / 2 : px;
+        return [left, left + width];
+    };
+    const check = (anns, xr, w, label, mustCut) => {
+        const texts = anns.filter((a) => a.meta && a.meta.role === 'segment-text');
+        const marks = anns.filter((a) => a.meta && a.meta.role === 'step-mark');
+        let clash = 0;
+        const groups = {};
+        texts.forEach((a) => {
+            const key = a.meta.lane + '|' + a.meta.row;
+            (groups[key] = groups[key] || []).push(a);
+        });
+        Object.values(groups).forEach((g) => {
+            const b = g.map((a) => boxOf(a, xr, w)).sort((p, q) => p[0] - q[0]);
+            for (let k = 1; k < b.length; k++) if (b[k - 1][1] > b[k][0]) clash++;
+        });
+        ok(clash === 0, label + ': no two segment texts of one lane row overlap (' + clash + ')');
+        let markClash = 0;
+        marks.forEach((m) => {
+            const mb = boxOf(m, xr, w);
+            texts.filter((t) => t.meta.row === 'bottom' && t.yref === m.yref).forEach((t) => {
+                const tb = boxOf(t, xr, w);
+                if (mb[0] < tb[1] && mb[1] > tb[0]) markClash++;
+            });
+        });
+        ok(markClash === 0, label + ': no mark overlaps a bottom-row segment text (' + markClash + ')');
+        const cut = texts.filter((a) => a.meta.shown2 !== a.meta.line2);
+        ok((cut.length > 0 || !mustCut) && cut.every((a) => /\u2026$/.test(a.meta.shown2) &&
+                                              a.hovertext === a.meta.operation + '<br>' + a.meta.line2),
+           label + ': the fixture cuts numbers, each with an ellipsis and its full words in the hover text');
+        ok(texts.every((a) => a.hovertext.indexOf(a.meta.operation) === 0),
+           label + ': every shortened name keeps its full name in the hover text');
+        return { texts, marks };
+    };
+    Object.defineProperty(host2, 'clientWidth', { configurable: true, value: 1100 });
+    const h = GT.render(host2, R3, {});
+    const f = h.figure();
+    check(f.layout.annotations, f.span, f.widthPx, 'r3 shape', true);
+    ok(host2.querySelectorAll('[data-step-description][title]').length === N,
+       'r3 shape: a mark that gives way to a text keeps its full text in the Sequence steps list');
+    last().el._fullLayout = { xaxis: { range: [8000, 19000], _length: f.widthPx } };
+    h.relayout({ 'xaxis.range': [8000, 19000] });
+    check(h.figure().layout.annotations, [8000, 19000], f.widthPx, 'r3 shape zoomed', false);
+    delete last().el._fullLayout;
+    h.destroy();
+    delete host2.clientWidth;
+}
 ok(host.childNodes.length === 0, 'host clean at the end');
 
 console.log(`${passed} passed, ${failed} failed`);

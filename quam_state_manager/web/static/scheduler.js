@@ -191,6 +191,9 @@
     }).then(finish, finish);                          // re-enable on success OR error
   };
 
+  // The Simulate a node page link for one library file (an absolute path; the page names it to the server).
+  function simHref(file) { return "/nodesim?node=" + encodeURIComponent(file); }
+
   SchedulerUI.prototype.renderLibrary = function (items) {
     var self = this;
     if (items) self._libItems = items;            // cache so the filter can re-render
@@ -222,11 +225,18 @@
         '<span class="sched-lib-name">' + esc(it.name) + "</span>" +
         '<span class="sched-lib-desc muted">' + esc(it.description || "") + "</span>" +
         '<button type="button" class="btn-sm outline sched-lib-add" aria-label="Add ' + esc(it.name)
-          + ' to queue">+ Add</button>';
+          + ' to queue">+ Add</button>' +
+        // a node can be simulated once on the cloud simulator (the Simulate a node page, preselected)
+        (it.kind === "node" && it.file
+          ? '<a class="btn-sm outline" data-sched-sim href="' + esc(simHref(it.file)) + '" hx-get="'
+            + esc(simHref(it.file)) + '" hx-target="#table-pane" hx-push-url="true" aria-label="Simulate '
+            + esc(it.name) + '">Simulate</a>'
+          : "");
       row.querySelector(".sched-lib-add").addEventListener("click", function (e) {
         self.addToQueue(it, e.currentTarget);
       });
       box.appendChild(row);
+      if (window.htmx && row.querySelector("[data-sched-sim]")) window.htmx.process(row);
     });
   };
 
