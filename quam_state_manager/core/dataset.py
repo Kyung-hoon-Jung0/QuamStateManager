@@ -99,7 +99,9 @@ _COLD_SCAN_BUDGET_S = 3.0
 # number with no unit names the field it is (a v5 row re-served it bare).
 # v7 (W3-6): a fit file's ns stamp on a seconds value no longer scales a
 # coherence metric to "0.0 ns" (a v6 row re-served it).
-_STORE_CACHE_V = 7
+# v8: an RB run headlines its "fidelity" field, not the decay alpha (a v7 row
+# re-served "alpha ...").
+_STORE_CACHE_V = 8
 # A scan that changed something writes the cache this long after the LAST
 # such scan -- a burst of landing runs is one write, not one per run.
 # The persisted index is only an accelerator (docs/171): losing 30 s on a
@@ -3336,6 +3338,26 @@ class DatasetStore:
 
         exp = run.experiment_name.lower()
 
+        # RB: the fallback below picked the decay alpha, which says nothing to
+        # a reader. Interleaved RB headlines the node's error per gate "epg"
+        # with its "systematic_bound" beside it (a fidelity alone hides an
+        # unresolved value); standard RB headlines the node's "fidelity". The
+        # node's own field names are kept. A run without those fields keeps
+        # the fallback (never blank because of this rule).
+        if _is_rb_experiment(exp):
+            def _fin(v):
+                return type(v) is not bool and isinstance(v, (int, float)) and math.isfinite(v)
+            epg = first_qubit_results.get("epg")
+            if "interleaved" in exp and _fin(epg):
+                text = f"epg {epg * 100:.2f} %"
+                bound = first_qubit_results.get("systematic_bound")
+                if _fin(bound):
+                    text += f" bound {bound * 100:.0f} %"
+                return text, False
+            val = first_qubit_results.get("fidelity")
+            if _fin(val):
+                return f"fidelity {_format_metric(val, '')}", False
+
         # Map experiment types to key metric fields
         metric_map = {
             # W2-11: before "ramsey" -- this node also matches it, and its
@@ -3609,6 +3631,15 @@ def _saved_keys_for(key: str) -> frozenset[str]:
     if n in ("decay", "t2star", "t2*", "t2ramsey"):
         return frozenset({n, "t2ramsey", "t2star", "t2*"})
     return frozenset({n})
+
+
+_RB_EXPERIMENT = re.compile(r"(^|_)(rb|randomized_benchmarking)(_|$)")
+
+
+def _is_rb_experiment(exp: str) -> bool:
+    """A randomized-benchmarking node, by its name ("..._standard_rb_...",
+    "..._interleaved_cz_rb", "randomized_benchmarking")."""
+    return bool(_RB_EXPERIMENT.search(exp))
 
 
 def _key_metric_target(run) -> str | None:
