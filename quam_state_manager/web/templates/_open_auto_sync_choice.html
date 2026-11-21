@@ -6,5 +6,5 @@
 <button type="submit" name="auto_sync" value="0" class="btn-sm outline"
         data-open-without-auto-sync>{{ _alt_label }}</button>
 <p class="ui-text-quiet" data-resume-arms-auto-sync>Opening also turns Auto-Sync
-    on for this chip when nothing waits to sync: your edits then go to the chip file. Turn it off in the top bar.</p>
+    on for this chip when nothing waits to sync: {{ auto_sync_open_words }}</p>
 {%- endif %}

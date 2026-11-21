@@ -22,7 +22,7 @@ from quam_state_manager.web import routes as routes_mod
 from quam_state_manager.web.app import create_app
 
 _WIRING = {"network": {"host": "1.1.1.1", "cluster_name": "C1"}}
-_TOAST = "Auto-Sync is on: your edits are written to the chip file."
+_TOAST = "Auto-Sync turned on for this chip: your edits go to the chip file."
 
 
 def _write_chip(folder: Path, f01=5.0e9):

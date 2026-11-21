@@ -43,6 +43,16 @@ setTimeout(() => {
     // style.css: cells are --font-mono at --data-table-font 0.88em (14.08 px at 16 px), ~0.6 em per glyph,
     // plus 2 x --data-table-td-pad-h 0.35rem: 15 glyphs of "fidelity 0.9876" need 127 + 12 px
     assert.ok(width >= Math.ceil(15 * 0.6 * 14.08) + 12, 'Key Metric fits "fidelity 0.xxxx": ' + width); checks++;
+    // Fix X2: at a 1440 px window Pico's root is 125% (20 px). The status chip is .72rem mono (~0.6 em per glyph)
+    // with .35rem padding each side + a 1 px border, inside a cell padded --data-table-td-pad-h .35rem each side.
+    const colW = key => parseFloat((w.document.querySelector('#datasets-colgroup col[data-col-key="' + key + '"]')
+        || {style: {}}).style.width);
+    const rem = 20, label = 'finished, no outcome';
+    const need = Math.ceil(label.length * 0.6 * 0.72 * rem + 2 * 0.35 * rem + 2 + 2 * 0.35 * rem);
+    assert.equal(cell(r3), label, 'the measured label is the one the cell shows'); checks++;
+    assert.ok(colW('status') >= need, 'Status fits "' + label + '" at 1440 px: ' + colW('status') + ' >= ' + need);
+    checks++;
+    assert.ok(colW('tags') >= 87, 'Tags keeps its fit floor (FIT_FLOOR.tags 87): ' + colW('tags')); checks++;
     console.log(checks + ' checks passed');
     w.close();
 }, 300);

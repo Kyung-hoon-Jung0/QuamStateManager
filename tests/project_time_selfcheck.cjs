@@ -50,9 +50,9 @@ const LANDING =
   '<div class="landing-card"><span class="landing-card-tz" data-tz-card="beta">tz Seoul UTC+9</span>' +
   '<div class="landing-card-env" data-project="beta"></div></div>' +
   '<section id="landing-tz" data-tz-default="alpha"><script type="application/json" data-tz-views>VIEWS</script>' +
-  '<strong>Time zone for <span data-tz-project></span></strong><span data-tz-current></span>' +
-  '<span data-tz-state></span><button type="button" data-tz-change>Change</button><span data-tz-clock></span>' +
-  '<p data-tz-note hidden></p><div data-tz-search hidden><input type="search" data-tz-input>' +
+  '<div data-tz-head><strong>Time zone for <span data-tz-project></span></strong><span data-tz-current></span>' +
+  '<span data-tz-state></span><button type="button" data-tz-change>Change</button><span data-tz-clock></span></div>' +
+  '<div data-tz-search hidden><input type="search" data-tz-input>' +
   '<div data-tz-list></div></div></section>';
 
 const VIEWS_PICKED = {
@@ -276,6 +276,21 @@ const btn = (doc, sel) => doc.querySelector(sel);
     ok(W.d.querySelector('[data-tz-current]').textContent === "not set - using this PC's zone (UTC+9)",
        'P10b: the unset zone and PC fallback are one statement');
     ok(W.d.querySelector('[data-tz-state]').textContent === '', 'P10b: no second unset-zone statement');
+  }
+  // P10c -- Fix X2: the zone note is the row's tooltip, never a paragraph under the row
+  {
+    const NOTE = 'Runs in this project are recorded in UTC+9; SM shows them in UTC.';
+    const W = await mk({ views: { alpha: { project: 'alpha', zone: 'UTC', state: 'picked', offset: '+00:00',
+                                           offset_text: 'UTC', note: NOTE } } });
+    await tick(10);
+    const head = W.d.querySelector('[data-tz-head]');
+    ok(head && head.title === NOTE, 'P10c: the note is the row tooltip, got "' + (head && head.title) + '"');
+    const tw = W.d.createTreeWalker(W.d.body, 4);   // text nodes outside the views' JSON script
+    let shown = false;
+    for (let n = tw.nextNode(); n; n = tw.nextNode()) {
+      if (n.parentNode.nodeName !== 'SCRIPT' && n.nodeValue.indexOf('recorded in UTC+9') >= 0) shown = true;
+    }
+    ok(!shown, 'P10c: no visible note text under the row');
   }
   // P11 -- the run-clock question, once, with evidence
   const ASK = {

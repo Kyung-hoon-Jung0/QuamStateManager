@@ -8045,6 +8045,26 @@ def agent_summary_page():
                                                summary=data))
 
 
+def _qualibrate_project_entry(name: str) -> dict | None:
+    """The QUAlibrate project *name* as /qualibrate/open opens it (its effective state_path and storage), or
+    None when there is no such project. One resolution for the open route and for every button that says
+    beforehand what that open will do (the landing's "Open QUAlibrate's current project")."""
+    if not name:
+        return None
+    listing = _qualibrate_listing()
+    return next((p for p in listing["projects"] if p["name"] == name), None)
+
+
+def _qualibrate_open_state_path(name: str) -> str | None:
+    """The chip folder /qualibrate/open would load for project *name*; None when that open would refuse."""
+    try:
+        proj = _qualibrate_project_entry(name)
+    except Exception:  # noqa: BLE001 -- unknown: the button makes no promise either way
+        return None
+    state = (proj or {}).get("state_path") or {}
+    return state.get("native") if state.get("exists") else None
+
+
 def _landing_current_project() -> dict:
     """v1.5.1 (U P2-21): the landing's "Open QUAlibrate's current project"
     is offered only for a project SM can open by name. A root config whose
@@ -8054,7 +8074,9 @@ def _landing_current_project() -> dict:
     ts = qualibrate_config.tray_status()
     active = ts.get("active")
     if not active or ts.get("project_exists", True):
-        return {"active_project": active, "active_project_orphan": None}
+        return {"active_project": active, "active_project_orphan": None,
+                # Fix X2: the folder that button's open loads, for the arm notice (open_arms_auto_sync)
+                "active_project_state": _qualibrate_open_state_path(active) if active else None}
     native = ts.get("state_native")
     return {"active_project": None,
             "active_project_orphan": {
@@ -9534,8 +9556,7 @@ def qualibrate_open_project():
     tier, guarded). Mirrors /load's HX-Redirect contract so the chip-identity
     tray re-renders fresh."""
     name = (request.form.get("project") or "").strip()
-    listing = _qualibrate_listing()
-    proj = next((p for p in listing["projects"] if p["name"] == name), None)
+    proj = _qualibrate_project_entry(name)
     if proj is None:
         return render_template("_status.html",
                                message=f"Unknown qualibrate project: {name!r}",
@@ -9593,9 +9614,12 @@ def qualibrate_open_project():
         logger.warning("project zone default failed for %s", name, exc_info=True)
     try:
         opened = _activate_quam(state["native"])
-        # the card's "... without Auto-Sync" press (the same field as /load)
-        if request.form.get("auto_sync") != "0":
-            _maybe_auto_arm_on_open(opened)
+        # the landing's "... without Auto-Sync" press (the same field as /load)
+        armed = request.form.get("auto_sync") != "0" and _maybe_auto_arm_on_open(opened)
+        if armed and request.form.get("from") != "landing":
+            # Fix X2: a door with no notice before the press (the sidebar's Projects row) says so after it,
+            # every time it armed, in the top bar's one-shot line (one wording: _AUTO_SYNC_OPEN_TOAST)
+            opened["_auto_sync_open_toast"] = _AUTO_SYNC_OPEN_TOAST
     except (FileNotFoundError, ValueError, OSError) as e:
         return render_template("_status.html", message=str(e), level="error"), 400
     if env_changed:
@@ -33069,8 +33093,10 @@ def _new_auto_session(*, pull: bool, pull_replace: bool, push: bool) -> dict:
 AUTO_SYNC_DEFAULT_MODES = {"pull": True, "pull_replace": False, "push": True}
 _AUTO_SYNC_OPEN_FILE = "auto_sync_on_open.json"
 _AUTO_SYNC_CHIPS_FILE = "auto_sync_chips.json"
-_AUTO_SYNC_OPEN_TOAST = ("Auto-Sync is on: your edits are written to the chip "
-                         "file. Turn it off in the top bar.")
+#: Fix X2: the one wording of what an armed open means, said before the press (_open_auto_sync_choice.html,
+#: via the auto_sync_open_words context) and after it (the top bar's one-shot line below).
+AUTO_SYNC_EDITS_GO_LIVE = "your edits go to the chip file. Turn it off in the top bar."
+_AUTO_SYNC_OPEN_TOAST = "Auto-Sync turned on for this chip: " + AUTO_SYNC_EDITS_GO_LIVE
 
 
 def _auto_sync_open_path() -> Path:
@@ -33243,6 +33269,12 @@ def _maybe_auto_arm_on_open(ctx: dict | None) -> bool:
     except Exception:  # noqa: BLE001 -- arming never blocks opening a chip
         logger.warning("Auto-Sync on open failed", exc_info=True)
         return False
+
+
+@bp.app_context_processor
+def _auto_sync_open_words_context():
+    # Fix X2: the arm notice's wording, one source (AUTO_SYNC_EDITS_GO_LIVE)
+    return {"auto_sync_open_words": AUTO_SYNC_EDITS_GO_LIVE}
 
 
 @bp.app_context_processor

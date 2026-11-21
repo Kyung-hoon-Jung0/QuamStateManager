@@ -91,7 +91,7 @@ def test_landing_resume_that_does_not_arm_offers_neither(scoped, arming):  # noq
 def test_project_card_that_arms_offers_the_quiet_open_and_it_is_honoured(scoped, arming):  # noqa: F811
     _restart_landing(scoped)
     card = _card_form(scoped["client"].get("/landing/projects").get_data(as_text=True), "alpha")
-    assert _NOTICE in card and _QUIET in card and "without Auto-Sync" in card
+    assert _NOTICE in card and _QUIET in card and "Without Auto-Sync" in card
     before = _files(scoped["chip_a"])
     r = scoped["client"].post("/qualibrate/open", data={"project": "alpha", "from": "landing", "auto_sync": "0"})
     assert r.status_code in (200, 302)
@@ -159,4 +159,4 @@ def test_metric_title_and_empty_outcome_status():
     result = subprocess.run(["node", str(Path(__file__).with_name("ds_fix_x_selfcheck.cjs"))],
                             capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "8 checks passed" in result.stdout
+    assert "11 checks passed" in result.stdout

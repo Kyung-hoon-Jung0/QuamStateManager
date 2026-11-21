@@ -267,8 +267,9 @@
             st.textContent = label;
             st.setAttribute('data-state', v.state || 'none');
         }
-        var note = q('[data-tz-note]');
-        if (note) { note.textContent = v.note || ''; note.hidden = !v.note; }
+        // Fix X2: the zone note is the row's tooltip (the row stays one line)
+        var head = q('[data-tz-head]');
+        if (head) head.title = v.note || '';
     }
     function renderClockLine() {
         var line = q('[data-tz-clock]');

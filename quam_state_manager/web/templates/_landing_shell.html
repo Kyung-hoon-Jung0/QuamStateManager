@@ -59,6 +59,11 @@
         <button type="submit" class="btn-sm outline landing-current-btn"
                 title="Load the chip QUAlibrate's active project points at, then open its Qubits page">
             Open QUAlibrate's current project: {{ active_project }}</button>
+        {#- this open arms Auto-Sync like /load: the same notice and alternative (Fix X2) -#}
+        {% set _arms = active_project_state is defined and active_project_state
+                       and open_arms_auto_sync(active_project_state) %}
+        {%- set _alt_label = "Open without Auto-Sync" %}
+        {% include "_open_auto_sync_choice.html" %}
     </form>
     {% elif active_project_orphan is defined and active_project_orphan %}
     {#- v1.5.1 (U P2-21): the active project has no projects/<name> folder --
@@ -72,6 +77,8 @@
                 title="QUAlibrate's active project '{{ _ap.name }}' has no projects/{{ _ap.name }} folder; this opens the chip its root config points at ({{ _ap.native }})">
             Open QUAlibrate's current chip: {{ _ap.label }}</button>
         <span class="muted landing-current-note">project '{{ _ap.name }}' has no folder; its root config's state_path is used</span>
+        {% set _arms = open_arms_auto_sync(_ap.native) %}{% set _alt_label = "Open without Auto-Sync" %}
+        {% include "_open_auto_sync_choice.html" %}
     </form>
     {% else %}
     <p class="muted landing-current-missing">QUAlibrate's active project '{{ _ap.name }}' has no

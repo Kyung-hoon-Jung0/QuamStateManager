@@ -82,7 +82,8 @@
                     {{ 'Continue' if p.name == last_project else 'Open' }}</button>
                 {#- opening the project arms Auto-Sync like /load: the same notice and alternative -#}
                 {%- set _arms = p.state_path.exists and open_arms_auto_sync(p.state_path.native) -%}
-                {%- set _alt_label = ('Continue' if p.name == last_project else 'Open') ~ ' without Auto-Sync' -%}
+                {#- Fix X2: a short label, so it stays one line in the narrow card -#}
+                {%- set _alt_label = 'Without Auto-Sync' -%}
                 {%- include "_open_auto_sync_choice.html" %}
             </form>
             {# r8 feedback: users want the project's paths + ports at a glance —

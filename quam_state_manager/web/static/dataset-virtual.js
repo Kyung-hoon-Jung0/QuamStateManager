@@ -727,8 +727,10 @@
              return (now.length ? escapeHtml(now.join(', ')) : (as ? '' : '-')) + as;
          }},
         // L9: 96 clipped "finished"; W2-11: 104 fit "all failed" by 2 px at the default size and clipped it at a
-        // larger one; Fix X: 124 -> 150 for "finished, no outcome" (Tags gave up the width)
-        {key: 'status', label: 'Status', on: true, w: 150, sortKey: 'status', type: 'str',
+        // larger one; Fix X: 124 -> 150 for "finished, no outcome" (Tags gave up the width); Fix X2: 150 clipped it
+        // at a 1440 px window (root 20 px: 20 mono glyphs at .72rem + chip and cell padding ~203 px) -> 204, taken
+        // from Tags (122 -> 96) and, on a narrow pane, from Key Metric down to its fit floor (FIT_FLOOR below)
+        {key: 'status', label: 'Status', on: true, w: 204, sortKey: 'status', type: 'str',
          render: function (r) {
              // a failed run status (error, aborted) stays on the cell beside the target count
              var lead = failedRunLead(r);
@@ -758,7 +760,7 @@
                      : escapeHtml(r.metric))); }},
         {key: 'when', label: 'When', on: true, w: 88, sortKey: 'when', type: 'num',
          render: function (r) { return '<span title="' + escapeHtml(_whenTitle(r)) + '">' + escapeHtml(fmtRelative(r)) + '</span>'; }},
-        {key: 'tags', label: 'Tags', on: true, w: 122, cls: 'col-tags',
+        {key: 'tags', label: 'Tags', on: true, w: 96, cls: 'col-tags',
          render: function (r) { return tagsCell(r); }},
         {key: 'duration', label: 'Duration', on: false, w: 84, sortKey: 'dur', type: 'num',
          render: function (r) { return escapeHtml(fmtDuration(r.dur)); }},
@@ -891,7 +893,9 @@
        the user sizes them, Experiment, Tags and Folder give up width -- in
        proportion to what each has above its floor -- so the table fits its
        pane; a column the user resized keeps the user's width. */
-    var FIT_FLOOR = { exp: 150, tags: 96, folder: 72 };
+    // Fix X2: Status's 204 is paid by Tags (floor 96 -> 87) and Key Metric (floor 100; its cell keeps the ellipsis
+    // and the full text in its title), so a 5-digit ID with its wrote mark still fits the 959 px pane.
+    var FIT_FLOOR = { exp: 150, tags: 87, folder: 72, metric: 100 };
     function fittedWidths(cols) {
         var w = cols.map(colWidth);
         var scroll = document.getElementById('datasets-scroll');

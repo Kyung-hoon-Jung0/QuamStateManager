@@ -74,6 +74,9 @@ const get = (cols, k) => (cols.find((c) => c[0] === k) || [])[1];
     ok(!!w.DatasetVirtual.getRow((r10001.f || '') + ':10001'), 'the polled run is in the table');
     const id1 = get(widths(w), 'id');
     ok(id1 >= id0 + 7, 'the ID column grew for the 5-digit id: ' + id0 + ' -> ' + id1 + ' px');
+    // Fix X2: Status is 204 px wide now; Tags and Key Metric pay for it, so the grown ID still fits.
+    const sum1 = widths(w).reduce((a, c) => a + c[1], 0);
+    ok(sum1 <= PANE, 'the columns still fit the ' + PANE + ' px pane with a 5-digit id: ' + sum1 + ' px');
 
     // A width the user dragged is kept.
     const u = boot({ quam_ds_col_widths: JSON.stringify({ id: 50 }) });
